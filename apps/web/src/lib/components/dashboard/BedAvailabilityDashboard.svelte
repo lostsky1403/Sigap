@@ -1,8 +1,11 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+
 	// Sigap Bed Availability Dashboard
 	// Strict minimalist design: generous whitespace, single emerald accent,
 	// clean typography, high contrast, no decorative noise.
 	// Svelte 5 runes for reactivity.
+	// Now with real-time updates via SSE from Go API (triggered by Rust engine queue creation).
 
 	type Facility = {
 		id: string;
@@ -16,14 +19,14 @@
 		shortCode: string;
 	};
 
-	const samples: Facility[] = [
+	let samples: Facility[] = $state([
 		{ id: 'f1', name: 'RSUD Kota Sehat', type: 'rumah_sakit', kecamatan: 'Sukamaju', kabupatenKota: 'Kota Bandung', totalBeds: 180, availableBeds: 42, lastUpdated: '2026-06-12T08:15:00Z', shortCode: 'RSK' },
 		{ id: 'f2', name: 'Puskesmas Sukajaya', type: 'puskesmas', kecamatan: 'Sukajaya', kabupatenKota: 'Kab. Bandung', totalBeds: 28, availableBeds: 19, lastUpdated: '2026-06-12T07:50:00Z', shortCode: 'PKM' },
 		{ id: 'f3', name: 'RS Mitra Sehat', type: 'rumah_sakit', kecamatan: 'Menteng', kabupatenKota: 'Jakarta Pusat', totalBeds: 95, availableBeds: 11, lastUpdated: '2026-06-12T09:05:00Z', shortCode: 'RSM' },
 		{ id: 'f4', name: 'Puskesmas Melati Indah', type: 'puskesmas', kecamatan: 'Cilandak', kabupatenKota: 'Jakarta Selatan', totalBeds: 35, availableBeds: 27, lastUpdated: '2026-06-12T06:40:00Z', shortCode: 'PMI' },
 		{ id: 'f5', name: 'RSUD Sejahtera', type: 'rumah_sakit', kecamatan: 'Cibadak', kabupatenKota: 'Kab. Sukabumi', totalBeds: 120, availableBeds: 68, lastUpdated: '2026-06-12T08:55:00Z', shortCode: 'RSJ' },
 		{ id: 'f6', name: 'Puskesmas Harapan Baru', type: 'puskesmas', kecamatan: 'Parung', kabupatenKota: 'Kab. Bogor', totalBeds: 22, availableBeds: 5, lastUpdated: '2026-06-12T07:10:00Z', shortCode: 'PHB' }
-	];
+	]);
 
 	let search = $state('');
 	let typeFilter = $state<'all' | 'rumah_sakit' | 'puskesmas'>('all');
@@ -52,6 +55,40 @@
 	function formatTime(iso: string) {
 		return new Date(iso).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 	}
+
+	// Live update from SSE (real-time magic)
+	function applyLiveBedUpdate(facilityId: string) {
+		const idx = samples.findIndex((f) => f.id === facilityId);
+		if (idx === -1) return;
+		const f = samples[idx];
+		if (f.availableBeds > 0) {
+			// Reassign array slice to trigger $derived + UI reactivity in runes
+			samples = [
+				...samples.slice(0, idx),
+				{ ...f, availableBeds: f.availableBeds - 1, lastUpdated: new Date().toISOString() },
+				...samples.slice(idx + 1)
+			];
+		}
+	}
+
+	// Connect to Go SSE endpoint (adjust host/port in real deploy or use relative + proxy)
+	onMount(() => {
+		const es = new EventSource('http://localhost:8080/api/v1/events/beds');
+		es.addEventListener('bed_updated', (ev) => {
+			try {
+				const data = JSON.parse(ev.data || '{}');
+				if (data.facility_id) {
+					applyLiveBedUpdate(data.facility_id);
+				}
+			} catch {
+				// ignore bad event
+			}
+		});
+		es.onerror = () => {
+			// connection lost or api not running; UI stays usable
+		};
+		return () => es.close();
+	});
 </script>
 
 <section class="px-6 py-8">
