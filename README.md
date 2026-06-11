@@ -1,5 +1,11 @@
 # Sigap
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go)
+![Rust](https://img.shields.io/badge/Rust-1.78-dea584?logo=rust)
+[![CI](https://github.com/lostsky1403/Sigap/actions/workflows/ci.yml/badge.svg)](https://github.com/lostsky1403/Sigap/actions/workflows/ci.yml)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker)](https://github.com/lostsky1403/Sigap/blob/main/docker-compose.yml)
+
 **Sigap** adalah kerangka kerja open-source Civic-Tech berbasis web untuk layanan informasi dan antrean kesehatan daerah (rumah sakit & puskesmas).
 
 Tujuan: memberikan transparansi ketersediaan fasilitas kesehatan dan kemudahan pengambilan nomor antrean secara digital bagi masyarakat di daerah.
@@ -22,6 +28,43 @@ Tujuan: memberikan transparansi ketersediaan fasilitas kesehatan dan kemudahan p
 - **Komunikasi internal**: gRPC (kontrak di `protos/sigap/queue_engine.proto`)
 - **Database**: PostgreSQL + migrasi SQL murni (satu sumber kebenaran)
 - **Monorepo**: pnpm (web) + Go modules + Cargo + Makefile untuk orkestrasi
+
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph Client
+        User[User / Browser]
+        Svelte[SvelteKit<br/>Web UI + SSE Client]
+    end
+
+    subgraph Backend
+        Go[Go API<br/>HTTP Handler + Rate Limiter<br/>gRPC Client + SSE Hub]
+        Rust[Rust Engine<br/>Tonic gRPC Server<br/>sqlx + Atomic Tx]
+    end
+
+    User -->|HTTP POST /generate + GET /events/beds| Svelte
+    Svelte -->|Real-time SSE updates| Go
+    Svelte -->|Submit queue request| Go
+    Go -->|gRPC GenerateQueueNumber<br/>(with processing_time_µs)| Rust
+    Rust -->|SELECT ... FOR UPDATE<br/>+ INSERT ticket| Postgres[(PostgreSQL)]
+    Go -->|Direct queries<br/>(rate limiting, etc.)| Postgres
+    Rust -->|Response + latency| Go
+    Go -->|JSON response<br/>(incl. processing_time)| Svelte
+    Go -->|SSE event: bed_updated| Svelte
+
+    classDef go fill:#00ADD8,stroke:#00ADD8,color:white
+    classDef rust fill:#dea584,stroke:#dea584,color:black
+    class Go go
+    class Rust rust
+```
+
+**Flow summary**:
+- User interacts with SvelteKit frontend.
+- Frontend talks to Go API (queue submission + real-time SSE).
+- Go enforces rate limiting (phone + facility per day) then delegates the critical atomic queue generation to the Rust engine over gRPC.
+- Rust engine performs the high-safety transaction (FOR UPDATE on daily counters) against PostgreSQL and returns the result **including micro-second execution time** for traceability.
+- Successful queue creation triggers an SSE event that the frontend listens to for live UI updates (no page refresh).
 
 ## Struktur Direktori (Monorepo)
 
