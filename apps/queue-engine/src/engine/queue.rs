@@ -1,4 +1,5 @@
 use sqlx::{PgPool, Postgres, Transaction};
+use std::time::Instant;
 use tonic::Status;
 use uuid::Uuid;
 
@@ -22,6 +23,8 @@ pub async fn generate_queue_number_tx(
     if phone.is_empty() || full_name.is_empty() {
         return Err(Status::invalid_argument("phone dan full_name wajib diisi"));
     }
+
+    let start = Instant::now();
 
     let mut tx: Transaction<'_, Postgres> = pool
         .begin()
@@ -134,11 +137,14 @@ pub async fn generate_queue_number_tx(
         .await
         .map_err(|e| Status::internal(format!("commit transaksi gagal: {}", e)))?;
 
+    let processing_time_micros = start.elapsed().as_micros() as i64;
+
     Ok(GenerateQueueResponse {
         ticket_id: ticket_id.to_string(),
         formatted_number: formatted,
         status: "waiting".to_string(),
         registered_at: chrono::Utc::now().to_rfc3339(),
         estimated_wait_minutes: 25,
+        processing_time_micros,
     })
 }
