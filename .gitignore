@@ -31,3 +31,9 @@ npm-debug.log*
 # SvelteKit / Next legacy
 .svelte-kit/
 .output/
+
+# Local AI agent / Grok session artifacts (never commit)
+.grok/
+.grok
+*.grok
+
