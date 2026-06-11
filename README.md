@@ -123,6 +123,50 @@ MIT — silakan fork, modifikasi, dan kontribusi untuk kepentingan publik.
 
 ---
 
+## 1-Click Deploy dengan Docker (Enterprise Ready)
+
+Seluruh stack (Postgres + Rust Engine + Go API + SvelteKit Web) bisa dijalankan dengan **satu perintah**.
+
+```bash
+# 1. Clone repo
+git clone https://github.com/lostsky1403/Sigap.git
+cd Sigap
+
+# 2. Jalankan seluruh sistem (build otomatis)
+docker compose up -d --build
+
+# 3. (Sekali saja) Jalankan migrasi database
+docker compose exec -T postgres psql -U sigap -d sigap -f /docker-entrypoint-initdb.d/0001_init.sql
+
+# 4. Buka aplikasi
+# Web UI:   http://localhost:3000
+# API:      http://localhost:8080/health
+# SSE:      http://localhost:8080/api/v1/events/beds   (EventSource)
+# gRPC:     localhost:50051  (Rust engine)
+```
+
+Setelah `docker compose up`, coba buat antrean via curl:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/queues/generate \
+  -H "Content-Type: application/json" \
+  -d '{"facilityId":"f1","patient":{"fullName":"Test Warga","phone":"081234567890"}}'
+```
+
+Anda akan melihat **processing_time** dalam response (contoh: `"processing_time":"87µs"`) dan UI web akan langsung update real-time via SSE tanpa refresh.
+
+Untuk stop:
+
+```bash
+docker compose down -v
+```
+
+File yang relevan:
+- `docker-compose.yml`
+- `apps/api/Dockerfile`, `apps/queue-engine/Dockerfile`, `apps/web/Dockerfile`
+
+---
+
 Dibuat dengan disiplin sebagai Senior Full-Stack Engineer & Open-Source Maintainer. Semua kode mengikuti prinsip KISS, explicit error handling, named constants, dan desain yang tenang serta dapat dipercaya.
 
 Untuk detail arsitektur lengkap dan langkah implementasi selanjutnya, lihat rencana yang telah disetujui.
