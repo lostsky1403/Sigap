@@ -20,13 +20,14 @@ type PatientInput struct {
 	DateOfBirth string // optional YYYY-MM-DD
 }
 
-// GenerateResult is the successful response payload (will later come from Rust gRPC).
+// GenerateResult is the successful response payload (comes from Rust gRPC engine).
 type GenerateResult struct {
 	TicketID             string
 	FormattedNumber      string // e.g. "RSK-0042"
 	Status               string
 	RegisteredAt         string
 	EstimatedWaitMinutes int
+	ProcessingTimeMicros int64 // from Rust engine, for micro-second traceability
 }
 
 // QueueService is the interface for the core queue generation logic.
@@ -67,5 +68,6 @@ func (f *fakeQueueService) Generate(ctx context.Context, input GenerateInput) (G
 		Status:               "waiting",
 		RegisteredAt:         now,
 		EstimatedWaitMinutes: 25,
+		ProcessingTimeMicros: 123, // dummy for unit tests; real value from gRPC in prod path
 	}, nil
 }
