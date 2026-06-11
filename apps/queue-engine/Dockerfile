@@ -1,6 +1,6 @@
 # apps/queue-engine/Dockerfile
 # Multi-stage Rust build - produces a very small final image
-FROM rust:1.85-slim AS builder
+FROM rust:slim-bookworm AS builder
 
 WORKDIR /app
 
