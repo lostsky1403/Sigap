@@ -20,9 +20,11 @@ func main() {
 		port = "8080"
 	}
 
-	// Rate limiter: initial anti-spam protection.
-	// 10 generates per IP per minute is generous for citizens but stops naive bots/calo.
-	rl := limiter.NewRateLimiter(10, time.Minute)
+	// Rate limiter (enhanced anti-spam):
+	// 1 nomor HP maksimal 2 antrean per hari per fasilitas.
+	// This protects citizens even when using shared/public WiFi (kelurahan, kampus, etc).
+	// The key is built in the handler as "YYYY-MM-DD:phone:facilityId".
+	rl := limiter.NewDailyLimiter(2)
 
 	// Use the fake service for now (self-contained for tests and demo).
 	// Phase 3+ will replace with real gRPC client to Rust engine.
@@ -38,7 +40,7 @@ func main() {
 
 	http.HandleFunc("/api/v1/queues/generate", qh.Generate)
 
-	slog.Info("sigap-api listening", "port", port, "rate_limit", "10/min per IP (anti-spam)")
+	slog.Info("sigap-api listening", "port", port, "rate_limit", "2 per hari per (HP + faskes) - anti-spam berbasis identitas")
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		slog.Error("server error", "err", err)
 		os.Exit(1)

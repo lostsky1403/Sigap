@@ -4,14 +4,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/sigap/sigap/apps/api/internal/limiter"
 	"github.com/sigap/sigap/apps/api/internal/service"
 )
 
 // Handler wires the rate limiter and queue service for the generate endpoint.
-// Rate limiting is applied early as the first line of anti-spam protection
-// for this public civic service (protects against bots and queue scalpers/calo).
+// Rate limiting is now based on (phone + facility) per calendar day to protect
+// against abuse even on shared/public WiFi (e.g. 1 nomor HP max 2 antrean/hari/faskes).
+// This replaces the previous pure-IP limiter for the registration action.
 type Handler struct {
 	svc     service.QueueService
 	limiter *limiter.RateLimiter
@@ -24,27 +26,37 @@ func NewHandler(svc service.QueueService, rl *limiter.RateLimiter) *Handler {
 
 // Generate handles POST /api/v1/queues/generate
 func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
-	// 1. Rate limit check (anti-spam) — done before any business logic or DB work.
-	// Key by remote IP (X-Forwarded-For respected for proxies in real deploys).
-	clientIP := clientIP(r)
-	if !h.limiter.Allow(clientIP) {
-		writeError(w, http.StatusTooManyRequests, "Terlalu banyak permintaan dari alamat Anda. Silakan tunggu beberapa saat sebelum mencoba lagi.")
-		return
-	}
-
-	// 2. Parse + basic validation
+	// 1. Parse body first so we have the real identity (phone) + facility for rate limiting.
 	var req GenerateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "Format permintaan tidak valid.")
 		return
 	}
 
-	if req.FacilityID == "" || req.Patient.FullName == "" || req.Patient.Phone == "" {
-		writeError(w, http.StatusBadRequest, "Data pasien tidak lengkap. Nama lengkap, nomor telepon, dan ID fasilitas wajib diisi.")
+	// 2. Basic field presence check (before expensive rate limit or service call)
+	if req.FacilityID == "" || req.Patient.Phone == "" {
+		writeError(w, http.StatusBadRequest, "Data pasien tidak lengkap. Nomor telepon dan ID fasilitas wajib diisi.")
 		return
 	}
 
-	// 3. Call service (will later be the gRPC call to Rust engine)
+	// 3. Per-hari per-(HP + faskes) rate limit (anti-calo / anti-spam).
+	// Key includes calendar date so it naturally resets every day.
+	// Limit is enforced by the limiter instance (created with NewDailyLimiter(2) in main).
+	today := time.Now().UTC().Format("2006-01-02")
+	identityKey := today + ":" + req.Patient.Phone + ":" + req.FacilityID
+	if !h.limiter.Allow(identityKey) {
+		writeError(w, http.StatusTooManyRequests,
+			"Nomor HP ini sudah mencapai batas maksimal 2 antrean per hari untuk fasilitas tersebut. Silakan coba lagi besok atau daftar di fasilitas lain.")
+		return
+	}
+
+	// 4. Full validation (name is also required for a real registration)
+	if req.Patient.FullName == "" {
+		writeError(w, http.StatusBadRequest, "Data pasien tidak lengkap. Nama lengkap wajib diisi.")
+		return
+	}
+
+	// 5. Call service (will later be the gRPC call to Rust engine)
 	result, err := h.svc.Generate(r.Context(), service.GenerateInput{
 		FacilityID: req.FacilityID,
 		Patient: service.PatientInput{
@@ -55,7 +67,6 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
-		// Map known service errors (currently only validation in the fake impl)
 		if err == service.ErrValidation {
 			writeError(w, http.StatusBadRequest, "Data pasien tidak lengkap. Nama lengkap, nomor telepon, dan ID fasilitas wajib diisi.")
 			return
@@ -64,7 +75,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Success — consistent {success, data} shape
+	// 6. Success — consistent {success, data} shape
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"data":    result,

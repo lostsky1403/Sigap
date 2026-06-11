@@ -73,29 +73,28 @@ func TestGenerateQueueHandler_MissingFields_ReturnsIndonesian400(t *testing.T) {
 }
 
 // TestGenerateQueueHandler_RateLimit_Returns429WithIndonesianMessage is the novelty requirement.
-// It proves the anti-spam rate limiting is active on the public endpoint and returns
-// HTTP 429 + friendly Indonesian message when the limit is hit.
+// It proves the anti-spam rate limiting is now based on (nomor HP + faskes) per hari,
+// not just IP (so it works on public WiFi). Returns 429 + friendly Indonesian message.
 func TestGenerateQueueHandler_RateLimit_Returns429WithIndonesianMessage(t *testing.T) {
-	// Very tight limit for the test: only 1 request allowed in the window.
-	rl := limiter.NewRateLimiter(1, time.Minute)
+	// Tight limit=1 for this test only, to trigger 429 on the 2nd request with same phone+facility.
+	// In production main we use NewDailyLimiter(2).
+	rl := limiter.NewDailyLimiter(1)
 	svc := service.NewFakeQueueService()
 	h := NewHandler(svc, rl)
 
-	body := `{"facilityId":"f1","patient":{"fullName":"Test","phone":"081111"}}`
+	body := `{"facilityId":"f1","patient":{"fullName":"Test Pasien","phone":"081234567890"}}`
 	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/queues/generate", strings.NewReader(body))
 	req1.Header.Set("Content-Type", "application/json")
-	req1.RemoteAddr = "10.0.0.99:5555"
 
 	rr1 := httptest.NewRecorder()
 	h.Generate(rr1, req1)
 	if rr1.Code != http.StatusOK {
-		t.Fatalf("first request should succeed, got %d", rr1.Code)
+		t.Fatalf("first request should succeed, got %d: %s", rr1.Code, rr1.Body.String())
 	}
 
-	// Second request from same IP must be rate limited
+	// Second request with *same phone + same facilityId* must be rate limited (daily limit hit)
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/queues/generate", strings.NewReader(body))
 	req2.Header.Set("Content-Type", "application/json")
-	req2.RemoteAddr = "10.0.0.99:5555"
 
 	rr2 := httptest.NewRecorder()
 	h.Generate(rr2, req2)
@@ -107,7 +106,7 @@ func TestGenerateQueueHandler_RateLimit_Returns429WithIndonesianMessage(t *testi
 	var resp map[string]any
 	_ = json.Unmarshal(rr2.Body.Bytes(), &resp)
 	errMsg, _ := resp["error"].(string)
-	if !strings.Contains(strings.ToLower(errMsg), "terlalu banyak") {
-		t.Errorf("expected friendly Indonesian rate limit message containing 'terlalu banyak', got: %s", errMsg)
+	if !strings.Contains(errMsg, "2 antrean per hari") || !strings.Contains(errMsg, "fasilitas tersebut") {
+		t.Errorf("expected Indonesian message mentioning '2 antrean per hari' and 'fasilitas tersebut', got: %s", errMsg)
 	}
 }

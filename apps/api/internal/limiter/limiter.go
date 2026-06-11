@@ -6,9 +6,15 @@ import (
 )
 
 // RateLimiter provides a simple in-memory fixed-window rate limiter.
-// This is the initial anti-spam protection framework for the public queue endpoint.
-// For production, replace with Redis-backed or distributed limiter (e.g. token bucket per phone/facility).
-// Keyed by IP (or X-Forwarded-For) for scaffold. Limits requests to the generate endpoint.
+// This is the anti-spam protection for the public "generate nomor antrean" endpoint.
+//
+// Usage for real-world civic:
+//   - Use NewDailyLimiter(2) for per-phone-per-faskes daily limit (1 NIK/phone max 2 antrean/hari/faskes).
+//   - Caller builds a stable key like "2026-06-12:081234567890:facility-uuid" (date + phone + faskes).
+//   - This prevents abuse on public WiFi (unlike pure IP limiting).
+//
+// For production, replace the whole thing with Redis-backed limiter (per phone + facility + date).
+// The current implementation is the "kerangka awal" that already supports the required policy.
 type RateLimiter struct {
 	mu      sync.Mutex
 	clients map[string]*clientLimit
@@ -66,4 +72,10 @@ func (rl *RateLimiter) Remaining(key string) int {
 		return rl.limit
 	}
 	return rl.limit - cl.count
+}
+
+// NewDailyLimiter is a convenience constructor for the per-hari identity limit
+// required by the anti-calo / anti-spam policy (e.g. max 2 antrean per phone per faskes per day).
+func NewDailyLimiter(maxPerDay int) *RateLimiter {
+	return NewRateLimiter(maxPerDay, 25*time.Hour)
 }
