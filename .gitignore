@@ -1,0 +1,33 @@
+# Sigap monorepo
+node_modules/
+.pnpm-store/
+dist/
+build/
+target/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# env & secrets
+.env
+.env.local
+*.pem
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Generated (do not commit raw generated pb unless needed for bootstrap)
+protos/gen/
+
+# Logs
+*.log
+npm-debug.log*
+
+# SvelteKit / Next legacy
+.svelte-kit/
+.output/

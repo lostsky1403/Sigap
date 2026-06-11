@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Sigap strict minimalist design system
+ * - Generous whitespace
+ * - Single accent (emerald-600)
+ * - Inter / system typography
+ * - Calm, high-contrast, no AI slop
+ */
+:root {
+	--accent: #059669; /* emerald-600 */
+}
+
+body {
+	font-family: Inter, system-ui, -apple-system, sans-serif;
+}

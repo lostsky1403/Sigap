@@ -1,0 +1,16 @@
+{
+  "name": "sigap",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Sigap — Civic-Tech framework untuk layanan informasi dan antrean kesehatan daerah",
+  "scripts": {
+    "dev:web": "pnpm --filter sigap-web dev",
+    "build:web": "pnpm --filter sigap-web build",
+    "db:migrate": "psql $DATABASE_URL -f packages/db/migrations/0001_init.sql || echo 'Run psql manually or use make db-migrate'",
+    "db:seed": "psql $DATABASE_URL -f packages/db/seed/dev.sql || echo 'Run psql manually or use make db-seed'"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package sigap.queue_engine;
+
+option go_package = "github.com/sigap/sigap/protos/sigap/queue_engine;queueenginepb";
+
+// QueueEngine is the gRPC service implemented by the Rust microservice.
+// It owns the dynamic, high-safety logic for queue number generation and bed synchronization.
+service QueueEngine {
+  // GenerateQueueNumber performs atomic daily counter, patient handling,
+  // ticket creation and returns the formatted nomor antrean.
+  // Called by the Go API gateway.
+  rpc GenerateQueueNumber (GenerateQueueRequest) returns (GenerateQueueResponse);
+}
+
+message GenerateQueueRequest {
+  string facility_id = 1;
+  PatientInfo patient = 2;
+}
+
+message PatientInfo {
+  string full_name = 1;
+  string phone = 2;
+  optional string gender = 3;      // "L" or "P"
+  optional string date_of_birth = 4; // YYYY-MM-DD
+}
+
+message GenerateQueueResponse {
+  string ticket_id = 1;
+  string formatted_number = 2;     // e.g. "RSK-0042"
+  string status = 3;               // waiting | ...
+  string registered_at = 4;        // RFC3339
+  int32 estimated_wait_minutes = 5;
+}
