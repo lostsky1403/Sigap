@@ -1,0 +1,128 @@
+# Sigap
+
+**Sigap** adalah kerangka kerja open-source Civic-Tech berbasis web untuk layanan informasi dan antrean kesehatan daerah (rumah sakit & puskesmas).
+
+Tujuan: memberikan transparansi ketersediaan fasilitas kesehatan dan kemudahan pengambilan nomor antrean secara digital bagi masyarakat di daerah.
+
+> Status: Scaffolding MVP awal (production-minded). Belum siap produksi untuk data sensitif.
+
+## Fitur MVP Saat Ini
+
+- Skema database lengkap (fasilitas, pasien, tiket antrean, counter harian)
+- Endpoint utama generate nomor antrean (akan diimplementasikan penuh di Go + Rust)
+- Dashboard Ketersediaan Kasur yang clean & minimalis (Svelte 5)
+- Dukungan penuh dark mode & light mode dengan desain sistem yang disiplin
+- Arsitektur monorepo polyglot berperforma tinggi (Go + Rust + SvelteKit)
+
+## Tech Stack
+
+- **Frontend**: SvelteKit (Svelte 5 runes) + Tailwind + desain sistem minimalis (headless primitives jika diperlukan)
+- **Core API & Routing**: Go (net/http + gRPC client)
+- **Mesin Antrean & Sinkronisasi Kasur**: Rust (tonic gRPC + sqlx)
+- **Komunikasi internal**: gRPC (kontrak di `protos/sigap/queue_engine.proto`)
+- **Database**: PostgreSQL + migrasi SQL murni (satu sumber kebenaran)
+- **Monorepo**: pnpm (web) + Go modules + Cargo + Makefile untuk orkestrasi
+
+## Struktur Direktori (Monorepo)
+
+```
+.
+├── Makefile
+├── protos/
+│   └── sigap/
+│       └── queue_engine.proto          # Kontrak gRPC (sumber utama)
+├── packages/
+│   └── db/
+│       ├── migrations/0001_init.sql    # DDL lengkap + index + constraint
+│       └── seed/dev.sql                # Data contoh 6 fasilitas
+├── apps/
+│   ├── api/                            # Go — gateway HTTP publik
+│   │   ├── cmd/server/main.go
+│   │   └── internal/handler/queue_test.go   # TDD dimulai di sini
+│   ├── queue-engine/                   # Rust — mesin pemroses antrean + bed sync
+│   │   └── src/
+│   │       ├── main.rs
+│   │       └── engine/queue.rs         # Logika transaksi kritis
+│   └── web/                            # SvelteKit
+│       └── src/lib/components/dashboard/
+│           └── BedAvailabilityDashboard.svelte   # Komponen utama yang diminta
+└── README.md
+```
+
+## Quickstart (Lokal)
+
+1. Clone & install
+   ```bash
+   git clone <repo>
+   cd sigap
+   pnpm install --filter sigap-web
+   ```
+
+2. Siapkan PostgreSQL
+   ```bash
+   # Contoh pakai Docker
+   docker run --name sigap-db -e POSTGRES_PASSWORD=sigap -e POSTGRES_DB=sigap -p 5432:5432 -d postgres:16
+   export DATABASE_URL="postgresql://postgres:sigap@localhost:5432/sigap"
+   ```
+
+3. Migrasi & seed
+   ```bash
+   make db-migrate
+   make db-seed
+   ```
+
+4. Jalankan layanan (gunakan 3 terminal atau `make` target)
+   ```bash
+   make dev-engine   # Rust gRPC (stub Phase 0)
+   make dev-api      # Go HTTP (:8080)
+   make dev-web      # SvelteKit (:5173)
+   ```
+
+5. Test endpoint (setelah Phase 2 selesai)
+   ```bash
+   curl -X POST http://localhost:8080/api/v1/queues/generate \
+     -H "Content-Type: application/json" \
+     -d '{"facilityId":"...","patient":{"fullName":"Test Pasien","phone":"081234567890"}}'
+   ```
+
+Buka http://localhost:5173 — lihat Dashboard Ketersediaan Kasur yang rapi.
+
+## Desain Sistem UI (Strict)
+
+- Tipografi jelas (Inter/system), tracking ketat pada judul
+- Whitespace lega (px-6, py-8, gap-6)
+- Satu aksen warna: emerald-600 (kesehatan & kepercayaan)
+- Kartu bersih dengan border 1px, tanpa bayangan berlebih
+- Progress bar tipis (h-[5px])
+- Dukungan dark/light sempurna dari awal
+- Tidak ada elemen generik "AI slop"
+
+Komponen dashboard dibuat dengan Svelte 5 runes, helper murni kecil, dan kode sangat mudah dibaca.
+
+## Pengembangan Selanjutnya (Sesuai Rencana)
+
+Lihat file `plan.md` di sesi (atau jalankan fase berikutnya):
+- Phase 2: Implementasi penuh Go handler + gRPC client (TDD)
+- Phase 3: Rust engine dengan sqlx transaction + counter atomic + tonic server
+- Phase 4: Penyempurnaan Svelte (jika perlu)
+- Phase 5: README lengkap + dokumentasi kontribusi
+
+Semua perubahan dilakukan dalam chunk <300 baris, dengan commit konvensional, dan TDD di bagian perilaku kritis.
+
+## Catatan Keamanan & Privasi (Penting)
+
+MVP ini **hanya untuk tujuan scaffolding dan demonstrasi**.
+
+- Jangan gunakan data pasien nyata.
+- Belum ada autentikasi, rate limiting, atau enkripsi PII.
+- Untuk produksi: audit keamanan, consent, minimization data, encryption at rest, dan logging yang sesuai regulasi kesehatan daerah wajib dilakukan.
+
+## Lisensi
+
+MIT — silakan fork, modifikasi, dan kontribusi untuk kepentingan publik.
+
+---
+
+Dibuat dengan disiplin sebagai Senior Full-Stack Engineer & Open-Source Maintainer. Semua kode mengikuti prinsip KISS, explicit error handling, named constants, dan desain yang tenang serta dapat dipercaya.
+
+Untuk detail arsitektur lengkap dan langkah implementasi selanjutnya, lihat rencana yang telah disetujui.
