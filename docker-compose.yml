@@ -1,0 +1,82 @@
+# docker-compose.yml
+# 1-Click Deploy for Sigap (Go API + Rust Engine + SvelteKit + Postgres)
+# Run with: docker compose up -d --build
+#
+# After start, apply DB migration (one time):
+#   docker compose exec -T postgres psql -U sigap -d sigap -f /docker-entrypoint-initdb.d/0001_init.sql || \
+#   docker cp packages/db/migrations/0001_init.sql sigap-postgres-1:/tmp/ && \
+#   docker compose exec postgres psql -U sigap -d sigap -f /tmp/0001_init.sql
+#
+# Then open http://localhost:3000
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sigap-postgres
+    environment:
+      POSTGRES_USER: sigap
+      POSTGRES_PASSWORD: sigap
+      POSTGRES_DB: sigap
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Optional: mount migration for easy init
+      - ./packages/db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sigap -d sigap"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  rust-engine:
+    build:
+      context: ./apps/queue-engine
+      dockerfile: Dockerfile
+    container_name: sigap-rust-engine
+    environment:
+      DATABASE_URL: postgresql://sigap:sigap@postgres:5432/sigap
+      RUST_LOG: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "50051:50051"
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: sigap-api
+    environment:
+      DATABASE_URL: postgresql://sigap:sigap@postgres:5432/sigap
+      SIGAP_ENGINE_ADDR: rust-engine:50051
+      SIGAP_API_PORT: 8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rust-engine:
+        condition: service_started
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: sigap-web
+    environment:
+      # SvelteKit will use its own preview server on 3000
+      PORT: 3000
+      HOST: 0.0.0.0
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
