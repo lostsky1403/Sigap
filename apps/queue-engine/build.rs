@@ -8,10 +8,10 @@ fn main() {
         .build_client(false)
         .out_dir(out_dir)
         .compile(
-            &["../../protos/sigap/queue_engine.proto"],
-            &["../../protos"],
+            &["protos/sigap/queue_engine.proto"],
+            &["protos"],
         )
         .unwrap_or_else(|e| panic!("Failed to compile protos: {}", e));
 
-    println!("cargo:rerun-if-changed=../../protos/sigap/queue_engine.proto");
+    println!("cargo:rerun-if-changed=protos/sigap/queue_engine.proto");
 }

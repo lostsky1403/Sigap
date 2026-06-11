@@ -32,8 +32,8 @@ services:
 
   rust-engine:
     build:
-      context: ./apps/queue-engine
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/queue-engine/Dockerfile
     container_name: sigap-rust-engine
     environment:
       DATABASE_URL: postgresql://sigap:sigap@postgres:5432/sigap
@@ -47,8 +47,8 @@ services:
 
   api:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/api/Dockerfile
     container_name: sigap-api
     environment:
       DATABASE_URL: postgresql://sigap:sigap@postgres:5432/sigap

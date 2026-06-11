@@ -9,11 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config libssl-dev ca-certificates protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
-# Cache deps
-COPY Cargo.toml Cargo.lock ./
+# Cache deps (context is monorepo root)
+COPY protos/sigap/queue_engine.proto ./protos/sigap/queue_engine.proto
+COPY apps/queue-engine/Cargo.toml apps/queue-engine/Cargo.lock ./
 RUN mkdir src && echo "fn main(){}" > src/main.rs && cargo build --release && rm -rf src
 
-COPY . .
+# Copy full app source (protos already copied above for build.rs)
+COPY apps/queue-engine/ ./
 
 # Build the real binary
 RUN cargo build --release

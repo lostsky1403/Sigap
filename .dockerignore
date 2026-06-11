@@ -1,0 +1,35 @@
+# .dockerignore - optimize Docker build context for Sigap monorepo
+# This dramatically reduces context size (from 660MB+)
+
+# Heavy dependency & build artifact folders
+node_modules/
+target/
+dist/
+build/
+.svelte-kit/
+.output/
+
+# VCS and local AI/dev folders
+.git/
+.github/
+.grok/
+
+# Logs, env, OS/IDE junk
+*.log
+.env
+.env.*
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Docs and non-build files (optional but helps size)
+*.md
+Makefile
+pnpm-lock.yaml
+pnpm-workspace.yaml
+package.json
+docker-compose.yml
+
+# IMPORTANT: Do NOT ignore "protos/" - the Rust engine and future Go regeneration need it.
+# Do NOT ignore the apps/ source folders either.

@@ -4,14 +4,16 @@ FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
-# Leverage cache
-COPY go.mod go.sum ./
-RUN go mod download
+# Leverage cache (context is monorepo root)
+COPY protos/ ./protos/
+COPY apps/api/go.mod apps/api/go.sum ./apps/api/
+RUN cd /app/apps/api && go mod download
 
-COPY . .
+# Copy full source preserving module structure
+COPY apps/api/ ./apps/api/
 
 # Build static binary
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /sigap-api ./cmd/server
+RUN cd /app/apps/api && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /sigap-api ./cmd/server
 
 # Final minimal image
 FROM alpine:3.19
