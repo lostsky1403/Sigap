@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/sigap/sigap/apps/api/internal/events"
 	"github.com/sigap/sigap/apps/api/internal/grpc"
 	"github.com/sigap/sigap/apps/api/internal/handler"
 	"github.com/sigap/sigap/apps/api/internal/limiter"
@@ -48,6 +49,9 @@ func main() {
 	})
 
 	http.HandleFunc("/api/v1/queues/generate", qh.Generate)
+
+	// Real-time SSE endpoint for bed/queue updates (Langkah 2)
+	http.HandleFunc("/api/v1/events/beds", events.Bus.ServeSSE)
 
 	slog.Info("sigap-api listening", "port", port,
 		"rate_limit", "2 per hari per (HP + faskes)",

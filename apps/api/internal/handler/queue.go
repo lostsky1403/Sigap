@@ -2,10 +2,12 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/sigap/sigap/apps/api/internal/events"
 	"github.com/sigap/sigap/apps/api/internal/limiter"
 	"github.com/sigap/sigap/apps/api/internal/service"
 )
@@ -80,6 +82,10 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"data":    result,
 	})
+
+	// 7. Real-time: notify SSE subscribers that a bed/queue state may have changed
+	// (in real system this could carry actual new available count from engine).
+	events.Bus.Publish(fmt.Sprintf(`{"facility_id":"%s","action":"queue_created"}`, req.FacilityID))
 }
 
 // GenerateRequest is the JSON body expected by the endpoint.
