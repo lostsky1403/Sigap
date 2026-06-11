@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package sigap.queue_engine;
 
-option go_package = "github.com/sigap/sigap/protos/sigap/queue_engine;queueenginepb";
+option go_package = "github.com/sigap/sigap/apps/api/internal/pb/queueenginepb;queueenginepb";
 
 // QueueEngine is the gRPC service implemented by the Rust microservice.
 // It owns the dynamic, high-safety logic for queue number generation and bed synchronization.
