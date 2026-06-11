@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  api:
+    name: Go API Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Test API
+        run: |
+          cd apps/api
+          go mod download
+          go test ./... -v
+
+  engine:
+    name: Rust Engine Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          components: clippy
+
+      - name: Cargo Check + Clippy (engine)
+        run: |
+          cd apps/queue-engine
+          cargo check
+          cargo clippy -- -D warnings || true   # non-blocking for scaffold phase
+
+  web:
+    name: SvelteKit Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install deps (workspace)
+        run: pnpm install --frozen-lockfile
+
+      - name: SvelteKit check
+        run: pnpm --filter sigap-web run check
