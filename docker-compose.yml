@@ -69,9 +69,11 @@ services:
       dockerfile: Dockerfile
     container_name: sigap-web
     environment:
-      # SvelteKit will use its own preview server on 3000
       PORT: 3000
       HOST: 0.0.0.0
+      ORIGIN: http://localhost:3000
+      # PUBLIC_SIGAP_API_BASE for client-side fetches to the Go API
+      PUBLIC_SIGAP_API_BASE: http://localhost:8080
     depends_on:
       - api
     ports:
