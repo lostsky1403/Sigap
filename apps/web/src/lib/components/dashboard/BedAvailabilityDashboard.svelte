@@ -78,7 +78,8 @@
 					phone: phone.trim()
 				}
 			};
-			const res = await fetch('http://localhost:8080/api/v1/queues/generate', {
+			// Use relative URL via SvelteKit proxy (+server.ts) — same origin, works in Docker and avoids CORS
+			const res = await fetch('/api/v1/queues/generate', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(payload)
@@ -122,9 +123,9 @@
 		}
 	}
 
-	// Connect to Go SSE endpoint (adjust host/port in real deploy or use relative + proxy)
+	// Connect to Go SSE via SvelteKit proxy (relative path). Proxy handles internal Docker routing to api container.
 	onMount(() => {
-		const es = new EventSource('http://localhost:8080/api/v1/events/beds');
+		const es = new EventSource('/api/v1/events/beds');
 		es.addEventListener('bed_updated', (ev) => {
 			try {
 				const data = JSON.parse(ev.data || '{}');

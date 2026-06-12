@@ -72,7 +72,9 @@ services:
       PORT: 3000
       HOST: 0.0.0.0
       ORIGIN: http://localhost:3000
-      # PUBLIC_SIGAP_API_BASE for client-side fetches to the Go API
+      # Internal Docker service URL for SvelteKit +server.ts proxies (resolves to Go API inside network)
+      SIGAP_API_INTERNAL: http://api:8080
+      # PUBLIC_SIGAP_API_BASE kept for reference (client uses relative paths via proxy now)
       PUBLIC_SIGAP_API_BASE: http://localhost:8080
     depends_on:
       - api

@@ -12,6 +12,30 @@ import (
 	"github.com/sigap/sigap/apps/api/internal/service"
 )
 
+// enableCORS wraps handlers to allow browser clients from the SvelteKit web origin.
+// Required for direct cross-origin fetch (POST /generate) and EventSource (SSE).
+// Allows preflight OPTIONS. Specific origin for dev; tighten in prod behind proxy.
+func enableCORS(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Support localhost and 127.0.0.1 on port 3000 (SvelteKit default in compose)
+		origin := r.Header.Get("Origin")
+		allowed := "http://localhost:3000"
+		if origin == "http://127.0.0.1:3000" {
+			allowed = origin
+		}
+		w.Header().Set("Access-Control-Allow-Origin", allowed)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Type")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next(w, r)
+	}
+}
+
 // main wires the production-ready (for scaffold) queue endpoint with
 // early anti-spam rate limiting + service layer.
 // The real heavy logic will be delegated to the Rust gRPC engine in later phases.
@@ -48,10 +72,11 @@ func main() {
 		_, _ = w.Write([]byte(`{"status":"ok","service":"sigap-api"}`))
 	})
 
-	http.HandleFunc("/api/v1/queues/generate", qh.Generate)
+	http.HandleFunc("/api/v1/queues/generate", enableCORS(qh.Generate))
 
 	// Real-time SSE endpoint for bed/queue updates (Langkah 2)
-	http.HandleFunc("/api/v1/events/beds", events.Bus.ServeSSE)
+	// Wrapped for CORS so browser EventSource from localhost:3000 works when not using proxy
+	http.HandleFunc("/api/v1/events/beds", enableCORS(events.Bus.ServeSSE))
 
 	slog.Info("sigap-api listening", "port", port,
 		"rate_limit", "2 per hari per (HP + faskes)",
