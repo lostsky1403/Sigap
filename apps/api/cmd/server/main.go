@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/sigap/sigap/apps/api/internal/events"
 	"github.com/sigap/sigap/apps/api/internal/grpc"
@@ -84,6 +85,15 @@ func main() {
 	// Super App: Smart Referral (mapcn peta rujukan) + Health Wallet records
 	http.HandleFunc("/api/v1/facilities/nearby", enableCORS(facilitiesNearbyHandler))
 	http.HandleFunc("/api/v1/medical-records", enableCORS(medicalRecordsHandler))
+	http.HandleFunc("/api/v1/records/", enableCORS(func(w http.ResponseWriter, r *http.Request) {
+		phone := strings.TrimPrefix(r.URL.Path, "/api/v1/records/")
+		if phone == "" {
+			phone = r.URL.Query().Get("phone")
+		}
+		// Reuse the demo handler by setting query (for compatibility with existing medicalRecordsHandler)
+		r.URL.RawQuery = "phone=" + phone
+		medicalRecordsHandler(w, r)
+	}))
 
 	slog.Info("sigap-api listening", "port", port,
 		"rate_limit", "2 per hari per (HP + faskes)",

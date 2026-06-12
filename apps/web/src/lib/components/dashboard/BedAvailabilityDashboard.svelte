@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import ReferralMap from './ReferralMap.svelte';
+	import ReferralMap from '../ReferralMap.svelte';
 
 	// Sigap Bed Availability Dashboard
 	// Strict minimalist design: generous whitespace, single emerald accent,
@@ -47,6 +47,10 @@
 	let userLocation = $state<{ lat: number; lon: number } | null>(null);
 	let antiCaloLogs = $state<{ time: string; msg: string }[]>([]);
 	let chaosRunning = $state(false);
+
+	// For Smart Routing modal (Peta Rujukan from Stitch design)
+	let showReferralModal = $state(false);
+	let referralAlts = $state<any[]>([]);
 
 	function calcOccupancy(available: number, total: number): number {
 		if (total <= 0) return 0;
@@ -174,6 +178,34 @@
 	// For referral map: alternatives with beds available (used when target penuh)
 	function getAltsFor(target: any) {
 		return samples.filter((f) => f.id !== target.id && f.availableBeds > 0);
+	}
+
+	// Open Smart Routing modal (per Stitch Peta Rujukan Otomatis design)
+	// Uses backend /nearby for alts if possible, else client
+	function openReferral(fac: any) {
+		selectedFacility = fac;
+		showReferralModal = true;
+		referralAlts = [];
+		if (fac.lat != null && fac.lon != null) {
+			fetch(`/api/v1/facilities/nearby?lat=${fac.lat}&lon=${fac.lon}&exclude=${fac.id}`)
+				.then(res => res.json().catch(() => ({} as any)))
+				.then(json => {
+					if (json.success && json.data) {
+						referralAlts = json.data;
+					} else {
+						referralAlts = getAltsFor(fac);
+					}
+				})
+				.catch(() => {
+					referralAlts = getAltsFor(fac);
+				});
+		} else {
+			referralAlts = getAltsFor(fac);
+		}
+	}
+
+	function closeReferralModal() {
+		showReferralModal = false;
 	}
 
 	// Submit to Go API (POST /api/v1/queues/generate) -> Rust engine for ticket + µs latency
@@ -327,6 +359,19 @@
 				Lokasi Anda: {userLocation.lat.toFixed(3)}, {userLocation.lon.toFixed(3)}
 			</span>
 		{/if}
+
+		<!-- Test button for Playwright to trigger full RS modal (Peta Rujukan) without changing real data -->
+		<button
+			onclick={() => {
+				// Simulate full by using f6 (low beds) or force
+				const testFac = samples.find(f => f.id === 'f6') || samples[0];
+				openReferral(testFac);
+			}}
+			class="text-xs px-2 py-1 border border-emerald-600 text-emerald-600 rounded hover:bg-emerald-50 dark:hover:bg-emerald-950"
+			title="Test: buka modal Peta Rujukan untuk faskes dengan kasur rendah (simulasi penuh)"
+		>
+			🧪 Test Modal Peta Rujukan
+		</button>
 	</div>
 
 	<!-- Log Radar Anti-Calo: scrolling, red on 429s (from chaos or manual). Newest on top. -->
@@ -402,11 +447,16 @@
 					<span class="text-slate-500 dark:text-slate-400">Update {formatTime(facility.lastUpdated)}</span>
 					<button
 						onclick={() => {
-							selectedFacility = facility;
-							phone = '';
-							fullNameForForm = 'Pengunjung';
-							error = '';
-							ticket = null;
+							if (facility.availableBeds <= 0) {
+								// Full: open Smart Routing modal (Peta Rujukan) instead of standard form
+								openReferral(facility);
+							} else {
+								selectedFacility = facility;
+								phone = '';
+								fullNameForForm = 'Pengunjung';
+								error = '';
+								ticket = null;
+							}
 						}}
 						class="font-medium text-emerald-600 hover:underline dark:text-emerald-500"
 					>
@@ -425,27 +475,7 @@
 	<!-- Super App: if target penuh (availableBeds <= 0), show mapcn-style referral map with pins + one-click auto route to alt -->
 	{#if selectedFacility}
 		{#if selectedFacility.availableBeds <= 0}
-			<div class="mt-8 rounded-2xl border border-red-200 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
-				<div class="mb-2">
-					<div class="text-[10px] uppercase tracking-[1px] text-red-600 dark:text-red-400">RS TUJUAN PENUH</div>
-					<div class="text-xl font-semibold tracking-[-0.01em] text-red-700 dark:text-red-300">{selectedFacility.name}</div>
-					<p class="text-sm text-red-600 dark:text-red-400 mt-1">Sistem rujukan otomatis via peta aktif. Pilih alternatif (pin hijau emerald) untuk ambil antrean dalam 1 klik.</p>
-				</div>
-
-				<ReferralMap
-					target={selectedFacility}
-					alternatives={getAltsFor(selectedFacility)}
-					onSelect={(f) => {
-						// Auto-routing: switch to alt fac and submit immediately
-						selectedFacility = f;
-						phone = '';
-						fullNameForForm = 'Pengunjung';
-						error = '';
-						ticket = null;
-						submitQueue();
-					}}
-				/>
-			</div>
+			<div class="mt-8 text-sm text-red-600 dark:text-red-400">RS penuh. Klik "Lihat antrean →" pada kartu untuk membuka modal Peta Rujukan Otomatis (desain dari Stitch).</div>
 		{:else}
 			<div class="mt-8 rounded-2xl border border-emerald-200 bg-white p-6 dark:border-emerald-800 dark:bg-slate-950">
 				<div class="flex items-center justify-between">
@@ -533,4 +563,43 @@
 	<p class="mt-8 text-center text-[10px] text-slate-400 dark:text-slate-600">
 		Contoh data untuk scaffolding awal Sigap. Integrasikan dengan Go API + Rust engine untuk produksi.
 	</p>
+
+	<!-- Modal Peta Rujukan Otomatis (per desain Stitch "Peta Rujukan Otomatis") -->
+	{#if showReferralModal && selectedFacility}
+		<div class="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4">
+			<div 
+				class="bg-white dark:bg-slate-950 rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-auto shadow-xl border border-emerald-200 dark:border-emerald-800"
+			>
+				<div class="p-6">
+					<div class="flex justify-between items-start mb-4">
+						<div>
+							<div class="text-xs uppercase tracking-[1px] text-red-600 dark:text-red-400">RS TUJUAN PENUH</div>
+							<div class="text-2xl font-semibold tracking-[-0.01em]">{selectedFacility.name}</div>
+							<p class="text-sm text-slate-600 dark:text-slate-400 mt-1">Sistem rujukan otomatis aktif. Peta menampilkan alternatif dengan kasur tersedia (pin hijau emerald). Klik pin untuk ambil antrean otomatis.</p>
+						</div>
+						<button 
+							class="text-sm px-3 py-1 rounded border border-slate-300 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
+						>
+							Tutup
+						</button>
+					</div>
+
+					<ReferralMap
+						target={selectedFacility}
+						alternatives={referralAlts.length ? referralAlts : getAltsFor(selectedFacility)}
+						onSelect={(f) => {
+							// Auto-routing: pilih alt, tutup modal, submit
+							selectedFacility = f;
+							phone = '';
+							fullNameForForm = 'Pengunjung';
+							error = '';
+							ticket = null;
+							showReferralModal = false;
+							submitQueue();
+						}}
+					/>
+				</div>
+			</div>
+		</div>
+	{/if}
 </section>
