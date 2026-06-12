@@ -18,9 +18,28 @@
 	onMount(() => {
 		if (!container) return;
 
+		// Init ONLY in onMount for CSR (no SSR map render)
+		// CSS imported in <script> as required (maplibre-gl/dist/maplibre-gl.css)
+		// Use dark CartoDB tiles per instruction for dark theme match
 		map = new maplibregl.Map({
 			container,
-			style: 'https://demotiles.maplibre.org/style.json',
+			style: {
+				version: 8,
+				sources: {
+					'carto-dark': {
+						type: 'raster',
+						tiles: ['https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'],
+						tileSize: 256
+					}
+				},
+				layers: [{
+					id: 'carto-dark-layer',
+					type: 'raster',
+					source: 'carto-dark',
+					minzoom: 0,
+					maxzoom: 22
+				}]
+			},
 			center: [106.8, -6.2], // approx Indonesia / Jakarta area
 			zoom: 4.5,
 			attributionControl: false
@@ -71,12 +90,16 @@
 			markers.push(m);
 		});
 
-		// Fit bounds if we have points
-		if (markers.length > 0) {
-			const bounds = new maplibregl.LngLatBounds();
-			markers.forEach((m) => bounds.extend(m.getLngLat()));
-			map.fitBounds(bounds, { padding: 40, maxZoom: 7 });
-		}
+		// Robust render: resize + fit ONLY after load to guarantee peta jalanan (dark tiles) visible, not blank
+		map.on('load', () => {
+			if (!map) return;
+			map.resize();
+			if (markers.length > 0) {
+				const bounds = new maplibregl.LngLatBounds();
+				markers.forEach((m) => bounds.extend(m.getLngLat()));
+				map.fitBounds(bounds, { padding: 40, maxZoom: 7 });
+			}
+		});
 	});
 
 	onDestroy(() => {
@@ -85,7 +108,7 @@
 	});
 </script>
 
-<div bind:this={container} class="w-full rounded-2xl border border-emerald-200 dark:border-emerald-800 overflow-hidden shadow-sm" style="height: 320px; min-height: 280px;"></div>
+<div bind:this={container} class="w-full h-[300px] rounded-lg relative border border-slate-700 dark:border-slate-700 overflow-hidden shadow-sm" style="height: 300px;"></div>
 <div class="mt-1 text-[10px] text-center text-slate-500 dark:text-slate-400">
 	Peta interaktif (MapLibre / mapcn style). Pin merah = tujuan penuh. Pin hijau emerald = alternatif (klik untuk ambil antrean otomatis).
 </div>

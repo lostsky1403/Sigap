@@ -566,19 +566,20 @@
 
 	<!-- Modal Peta Rujukan Otomatis (per desain Stitch "Peta Rujukan Otomatis") -->
 	{#if showReferralModal && selectedFacility}
-		<div class="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4">
+		<div class="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4" onclick={(e) => { if (e.currentTarget === e.target) closeReferralModal(); }}>
 			<div 
-				class="bg-white dark:bg-slate-950 rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-auto shadow-xl border border-emerald-200 dark:border-emerald-800"
+				class="bg-slate-900 rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-auto shadow-xl border border-slate-700"
 			>
 				<div class="p-6">
 					<div class="flex justify-between items-start mb-4">
 						<div>
 							<div class="text-xs uppercase tracking-[1px] text-red-600 dark:text-red-400">RS TUJUAN PENUH</div>
-							<div class="text-2xl font-semibold tracking-[-0.01em]">{selectedFacility.name}</div>
-							<p class="text-sm text-slate-600 dark:text-slate-400 mt-1">Sistem rujukan otomatis aktif. Peta menampilkan alternatif dengan kasur tersedia (pin hijau emerald). Klik pin untuk ambil antrean otomatis.</p>
+							<div class="text-2xl font-semibold tracking-[-0.01em] text-white">{selectedFacility.name}</div>
+							<p class="text-sm text-slate-300 mt-1">Sistem rujukan otomatis aktif. Peta menampilkan alternatif dengan kasur tersedia (pin hijau emerald). Klik pin untuk ambil antrean otomatis.</p>
 						</div>
 						<button 
-							class="text-sm px-3 py-1 rounded border border-slate-300 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
+							onclick={closeReferralModal}
+							class="text-sm px-3 py-1 rounded border border-slate-700 hover:bg-slate-800 text-slate-300 dark:text-slate-300"
 						>
 							Tutup
 						</button>
