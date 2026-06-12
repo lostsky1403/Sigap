@@ -7,7 +7,7 @@
 #   docker cp packages/db/migrations/0001_init.sql sigap-postgres-1:/tmp/ && \
 #   docker compose exec postgres psql -U sigap -d sigap -f /tmp/0001_init.sql
 #
-# Then open http://localhost:3000
+# Then open http://localhost:3005
 
 services:
   postgres:
@@ -71,7 +71,7 @@ services:
     environment:
       PORT: 3000
       HOST: 0.0.0.0
-      ORIGIN: http://localhost:3000
+      ORIGIN: http://localhost:3005
       # Internal Docker service URL for SvelteKit +server.ts proxies (resolves to Go API inside network)
       SIGAP_API_INTERNAL: http://api:8080
       # PUBLIC_SIGAP_API_BASE kept for reference (client uses relative paths via proxy now)
@@ -79,7 +79,7 @@ services:
     depends_on:
       - api
     ports:
-      - "3000:3000"
+      - "3005:3000"
     restart: unless-stopped
 
 volumes:

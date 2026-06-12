@@ -20,10 +20,10 @@ import (
 // Allows preflight OPTIONS. Specific origin for dev; tighten in prod behind proxy.
 func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Support localhost and 127.0.0.1 on port 3000 (SvelteKit default in compose)
+		// Support localhost and 127.0.0.1 on port 3005 (SvelteKit web service in compose, shifted from 3000 to avoid host conflict)
 		origin := r.Header.Get("Origin")
-		allowed := "http://localhost:3000"
-		if origin == "http://127.0.0.1:3000" {
+		allowed := "http://localhost:3005"
+		if origin == "http://127.0.0.1:3005" {
 			allowed = origin
 		}
 		w.Header().Set("Access-Control-Allow-Origin", allowed)
@@ -78,7 +78,7 @@ func main() {
 	http.HandleFunc("/api/v1/queues/generate", enableCORS(qh.Generate))
 
 	// Real-time SSE endpoint for bed/queue updates (Langkah 2)
-	// Wrapped for CORS so browser EventSource from localhost:3000 works when not using proxy
+	// Wrapped for CORS so browser EventSource from localhost:3005 works when not using proxy
 	http.HandleFunc("/api/v1/events/beds", enableCORS(events.Bus.ServeSSE))
 
 	// Super App: Smart Referral (mapcn peta rujukan) + Health Wallet records
