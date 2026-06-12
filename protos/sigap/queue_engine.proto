@@ -32,4 +32,5 @@ message GenerateQueueResponse {
   string registered_at = 4;        // RFC3339
   int32 estimated_wait_minutes = 5;
   int64 processing_time_micros = 6; // Micro-second (µs) latency of the atomic transaction inside the Rust engine (for traceability)
+  string signature = 7;            // SHA-256 hex signature of the visit (immutable proof for Health Wallet)
 }

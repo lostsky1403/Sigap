@@ -28,6 +28,7 @@ type GenerateResult struct {
 	RegisteredAt         string `json:"registered_at"`
 	EstimatedWaitMinutes int    `json:"estimated_wait_minutes"`
 	ProcessingTime       string `json:"processing_time"` // e.g. "45µs" from Rust engine micro-second measurement
+	Signature            string `json:"signature"`       // SHA-256 hex from Rust engine for immutable Health Wallet proof
 }
 
 // QueueService is the interface for the core queue generation logic.
@@ -69,5 +70,6 @@ func (f *fakeQueueService) Generate(ctx context.Context, input GenerateInput) (G
 		RegisteredAt:         now,
 		EstimatedWaitMinutes: 25,
 		ProcessingTime:       "123µs", // dummy for unit tests; real value comes from Rust gRPC
+		Signature:            "a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef01", // demo immutable sig
 	}, nil
 }

@@ -63,5 +63,6 @@ func (g *grpcQueueService) Generate(ctx context.Context, input service.GenerateI
 		RegisteredAt:         resp.RegisteredAt,
 		EstimatedWaitMinutes: int(resp.EstimatedWaitMinutes),
 		ProcessingTime:       fmt.Sprintf("%dµs", resp.ProcessingTimeMicros),
+		Signature:            resp.Signature,
 	}, nil
 }

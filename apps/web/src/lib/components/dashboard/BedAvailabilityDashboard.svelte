@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import ReferralMap from './ReferralMap.svelte';
 
 	// Sigap Bed Availability Dashboard
 	// Strict minimalist design: generous whitespace, single emerald accent,
@@ -168,6 +169,11 @@
 			},
 			{ enableHighAccuracy: false, timeout: 6000, maximumAge: 30000 }
 		);
+	}
+
+	// For referral map: alternatives with beds available (used when target penuh)
+	function getAltsFor(target: any) {
+		return samples.filter((f) => f.id !== target.id && f.availableBeds > 0);
 	}
 
 	// Submit to Go API (POST /api/v1/queues/generate) -> Rust engine for ticket + µs latency
@@ -414,45 +420,70 @@
 	</div>
 
 	<!-- Queue form (replaces placeholder) + ticket with Rust latency -->
+	<!-- Super App: if target penuh (availableBeds <= 0), show mapcn-style referral map with pins + one-click auto route to alt -->
 	{#if selectedFacility}
-		<div class="mt-8 rounded-2xl border border-emerald-200 bg-white p-6 dark:border-emerald-800 dark:bg-slate-950">
-			<div class="flex items-center justify-between">
-				<div>
-					<div class="text-[10px] uppercase tracking-[1px] text-emerald-600 dark:text-emerald-400">Ambil Antrean</div>
-					<div class="text-xl font-semibold tracking-[-0.01em]">{selectedFacility.name}</div>
+		{#if selectedFacility.availableBeds <= 0}
+			<div class="mt-8 rounded-2xl border border-red-200 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
+				<div class="mb-2">
+					<div class="text-[10px] uppercase tracking-[1px] text-red-600 dark:text-red-400">RS TUJUAN PENUH</div>
+					<div class="text-xl font-semibold tracking-[-0.01em] text-red-700 dark:text-red-300">{selectedFacility.name}</div>
+					<p class="text-sm text-red-600 dark:text-red-400 mt-1">Sistem rujukan otomatis via peta aktif. Pilih alternatif (pin hijau emerald) untuk ambil antrean dalam 1 klik.</p>
 				</div>
-				<button onclick={() => (selectedFacility = null)} class="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400">Batal</button>
+
+				<ReferralMap
+					target={selectedFacility}
+					alternatives={getAltsFor(selectedFacility)}
+					onSelect={(f) => {
+						// Auto-routing: switch to alt fac and submit immediately
+						selectedFacility = f;
+						phone = '';
+						fullNameForForm = 'Pengunjung';
+						error = '';
+						ticket = null;
+						submitQueue();
+					}}
+				/>
 			</div>
-
-			<form onsubmit={(e) => { e.preventDefault(); submitQueue(); }} class="mt-4 flex flex-col sm:flex-row gap-3">
-				<input
-					type="text"
-					bind:value={fullNameForForm}
-					placeholder="Nama lengkap"
-					class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm focus:border-emerald-600 dark:border-slate-700 dark:bg-slate-900"
-				/>
-				<input
-					type="tel"
-					bind:value={phone}
-					placeholder="Nomor HP (wajib, contoh 081234567890)"
-					required
-					class="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm placeholder:text-slate-400 focus:outline-none focus:border-emerald-600 dark:border-slate-700 dark:bg-slate-900"
-				/>
-				<button
-					type="submit"
-					disabled={submitting || !phone}
-					class="rounded-lg bg-emerald-600 px-8 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-				>
-					{submitting ? 'Memproses via Rust…' : 'Ambil Antrean'}
-				</button>
-			</form>
-
-			{#if error}
-				<div class="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
-					{error}
+		{:else}
+			<div class="mt-8 rounded-2xl border border-emerald-200 bg-white p-6 dark:border-emerald-800 dark:bg-slate-950">
+				<div class="flex items-center justify-between">
+					<div>
+						<div class="text-[10px] uppercase tracking-[1px] text-emerald-600 dark:text-emerald-400">Ambil Antrean</div>
+						<div class="text-xl font-semibold tracking-[-0.01em]">{selectedFacility.name}</div>
+					</div>
+					<button onclick={() => (selectedFacility = null)} class="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400">Batal</button>
 				</div>
-			{/if}
-		</div>
+
+				<form onsubmit={(e) => { e.preventDefault(); submitQueue(); }} class="mt-4 flex flex-col sm:flex-row gap-3">
+					<input
+						type="text"
+						bind:value={fullNameForForm}
+						placeholder="Nama lengkap"
+						class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm focus:border-emerald-600 dark:border-slate-700 dark:bg-slate-900"
+					/>
+					<input
+						type="tel"
+						bind:value={phone}
+						placeholder="Nomor HP (wajib, contoh 081234567890)"
+						required
+						class="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm placeholder:text-slate-400 focus:outline-none focus:border-emerald-600 dark:border-slate-700 dark:bg-slate-900"
+					/>
+					<button
+						type="submit"
+						disabled={submitting || !phone}
+						class="rounded-lg bg-emerald-600 px-8 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+					>
+						{submitting ? 'Memproses via Rust…' : 'Ambil Antrean'}
+					</button>
+				</form>
+
+				{#if error}
+					<div class="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+						{error}
+					</div>
+				{/if}
+			</div>
+		{/if}
 	{/if}
 
 	{#if ticket}

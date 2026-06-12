@@ -3,6 +3,8 @@ use std::time::Instant;
 use tonic::Status;
 use uuid::Uuid;
 
+use sha2::{Sha256, Digest};
+
 use crate::queue_engine::{GenerateQueueRequest, GenerateQueueResponse};
 
 const DAILY_QUEUE_LIMIT: i32 = 300;
@@ -115,6 +117,13 @@ pub async fn generate_queue_number_tx(
 
     let formatted = format!("{}-{:04}", short_code, next_number);
 
+    // Immutable Health Record: compute SHA-256 signature for tamper-proof proof
+    let visit_time = chrono::Utc::now();
+    let sig_input = format!("{}|{}|{}|{}|{}", phone, facility_id, next_number, formatted, visit_time.to_rfc3339());
+    let mut hasher = Sha256::new();
+    hasher.update(sig_input.as_bytes());
+    let signature = format!("{:x}", hasher.finalize());
+
     // 4. Create the ticket (client-supplied UUID)
     let ticket_id = Uuid::new_v4();
     sqlx::query(
@@ -132,6 +141,23 @@ pub async fn generate_queue_number_tx(
     .await
     .map_err(|e| Status::internal(format!("insert tiket gagal: {}", e)))?;
 
+    // 5. Insert immutable medical record (Health Wallet) with the signature (anti-ubah)
+    sqlx::query(
+        r#"
+        INSERT INTO medical_records (patient_phone, facility_id, queue_number, formatted_number, signature, visit_time)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        "#
+    )
+    .bind(phone)
+    .bind(facility_id)
+    .bind(next_number)
+    .bind(formatted.clone())
+    .bind(&signature)
+    .bind(visit_time)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| Status::internal(format!("insert medical record gagal: {}", e)))?;
+
     // Commit
     tx.commit()
         .await
@@ -143,8 +169,9 @@ pub async fn generate_queue_number_tx(
         ticket_id: ticket_id.to_string(),
         formatted_number: formatted,
         status: "waiting".to_string(),
-        registered_at: chrono::Utc::now().to_rfc3339(),
+        registered_at: visit_time.to_rfc3339(),
         estimated_wait_minutes: 25,
         processing_time_micros,
+        signature,
     })
 }
