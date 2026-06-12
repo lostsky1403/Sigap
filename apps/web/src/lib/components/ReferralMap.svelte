@@ -28,36 +28,39 @@
 
 		map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
-		// Target pin (red) - penuh
+		// Target pin (red teardrop per Stitch design: sharp 0px point at bottom for precise location)
 		if (target && target.lat != null && target.lon != null) {
 			const el = document.createElement('div');
-			el.style.width = '18px';
-			el.style.height = '18px';
+			el.style.width = '16px';
+			el.style.height = '20px';
 			el.style.background = '#ef4444';
 			el.style.border = '2px solid #fff';
-			el.style.borderRadius = '9999px';
+			el.style.borderRadius = '50% 50% 50% 0';
+			el.style.transform = 'rotate(-45deg)';
 			el.style.boxShadow = '0 0 0 3px rgba(239,68,68,0.3)';
+			el.style.cursor = 'default';
 
-			const m = new maplibregl.Marker({ element: el })
+			const m = new maplibregl.Marker({ element: el, anchor: 'bottom' })
 				.setLngLat([target.lon, target.lat])
 				.setPopup(new maplibregl.Popup({ offset: 12 }).setHTML(`<strong>${target.name}</strong><br><span style="color:#ef4444">PENUH — rujukan tersedia</span>`))
 				.addTo(map);
 			markers.push(m);
 		}
 
-		// Alt pins (emerald green) - clickable for auto route
+		// Alt pins (emerald green teardrop) - clickable for auto route
 		alternatives.forEach((f) => {
 			if (f.lat == null || f.lon == null) return;
 			const el = document.createElement('div');
-			el.style.width = '16px';
-			el.style.height = '16px';
+			el.style.width = '14px';
+			el.style.height = '18px';
 			el.style.background = '#059669'; // emerald-600
 			el.style.border = '2px solid #fff';
-			el.style.borderRadius = '9999px';
+			el.style.borderRadius = '50% 50% 50% 0';
+			el.style.transform = 'rotate(-45deg)';
 			el.style.cursor = 'pointer';
 			el.style.boxShadow = '0 0 0 3px rgba(5,150,105,0.25)';
 
-			const m = new maplibregl.Marker({ element: el })
+			const m = new maplibregl.Marker({ element: el, anchor: 'bottom' })
 				.setLngLat([f.lon, f.lat])
 				.setPopup(new maplibregl.Popup({ offset: 10 }).setHTML(`<strong>${f.name}</strong><br><span style="color:#059669">Tersedia • klik untuk rujuk otomatis</span>`))
 				.addTo(map);

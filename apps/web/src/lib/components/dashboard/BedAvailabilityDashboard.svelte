@@ -294,10 +294,12 @@
 
 	<!-- Supercharged controls: Chaos Load Tester + Geo + prominent Anti-Calo Radar Log (gamifikasi) -->
 	<div class="mb-4 flex flex-wrap items-center gap-2">
+		<!-- Chaos Mode button per Stitch: diagonal stripe pattern (Brick Red #B91C1C and White) border, high-tension, invert on hover -->
 		<button
 			onclick={runChaosMode}
 			disabled={chaosRunning}
-			class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60 flex items-center gap-1"
+			class="rounded-lg px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-60 flex items-center gap-1 border-2 border-[#B91C1C] bg-[#B91C1C] hover:invert"
+			style="background-image: repeating-linear-gradient(45deg, #B91C1C, #B91C1C 4px, #fff 4px, #fff 8px); border-image: repeating-linear-gradient(45deg, #B91C1C, #B91C1C 4px, #fff 4px, #fff 8px) 1;"
 			title="Fire 50 rapid queue requests (unique phones for successes + repeats for 429s). Watch beds + SSE fly + anti-calo log fill!"
 		>
 			{chaosRunning ? '⏳ Chaos Mode (50x running...)' : '🚀 Chaos Mode (Load Test 50x)'}
@@ -384,15 +386,15 @@
 						</span>
 					</div>
 
-					<!-- Thin, calm progress bar -->
-					<div class="mt-2 h-[5px] w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+					<!-- Linear performance bar 2px per Stitch Sigap design: Emerald for stable/optimal, Brick Red for urgent -->
+					<div class="mt-2 h-[2px] w-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
 						<div
-							class="h-[5px] bg-emerald-600 transition-[width] duration-200 ease-out"
+							class="h-[2px] transition-[width] duration-200 ease-out {occupancy > 70 ? 'bg-red-600' : 'bg-emerald-600'}"
 							style="width: {100 - occupancy}%"
 						></div>
 					</div>
 					<div class="mt-1 text-right text-xs tabular-nums text-slate-500 dark:text-slate-400">
-						{occupancy}% terisi
+						{occupancy}% terisi {occupancy > 70 ? '• Urgent' : '• Optimal'}
 					</div>
 				</div>
 
@@ -487,15 +489,44 @@
 	{/if}
 
 	{#if ticket}
-		<div class="mt-6 rounded-2xl border-2 border-emerald-600 bg-emerald-50 p-6 dark:bg-emerald-950">
-			<div class="text-[10px] font-medium uppercase tracking-[2px] text-emerald-600 dark:text-emerald-400">Tiket Antrean Digital • Rust Engine</div>
-			<div class="mt-1 font-mono text-4xl font-semibold tracking-[-0.03em] text-emerald-900 dark:text-white">{ticket.nomorAntrean}</div>
-			<div class="mt-3 text-sm text-emerald-800 dark:text-emerald-200 space-y-0.5">
-				<div>Fasilitas: <span class="font-medium">{ticket.facilityName}</span></div>
-				<div>Nomor HP: <span class="font-medium">{ticket.phone}</span></div>
-				<div class="pt-2 font-semibold text-emerald-700 dark:text-emerald-300">Diproses dalam {ticket.processingTime}</div>
+		<!-- Apple Wallet style per Stitch Sigap design: high-contrast Slate header, perforated line, QR, punched 12px (0.75rem) corners, technical metadata with Geist-like labels -->
+		<div class="mt-6 rounded-[12px] border border-slate-300 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-950 overflow-hidden" style="box-shadow: 0 6px 8px #00000024;">
+			<!-- Slate header -->
+			<div class="bg-slate-900 text-white p-4">
+				<div class="flex justify-between items-start">
+					<div>
+						<div class="text-[10px] font-medium uppercase tracking-[1px] text-slate-400">Tiket Antrean Digital • Rust Engine</div>
+						<div class="mt-1 font-mono text-3xl font-semibold tracking-[-0.03em]">{ticket.nomorAntrean}</div>
+					</div>
+					<!-- Simple QR placeholder (perforated style) -->
+					<div class="w-12 h-12 border-2 border-white/80 bg-white/10 flex items-center justify-center rounded">
+						<div class="text-[8px] font-mono text-white/70">QR</div>
+					</div>
+				</div>
 			</div>
-			<button onclick={() => (ticket = null)} class="mt-4 text-xs font-medium text-emerald-700 underline hover:no-underline dark:text-emerald-400">Tutup tiket</button>
+			
+			<!-- Perforated separator line -->
+			<div class="border-t border-dashed border-slate-300 dark:border-slate-600 mx-4"></div>
+			
+			<div class="p-4 text-sm">
+				<div class="flex justify-between">
+					<div>
+						<div class="text-[10px] uppercase tracking-[1px] text-slate-500 dark:text-slate-400">Fasilitas</div>
+						<div class="font-medium text-slate-900 dark:text-white">{ticket.facilityName}</div>
+					</div>
+					<div class="text-right">
+						<div class="text-[10px] uppercase tracking-[1px] text-slate-500 dark:text-slate-400">Nomor HP</div>
+						<div class="font-medium text-slate-900 dark:text-white">{ticket.phone}</div>
+					</div>
+				</div>
+				
+				<div class="mt-3 pt-3 border-t border-dashed border-slate-200 dark:border-slate-700">
+					<div class="text-[10px] uppercase tracking-[1px] text-emerald-600 dark:text-emerald-400">Diproses dalam {ticket.processingTime}</div>
+					<div class="text-[9px] text-slate-500 dark:text-slate-400 mt-1">Bukti kriptografi tersedia di Dompet Jejak Medis</div>
+				</div>
+			</div>
+			
+			<button onclick={() => (ticket = null)} class="w-full py-2 text-xs font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 border-t border-slate-200 dark:border-slate-700">Tutup Tiket</button>
 		</div>
 	{/if}
 

@@ -65,23 +65,33 @@
 
 	<div class="space-y-4">
 		{#each records as rec}
-			<div class="rounded-2xl border border-emerald-200 bg-white p-5 dark:border-emerald-800 dark:bg-slate-950">
-				<div class="flex justify-between text-sm">
-					<div>
-						<div class="font-medium text-emerald-700 dark:text-emerald-400">{rec.facility_name}</div>
-						<div class="font-mono text-xl tracking-[-0.02em] text-slate-950 dark:text-white mt-0.5">{rec.formatted_number}</div>
-					</div>
-					<div class="text-right text-xs text-slate-500 dark:text-slate-400">
-						{new Date(rec.visit_time).toLocaleString('id-ID')}
+			<!-- Apple Wallet style per Stitch Sigap design: high-contrast Slate header, perforated line, QR, punched 12px corners, technical metadata -->
+			<div class="rounded-[12px] border border-slate-300 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-950 overflow-hidden" style="box-shadow: 0 6px 8px #00000024;">
+				<!-- Slate header -->
+				<div class="bg-slate-900 text-white p-3">
+					<div class="flex justify-between items-center">
+						<div>
+							<div class="text-[10px] font-medium uppercase tracking-[1px] text-slate-400">{rec.facility_name}</div>
+							<div class="font-mono text-2xl font-semibold tracking-[-0.02em]">{rec.formatted_number}</div>
+						</div>
+						<!-- QR placeholder -->
+						<div class="w-10 h-10 border border-white/70 bg-white/10 flex items-center justify-center rounded text-[7px] font-mono text-white/60">QR</div>
 					</div>
 				</div>
-
-				<div class="mt-4 pt-3 border-t border-emerald-100 dark:border-emerald-900">
-					<div class="text-[10px] uppercase tracking-[1px] text-emerald-600 dark:text-emerald-500">Hash Signature (SHA-256 — Immutable Proof)</div>
-					<div class="mt-1 font-mono text-[11px] break-all text-slate-700 dark:text-slate-300 bg-emerald-50 dark:bg-emerald-950/40 p-2 rounded">
-						{rec.signature}
+				
+				<!-- Perforated separator -->
+				<div class="border-t border-dashed border-slate-300 dark:border-slate-600 mx-3"></div>
+				
+				<div class="p-3 text-xs">
+					<div class="text-slate-500 dark:text-slate-400">{new Date(rec.visit_time).toLocaleString('id-ID')}</div>
+					
+					<div class="mt-2 pt-2 border-t border-dashed border-slate-200 dark:border-slate-700">
+						<div class="text-[9px] uppercase tracking-[1px] text-emerald-600 dark:text-emerald-400">Hash Signature (SHA-256 — Immutable Proof)</div>
+						<div class="mt-0.5 font-mono text-[10px] break-all text-slate-700 dark:text-slate-300 bg-emerald-50 dark:bg-emerald-950/40 p-1.5 rounded">
+							{rec.signature}
+						</div>
+						<div class="mt-0.5 text-[8px] text-emerald-500/70">Bukti kriptografi dari Rust Engine — rekam medis anti-ubah.</div>
 					</div>
-					<div class="mt-1 text-[9px] text-emerald-500/70">Bukti kriptografi — rekam medis tidak dapat diubah tanpa terdeteksi.</div>
 				</div>
 			</div>
 		{/each}
