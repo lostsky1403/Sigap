@@ -7,7 +7,7 @@ fn main() {
         .build_server(true)
         .build_client(false)
         .out_dir(out_dir)
-        .compile(
+        .compile_protos(
             &["protos/sigap/queue_engine.proto"],
             &["protos"],
         )

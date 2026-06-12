@@ -68,8 +68,11 @@
 			.sort((a, b) => {
 				if (sortMode === 'name') return a.name.localeCompare(b.name, 'id');
 				if (sortMode === 'distance' && userLocation && a.lat != null && b.lat != null) {
-					const da = getDistance(userLocation.lat, userLocation.lon, a.lat, a.lon);
-					const db = getDistance(userLocation.lat, userLocation.lon, b.lat, b.lon);
+					const ul = userLocation!;
+					// @ts-ignore -- svelte-check/TS narrows oddly for $state + derived sort closure; lat is number post-guard
+					const da = getDistance(ul.lat, ul.lon, a.lat, a.lon);
+					// @ts-ignore
+					const db = getDistance(ul.lat, ul.lon, b.lat, b.lon);
 					if (Math.abs(da - db) > 0.01) return da - db;
 					// tie-break: prefer higher availability (lower occupancy)
 					return calcOccupancy(a.availableBeds, a.totalBeds) - calcOccupancy(b.availableBeds, b.totalBeds);
@@ -415,7 +418,8 @@
 				<div class="mt-1 text-sm text-slate-600 dark:text-slate-400">
 					{facility.kecamatan}, {facility.kabupatenKota}
 					{#if userLocation && facility.lat != null && facility.lon != null}
-						{@const d = getDistance(userLocation.lat, userLocation.lon, facility.lat, facility.lon)}
+						{@const ul = userLocation!}
+						{@const d = getDistance(ul.lat, ul.lon, facility.lat, facility.lon)}
 						<span class="ml-1 inline-block rounded bg-emerald-100 px-1 py-0 text-[9px] font-medium text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
 							{d.toFixed(1)} km
 						</span>
@@ -566,6 +570,7 @@
 
 	<!-- Modal Peta Rujukan Otomatis (per desain Stitch "Peta Rujukan Otomatis") -->
 	{#if showReferralModal && selectedFacility}
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 		<div class="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4" onclick={(e) => { if (e.currentTarget === e.target) closeReferralModal(); }}>
 			<div 
 				class="bg-slate-900 rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-auto shadow-xl border border-slate-700"

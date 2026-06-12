@@ -47,6 +47,9 @@
 
 		map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
+		// Non-null local for TS (map declared |null at top; assignment inside onMount + closures don't narrow automatically)
+		const m = map!;
+
 		// Target pin (red teardrop per Stitch design: sharp 0px point at bottom for precise location)
 		if (target && target.lat != null && target.lon != null) {
 			const el = document.createElement('div');
@@ -59,11 +62,11 @@
 			el.style.boxShadow = '0 0 0 3px rgba(239,68,68,0.3)';
 			el.style.cursor = 'default';
 
-			const m = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+			const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
 				.setLngLat([target.lon, target.lat])
 				.setPopup(new maplibregl.Popup({ offset: 12 }).setHTML(`<strong>${target.name}</strong><br><span style="color:#ef4444">PENUH — rujukan tersedia</span>`))
-				.addTo(map);
-			markers.push(m);
+				.addTo(m);
+			markers.push(marker);
 		}
 
 		// Alt pins (emerald green teardrop) - clickable for auto route
@@ -79,24 +82,24 @@
 			el.style.cursor = 'pointer';
 			el.style.boxShadow = '0 0 0 3px rgba(5,150,105,0.25)';
 
-			const m = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+			const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
 				.setLngLat([f.lon, f.lat])
 				.setPopup(new maplibregl.Popup({ offset: 10 }).setHTML(`<strong>${f.name}</strong><br><span style="color:#059669">Tersedia • klik untuk rujuk otomatis</span>`))
-				.addTo(map);
+				.addTo(m);
 
 			el.addEventListener('click', () => {
 				onSelect(f);
 			});
-			markers.push(m);
+			markers.push(marker);
 		});
 
 		// Robust render: resize + fit ONLY after load to guarantee peta jalanan (dark tiles) visible, not blank
-		map.on('load', () => {
+		m.on('load', () => {
 			if (!map) return;
 			map.resize();
 			if (markers.length > 0) {
 				const bounds = new maplibregl.LngLatBounds();
-				markers.forEach((m) => bounds.extend(m.getLngLat()));
+				markers.forEach((mk) => bounds.extend(mk.getLngLat()));
 				map.fitBounds(bounds, { padding: 40, maxZoom: 7 });
 			}
 		});

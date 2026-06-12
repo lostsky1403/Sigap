@@ -44,6 +44,17 @@ func TestGenerateQueueHandler_SuccessShape(t *testing.T) {
 	if _, ok := resp["data"]; !ok {
 		t.Error("expected data field in success response")
 	}
+	// Post-super-app: verify Health Wallet relevant fields (signature for immutable proof, formatted_number)
+	data, _ := resp["data"].(map[string]any)
+	if data == nil {
+		t.Fatal("data not map")
+	}
+	if _, hasSig := data["signature"]; !hasSig {
+		t.Error("expected signature in result for Health Wallet /records/ (SHA-256 from Rust)")
+	}
+	if _, hasFmt := data["formatted_number"]; !hasFmt {
+		t.Error("expected formatted_number (used in Smart Routing ticket + wallet)")
+	}
 }
 
 // TestGenerateQueueHandler_MissingFields_ReturnsIndonesian400 ensures validation
