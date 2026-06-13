@@ -8,8 +8,8 @@ fn main() {
         .build_client(false)
         .out_dir(out_dir)
         .compile_protos(
-            &["protos/sigap/queue_engine.proto"],
-            &["protos"],
+            &["../../protos/sigap/queue_engine.proto"],
+            &["../../protos"],
         )
         .unwrap_or_else(|e| panic!("Failed to compile protos: {}", e));
 
