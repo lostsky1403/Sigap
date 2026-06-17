@@ -82,10 +82,13 @@ func main() {
 	// Wrapped for CORS so browser EventSource from localhost:3005 works when not using proxy
 	http.HandleFunc("/api/v1/events/beds", enableCORS(events.Bus.ServeSSE))
 
-	// Super App: Smart Referral (mapcn peta rujukan) + Health Wallet records
+	// Super App: Smart Referral (mapcn peta rujukan) + Health Wallet records.
+	// /facilities/nearby exposes only facility/bed info (non-PHI) and stays open.
+	// The medical-records endpoints serve patient-shaped data with NO authn/authz,
+	// so they are guarded: closed by default until real access control lands.
 	http.HandleFunc("/api/v1/facilities/nearby", enableCORS(facilitiesNearbyHandler))
-	http.HandleFunc("/api/v1/medical-records", enableCORS(medicalRecordsHandler))
-	http.HandleFunc("/api/v1/records/", enableCORS(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/api/v1/medical-records", enableCORS(guardDemoPHI(medicalRecordsHandler)))
+	http.HandleFunc("/api/v1/records/", enableCORS(guardDemoPHI(func(w http.ResponseWriter, r *http.Request) {
 		phone := strings.TrimPrefix(r.URL.Path, "/api/v1/records/")
 		if phone == "" {
 			phone = r.URL.Query().Get("phone")
@@ -93,7 +96,7 @@ func main() {
 		// Reuse the demo handler by setting query (for compatibility with existing medicalRecordsHandler)
 		r.URL.RawQuery = "phone=" + phone
 		medicalRecordsHandler(w, r)
-	}))
+	})))
 
 	slog.Info("sigap-api listening", "port", port,
 		"rate_limit", "2 per hari per (HP + faskes)",
@@ -107,6 +110,28 @@ func main() {
 }
 
 // --- Super App endpoints: mapcn Smart Routing + Health Wallet ---
+
+// guardDemoPHI gates patient-shaped (PHI) demo endpoints that currently have NO
+// authentication or authorization. They are closed by default and only served
+// when SIGAP_ENABLE_DEMO_PHI=true is explicitly set for local development.
+// This closes the live unauthenticated PHI exposure until real access control
+// (RBAC) is wired in a later phase. Never enable this in production.
+func guardDemoPHI(next http.HandlerFunc) http.HandlerFunc {
+	enabled := strings.EqualFold(os.Getenv("SIGAP_ENABLE_DEMO_PHI"), "true")
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !enabled {
+			writeJSON(w, http.StatusNotFound, map[string]any{
+				"success": false,
+				"error":   "Endpoint tidak tersedia: akses data medis dinonaktifkan hingga autentikasi tersedia.",
+			})
+			return
+		}
+		slog.Warn("serving demo PHI endpoint without authn/authz; dev only",
+			"path", r.URL.Path, "flag", "SIGAP_ENABLE_DEMO_PHI")
+		next(w, r)
+	}
+}
+
 
 // facilitiesNearbyHandler returns alternative facilities sorted by distance + availability (for rujukan when target penuh).
 // Uses same coords as UI samples for consistency. Real version would query DB with PostGIS.
