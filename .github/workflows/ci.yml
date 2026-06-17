@@ -16,14 +16,28 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          # Pin to the version declared in go.mod (single source of truth) so CI
+          # never silently drifts onto a newer Go release.
+          go-version-file: apps/api/go.mod
           cache-dependency-path: apps/api/go.sum
 
-      - name: Test API
+      - name: Test API (with coverage)
         run: |
           cd apps/api
           go mod download
-          go test ./... -v
+          go test ./... -v -coverprofile=coverage.out
+          echo "Total coverage:"
+          go tool cover -func=coverage.out | tail -1
+
+      - name: Coverage gate (deny-by-default router must stay covered)
+        run: |
+          cd apps/api
+          go test ./internal/router/ -coverprofile=router.cov >/dev/null
+          pct=$(go tool cover -func=router.cov | awk '/^total:/ {gsub(/%/,"",$3); print $3}')
+          min=90
+          echo "router coverage: ${pct}% (min ${min}%)"
+          awk -v p="$pct" -v m="$min" 'BEGIN { exit (p+0 < m+0) ? 1 : 0 }' \
+            || { echo "FAIL: router (security seam) coverage ${pct}% < ${min}%"; exit 1; }
 
   engine:
     name: Rust Engine Check
@@ -37,16 +51,16 @@ jobs:
           sudo apt-get install -y protobuf-compiler
 
       - name: Setup Rust
-        uses: actions-rs/toolchain@v1
+        # actions-rs is archived/unmaintained; dtolnay/rust-toolchain is the
+        # maintained replacement.
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          override: true
           components: clippy
 
-      - name: Cargo Check + Clippy (engine)
+      - name: Cargo Test + Clippy (engine)
         run: |
           cd apps/queue-engine
-          cargo check
+          cargo test
           cargo clippy -- -D warnings || true   # non-blocking for scaffold phase
 
   web:
