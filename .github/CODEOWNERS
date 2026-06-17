@@ -1,0 +1,26 @@
+# Sigap code owners
+#
+# These owners are requested for review on matching paths. See:
+# https://docs.github.com/articles/about-code-owners
+#
+# Order matters: the last matching pattern takes precedence.
+
+# Default owner for everything in the repo.
+*                           @lostsky1403
+
+# Security-sensitive surfaces require owner review.
+/SECURITY.md                @lostsky1403
+/LICENSE                    @lostsky1403
+/.github/                   @lostsky1403
+/docker-compose.yml         @lostsky1403
+/.env.example               @lostsky1403
+
+# Backend services.
+/apps/api/                  @lostsky1403
+/apps/queue-engine/         @lostsky1403
+
+# Database migrations and schema.
+/packages/db/               @lostsky1403
+
+# Frontend.
+/apps/web/                  @lostsky1403
