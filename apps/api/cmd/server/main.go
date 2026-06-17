@@ -13,6 +13,7 @@ import (
 	"github.com/sigap/sigap/apps/api/internal/grpc"
 	"github.com/sigap/sigap/apps/api/internal/handler"
 	"github.com/sigap/sigap/apps/api/internal/limiter"
+	"github.com/sigap/sigap/apps/api/internal/router"
 	"github.com/sigap/sigap/apps/api/internal/service"
 )
 
@@ -70,25 +71,27 @@ func main() {
 
 	qh := handler.NewHandler(svc, rl)
 
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok","service":"sigap-api"}`))
 	})
 
-	http.HandleFunc("/api/v1/queues/generate", enableCORS(qh.Generate))
+	mux.HandleFunc("/api/v1/queues/generate", enableCORS(qh.Generate))
 
 	// Real-time SSE endpoint for bed/queue updates (Langkah 2)
 	// Wrapped for CORS so browser EventSource from localhost:3005 works when not using proxy
-	http.HandleFunc("/api/v1/events/beds", enableCORS(events.Bus.ServeSSE))
+	mux.HandleFunc("/api/v1/events/beds", enableCORS(events.Bus.ServeSSE))
 
 	// Super App: Smart Referral (mapcn peta rujukan) + Health Wallet records.
 	// /facilities/nearby exposes only facility/bed info (non-PHI) and stays open.
 	// The medical-records endpoints serve patient-shaped data with NO authn/authz,
 	// so they are guarded: closed by default until real access control lands.
-	http.HandleFunc("/api/v1/facilities/nearby", enableCORS(facilitiesNearbyHandler))
-	http.HandleFunc("/api/v1/medical-records", enableCORS(guardDemoPHI(medicalRecordsHandler)))
-	http.HandleFunc("/api/v1/records/", enableCORS(guardDemoPHI(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/facilities/nearby", enableCORS(facilitiesNearbyHandler))
+	mux.HandleFunc("/api/v1/medical-records", enableCORS(guardDemoPHI(medicalRecordsHandler)))
+	mux.HandleFunc("/api/v1/records/", enableCORS(guardDemoPHI(func(w http.ResponseWriter, r *http.Request) {
 		phone := strings.TrimPrefix(r.URL.Path, "/api/v1/records/")
 		if phone == "" {
 			phone = r.URL.Query().Get("phone")
@@ -103,7 +106,10 @@ func main() {
 		"engine", engineAddr,
 		"traceability", "processing_time from Rust gRPC in µs")
 
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	// Deny-by-default: only routes declared in the registry (or allow-listed
+	// probes) are reachable; everything else gets 401. This is the seam that
+	// per-route RBAC and audit logging attach to in later phases.
+	if err := http.ListenAndServe(":"+port, router.DenyByDefault(mux)); err != nil {
 		slog.Error("server error", "err", err)
 		os.Exit(1)
 	}
