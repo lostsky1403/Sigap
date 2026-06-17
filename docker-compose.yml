@@ -14,9 +14,9 @@ services:
     image: postgres:16-alpine
     container_name: sigap-postgres
     environment:
-      POSTGRES_USER: sigap
-      POSTGRES_PASSWORD: sigap
-      POSTGRES_DB: sigap
+      POSTGRES_USER: ${POSTGRES_USER:-sigap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (copy from .env.example)}
+      POSTGRES_DB: ${POSTGRES_DB:-sigap}
     ports:
       - "5433:5432"
     volumes:
@@ -36,7 +36,7 @@ services:
       dockerfile: apps/queue-engine/Dockerfile
     container_name: sigap-rust-engine
     environment:
-      DATABASE_URL: postgresql://sigap:sigap@postgres:5432/sigap
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sigap}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-sigap}
       RUST_LOG: info
     depends_on:
       postgres:
@@ -51,7 +51,7 @@ services:
       dockerfile: apps/api/Dockerfile
     container_name: sigap-api
     environment:
-      DATABASE_URL: postgresql://sigap:sigap@postgres:5432/sigap
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sigap}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-sigap}
       SIGAP_ENGINE_ADDR: rust-engine:50051
       SIGAP_API_PORT: 8080
     depends_on:
