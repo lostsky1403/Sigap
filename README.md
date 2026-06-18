@@ -121,11 +121,24 @@ flowchart TD
    make dev-web      # SvelteKit (:5173)
    ```
 
+## Testing
+
+```bash
+# Unit tests (Go + Rust)
+make test
+
+# Type checking, linting, and formatting
+make lint
+
+# Security scanning (govulncheck, cargo-audit, gitleaks)
+make security
+```
+
 5. Test endpoint (setelah Phase 2 selesai)
    ```bash
    curl -X POST http://localhost:8080/api/v1/queues/generate \
      -H "Content-Type: application/json" \
-     -d '{"facilityId":"...","patient":{"fullName":"Test Pasien","phone":"081234567890"}}'
+     -d '{"facilityId":"f1","patient":{"fullName":"Test Pasien","phone":"081234567890"}}'
    ```
 
 Buka http://localhost:5173 — lihat Dashboard Ketersediaan Kasur yang rapi.
@@ -156,9 +169,11 @@ Semua perubahan dilakukan dalam chunk <300 baris, dengan commit konvensional, da
 
 MVP ini **hanya untuk tujuan scaffolding dan demonstrasi**.
 
-- Jangan gunakan data pasien nyata.
+- Jangan gunakan data pasien nyata (**never use real patient data**).
 - Belum ada autentikasi, rate limiting, atau enkripsi PII.
 - Untuk produksi: audit keamanan, consent, minimization data, encryption at rest, dan logging yang sesuai regulasi kesehatan daerah wajib dilakukan.
+
+Lihat [`SECURITY.md`](./SECURITY.md) untuk daftar lengkap **security limitation** dan panduan pengungkapan kerentanan (responsible disclosure).
 
 ## Lisensi
 
