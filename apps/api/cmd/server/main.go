@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"math"
@@ -8,10 +9,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sigap/sigap/apps/api/internal/audit"
 	"github.com/sigap/sigap/apps/api/internal/events"
 	"github.com/sigap/sigap/apps/api/internal/grpc"
 	"github.com/sigap/sigap/apps/api/internal/handler"
+	"github.com/sigap/sigap/apps/api/internal/identity"
 	"github.com/sigap/sigap/apps/api/internal/limiter"
 	"github.com/sigap/sigap/apps/api/internal/router"
 	"github.com/sigap/sigap/apps/api/internal/service"
@@ -19,16 +24,21 @@ import (
 
 // enableCORS wraps handlers to allow browser clients from the SvelteKit web origin.
 // Required for direct cross-origin fetch (POST /generate) and EventSource (SSE).
-// Allows preflight OPTIONS. Specific origin for dev; tighten in prod behind proxy.
+// Allows preflight OPTIONS. Reads allowed origin from SIGAP_WEB_ORIGIN env var
+// with a safe localhost default. Production should set this explicitly.
 func enableCORS(next http.HandlerFunc) http.HandlerFunc {
+	allowed := os.Getenv("SIGAP_WEB_ORIGIN")
+	if allowed == "" {
+		allowed = "http://localhost:3005"
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Support localhost and 127.0.0.1 on port 3005 (SvelteKit web service in compose, shifted from 3000 to avoid host conflict)
 		origin := r.Header.Get("Origin")
-		allowed := "http://localhost:3005"
-		if origin == "http://127.0.0.1:3005" {
-			allowed = origin
+		// Allow exact match or the configured origin
+		if origin == allowed || origin == "http://127.0.0.1:3005" && allowed == "http://localhost:3005" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		} else if origin == "" {
+			w.Header().Set("Access-Control-Allow-Origin", allowed)
 		}
-		w.Header().Set("Access-Control-Allow-Origin", allowed)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Type")
@@ -63,13 +73,41 @@ func main() {
 
 	// Real gRPC client to Rust engine (with micro-second traceability).
 	// Falls back to localhost:50051 for docker-compose / local dev.
+	// FakeQueueService fallback is gated behind SIGAP_ENGINE_FALLBACK=dev;
+	// never auto-fallback silently — fail hard in production.
 	svc, err := grpc.NewGRPCQueueService(engineAddr)
 	if err != nil {
-		slog.Error("failed to connect to rust engine, using fake for demo", "err", err, "addr", engineAddr)
-		svc = service.NewFakeQueueService()
+		fallback := os.Getenv("SIGAP_ENGINE_FALLBACK")
+		if fallback == "dev" {
+			slog.Warn("SIGAP_ENGINE_FALLBACK=dev set; using FakeQueueService for local development only",
+				"err", err, "addr", engineAddr)
+			svc = service.NewFakeQueueService()
+		} else {
+			slog.Error("failed to connect to rust engine; set SIGAP_ENGINE_FALLBACK=dev for local dev, or ensure engine is reachable",
+				"err", err, "addr", engineAddr)
+			os.Exit(1)
+		}
 	}
 
 	qh := handler.NewHandler(svc, rl)
+
+	// Audit service: best-effort append-only logging. Disabled when
+	// SIGAP_DATABASE_URL is missing or the connection fails so the
+	// server can start without a reachable PostgreSQL instance.
+	var auditSvc *audit.Service
+	dbURL := os.Getenv("SIGAP_DATABASE_URL")
+	if dbURL != "" {
+		pool, err := pgxpool.New(context.Background(), dbURL)
+		if err != nil {
+			slog.Warn("SIGAP_DATABASE_URL set but failed to connect; audit logging disabled", "err", err)
+		} else {
+			auditSvc = audit.NewService(pool)
+			slog.Info("audit logging enabled")
+		}
+	} else {
+		slog.Info("SIGAP_DATABASE_URL not set; audit logging disabled")
+	}
+	qh = qh.WithAudit(auditSvc)
 
 	mux := http.NewServeMux()
 
@@ -77,6 +115,20 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok","service":"sigap-api"}`))
+	})
+
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if err := svc.Probe(ctx); err != nil {
+			slog.Warn("readyz probe failed", "err", err)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"unavailable","service":"sigap-api","detail":"engine unreachable"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ready","service":"sigap-api"}`))
 	})
 
 	mux.HandleFunc("/api/v1/queues/generate", enableCORS(qh.Generate))
@@ -109,7 +161,15 @@ func main() {
 	// Deny-by-default: only routes declared in the registry (or allow-listed
 	// probes) are reachable; everything else gets 401. This is the seam that
 	// per-route RBAC and audit logging attach to in later phases.
-	if err := http.ListenAndServe(":"+port, router.DenyByDefault(mux)); err != nil {
+	// RequirePermission enforces per-route RequiredPolicy using the actor
+	// injected by DevIdentity. The order is:
+	//   DenyByDefault → DevIdentity → injectAudit → RequirePermission → mux.
+	injectAudit := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(identity.ContextWithAudit(r.Context(), auditSvc)))
+		})
+	}
+	if err := http.ListenAndServe(":"+port, router.DenyByDefault(identity.DevIdentity(injectAudit(identity.RequirePermission(mux))))); err != nil {
 		slog.Error("server error", "err", err)
 		os.Exit(1)
 	}

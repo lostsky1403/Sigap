@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sigap/sigap/apps/api/internal/audit"
 	"github.com/sigap/sigap/apps/api/internal/events"
+	"github.com/sigap/sigap/apps/api/internal/identity"
 	"github.com/sigap/sigap/apps/api/internal/limiter"
 	"github.com/sigap/sigap/apps/api/internal/service"
 )
@@ -19,11 +21,18 @@ import (
 type Handler struct {
 	svc     service.QueueService
 	limiter *limiter.RateLimiter
+	audit   *audit.Service
 }
 
 // NewHandler creates a handler with the given dependencies.
 func NewHandler(svc service.QueueService, rl *limiter.RateLimiter) *Handler {
 	return &Handler{svc: svc, limiter: rl}
+}
+
+// WithAudit attaches an optional audit service. Call after NewHandler.
+func (h *Handler) WithAudit(a *audit.Service) *Handler {
+	h.audit = a
+	return h
 }
 
 // Generate handles POST /api/v1/queues/generate
@@ -86,6 +95,23 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 	// 7. Real-time: notify SSE subscribers that a bed/queue state may have changed
 	// (in real system this could carry actual new available count from engine).
 	events.Bus.Publish(fmt.Sprintf(`{"facility_id":"%s","action":"queue_created"}`, req.FacilityID))
+
+	// 8. Audit: log successful queue generation with privacy-safe metadata.
+	// SanitizeMetadata ensures no patient PII leaks into the audit trail.
+	actor := identity.ActorFromContext(r.Context())
+	h.audit.LogEvent(r.Context(), audit.Event{
+		Action:       "queue.generate",
+		ResourceType: "queue",
+		ResourceID:   result.TicketID,
+		ActorType:    string(actor.Type),
+		ActorUserID:  actor.UserID,
+		FacilityID:   req.FacilityID,
+		RequestID:    identity.RequestIDFromContext(r.Context()),
+		Metadata: audit.SanitizeMetadata(map[string]any{
+			"facility_id": req.FacilityID,
+			"status":      result.Status,
+		}),
+	})
 }
 
 // GenerateRequest is the JSON body expected by the endpoint.
