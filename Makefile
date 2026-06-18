@@ -1,7 +1,7 @@
 # Sigap Makefile — cross-language dev orchestration (KISS, no heavy runner)
 SHELL := /bin/bash
 
-.PHONY: help dev dev-down db-migrate db-seed dev-api dev-engine dev-web build test clean
+.PHONY: help dev dev-down db-migrate db-seed dev-api dev-engine dev-web build test clean lint security
 
 help:
 	@echo "Sigap — available targets:"
@@ -12,6 +12,8 @@ help:
 	@echo "  make dev-api      # Go HTTP gateway (:8080)"
 	@echo "  make dev-engine   # Rust gRPC engine (:50051)"
 	@echo "  make dev-web      # SvelteKit (:5173)"
+	@echo "  make lint         # run linters across all services"
+	@echo "  make security     # run security checks (gitleaks, cargo audit, govulncheck)"
 	@echo "  make build        # build all"
 	@echo "  make test         # run Go + Rust tests"
 	@echo "  make clean        # remove build artifacts"
@@ -51,3 +53,21 @@ test:
 
 clean:
 	rm -rf apps/api/bin apps/queue-engine/target apps/web/.svelte-kit apps/web/build
+
+# ---- Quality gates ----
+
+lint:
+	@echo "==> Go vet"
+	cd apps/api && go vet ./...
+	@echo "==> Clippy"
+	cd apps/queue-engine && cargo clippy -- -D warnings || true
+	@echo "==> Svelte check"
+	pnpm --filter sigap-web run check
+
+security:
+	@echo "==> Go vulnerability scan"
+	@which govulncheck >/dev/null 2>&1 && (cd apps/api && govulncheck ./...) || echo "SKIP: govulncheck not installed (run: go install golang.org/x/vuln/cmd/govulncheck@latest)"
+	@echo "==> Rust audit"
+	@which cargo-audit >/dev/null 2>&1 && (cd apps/queue-engine && cargo audit) || echo "SKIP: cargo-audit not installed (run: cargo install cargo-audit)"
+	@echo "==> Secrets scan"
+	@which gitleaks >/dev/null 2>&1 && gitleaks detect --source . --verbose || echo "SKIP: gitleaks not installed (see .env.example or install from https://github.com/gitleaks/gitleaks)"

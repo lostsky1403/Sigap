@@ -37,3 +37,17 @@ npm-debug.log*
 .grok
 *.grok
 
+# Local AI assistant directories (never commit)
+.agents/
+.claude/
+.kimchi/
+.kiro/
+.omc/
+.trae/
+
+# Temporary directories
+tmp/
+
+# Generated Go binaries
+apps/api/server
+
