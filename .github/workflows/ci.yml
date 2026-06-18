@@ -83,3 +83,57 @@ jobs:
 
       - name: SvelteKit check
         run: pnpm --filter sigap-web run check
+
+  security-go:
+    name: Go Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Scan Go API for known vulnerabilities
+        run: |
+          cd apps/api
+          govulncheck ./...
+        # govulncheck exits non-zero when vulnerabilities are found.
+        # Keep this blocking so security issues cannot be merged silently.
+
+  security-rust:
+    name: Rust Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit || true
+
+      - name: Scan Rust engine for known vulnerabilities
+        run: |
+          cd apps/queue-engine
+          cargo audit || true   # non-blocking for scaffold phase; switch to blocking after stabilising deps
+
+  security-secrets:
+    name: Secret Leak Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gitleaks needs full git history to scan all commits
+
+      - name: Run gitleaks scan
+        uses: zricethez/gitleaks-action@v2
+        env:
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+        # gitleaks-action is free for public repos; private repos need a license.
+        # Exits non-zero when leaks are found, keeping the gate blocking.
