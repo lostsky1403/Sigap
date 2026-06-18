@@ -73,6 +73,29 @@ We use **conventional commits** and prefer small, focused pull requests.
 
 We use squash merges. Your PR title will become the commit message (so make it good!).
 
+### PR Size Cap
+
+Prefer small, focused pull requests. Aim for **under 300 lines of code** per PR when possible. Large changes are harder to review, riskier to deploy, and harder to roll back. If a feature requires more than 300 lines, split it into stacked or incremental PRs (e.g., scaffold → logic → tests → integration).
+
+## Data Privacy & PII Prohibition
+
+**Never use real patient data in development, tests, seeds, fixtures, or pull requests.**
+
+- All test data must be synthetic. Use fictional names like "Test Patient" and phone numbers like `081234567890`.
+- Do not include real names, medical record numbers, national IDs, addresses, or any personally identifiable information (PII) in code, commits, issues, documentation, **logs**, or **audit events**.
+- If you find real patient data anywhere in the repository, report it immediately as a security issue per `SECURITY.md`.
+- Reviewers will reject any PR that introduces real patient data or insufficiently anonymized test fixtures.
+
+### Canonical PII Forbid-List
+
+The audit service maintains a canonical list of forbidden metadata keys that **must never** appear in logs, audit events, seeds, fixtures, or tests. This is the single source of truth for PII redaction:
+
+- See `apps/api/internal/audit/service.go` (`forbidList`) for the authoritative list.
+- Keys matching these substrings are automatically redacted to `[REDACTED]` before they reach the audit log.
+- **Do not add new metadata keys** that overlap with these forbidden substrings without updating `forbidList` and this section.
+
+The current forbidden substrings include identities (`patient`, `pasien`, `nik`, `ktp`), contact (`phone`, `telepon`, `email`), personal names (`name`, `nama`), and addresses (`address`, `alamat`). Any PR that introduces metadata keys containing these substrings must include corresponding `forbidList` entries.
+
 ## Questions?
 
 Feel free to open an issue with the `question` label or start a discussion.
