@@ -4,7 +4,7 @@
 	// Uses emerald-600 accents, clean Tailwind, monospace for sig.
 
 	let phone = $state('081234567890');
-	let records = $state<any[]>([]);
+	let records = $state<MedicalRecord[]>([]);
 	let loading = $state(false);
 	let err = $state('');
 
@@ -28,6 +28,7 @@
 
 	// auto load demo on mount
 	import { onMount } from 'svelte';
+	import type { MedicalRecord } from '$lib/types';
 	onMount(() => {
 		loadWallet();
 	});

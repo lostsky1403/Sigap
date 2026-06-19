@@ -7,7 +7,8 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test": "echo '=== Build verification + type check ===' && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && node tests/build-verification.test.js && vite build"
   },
   "devDependencies": {
     "@sveltejs/adapter-node": "^3.0.0",

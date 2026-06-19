@@ -23,7 +23,7 @@ RUN cargo build --release
 # Runtime image - distroless-ish for security
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates netcat-openbsd \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -u 10001 sigap
 

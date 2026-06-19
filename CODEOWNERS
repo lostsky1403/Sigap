@@ -1,0 +1,32 @@
+# Code Owners for Sigap
+#
+# The CODEOWNERS file defines who is automatically requested for review
+# when a pull request modifies files matching a given pattern.
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Default owner for everything in the repo.
+* @lostsky1403
+
+# Backend (Go API + Rust Engine)
+apps/ @lostsky1403
+
+# Frontend (SvelteKit)
+apps/web/ @lostsky1403
+
+# Database schema and migrations
+packages/db/ @lostsky1403
+
+# Infrastructure (Docker, CI, Makefile)
+*.yml @lostsky1403
+*.yaml @lostsky1403
+Dockerfile @lostsky1403
+Makefile @lostsky1403
+docker-compose* @lostsky1403
+.github/ @lostsky1403
+
+# Documentation
+docs/ @lostsky1403
+README.md @lostsky1403
+SECURITY.md @lostsky1403
+CONTRIBUTING.md @lostsky1403
+ROADMAP.md @lostsky1403
