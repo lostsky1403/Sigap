@@ -138,6 +138,68 @@ The API will use an in-memory fake queue service instead of connecting to the re
 
 > ⚠️ The fallback flag is **for local development only**. Never enable `SIGAP_ENGINE_FALLBACK=dev` in production.
 
+## Auth Mode Selection
+
+The API gateway supports three authentication modes, controlled by the `SIGAP_AUTH_MODE` environment variable. Set it in `.env` before starting the API.
+
+### Mode: `disabled` (default)
+
+No authentication provider is active. The middleware chain passes through transparently, but the authorization layer (`RequirePermission`) still denies requests for protected routes unless an actor is present. This is the safest default for a fresh checkout.
+
+```env
+SIGAP_AUTH_MODE=disabled
+```
+
+Expected behavior:
+- Public routes (`/health`, `/readyz`) return `200`.
+- Protected routes (e.g., `/api/v1/admin/facilities`) return `403` for all requests.
+
+### Mode: `dev`
+
+Uses `DevIdentityProvider`. When `SIGAP_DEV_IDENTITY=true`, requests carrying the `X-Sigap-Dev-User-ID` header receive a synthetic `Actor` with full permissions. This is the fastest way to test protected routes locally.
+
+```env
+SIGAP_AUTH_MODE=dev
+SIGAP_DEV_IDENTITY=true
+```
+
+Then send requests with the dev header:
+```bash
+curl http://localhost:8080/api/v1/admin/facilities \
+  -H "X-Sigap-Dev-User-ID: dev-user-42"
+```
+
+> ⚠️ **Never** use `dev` mode in production or shared environments. It is trivially bypassable.
+
+### Mode: `jwt`
+
+Uses `JWTProvider` with JWKS validation. Tokens must be signed with RS256/RS384/RS512 or ES256/ES384/ES512 and include standard claims (`iss`, `aud`, `sub`, `exp`).
+
+```env
+SIGAP_AUTH_MODE=jwt
+SIGAP_AUTH_ISSUER=https://your-oidc-provider
+SIGAP_AUTH_AUDIENCE=sigap-api
+SIGAP_AUTH_JWKS_URL=https://your-oidc-provider/.well-known/jwks.json
+```
+
+ Minimal test with a valid JWT (replace `$TOKEN`):
+```bash
+curl http://localhost:8080/api/v1/admin/facilities \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Auth Environment Variables
+
+| Variable | Required | Mode | Description |
+|----------|----------|------|-------------|
+| `SIGAP_AUTH_MODE` | No | all | `disabled` (default), `dev`, or `jwt`. |
+| `SIGAP_DEV_IDENTITY` | No | `dev` | Enable synthetic dev actor when `"true"`. |
+| `SIGAP_AUTH_ISSUER` | Yes | `jwt` | Expected `iss` claim. |
+| `SIGAP_AUTH_AUDIENCE` | Yes | `jwt` | Expected `aud` claim. |
+| `SIGAP_AUTH_JWKS_URL` | No | `jwt` | JWKS endpoint for key retrieval. |
+
+> **Validation:** Invalid auth configuration (e.g., `jwt` mode without `SIGAP_AUTH_ISSUER`) causes the server to exit with code `1` at boot time. This fail-closed behavior prevents a misconfigured server from starting.
+
 ## Dev Identity (Local Testing)
 
 The API includes a synthetic dev-identity middleware for local testing when real authentication is not configured.
@@ -159,18 +221,162 @@ When enabled, this header injects a synthetic `Actor` with type `dev` and a full
 
 > ⚠️ **NEVER** enable `SIGAP_DEV_IDENTITY=true` in production, staging, or any shared environment. The middleware fails closed when this variable is absent or not set to `"true"` exactly.
 
-## Testing
+## Bootstrap Admin (One-Time Setup)
+
+After applying migrations and RBAC seed data, you can create the first admin user with the bootstrap CLI. This tool is **disabled by default** and must be explicitly enabled.
+
+> 🚫 **DANGER: Never enable `SIGAP_BOOTSTRAP_ADMIN` in production or shared environments.** The tool creates a synthetic account (`admin@sigap.local`) with full system access (`super_admin`). It is intended solely for standing up a fresh local development database.
+
+### Requirements
+
+- PostgreSQL must be running with migrations applied (`make db-migrate`)
+- RBAC seed must be loaded (`make db-seed` or `psql $DATABASE_URL -f packages/db/seed/rbac.sql`) so the `super_admin` role exists
+
+### Run Bootstrap
 
 ```bash
-# All unit tests (Go + Rust)
+SIGAP_BOOTSTRAP_ADMIN=true \
+  DATABASE_URL=postgres://sigap:sigap@localhost:5432/sigap \
+  go run ./cmd/bootstrap
+```
+
+On success, the output will be similar to:
+
+```
+[bootstrap] Created bootstrap admin user: a1b2c3d4-... (admin@sigap.local)
+[bootstrap] Assigned super_admin role to a1b2c3d4-...
+```
+
+Rerunning the command is safe (idempotent). If the admin already exists, it will print:
+
+```
+[bootstrap] Bootstrap admin user already exists: a1b2c3d4-... (admin@sigap.local)
+[bootstrap] super_admin role already assigned to a1b2c3d4-...
+```
+
+### What It Does
+
+1. Creates a single user in `app_users` with:
+   - `email`: `admin@sigap.local` (`.local` TLD prevents accidental email delivery)
+   - `display_name`: `Bootstrap Admin`
+   - `status`: `active`
+2. Assigns the existing `super_admin` role from the RBAC seed via `user_roles`
+
+### Safety Controls
+
+- **Env gate**: The tool exits immediately with code `1` unless `SIGAP_BOOTSTRAP_ADMIN` is exactly `"true"`.
+- **No hardcoded secrets**: No passwords or API keys are embedded.
+- **No network exposure**: This is a CLI tool, not an HTTP endpoint.
+- **Synthetic data only**: Email uses `.local` domain; no real PII is involved.
+
+## Testing & Security Scanning
+
+### Running Tests
+
+```bash
+# All unit tests (Go + Rust + Web)
 make test
 
+# Go tests only
+cd apps/api && go test ./...
+
+# Rust tests only
+cd apps/queue-engine && cargo test
+
+# Web type-checking only
+pnpm --filter sigap-web run check
+```
+
+### Lint & Format Checks
+
+```bash
 # Type checking, linting, and formatting
 make lint
 
-# Security scanning (requires govulncheck, cargo-audit, gitleaks)
+# Auto-fix Go formatting
+cd apps/api && gofmt -w .
+
+# Auto-fix Rust formatting
+cd apps/queue-engine && cargo fmt
+
+# Auto-fix web formatting
+pnpm --filter sigap-web run format
+```
+
+### Security Scanning
+
+The `make security` target runs three security tools. Install any missing tools before running it.
+
+#### 1. Go Vulnerability Check (`govulncheck`)
+
+Install:
+```bash
+go install golang.org/x/vuln/cmd/govulncheck@latest
+```
+
+Requires: Go 1.21+ (uses the Go toolchain automatic download for newer versions).
+
+Run standalone:
+```bash
+cd apps/api && govulncheck ./...
+```
+
+#### 2. Rust Audit (`cargo-audit`)
+
+Install:
+```bash
+cargo install cargo-audit
+```
+
+Run standalone:
+```bash
+cd apps/queue-engine && cargo audit
+```
+
+#### 3. Secrets Scan (`gitleaks`)
+
+Install (choose one):
+
+**With package managers:**
+```bash
+# macOS
+brew install gitleaks
+
+# Ubuntu/Debian (requires adding the repo)
+echo "deb [trusted=yes] https://apt.gitleaks.io/ /" | sudo tee /etc/apt/sources.list.d/gitleaks.list
+sudo apt update && sudo apt install gitleaks
+```
+
+**With Go install** (requires Go 1.22+):
+```bash
+go install github.com/gitleaks/gitleaks/v8@latest
+```
+
+**Manual binary** (Linux AMD64):
+```bash
+curl -sSL https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep tag_name | cut -d '"' -f 4 | tr -d 'v')_linux_x64.tar.gz | tar -xz -C /tmp
+sudo mv /tmp/gitleaks /usr/local/bin/
+```
+
+Run standalone:
+```bash
+gitleaks detect --source . --no-git
+```
+
+#### Running the Full Security Suite
+
+After installing all three tools:
+
+```bash
 make security
 ```
+
+Output meaning:
+- `PASS` — the tool ran and found no issues.
+- `FAIL` — the tool ran and found real issues. The Makefile exits with code 1.
+- `SKIP` — the tool is not installed on your machine.
+
+> **Note:** If a tool prints `SKIP`, install it using the instructions above. We do not commit `gitleaks` binaries to the repository.
 
 ## Docker Compose (Full Stack)
 

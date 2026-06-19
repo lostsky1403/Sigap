@@ -86,6 +86,89 @@ Prefer small, focused pull requests. Aim for **under 300 lines of code** per PR 
 - If you find real patient data anywhere in the repository, report it immediately as a security issue per `SECURITY.md`.
 - Reviewers will reject any PR that introduces real patient data or insufficiently anonymized test fixtures.
 
+### Auth & Authorization Conventions
+
+When contributing to authentication or authorization features, follow these conventions established in the `internal/auth` and `internal/identity` packages:
+
+#### Adding a New Auth Provider
+
+All auth providers must implement the `auth.Provider` interface:
+```go
+type Provider interface {
+    Authenticate(r *http.Request) (identity.Actor, error)
+}
+```
+
+- Return a zero `Actor` on any error or unauthenticated request (fail-closed).
+- Never return errors to middleware callers; let the authorization layer (`RequirePermission`) handle denial.
+- Register new providers in `internal/auth/factory.go` under `NewProvider`.
+
+#### Adding a New Protected Route
+
+Register routes in `internal/router/router.go` using `RouteConfig`:
+```go
+{
+    Method:         "GET",
+    Path:           "/api/v1/admin/records",
+    RequiredPolicy: "record.read",
+    PHI:            false,
+    FilterableId:   true,
+}
+```
+
+- `RequiredPolicy`: must match an existing `slug` in `permissions` table.
+- `PHI`: set to `true` only if the route handles patient health information (triggers stricter audit).
+- Use **exact match** (`Prefix: false`) unless you explicitly intend to protect all subpaths.
+
+#### Testing Auth Boundary Changes
+
+Use the `staticActorProvider` pattern from `internal/handler/admin_test.go` for integration tests:
+```go
+type staticActorProvider struct{ actor identity.Actor }
+
+func (p *staticActorProvider) Authenticate(_ *http.Request) (identity.Actor, error) {
+    return p.actor, nil
+}
+```
+
+This lets you inject specific actors (with/without permissions) to test all four auth scenarios:
+1. Unauthenticated → 403
+2. Wrong permission → 403
+3. Correct permission → 200
+4. Public route → 200
+
+Always compose the **full middleware chain** in tests:
+```go
+chain := router.DenyByDefault(
+    auth.Middleware(provider)(
+        injectAudit(identity.RequirePermission(mux)),
+    ),
+)
+```
+
+> **Note:** `auth.Middleware` unconditionally overwrites any pre-existing actor in context. Setting `identity.ContextWithActor` before the middleware is invalid; use a `staticActorProvider` instead.
+
+#### Dev Identity Testing
+
+When testing locally with dev identity:
+```bash
+SIGAP_AUTH_MODE=dev SIGAP_DEV_IDENTITY=true go run ./cmd/server
+```
+
+Send the header with every request:
+```bash
+curl -H "X-Sigap-Dev-User-ID: dev-user-42" http://localhost:8080/api/v1/admin/facilities
+```
+
+> ⚠️ **Never** commit code that enables `SIGAP_DEV_IDENTITY` by default or bypasses auth in production.
+
+#### Bootstrap Admin
+
+The bootstrap CLI (`cmd/bootstrap`) is strictly for local development. When writing features that depend on admin permissions:
+1. Run `make db-seed` first (creates `super_admin` role).
+2. Run `make bootstrap` to create the synthetic admin user.
+3. Use the dev identity header or a valid JWT with `facility.manage` permission to call admin routes.
+
 ### Canonical PII Forbid-List
 
 The audit service maintains a canonical list of forbidden metadata keys that **must never** appear in logs, audit events, seeds, fixtures, or tests. This is the single source of truth for PII redaction:

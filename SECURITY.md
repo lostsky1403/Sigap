@@ -59,35 +59,96 @@ The foundation for authentication, authorization, and compliance auditing is now
 ### Dev identity (development only)
 Setting `SIGAP_DEV_IDENTITY=true` enables a synthetic actor for local testing when the `X-Sigap-Dev-User-ID` header is present. This **MUST NEVER be enabled in production** — the middleware fails closed when the env var is absent or not `"true"`.
 
+## Authentication Provider Architecture (Auth Provider — ✅ Completed)
+
+The API gateway now supports pluggable authentication providers via the `internal/auth.Provider` interface.
+
+### What is implemented
+- **`Provider` interface** (`Authenticate(r *http.Request) (Actor, error)`) decouples identity verification from authorization and audit layers.
+- **`DevIdentityProvider`** reads `SIGAP_DEV_IDENTITY` once at construction time; when enabled, injects a synthetic `ActorDev` with the full permission set on requests carrying `X-Sigap-Dev-User-ID`.
+- **`JWTProvider`** validates RS256/RS384/RS512 and ES256/ES384/ES512 tokens against a JWKS endpoint with a 15-minute TTL cache and stale-serving fallback. It rejects `alg=none`, validates `exp`/`nbf`/`iat`, and extracts `iss`/`aud`/`sub` using `golang-jwt/jwt/v5`.
+- **Factory** (`NewProvider`) selects the provider at boot time based on `SIGAP_AUTH_MODE` (`disabled`, `dev`, `jwt`).
+- **Config validation** is fatal at boot: invalid auth config logs an error and exits before `ListenAndServe`.
+- **Fail-closed defaults**: `SIGAP_AUTH_MODE=disabled` returns a nil provider (transparent pass-through), but `RequirePermission` still denies requests without a valid actor.
+
 ### What is NOT implemented (backlogged)
-- Real authentication (JWT, OAuth 2.0 / OIDC, sessions).
-- Cryptographic hash-chain verification (the schema stores `previous_hash` and `event_hash`; full chain validation is planned for a later compliance phase).
-- Production audit log tamper-evidence beyond best-effort append-only inserts.
+- Full OIDC discovery flow (the JWT provider accepts a raw JWKS URL; no `.well-known/openid-configuration` support yet).
+- Token refresh, logout, or session management.
+- Key rotation with graceful cutover (JWKS cache refreshes every 15 minutes; there is no forced eviction API).
 
-## Known Security Limitations (Foundation Phase)
+### Environment variables
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SIGAP_AUTH_MODE` | No | `disabled` (default), `dev`, or `jwt`. |
+| `SIGAP_AUTH_ISSUER` | For `jwt` | Expected `iss` claim. |
+| `SIGAP_AUTH_AUDIENCE` | For `jwt` | Expected `aud` claim. |
+| `SIGAP_AUTH_JWKS_URL` | No | JWKS endpoint for key retrieval. |
 
-Sigap is currently a **foundation-phase MVP**. It is **not suitable for production use with real patient data** without significant additional hardening. The following limitations are intentional out-of-scope items for the current foundation phase and will be addressed in subsequent phases:
+## Admin Boundary (Admin Boundary — ✅ Completed)
+
+Protected admin routes are now enforced by the existing RBAC permission system.
+
+### What is implemented
+- **Route registration**: `GET /api/v1/admin/facilities` requires `facility.manage` permission (exact match, no sub-path wildcard).
+- **Admin handler** (`internal/handler/admin.go`) queries facilities from the database and returns JSON. Privacy-safe audit events are logged for every access attempt.
+- **Integration tests** cover all four auth scenarios: unauthenticated → 403, wrong permission → 403, correct permission → 200, public route (`/health`) → 200.
+- **Wiring in `cmd/server/main.go`**: shared DB pool between audit service and admin handler, with nil-safe guards that skip admin route registration when the database is unreachable.
+
+### What is NOT implemented (backlogged)
+- Admin dashboard UI (web). The endpoint returns JSON only.
+- Facility mutation endpoints (POST, PUT, DELETE) — only list (GET) is available.
+- Fine-grained facility scoping (e.g., admin can only manage facilities in a specific province).
+
+## Bootstrap Admin (Bootstrap — ✅ Completed)
+
+A one-time CLI tool at `cmd/bootstrap` creates a synthetic admin user and assigns the `super_admin` role.
+
+### What is implemented
+- **Env-gated**: only runs when `SIGAP_BOOTSTRAP_ADMIN=true`; disabled by default.
+- **Idempotent**: safe to rerun; finds the existing `admin@sigap.local` user if already present.
+- **Synthetic data only**: creates `admin@sigap.local` with `display_name='Bootstrap Admin'` and `status='active'`.
+- **Role assignment**: assigns the existing `super_admin` role (which has all five permissions: `queue.generate`, `queue.read`, `facility.read`, `facility.manage`, `audit.read`).
+
+### How to run
+```bash
+make bootstrap
+```
+
+### DANGER
+- Never enable `SIGAP_BOOTSTRAP_ADMIN` in production.
+- The bootstrap user has full access. Rotate or delete it after initial setup.
+- No hardcoded secrets; `admin@sigap.local` is a synthetic email that cannot receive real mail.
+
+## Known Security Limitations (Auth & Admin Boundary Phase)
+
+Sigap is currently a **foundation-phase MVP with auth scaffolding**. It is **not suitable for production use with real patient data** without significant additional hardening. The following limitations are intentional out-of-scope items for the current phase and will be addressed in subsequent phases:
 
 ### Authentication & Authorization
-- **There is no authentication or session management.** All endpoints are public. Anyone can submit queue requests or access dashboard data.
-- **No role-based access control (RBAC).** There are no admin, operator, or patient roles.
-- Planned: OAuth 2.0 / OIDC integration, JWT-based sessions, and fine-grained RBAC for facility administrators and patients.
+- ✅ **Authentication providers exist** (dev identity, JWT with JWKS), but there is **no user-facing login flow** or password-based authentication. Production deployments must bring their own identity provider (e.g., Keycloak, Auth0, AWS Cognito).
+- ✅ **RBAC is implemented** in the database schema and middleware, but there is **no user-role management UI or API** beyond the bootstrap CLI.
+- 🔒 **Dev identity (`SIGAP_DEV_IDENTITY=true`) is development-only** and trivially bypassable if enabled in production.
 
 ### Data Protection
 - **No end-to-end encryption.** Queue submissions and SSE events travel in plaintext over HTTP.†
 - **No field-level encryption for PII/PHI.** Patient names and phone numbers are stored in the database as plaintext.†
-- **No audit logging.** Actions (who created a queue ticket, who updated a bed count) are not logged for accountability.
+- ✅ **Audit logging is implemented** (append-only, hash-chained schema) but does **not yet have cryptographic chain verification** or tamper-evidence guarantees.
 - **No data retention policies.** Old queue tickets and patient records are never purged.
-- Planned: TLS/mTLS for gRPC, field-level encryption, robust audit logging, and configurable retention.
+
+### JWT / OIDC Provider
+- The JWT provider is a **scaffold with real token validation**, but it lacks:
+  - OIDC discovery (`.well-known/openid-configuration`).
+  - Token refresh, revocation, or logout flows.
+  - Graceful key rotation beyond JWKS cache TTL (15 minutes).
+  - Audience array or multi-issuer support.
 
 ### gRPC Transport
 - **gRPC between Go API and Rust engine runs unencrypted in development.** The production CA bundle path is scaffolded but the client defaults to `insecure` when `SIGAP_GRPC_TLS` is not explicitly enabled.
 - The `SIGAP_ENGINE_FALLBACK=dev` mode uses a fake in-memory queue service with no persistence or concurrency safety for demonstration purposes only.
 - Planned: mTLS with client certificates for gRPC; strict fail-closed TLS in production.
 
-### Input Validation
+### Input Validation & Rate Limiting
 - **Basic validation only.** Phone numbers, facility IDs, and patient data receive minimal validation beyond JSON unmarshaling.
-- **No rate limiting at the API gateway.** The Rust engine has an internal concurrency guardrail, but the HTTP layer does not throttle per-IP or per-phone.
+- ✅ **Queue rate limiting exists** (2 per day per phone + facility), but there is **no global API rate limiting** (per-IP, per-user, or burst protection) at the gateway level.
 - Planned: comprehensive input validation with a rules engine; API-level rate limiting.
 
 ### Infrastructure
