@@ -132,7 +132,7 @@ jobs:
           fetch-depth: 0   # gitleaks needs full git history to scan all commits
 
       - name: Run gitleaks scan
-        uses: zricethez/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
         # gitleaks-action is free for public repos; private repos need a license.
