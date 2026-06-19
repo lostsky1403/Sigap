@@ -5,7 +5,7 @@ pub mod queue_engine {
     tonic::include_proto!("sigap.queue_engine");
 }
 
-mod engine;
+pub mod engine;
 
 use queue_engine::queue_engine_server::{QueueEngine, QueueEngineServer};
 use queue_engine::{GenerateQueueRequest, GenerateQueueResponse};
@@ -33,18 +33,19 @@ impl QueueEngine for SigapQueueEngine {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql://sigap:sigap@localhost:5432/sigap".to_string());
 
-    let pool = PgPool::connect(&database_url)
-        .await
-        .expect("failed to connect to postgres for queue engine");
+    let pool = PgPool::connect(&database_url).await?;
 
     let addr = "0.0.0.0:50051".parse()?;
     let engine = SigapQueueEngine::new(pool);
 
-    println!("sigap-queue-engine (real tx + FOR UPDATE) gRPC listening on {}", addr);
+    println!(
+        "sigap-queue-engine (real tx + FOR UPDATE) gRPC listening on {}",
+        addr
+    );
 
     Server::builder()
         .add_service(QueueEngineServer::new(engine))
@@ -53,5 +54,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-

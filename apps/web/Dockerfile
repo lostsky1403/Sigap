@@ -31,4 +31,9 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOST=0.0.0.0
 
+# Drop root: the node:alpine image ships an unprivileged "node" user (uid 1000).
+# Port 3000 is >1024 so no root is needed to bind. Limits blast radius if the
+# SvelteKit process is compromised.
+USER node
+
 CMD ["node", "build/index.js"]

@@ -2,14 +2,15 @@
 	import { onMount, onDestroy } from 'svelte';
 	import maplibregl from 'maplibre-gl';
 	import 'maplibre-gl/dist/maplibre-gl.css';
+	import type { Facility } from '../types';
 
 	// ReferralMap (mapcn-inspired interactive MapLibre + emerald/red pins)
 	// Target (full) = red pin; Alternatives (available) = emerald pin
 	// Click green pin => onSelect(fac) for one-click auto-routing / queue
 
-	export let target: any = null;           // {id, name, lat, lon, ...}
-	export let alternatives: any[] = [];     // list of alt fac with lat/lon
-	export let onSelect: (fac: any) => void = () => {};
+	export let target: Facility | null = null;
+	export let alternatives: Facility[] = [];
+	export let onSelect: (fac: Facility) => void = () => {};
 
 	let container: HTMLDivElement;
 	let map: maplibregl.Map | null = null;

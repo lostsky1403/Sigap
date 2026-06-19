@@ -1,26 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import ReferralMap from '../ReferralMap.svelte';
+	import type { Facility, QueueApiResponse, NearbyApiResponse } from '$lib/types';
 
 	// Sigap Bed Availability Dashboard
-	// Strict minimalist design: generous whitespace, single emerald accent,
-	// clean typography, high contrast, no decorative noise.
-	// Svelte 5 runes for reactivity.
-	// Now with real-time updates via SSE from Go API (triggered by Rust engine queue creation).
-
-	type Facility = {
-		id: string;
-		name: string;
-		type: 'rumah_sakit' | 'puskesmas';
-		kecamatan: string;
-		kabupatenKota: string;
-		totalBeds: number;
-		availableBeds: number;
-		lastUpdated: string;
-		shortCode: string;
-		lat?: number;
-		lon?: number;
-	};
 
 	let samples: Facility[] = $state([
 		{ id: 'f1', name: 'RSUD Kota Sehat', type: 'rumah_sakit', kecamatan: 'Sukamaju', kabupatenKota: 'Kota Bandung', totalBeds: 180, availableBeds: 42, lastUpdated: '2026-06-12T08:15:00Z', shortCode: 'RSK', lat: -6.9175, lon: 107.6191 },
@@ -50,7 +33,7 @@
 
 	// For Smart Routing modal (Peta Rujukan from Stitch design)
 	let showReferralModal = $state(false);
-	let referralAlts = $state<any[]>([]);
+	let referralAlts = $state<Facility[]>([]);
 
 	function calcOccupancy(available: number, total: number): number {
 		if (total <= 0) return 0;
@@ -67,11 +50,9 @@
 			})
 			.sort((a, b) => {
 				if (sortMode === 'name') return a.name.localeCompare(b.name, 'id');
-				if (sortMode === 'distance' && userLocation && a.lat != null && b.lat != null) {
-					const ul = userLocation!;
-					// @ts-ignore -- svelte-check/TS narrows oddly for $state + derived sort closure; lat is number post-guard
+				if (sortMode === 'distance' && userLocation && a.lat != null && a.lon != null && b.lat != null && b.lon != null) {
+					const ul = userLocation as NonNullable<typeof userLocation>;
 					const da = getDistance(ul.lat, ul.lon, a.lat, a.lon);
-					// @ts-ignore
 					const db = getDistance(ul.lat, ul.lon, b.lat, b.lon);
 					if (Math.abs(da - db) > 0.01) return da - db;
 					// tie-break: prefer higher availability (lower occupancy)
@@ -131,8 +112,8 @@
 					body: JSON.stringify(payload)
 				})
 					.then(async (res) => {
-						const json = await res.json().catch(() => ({} as any));
-						if (res.status === 429 || (json?.error && /2 antrean|batas maksimal/i.test(json.error))) {
+						const json = await res.json().catch(() => ({} as QueueApiResponse));
+						if (res.status === 429 || (json?.error && /2 antrean|batas maksimal/i.test(json.error as string))) {
 							addAntiCaloLog(fac);
 						}
 						// successes publish SSE -> applyLiveBedUpdate -> progress bars race (real-time magic)
@@ -179,20 +160,20 @@
 	}
 
 	// For referral map: alternatives with beds available (used when target penuh)
-	function getAltsFor(target: any) {
+	function getAltsFor(target: Facility) {
 		return samples.filter((f) => f.id !== target.id && f.availableBeds > 0);
 	}
 
 	// Open Smart Routing modal (per Stitch Peta Rujukan Otomatis design)
 	// Uses backend /nearby for alts if possible, else client
-	function openReferral(fac: any) {
+	function openReferral(fac: Facility) {
 		selectedFacility = fac;
 		showReferralModal = true;
 		referralAlts = [];
 		if (fac.lat != null && fac.lon != null) {
 			fetch(`/api/v1/facilities/nearby?lat=${fac.lat}&lon=${fac.lon}&exclude=${fac.id}`)
-				.then(res => res.json().catch(() => ({} as any)))
-				.then(json => {
+				.then(res => res.json().catch(() => ({} as NearbyApiResponse)))
+				.then((json: NearbyApiResponse) => {
 					if (json.success && json.data) {
 						referralAlts = json.data;
 					} else {
@@ -231,7 +212,7 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(payload)
 			});
-			const json = await res.json().catch(() => ({} as any));
+			const json = await res.json().catch(() => ({} as QueueApiResponse));
 			if (!res.ok || json.success === false) {
 				error = json.error || `Gagal mengambil antrean (HTTP ${res.status}).`;
 				if (res.status === 429 || (json?.error && /2 antrean|batas maksimal/i.test(json.error))) {
