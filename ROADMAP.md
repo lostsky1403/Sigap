@@ -2,7 +2,7 @@
 
 This document outlines the phased evolution of Sigap from its current MVP scaffolding toward a production-ready open-source healthcare superapp. Each phase links to concrete deliverables and success criteria.
 
-> **Current Status**: Identity Foundation phase completed. Auth integration (JWT/OAuth), session management, and full hash-chain verification remain backlogged.
+> **Current Status**: Auth Provider & Admin Boundary phase completed. JWT/OAuth2 session management and full external OIDC discovery remain backlogged.
 
 ---
 
@@ -72,12 +72,27 @@ This document outlines the phased evolution of Sigap from its current MVP scaffo
 
 > **These are NOT in scope for the current foundation work.** They represent the superapp vision and will be scheduled in subsequent phases.
 
-### Phase 7: Authentication & Authorization (full integration)
-- OAuth2/OIDC integration (Google, etc.)
-- JWT session management
-- Role-based access control (RBAC) with per-route policies — **foundation schema & middleware done; real enforcement backlogged**
+### Phase 7: Authentication & Authorization (Auth Provider & Admin Boundary — ✅ Completed)
+
+The auth provider interface, JWT scaffold, protected admin routes, and bootstrap CLI are now complete. Foundation RBAC and audit services from Phase 6 are leveraged for real enforcement.
+
+- [x] Pluggable `auth.Provider` interface (`internal/auth/provider.go`)
+- [x] `DevIdentityProvider` with `SIGAP_DEV_IDENTITY` gate and `X-Sigap-Dev-User-ID` header
+- [x] `JWTProvider` with JWKS cache, `alg=none` rejection, exp/iss/aud validation, permissions claim extraction
+- [x] Auth mode selection at boot (`disabled`, `dev`, `jwt`) via `SIGAP_AUTH_MODE`; fail-closed config validation
+- [x] Middleware chain: `DenyByDefault → AuthProvider → RequirePermission → mux`
+- [x] Protected admin route (`GET /api/v1/admin/facilities`) with `facility.manage` policy
+- [x] Integration tests: unauthenticated 403, wrong permission 403, correct permission 200, public 200, dev identity enabled/disabled
+- [x] Bootstrap admin CLI (`cmd/bootstrap`) env-gated, idempotent, synthetic data only
+- [x] Auth denials write privacy-safe audit events via existing audit service
+
+Backlogged for future phases:
+- Full OIDC discovery flow (`.well-known/openid-configuration`)
+- Token refresh, revocation, logout, and session management
+- OAuth2 / social login integration (Google, etc.)
 - Patient identity verification (NIK + phone)
-- Middleware audit logging for all PHI access — **foundation service & schema done; full coverage backlogged**
+- Full middleware audit coverage for every PHI access path
+- Admin dashboard UI and facility mutation endpoints (POST/PUT/DELETE)
 
 ### Phase 8: Live SATUSEHAT Integration
 - Bridge module for Kemenkes SATUSEHAT API
@@ -101,6 +116,7 @@ This document outlines the phased evolution of Sigap from its current MVP scaffo
 - Rate limiting at edge (API gateway)
 
 ### Phase 11: Audit & Compliance (full implementation)
+- [x] Privacy-safe audit logging for auth denials and queue events
 - Immutable audit trail for all PHI access — **foundation schema & basic service done**
 - Full local hash-chain append-only log verification — **schema fields present; chain validation backlogged**
 - Data retention policies
@@ -121,4 +137,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for branch conventions, commit format, an
 
 ---
 
-*Last updated: 2026-06-18*
+*Last updated: 2026-06-19*
