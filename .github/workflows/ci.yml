@@ -135,5 +135,6 @@ jobs:
         uses: gitleaks/gitleaks-action@v3
         env:
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # gitleaks-action is free for public repos; private repos need a license.
         # Exits non-zero when leaks are found, keeping the gate blocking.
