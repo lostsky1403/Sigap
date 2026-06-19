@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sigap/sigap/apps/api/internal/audit"
+	"github.com/sigap/sigap/apps/api/internal/auth"
 	"github.com/sigap/sigap/apps/api/internal/events"
 	"github.com/sigap/sigap/apps/api/internal/grpc"
 	"github.com/sigap/sigap/apps/api/internal/handler"
@@ -95,12 +96,14 @@ func main() {
 	// SIGAP_DATABASE_URL is missing or the connection fails so the
 	// server can start without a reachable PostgreSQL instance.
 	var auditSvc *audit.Service
+	var dbPool *pgxpool.Pool
 	dbURL := os.Getenv("SIGAP_DATABASE_URL")
 	if dbURL != "" {
 		pool, err := pgxpool.New(context.Background(), dbURL)
 		if err != nil {
 			slog.Warn("SIGAP_DATABASE_URL set but failed to connect; audit logging disabled", "err", err)
 		} else {
+			dbPool = pool
 			auditSvc = audit.NewService(pool)
 			slog.Info("audit logging enabled")
 		}
@@ -108,6 +111,22 @@ func main() {
 		slog.Info("SIGAP_DATABASE_URL not set; audit logging disabled")
 	}
 	qh = qh.WithAudit(auditSvc)
+
+	// Admin handler: queries facilities. Available only when DB is reachable.
+	var adminH *handler.AdminHandler
+	if dbPool != nil {
+		adminH = handler.NewAdminHandler(dbPool).WithAudit(auditSvc)
+		slog.Info("admin handler enabled")
+	}
+
+	// Load auth config and select provider.
+	authCfg, err := auth.LoadConfigFromEnv()
+	if err != nil {
+		slog.Error("invalid auth configuration; refusing to start", "err", err)
+		os.Exit(1)
+	}
+	provider := auth.NewProvider(authCfg)
+	slog.Info("auth provider configured", "mode", authCfg.Mode)
 
 	mux := http.NewServeMux()
 
@@ -153,6 +172,14 @@ func main() {
 		medicalRecordsHandler(w, r)
 	})))
 
+	// Admin endpoints: protected by facility.manage permission via RequirePermission
+	if adminH != nil {
+		mux.HandleFunc("/api/v1/admin/facilities", enableCORS(adminH.ListFacilities))
+		slog.Info("admin route registered", "path", "/api/v1/admin/facilities")
+	} else {
+		slog.Warn("admin handler skipped: no database connection")
+	}
+
 	slog.Info("sigap-api listening", "port", port,
 		"rate_limit", "2 per hari per (HP + faskes)",
 		"engine", engineAddr,
@@ -162,14 +189,14 @@ func main() {
 	// probes) are reachable; everything else gets 401. This is the seam that
 	// per-route RBAC and audit logging attach to in later phases.
 	// RequirePermission enforces per-route RequiredPolicy using the actor
-	// injected by DevIdentity. The order is:
-	//   DenyByDefault → DevIdentity → injectAudit → RequirePermission → mux.
+	// injected by the selected auth provider. The order is:
+	//   DenyByDefault → AuthProvider → injectAudit → RequirePermission → mux.
 	injectAudit := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			next.ServeHTTP(w, r.WithContext(identity.ContextWithAudit(r.Context(), auditSvc)))
 		})
 	}
-	if err := http.ListenAndServe(":"+port, router.DenyByDefault(identity.DevIdentity(injectAudit(identity.RequirePermission(mux))))); err != nil {
+	if err := http.ListenAndServe(":"+port, router.DenyByDefault(auth.Middleware(provider)(injectAudit(identity.RequirePermission(mux))))); err != nil {
 		slog.Error("server error", "err", err)
 		os.Exit(1)
 	}
