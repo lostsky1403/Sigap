@@ -178,11 +178,33 @@ func main() {
 		mux.HandleFunc("/api/v1/admin/facilities/", enableCORS(adminH.FacilitiesRouter))
 		mux.HandleFunc("/api/v1/admin/queues", enableCORS(adminH.QueuesRouter))
 		mux.HandleFunc("/api/v1/admin/queues/", enableCORS(adminH.QueuesRouter))
+		mux.HandleFunc("/api/v1/admin/service-units", enableCORS(adminH.ServiceUnitsRouter))
+		mux.HandleFunc("/api/v1/admin/service-units/", enableCORS(adminH.ServiceUnitsRouter))
+		mux.HandleFunc("/api/v1/admin/schedules", enableCORS(adminH.SchedulesRouter))
+		mux.HandleFunc("/api/v1/admin/schedules/", enableCORS(adminH.SchedulesRouter))
+		mux.HandleFunc("/api/v1/admin/appointments", enableCORS(adminH.AppointmentsRouter))
+		mux.HandleFunc("/api/v1/admin/appointments/", enableCORS(adminH.AppointmentsRouter))
 		slog.Info("admin routes registered", "paths", []string{
 			"/api/v1/admin/facilities",
 			"/api/v1/admin/facilities/",
 			"/api/v1/admin/queues",
 			"/api/v1/admin/queues/",
+			"/api/v1/admin/service-units",
+			"/api/v1/admin/service-units/",
+			"/api/v1/admin/schedules",
+			"/api/v1/admin/schedules/",
+			"/api/v1/admin/appointments",
+			"/api/v1/admin/appointments/",
+		})
+		// Public booking endpoint (no auth required)
+		bookingH := handler.NewBookingHandler(dbPool, rl)
+		bookingH.WithAudit(auditSvc)
+		bookingH.WithQueueService(svc)
+		mux.HandleFunc("/api/v1/appointments", enableCORS(bookingH.PublicAppointmentsRouter))
+		mux.HandleFunc("/api/v1/appointments/", enableCORS(bookingH.PublicAppointmentsRouter))
+		slog.Info("booking routes registered", "paths", []string{
+			"/api/v1/appointments",
+			"/api/v1/appointments/",
 		})
 	} else {
 		slog.Warn("admin handler skipped: no database connection")
