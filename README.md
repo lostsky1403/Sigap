@@ -155,6 +155,32 @@ Buka http://localhost:5173 — lihat Dashboard Ketersediaan Kasur yang rapi.
 
 Komponen dashboard dibuat dengan Svelte 5 runes, helper murni kecil, dan kode sangat mudah dibaca.
 
+### Admin API
+
+Operasional fasilitas dan antrean dilakukan melalui endpoint terpisah dengan RBAC.
+
+**Facility Administration** (`facility.read` / `facility.manage`):
+- `GET /api/v1/admin/facilities` — List semua fasilitas
+- `GET /api/v1/admin/facilities/{id}` — Detail fasilitas
+- `POST /api/v1/admin/facilities` — Buat fasilitas baru
+- `PATCH /api/v1/admin/facilities/{id}` — Update fasilitas
+- `PATCH /api/v1/admin/facilities/{id}/deactivate` — Nonaktifkan fasilitas (soft delete)
+
+Validasi: nama wajib, type enum (`rumah_sakit`, `puskesmas`), `available_beds ≤ total_beds`, dan sanitasi telepon/alamat.
+
+**Queue Operator Console** (`queue.read` / `queue.manage`):
+- `GET /api/v1/admin/queues?facility_id=` — List tiket antrean per fasilitas
+- `GET /api/v1/admin/queues/{id}` — Detail tiket
+- `PATCH /api/v1/admin/queues/{id}/status` — Update status antrean
+
+State machine: `waiting→called→in_service→completed`, plus `cancelled` dan `skipped`.
+
+**Admin UI** (`/admin`)
+- `/admin/facilities` — Manajemen fasilitas (list, create, edit, deactivate)
+- `/admin/queues` — Konsole operator antrean (status badge, transisi status)
+
+Audit event untuk setiap mutasi: `facility.created`, `facility.updated`, `facility.deactivated`, `queue.status_updated`.
+
 ## Pengembangan Selanjutnya (Sesuai Rencana)
 
 Lihat file `plan.md` di sesi (atau jalankan fase berikutnya):

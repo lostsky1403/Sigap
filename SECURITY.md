@@ -89,15 +89,30 @@ The API gateway now supports pluggable authentication providers via the `interna
 Protected admin routes are now enforced by the existing RBAC permission system.
 
 ### What is implemented
-- **Route registration**: `GET /api/v1/admin/facilities` requires `facility.manage` permission (exact match, no sub-path wildcard).
-- **Admin handler** (`internal/handler/admin.go`) queries facilities from the database and returns JSON. Privacy-safe audit events are logged for every access attempt.
-- **Integration tests** cover all four auth scenarios: unauthenticated → 403, wrong permission → 403, correct permission → 200, public route (`/health`) → 200.
+- **Route registration**: Admin facility routes require `facility.read` (GET) or `facility.manage` (POST/PATCH) permission. Admin queue routes require `queue.read` (GET) or `queue.manage` (PATCH status).
+- **Admin handler** (`internal/handler/admin.go`) queries facilities and queue tickets from the database and returns JSON. Privacy-safe audit events are logged for every access attempt.
+- **Integration tests** cover all scenarios: unauthenticated → 403, wrong permission → 403, correct permission → 200, public route (`/health`) → 200.
 - **Wiring in `cmd/server/main.go`**: shared DB pool between audit service and admin handler, with nil-safe guards that skip admin route registration when the database is unreachable.
+- **Queue operator console**: `GET /api/v1/admin/queues` and `PATCH /api/v1/admin/queues/{id}/status` with state-machine enforced transitions (`waiting→called→in_service→completed`, plus `cancelled`/`skipped`).
 
 ### What is NOT implemented (backlogged)
-- Admin dashboard UI (web). The endpoint returns JSON only.
 - Facility mutation endpoints (POST, PUT, DELETE) — only list (GET) is available.
 - Fine-grained facility scoping (e.g., admin can only manage facilities in a specific province).
+
+## Queue Operator Console Privacy (Queue Console — ✅ Completed)
+
+The queue operator console (`/api/v1/admin/queues`) is designed with **PHI minimization** as a core constraint.
+
+### What is implemented
+- **No `patient_id` exposure**: Admin queue responses never include `patient_id`. The allowed fields are strictly limited to: `id`, `facility_id`, `queue_number`, `formatted_number`, `status`, `registered_at`, `called_at`, `completed_at`.
+- **State-machine enforcement**: Status transitions are validated against an exact allow-list (`waiting→called`, `called→in_service`, `in_service→completed`, `waiting→cancelled`, `called→cancelled`, `called→skipped`). Invalid transitions return `400`.
+- **Audit events**: Every status mutation writes a `queue.status_updated` event with sanitized metadata (no patient data).
+- **RBAC enforcement**: `queue.read` for list/detail; `queue.manage` for status updates. The `operator`, `facility_admin`, and `super_admin` roles have these permissions via `rbac.sql` seed.
+
+### What is NOT implemented (backlogged)
+- Bulk status updates or batch operations.
+- Queue ticket reassignment between facilities.
+- Real-time queue updates via SSE for admin console (currently polling-based via SvelteKit UI).
 
 ## Bootstrap Admin (Bootstrap — ✅ Completed)
 
