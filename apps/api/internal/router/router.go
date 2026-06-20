@@ -30,6 +30,8 @@ var AllowList = []string{"/health", "/readyz"}
 // Adding a route here is what makes it reachable through DenyByDefault.
 var Registry = []Route{
 	{Method: http.MethodPost, Path: "/api/v1/queues/generate"},
+	{Method: http.MethodPost, Path: "/api/v1/appointments"},
+	{Method: http.MethodPost, Path: "/api/v1/appointments/", Prefix: true},
 	{Method: http.MethodGet, Path: "/api/v1/events/beds"},
 	{Method: http.MethodGet, Path: "/api/v1/facilities/nearby"},
 	{Method: http.MethodGet, Path: "/api/v1/medical-records", PHI: true, RequiredPolicy: "medical_records:read"},
@@ -41,6 +43,16 @@ var Registry = []Route{
 	{Method: http.MethodGet, Path: "/api/v1/admin/queues", RequiredPolicy: "queue.read"},
 	{Method: http.MethodGet, Path: "/api/v1/admin/queues/", Prefix: true, RequiredPolicy: "queue.read"},
 	{Method: http.MethodPatch, Path: "/api/v1/admin/queues/", Prefix: true, RequiredPolicy: "queue.manage"},
+	{Method: http.MethodGet, Path: "/api/v1/admin/service-units", RequiredPolicy: "schedule.read"},
+	{Method: http.MethodGet, Path: "/api/v1/admin/service-units/", Prefix: true, RequiredPolicy: "schedule.read"},
+	{Method: http.MethodPost, Path: "/api/v1/admin/service-units", RequiredPolicy: "schedule.manage"},
+	{Method: http.MethodPatch, Path: "/api/v1/admin/service-units/", Prefix: true, RequiredPolicy: "schedule.manage"},
+	{Method: http.MethodGet, Path: "/api/v1/admin/schedules", RequiredPolicy: "schedule.read"},
+	{Method: http.MethodGet, Path: "/api/v1/admin/schedules/", Prefix: true, RequiredPolicy: "schedule.read"},
+	{Method: http.MethodPost, Path: "/api/v1/admin/schedules", RequiredPolicy: "schedule.manage"},
+	{Method: http.MethodPatch, Path: "/api/v1/admin/schedules/", Prefix: true, RequiredPolicy: "schedule.manage"},
+	{Method: http.MethodGet, Path: "/api/v1/admin/appointments", RequiredPolicy: "appointment.read"},
+	{Method: http.MethodPatch, Path: "/api/v1/admin/appointments/", Prefix: true, RequiredPolicy: "appointment.manage"},
 }
 
 // IsAllowListed reports whether a path bypasses authorization.
