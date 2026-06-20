@@ -14,8 +14,11 @@ Tujuan: memberikan transparansi ketersediaan fasilitas kesehatan dan kemudahan p
 
 ## Fitur MVP Saat Ini
 
-- Skema database lengkap (fasilitas, pasien, tiket antrean, counter harian)
-- Endpoint utama generate nomor antrean (akan diimplementasikan penuh di Go + Rust)
+- Skema database lengkap (fasilitas, pasien, tiket antrean, counter harian, **service unit, jadwal praktik, janji temu**)
+- Endpoint utama generate nomor antrean (Go + Rust)
+- **Janji temu digital**: booking publik dengan kode check-in, validasi kapasitas slot, rate limiting by phone
+- **Check-in terintegrasi**: validasi kode check-in → gRPC GenerateQueueNumber → update status `scheduled→checked_in→queued`
+- **Admin jadwal & janji temu**: CRUD jadwal praktik, daftar & update status janji temu
 - Dashboard Ketersediaan Kasur yang clean & minimalis (Svelte 5)
 - Dukungan penuh dark mode & light mode dengan desain sistem yang disiplin
 - Arsitektur monorepo polyglot berperforma tinggi (Go + Rust + SvelteKit)
@@ -141,7 +144,25 @@ make security
      -d '{"facilityId":"f1","patient":{"fullName":"Test Pasien","phone":"081234567890"}}'
    ```
 
-Buka http://localhost:5173 — lihat Dashboard Ketersediaan Kasur yang rapi.
+Buka http://localhost:5173 — lihat Dashboard Ketersediaan Kasur, buat janji temu di `/appointments/new`, atau check-in di `/appointments/check-in`.
+
+**Booking janji temu (publik):**
+```bash
+# Buat janji temu (tanpa autentikasi)
+curl -X POST http://localhost:8080/api/v1/appointments \
+  -H "Content-Type: application/json" \
+  -d '{"facility_id":"f1","service_unit_id":"u1","appointment_time":"2026-06-22T09:00:00Z","patient_phone":"081234567890","patient_display_name":"Budi Santoso"}'
+
+# Response akan mengembalikan checkin_code (contoh: "A3B9K2")
+```
+
+**Check-in janji temu:**
+```bash
+# Check-in dengan kode (mendapat nomor antrean)
+curl -X POST http://localhost:8080/api/v1/appointments/appt-id/check-in \
+  -H "Content-Type: application/json" \
+  -d '{"checkin_code":"A3B9K2"}'
+```
 
 ## Desain Sistem UI (Strict)
 
@@ -178,25 +199,45 @@ State machine: `waiting→called→in_service→completed`, plus `cancelled` dan
 **Admin UI** (`/admin`)
 - `/admin/facilities` — Manajemen fasilitas (list, create, edit, deactivate)
 - `/admin/queues` — Konsole operator antrean (status badge, transisi status)
+- `/admin/schedules` — Manajemen jadwal praktik (list, create, edit)
+- `/admin/appointments` — Daftar janji temu dengan kontrol update status
 
-Audit event untuk setiap mutasi: `facility.created`, `facility.updated`, `facility.deactivated`, `queue.status_updated`.
+**Patient UI** (`/appointments`)
+- `/appointments/new` — Form booking janji temu publik
+- `/appointments/check-in` — Form check-in dengan kode check-in
 
-## Pengembangan Selanjutnya (Sesuai Rencana)
+Audit event untuk setiap mutasi: `facility.created`, `facility.updated`, `facility.deactivated`, `queue.status_updated`, `service_unit.created`, `service_unit.updated`, `schedule.created`, `schedule.updated`, `appointment.created`, `appointment.status_updated`, `appointment.checked_in`.
 
-Lihat file `plan.md` di sesi (atau jalankan fase berikutnya):
-- Phase 2: Implementasi penuh Go handler + gRPC client (TDD)
-- Phase 3: Rust engine dengan sqlx transaction + counter atomic + tonic server
-- Phase 4: Penyempurnaan Svelte (jika perlu)
-- Phase 5: README lengkap + dokumentasi kontribusi
+**Service Unit Administration** (`service_unit.manage`):
+- `GET /api/v1/admin/service-units` — List layanan (service unit)
+- `POST /api/v1/admin/service-units` — Buat layanan baru
+- `PATCH /api/v1/admin/service-units/{id}` — Update layanan
 
-Semua perubahan dilakukan dalam chunk <300 baris, dengan commit konvensional, dan TDD di bagian perilaku kritis.
+**Schedule Administration** (`schedule.read` / `schedule.manage`):
+- `GET /api/v1/admin/schedules` — List jadwal praktik
+- `POST /api/v1/admin/schedules` — Buat jadwal praktik
+- `PATCH /api/v1/admin/schedules/{id}` — Update jadwal praktik
+
+Validasi: `start_time < end_time`, `slot_minutes ≥ 1`, `capacity_per_slot ≥ 1`.
+
+**Appointment Administration** (`appointment.read` / `appointment.manage`):
+- `GET /api/v1/admin/appointments` — List janji temu dengan filter status
+- `PATCH /api/v1/admin/appointments/{id}/status` — Update status janji temu (state machine enforced)
+
+State machine: `scheduled→checked_in→queued→completed`, plus `cancelled` dan `no_show`.
+
+**Public Booking & Check-In** (tanpa autentikasi, rate-limited by phone):
+- `POST /api/v1/appointments` — Booking janji temu. Mengembalikan `checkin_code` (6 karakter alphanumeric, uppercase). Rate-limited 2 booking/hari per nomor telepon via `limiter.DailyLimiter`. Validasi kapasitas: jumlah booking pada slot jadwal ≤ `capacity_per_slot`.
+- `POST /api/v1/appointments/{id}/check-in` — Check-in dengan `checkin_code`. Memvalidasi kode, memanggil Rust gRPC `GenerateQueueNumber`, menyimpan `queue_ticket_id` di appointment, transisi status `scheduled→checked_in→queued`.
 
 ## Catatan Keamanan & Privasi (Penting)
 
 MVP ini **hanya untuk tujuan scaffolding dan demonstrasi**.
 
 - Jangan gunakan data pasien nyata (**never use real patient data**).
-- Belum ada autentikasi, rate limiting, atau enkripsi PII.
+- Autentikasi tersedia (dev / JWT) tetapi OIDC discovery belum diimplementasikan penuh.
+- Rate limiting aktif pada endpoint publik booking (2 per hari per nomor telepon) dan generate antrean.
+- Audit event mencatat semua mutasi dengan metadata yang disanitasi (redaksi phone/patient/name/address dari metadata keys).
 - Untuk produksi: audit keamanan, consent, minimization data, encryption at rest, dan logging yang sesuai regulasi kesehatan daerah wajib dilakukan.
 
 Lihat [`SECURITY.md`](./SECURITY.md) untuk daftar lengkap **security limitation** dan panduan pengungkapan kerentanan (responsible disclosure).
