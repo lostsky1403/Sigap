@@ -111,7 +111,7 @@ Service ports:
 
 ### Admin Endpoints (Dev Identity)
 
-The following admin endpoints require `X-Sigap-Dev-User-ID` in `dev` auth mode. The SvelteKit admin UI (`/admin/facilities` and `/admin/queues`) proxies these via same-origin `+server.ts` routes.
+The following admin endpoints require `X-Sigap-Dev-User-ID` in `dev` auth mode. The SvelteKit admin UI (`/admin/facilities`, `/admin/queues`, `/admin/schedules`, `/admin/appointments`) proxies these via same-origin `+server.ts` routes.
 
 **Facility CRUD** (needs `facility.read` / `facility.manage`):
 ```bash
@@ -155,6 +155,45 @@ curl -X PATCH http://localhost:8080/api/v1/admin/queues/a1b2c3d4/status \
   -H "Content-Type: application/json" \
   -H "X-Sigap-Dev-User-ID: dev-user-42" \
   -d '{"status":"called"}'
+```
+
+**Appointment Operator Console** (needs `appointment.read` / `appointment.manage`):
+```bash
+# List appointments with status filter
+curl "http://localhost:8080/api/v1/admin/appointments" \
+  -H "X-Sigap-Dev-User-ID: dev-user-42"
+
+# Update appointment status (state machine enforced)
+curl -X PATCH http://localhost:8080/api/v1/admin/appointments/a1b2c3d4/status \
+  -H "Content-Type: application/json" \
+  -H "X-Sigap-Dev-User-ID: dev-user-42" \
+  -d '{"status":"completed"}'
+```
+
+**Schedule Management** (needs `schedule.read` / `schedule.manage`):
+```bash
+# List schedules
+curl "http://localhost:8080/api/v1/admin/schedules" \
+  -H "X-Sigap-Dev-User-ID: dev-user-42"
+
+# Create schedule
+curl -X POST http://localhost:8080/api/v1/admin/schedules \
+  -H "Content-Type: application/json" \
+  -H "X-Sigap-Dev-User-ID: dev-user-42" \
+  -d '{"facility_id":"f1","service_unit_id":"u1","schedule_date":"2026-06-22","start_time":"08:00","end_time":"12:00","slot_minutes":30,"capacity_per_slot":2}'
+```
+
+**Public Booking** (no auth required):
+```bash
+# Book appointment (rate-limited by phone)
+curl -X POST http://localhost:8080/api/v1/appointments \
+  -H "Content-Type: application/json" \
+  -d '{"facility_id":"f1","service_unit_id":"u1","appointment_time":"2026-06-22T09:00:00Z","patient_phone":"081234567890","patient_display_name":"Budi Santoso"}'
+
+# Check-in with code (returns queue number)
+curl -X POST http://localhost:8080/api/v1/appointments/{id}/check-in \
+  -H "Content-Type: application/json" \
+  -d '{"checkin_code":"A3B9K2"}'
 ```
 
 ### 7. Verify Endpoints

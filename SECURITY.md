@@ -109,6 +109,17 @@ The queue operator console (`/api/v1/admin/queues`) is designed with **PHI minim
 - **Audit events**: Every status mutation writes a `queue.status_updated` event with sanitized metadata (no patient data).
 - **RBAC enforcement**: `queue.read` for list/detail; `queue.manage` for status updates. The `operator`, `facility_admin`, and `super_admin` roles have these permissions via `rbac.sql` seed.
 
+## Appointment Scheduling & Check-In (Appointment Module — ✅ Completed)
+
+### What is implemented
+- **Database schema**: `service_units`, `practitioners`, `practitioner_schedules`, `appointments` with forward-only migrations. Indexes on `facility_id`, `appointment_time`, `status`.
+- **Public booking API** (`POST /api/v1/appointments`): No auth required. Returns a 6-character alphanumeric `checkin_code`. Rate-limited at 2 bookings/day per phone via `limiter.DailyLimiter`. Capacity enforced: bookings per slot ≤ `capacity_per_slot`.
+- **Check-in API** (`POST /api/v1/appointments/{id}/check-in`): Validates `checkin_code`, calls Rust gRPC `GenerateQueueNumber`, stores `queue_ticket_id`, transitions status `scheduled→checked_in→queued`.
+- **State-machine enforcement**: `scheduled→checked_in→queued→completed`; `cancelled` and `no_show` allowed from `scheduled` or `checked_in`.
+- **Privacy-safe audit**: `appointment.created`, `appointment.status_updated`, `appointment.checked_in` events log only sanitized metadata. Raw phone numbers never appear in audit event metadata (redacted via canonical forbid-list: `phone`, `telepon`, `patient`, `pasien`, `name`, `nama`, etc.).
+- **Admin UI**: `/admin/schedules` (CRUD jadwal), `/admin/appointments` (list + status update), `/appointments/new` (public booking), `/appointments/check-in` (public check-in).
+- **RBAC enforcement**: `appointment.read` / `appointment.manage`, `schedule.read` / `schedule.manage` assigned to `super_admin`, `facility_admin`, and `operator` roles.
+
 ### What is NOT implemented (backlogged)
 - Bulk status updates or batch operations.
 - Queue ticket reassignment between facilities.
@@ -122,7 +133,7 @@ A one-time CLI tool at `cmd/bootstrap` creates a synthetic admin user and assign
 - **Env-gated**: only runs when `SIGAP_BOOTSTRAP_ADMIN=true`; disabled by default.
 - **Idempotent**: safe to rerun; finds the existing `admin@sigap.local` user if already present.
 - **Synthetic data only**: creates `admin@sigap.local` with `display_name='Bootstrap Admin'` and `status='active'`.
-- **Role assignment**: assigns the existing `super_admin` role (which has all five permissions: `queue.generate`, `queue.read`, `facility.read`, `facility.manage`, `audit.read`).
+- **Role assignment**: assigns the existing `super_admin` role (which has all permissions including `queue.generate`, `queue.read`, `facility.read`, `facility.manage`, `audit.read`, `appointment.read`, `appointment.manage`, `schedule.read`, `schedule.manage`).
 
 ### How to run
 ```bash
