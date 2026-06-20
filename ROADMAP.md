@@ -72,19 +72,37 @@ This document outlines the phased evolution of Sigap from its current MVP scaffo
 
 > **These are NOT in scope for the current foundation work.** They represent the superapp vision and will be scheduled in subsequent phases.
 
-### Phase 7: Authentication & Authorization (Auth Provider & Admin Boundary — ✅ Completed)
+### Phase 7: Authentication, Authorization, Facility Admin & Queue Console (Auth Provider & Admin Boundary — ✅ Completed)
 
-The auth provider interface, JWT scaffold, protected admin routes, and bootstrap CLI are now complete. Foundation RBAC and audit services from Phase 6 are leveraged for real enforcement.
+The auth provider interface, JWT scaffold, protected admin routes, facility CRUD, queue operator console, and bootstrap CLI are now complete. Foundation RBAC and audit services from Phase 6 are leveraged for real enforcement.
 
 - [x] Pluggable `auth.Provider` interface (`internal/auth/provider.go`)
 - [x] `DevIdentityProvider` with `SIGAP_DEV_IDENTITY` gate and `X-Sigap-Dev-User-ID` header
 - [x] `JWTProvider` with JWKS cache, `alg=none` rejection, exp/iss/aud validation, permissions claim extraction
 - [x] Auth mode selection at boot (`disabled`, `dev`, `jwt`) via `SIGAP_AUTH_MODE`; fail-closed config validation
 - [x] Middleware chain: `DenyByDefault → AuthProvider → RequirePermission → mux`
-- [x] Protected admin route (`GET /api/v1/admin/facilities`) with `facility.manage` policy
+- [x] **Facility Admin CRUD** (`facility.read` / `facility.manage`):
+  - [x] `GET /api/v1/admin/facilities` — list all facilities
+  - [x] `GET /api/v1/admin/facilities/{id}` — get facility detail
+  - [x] `POST /api/v1/admin/facilities` — create facility with validation
+  - [x] `PATCH /api/v1/admin/facilities/{id}` — update facility
+  - [x] `PATCH /api/v1/admin/facilities/{id}/deactivate` — soft deactivate
+  - [x] Validation: name required, type enum, `available_beds ≤ total_beds`, phone sanitization
+- [x] **Queue Operator Console** (`queue.read` / `queue.manage`):
+  - [x] `GET /api/v1/admin/queues?facility_id=` — list tickets per facility
+  - [x] `GET /api/v1/admin/queues/{id}` — get ticket detail
+  - [x] `PATCH /api/v1/admin/queues/{id}/status` — update status with state machine
+  - [x] State machine: `waiting→called→in_service→completed`, plus `cancelled`/`skipped`
+  - [x] PHI minimization: `patient_id` never exposed in admin responses
+- [x] `queue.manage` permission added via forward-only seed (`rbac.sql`)
+- [x] Privacy-safe audit events for all mutations (`facility.created`, `facility.updated`, `facility.deactivated`, `queue.status_updated`)
+- [x] **SvelteKit Admin UI**: `/admin/facilities` (list/create/edit/deactivate) and `/admin/queues` (status console with badges)
+- [x] Admin UI proxy endpoints (`+server.ts`) forwarding to Go API with dev identity headers
 - [x] Integration tests: unauthenticated 403, wrong permission 403, correct permission 200, public 200, dev identity enabled/disabled
 - [x] Bootstrap admin CLI (`cmd/bootstrap`) env-gated, idempotent, synthetic data only
 - [x] Auth denials write privacy-safe audit events via existing audit service
+- [x] `svelte-check` 0 errors, 0 warnings; `vite build` succeeds
+- [x] Go tests pass (123 tests, 12 packages), Rust tests pass, `make lint` clean, `make security` clean
 
 Backlogged for future phases:
 - Full OIDC discovery flow (`.well-known/openid-configuration`)
@@ -92,7 +110,8 @@ Backlogged for future phases:
 - OAuth2 / social login integration (Google, etc.)
 - Patient identity verification (NIK + phone)
 - Full middleware audit coverage for every PHI access path
-- Admin dashboard UI and facility mutation endpoints (POST/PUT/DELETE)
+- Fine-grained facility scoping (e.g., province-level admin)
+- Real-time queue SSE for admin console (currently polling-based)
 
 ### Phase 8: Live SATUSEHAT Integration
 - Bridge module for Kemenkes SATUSEHAT API

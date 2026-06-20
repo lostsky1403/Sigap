@@ -552,7 +552,7 @@
 	<!-- Modal Peta Rujukan Otomatis (per desain Stitch "Peta Rujukan Otomatis") -->
 	{#if showReferralModal && selectedFacility}
 		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-		<div class="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4" onclick={(e) => { if (e.currentTarget === e.target) closeReferralModal(); }}>
+		<div class="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4" role="presentation" tabindex="-1" onclick={(e) => { if (e.currentTarget === e.target) closeReferralModal(); }}>
 			<div 
 				class="bg-slate-900 rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-auto shadow-xl border border-slate-700"
 			>
