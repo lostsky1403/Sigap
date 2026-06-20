@@ -15,6 +15,7 @@ INSERT INTO roles (name, description, is_system) VALUES
 INSERT INTO permissions (key, description) VALUES
   ('queue.generate', 'Generate a new queue ticket for a citizen'),
   ('queue.read', 'Read queue ticket information'),
+  ('queue.manage', 'Manage queue status and operator actions'),
   ('facility.read', 'Read facility public data'),
   ('facility.manage', 'Update facility settings and bed counts'),
   ('audit.read', 'Query audit event logs');
@@ -24,7 +25,7 @@ WITH role_ids AS (
   SELECT id, name FROM roles WHERE name IN ('super_admin', 'facility_admin', 'operator', 'viewer')
 ),
 perm_ids AS (
-  SELECT id, key FROM permissions WHERE key IN ('queue.generate', 'queue.read', 'facility.read', 'facility.manage', 'audit.read')
+  SELECT id, key FROM permissions WHERE key IN ('queue.generate', 'queue.read', 'queue.manage', 'facility.read', 'facility.manage', 'audit.read')
 )
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM role_ids r CROSS JOIN perm_ids p
@@ -34,21 +35,21 @@ WITH role_ids AS (
   SELECT id, name FROM roles WHERE name IN ('facility_admin', 'operator', 'viewer')
 ),
 perm_ids AS (
-  SELECT id, key FROM permissions WHERE key IN ('queue.generate', 'queue.read', 'facility.read', 'facility.manage')
+  SELECT id, key FROM permissions WHERE key IN ('queue.generate', 'queue.read', 'queue.manage', 'facility.read', 'facility.manage')
 )
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM role_ids r CROSS JOIN perm_ids p
-WHERE r.name = 'facility_admin' AND p.key IN ('queue.generate', 'queue.read', 'facility.read', 'facility.manage');
+WHERE r.name = 'facility_admin' AND p.key IN ('queue.generate', 'queue.read', 'queue.manage', 'facility.read', 'facility.manage');
 
 WITH role_ids AS (
   SELECT id, name FROM roles WHERE name IN ('operator', 'viewer')
 ),
 perm_ids AS (
-  SELECT id, key FROM permissions WHERE key IN ('queue.generate', 'queue.read', 'facility.read')
+  SELECT id, key FROM permissions WHERE key IN ('queue.generate', 'queue.read', 'queue.manage', 'facility.read')
 )
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM role_ids r CROSS JOIN perm_ids p
-WHERE r.name = 'operator' AND p.key IN ('queue.generate', 'queue.read', 'facility.read');
+WHERE r.name = 'operator' AND p.key IN ('queue.generate', 'queue.read', 'queue.manage', 'facility.read');
 
 WITH role_ids AS (
   SELECT id, name FROM roles WHERE name IN ('viewer')
