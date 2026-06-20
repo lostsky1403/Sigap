@@ -109,6 +109,54 @@ Service ports:
 - gRPC: localhost:50051
 - Web (Docker): http://localhost:3000
 
+### Admin Endpoints (Dev Identity)
+
+The following admin endpoints require `X-Sigap-Dev-User-ID` in `dev` auth mode. The SvelteKit admin UI (`/admin/facilities` and `/admin/queues`) proxies these via same-origin `+server.ts` routes.
+
+**Facility CRUD** (needs `facility.read` / `facility.manage`):
+```bash
+# List all facilities
+curl http://localhost:8080/api/v1/admin/facilities \
+  -H "X-Sigap-Dev-User-ID: dev-user-42"
+
+# Get facility by ID
+curl http://localhost:8080/api/v1/admin/facilities/f1 \
+  -H "X-Sigap-Dev-User-ID: dev-user-42"
+
+# Create facility
+curl -X POST http://localhost:8080/api/v1/admin/facilities \
+  -H "Content-Type: application/json" \
+  -H "X-Sigap-Dev-User-ID: dev-user-42" \
+  -d '{"name":"RS Baru","type":"rumah_sakit","kecamatan":"Sukmajaya","kabupaten_kota":"Depok","province":"Jawa Barat","total_beds":50,"available_beds":10}'
+
+# Update facility
+curl -X PATCH http://localhost:8080/api/v1/admin/facilities/f1 \
+  -H "Content-Type: application/json" \
+  -H "X-Sigap-Dev-User-ID: dev-user-42" \
+  -d '{"name":"RS Baru Updated","total_beds":60}'
+
+# Deactivate (soft delete)
+curl -X PATCH http://localhost:8080/api/v1/admin/facilities/f1/deactivate \
+  -H "X-Sigap-Dev-User-ID: dev-user-42"
+```
+
+**Queue Operator Console** (needs `queue.read` / `queue.manage`):
+```bash
+# List queue tickets by facility
+curl "http://localhost:8080/api/v1/admin/queues?facility_id=f1" \
+  -H "X-Sigap-Dev-User-ID: dev-user-42"
+
+# Get queue ticket detail
+curl http://localhost:8080/api/v1/admin/queues/a1b2c3d4 \
+  -H "X-Sigap-Dev-User-ID: dev-user-42"
+
+# Update status (state-machine enforced)
+curl -X PATCH http://localhost:8080/api/v1/admin/queues/a1b2c3d4/status \
+  -H "Content-Type: application/json" \
+  -H "X-Sigap-Dev-User-ID: dev-user-42" \
+  -d '{"status":"called"}'
+```
+
 ### 7. Verify Endpoints
 
 ```bash
