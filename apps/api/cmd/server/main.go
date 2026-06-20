@@ -172,10 +172,18 @@ func main() {
 		medicalRecordsHandler(w, r)
 	})))
 
-	// Admin endpoints: protected by facility.manage permission via RequirePermission
+	// Admin endpoints: protected by facility.read and facility.manage permissions via RequirePermission
 	if adminH != nil {
 		mux.HandleFunc("/api/v1/admin/facilities", enableCORS(adminH.ListFacilities))
-		slog.Info("admin route registered", "path", "/api/v1/admin/facilities")
+		mux.HandleFunc("/api/v1/admin/facilities/", enableCORS(adminH.FacilitiesRouter))
+		mux.HandleFunc("/api/v1/admin/queues", enableCORS(adminH.QueuesRouter))
+		mux.HandleFunc("/api/v1/admin/queues/", enableCORS(adminH.QueuesRouter))
+		slog.Info("admin routes registered", "paths", []string{
+			"/api/v1/admin/facilities",
+			"/api/v1/admin/facilities/",
+			"/api/v1/admin/queues",
+			"/api/v1/admin/queues/",
+		})
 	} else {
 		slog.Warn("admin handler skipped: no database connection")
 	}
