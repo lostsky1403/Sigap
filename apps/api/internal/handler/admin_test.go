@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/sigap/sigap/apps/api/internal/auth"
@@ -586,4 +587,649 @@ func TestExtractQueueTicketID(t *testing.T) {
 			t.Error("expected empty for trailing slash only")
 		}
 	})
+}
+
+// --- Service unit tests ---
+
+func TestListServiceUnits(t *testing.T) {
+	// Auth boundary is exercised by TestAdminBoundary_AuthScenarios.
+	// This test validates that the handler method returns an error when DB is nil.
+	// In practice integration tests need a real DB; here we verify structural correctness.
+	h := NewAdminHandler(nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/service-units", nil)
+	rec := httptest.NewRecorder()
+
+	h.ListServiceUnits(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("ListServiceUnits with nil pool: got %d want 500", rec.Code)
+	}
+}
+
+func TestGetServiceUnit(t *testing.T) {
+	h := NewAdminHandler(nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/service-units/550e8400-e29b-41d4-a716-446655440000", nil)
+	rec := httptest.NewRecorder()
+
+	h.GetServiceUnit(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("GetServiceUnit with nil pool: got %d want 500", rec.Code)
+	}
+}
+
+func TestCreateServiceUnit(t *testing.T) {
+	h := NewAdminHandler(nil)
+	body := map[string]any{"name": "Poli Umum", "facility_id": "550e8400-e29b-41d4-a716-446655440000"}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/service-units", strings.NewReader(string(b)))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.CreateServiceUnit(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("CreateServiceUnit with nil pool: got %d want 500", rec.Code)
+	}
+}
+
+func TestUpdateServiceUnit(t *testing.T) {
+	h := NewAdminHandler(nil)
+	body := map[string]any{"name": "Poli Umum Updated"}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/service-units/550e8400-e29b-41d4-a716-446655440000", strings.NewReader(string(b)))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.UpdateServiceUnit(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("UpdateServiceUnit with nil pool: got %d want 500", rec.Code)
+	}
+}
+
+func TestValidateCreateServiceUnit(t *testing.T) {
+	validFacility := "550e8400-e29b-41d4-a716-446655440000"
+	t.Run("valid", func(t *testing.T) {
+		req := CreateServiceUnitRequest{Name: "Poli Umum", FacilityID: validFacility}
+		if err := validateCreateServiceUnit(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("valid with code", func(t *testing.T) {
+		req := CreateServiceUnitRequest{Name: "Poli Umum", FacilityID: validFacility, Code: "PU001"}
+		if err := validateCreateServiceUnit(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("missing name", func(t *testing.T) {
+		req := CreateServiceUnitRequest{Name: "   ", FacilityID: validFacility}
+		if validateCreateServiceUnit(req) == nil {
+			t.Error("expected error for empty name")
+		}
+	})
+	t.Run("name too long", func(t *testing.T) {
+		req := CreateServiceUnitRequest{Name: strings.Repeat("a", 101), FacilityID: validFacility}
+		if validateCreateServiceUnit(req) == nil {
+			t.Error("expected error for name > 100")
+		}
+	})
+	t.Run("invalid facility_id", func(t *testing.T) {
+		req := CreateServiceUnitRequest{Name: "Poli Umum", FacilityID: "not-a-uuid"}
+		if validateCreateServiceUnit(req) == nil {
+			t.Error("expected error for invalid facility_id")
+		}
+	})
+	t.Run("code too long", func(t *testing.T) {
+		req := CreateServiceUnitRequest{Name: "Poli Umum", FacilityID: validFacility, Code: strings.Repeat("a", 21)}
+		if validateCreateServiceUnit(req) == nil {
+			t.Error("expected error for code > 20")
+		}
+	})
+	t.Run("empty code ok", func(t *testing.T) {
+		req := CreateServiceUnitRequest{Name: "Poli Umum", FacilityID: validFacility, Code: ""}
+		if err := validateCreateServiceUnit(req); err != nil {
+			t.Errorf("unexpected error for empty code: %v", err)
+		}
+	})
+}
+
+func TestValidateUpdateServiceUnit(t *testing.T) {
+	validFacility := "550e8400-e29b-41d4-a716-446655440000"
+	name := "Poli Gigi"
+	code := "PG"
+	invalidFacility := "bad-uuid"
+	longCode := strings.Repeat("a", 21)
+	t.Run("valid partial", func(t *testing.T) {
+		req := UpdateServiceUnitRequest{Name: &name}
+		if err := validateUpdateServiceUnit(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("valid facility_id", func(t *testing.T) {
+		req := UpdateServiceUnitRequest{FacilityID: &validFacility}
+		if err := validateUpdateServiceUnit(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("invalid facility_id", func(t *testing.T) {
+		req := UpdateServiceUnitRequest{FacilityID: &invalidFacility}
+		if validateUpdateServiceUnit(req) == nil {
+			t.Error("expected error for invalid facility_id")
+		}
+	})
+	t.Run("empty name", func(t *testing.T) {
+		empty := ""
+		req := UpdateServiceUnitRequest{Name: &empty}
+		if validateUpdateServiceUnit(req) == nil {
+			t.Error("expected error for empty name")
+		}
+	})
+	t.Run("name too long", func(t *testing.T) {
+		long := strings.Repeat("a", 101)
+		req := UpdateServiceUnitRequest{Name: &long}
+		if validateUpdateServiceUnit(req) == nil {
+			t.Error("expected error for name > 100")
+		}
+	})
+	t.Run("code too long", func(t *testing.T) {
+		req := UpdateServiceUnitRequest{Code: &longCode}
+		if validateUpdateServiceUnit(req) == nil {
+			t.Error("expected error for code > 20")
+		}
+	})
+	t.Run("valid code", func(t *testing.T) {
+		req := UpdateServiceUnitRequest{Code: &code}
+		if err := validateUpdateServiceUnit(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("empty code ok", func(t *testing.T) {
+		empty := ""
+		req := UpdateServiceUnitRequest{Code: &empty}
+		if err := validateUpdateServiceUnit(req); err != nil {
+			t.Errorf("unexpected error for empty code: %v", err)
+		}
+	})
+}
+
+func TestExtractServiceUnitID(t *testing.T) {
+	t.Run("valid id", func(t *testing.T) {
+		id := "550e8400-e29b-41d4-a716-446655440000"
+		got := extractServiceUnitID("/api/v1/admin/service-units/" + id)
+		if got != id {
+			t.Errorf("got %s want %s", got, id)
+		}
+	})
+	t.Run("invalid uuid", func(t *testing.T) {
+		if extractServiceUnitID("/api/v1/admin/service-units/not-a-uuid") != "" {
+			t.Error("expected empty for invalid uuid")
+		}
+	})
+	t.Run("empty", func(t *testing.T) {
+		if extractServiceUnitID("/api/v1/admin/service-units/") != "" {
+			t.Error("expected empty for trailing slash only")
+		}
+	})
+}
+
+// --- Schedule handler tests ---
+
+func TestListSchedules(t *testing.T) {
+	h := NewAdminHandler(nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/schedules", nil)
+	rec := httptest.NewRecorder()
+
+	h.ListSchedules(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("ListSchedules with nil pool: got %d want 500", rec.Code)
+	}
+}
+
+func TestGetSchedule(t *testing.T) {
+	h := NewAdminHandler(nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/schedules/550e8400-e29b-41d4-a716-446655440000", nil)
+	rec := httptest.NewRecorder()
+
+	h.GetSchedule(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("GetSchedule with nil pool: got %d want 500", rec.Code)
+	}
+}
+
+func TestCreateSchedule(t *testing.T) {
+	h := NewAdminHandler(nil)
+	body := map[string]any{
+		"facility_id":       "550e8400-e29b-41d4-a716-446655440000",
+		"service_unit_id":   "550e8400-e29b-41d4-a716-446655440001",
+		"schedule_date":     "2026-12-01",
+		"start_time":        "08:00",
+		"end_time":          "16:00",
+		"slot_minutes":      30,
+		"capacity_per_slot": 5,
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/schedules", strings.NewReader(string(b)))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.CreateSchedule(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("CreateSchedule with nil pool: got %d want 500", rec.Code)
+	}
+}
+
+func TestUpdateSchedule(t *testing.T) {
+	h := NewAdminHandler(nil)
+	body := map[string]any{"slot_minutes": 60}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/schedules/550e8400-e29b-41d4-a716-446655440000", strings.NewReader(string(b)))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.UpdateSchedule(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("UpdateSchedule with nil pool: got %d want 500", rec.Code)
+	}
+}
+
+func TestValidateCreateSchedule(t *testing.T) {
+	validFacility := "550e8400-e29b-41d4-a716-446655440000"
+	validUnit := "550e8400-e29b-41d4-a716-446655440001"
+	t.Run("valid", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: validFacility, ServiceUnitID: validUnit,
+			ScheduleDate: "2026-12-01", StartTime: "08:00", EndTime: "10:00",
+			SlotMinutes: 30, CapacityPerSlot: 5,
+		}
+		if err := validateCreateSchedule(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("valid with practitioner", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: validFacility, PractitionerID: "550e8400-e29b-41d4-a716-446655440002",
+			ServiceUnitID: validUnit, ScheduleDate: "2026-12-01",
+			StartTime: "08:00", EndTime: "10:00", SlotMinutes: 30, CapacityPerSlot: 1,
+		}
+		if err := validateCreateSchedule(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("valid long time format", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: validFacility, ServiceUnitID: validUnit,
+			ScheduleDate: "2026-12-01", StartTime: "08:00:00", EndTime: "10:00:00",
+			SlotMinutes: 60, CapacityPerSlot: 5,
+		}
+		if err := validateCreateSchedule(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("invalid facility", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: "bad", ServiceUnitID: validUnit,
+			ScheduleDate: "2026-12-01", StartTime: "08:00", EndTime: "10:00",
+			SlotMinutes: 30, CapacityPerSlot: 5,
+		}
+		if validateCreateSchedule(req) == nil {
+			t.Error("expected error for invalid facility_id")
+		}
+	})
+	t.Run("invalid practitioner", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: validFacility, PractitionerID: "bad",
+			ServiceUnitID: validUnit, ScheduleDate: "2026-12-01",
+			StartTime: "08:00", EndTime: "10:00", SlotMinutes: 30, CapacityPerSlot: 5,
+		}
+		if validateCreateSchedule(req) == nil {
+			t.Error("expected error for invalid practitioner_id")
+		}
+	})
+	t.Run("missing date", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: validFacility, ServiceUnitID: validUnit,
+			ScheduleDate: "", StartTime: "08:00", EndTime: "10:00",
+			SlotMinutes: 30, CapacityPerSlot: 5,
+		}
+		if validateCreateSchedule(req) == nil {
+			t.Error("expected error for missing schedule_date")
+		}
+	})
+	t.Run("invalid date format", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: validFacility, ServiceUnitID: validUnit,
+			ScheduleDate: "12-01-2026", StartTime: "08:00", EndTime: "10:00",
+			SlotMinutes: 30, CapacityPerSlot: 5,
+		}
+		if validateCreateSchedule(req) == nil {
+			t.Error("expected error for invalid date format")
+		}
+	})
+	t.Run("missing start time", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: validFacility, ServiceUnitID: validUnit,
+			ScheduleDate: "2026-12-01", StartTime: "", EndTime: "10:00",
+			SlotMinutes: 30, CapacityPerSlot: 5,
+		}
+		if validateCreateSchedule(req) == nil {
+			t.Error("expected error for missing start_time")
+		}
+	})
+	t.Run("invalid time format", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: validFacility, ServiceUnitID: validUnit,
+			ScheduleDate: "2026-12-01", StartTime: "8:00", EndTime: "10:00",
+			SlotMinutes: 30, CapacityPerSlot: 5,
+		}
+		if validateCreateSchedule(req) == nil {
+			t.Error("expected error for invalid time format")
+		}
+	})
+	t.Run("end before start", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: validFacility, ServiceUnitID: validUnit,
+			ScheduleDate: "2026-12-01", StartTime: "10:00", EndTime: "08:00",
+			SlotMinutes: 30, CapacityPerSlot: 5,
+		}
+		if validateCreateSchedule(req) == nil {
+			t.Error("expected error for end_time <= start_time")
+		}
+	})
+	t.Run("slot not dividing", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: validFacility, ServiceUnitID: validUnit,
+			ScheduleDate: "2026-12-01", StartTime: "08:00", EndTime: "09:00",
+			SlotMinutes: 25, CapacityPerSlot: 5,
+		}
+		if validateCreateSchedule(req) == nil {
+			t.Error("expected error for slot_minutes not dividing range")
+		}
+	})
+	t.Run("slot too small", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: validFacility, ServiceUnitID: validUnit,
+			ScheduleDate: "2026-12-01", StartTime: "08:00", EndTime: "10:00",
+			SlotMinutes: 3, CapacityPerSlot: 5,
+		}
+		if validateCreateSchedule(req) == nil {
+			t.Error("expected error for slot_minutes < 5")
+		}
+	})
+	t.Run("slot too large", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: validFacility, ServiceUnitID: validUnit,
+			ScheduleDate: "2026-12-01", StartTime: "08:00", EndTime: "10:00",
+			SlotMinutes: 200, CapacityPerSlot: 5,
+		}
+		if validateCreateSchedule(req) == nil {
+			t.Error("expected error for slot_minutes > 180")
+		}
+	})
+	t.Run("zero capacity", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: validFacility, ServiceUnitID: validUnit,
+			ScheduleDate: "2026-12-01", StartTime: "08:00", EndTime: "10:00",
+			SlotMinutes: 30, CapacityPerSlot: 0,
+		}
+		if validateCreateSchedule(req) == nil {
+			t.Error("expected error for capacity_per_slot <= 0")
+		}
+	})
+	t.Run("capacity too large", func(t *testing.T) {
+		req := CreateScheduleRequest{
+			FacilityID: validFacility, ServiceUnitID: validUnit,
+			ScheduleDate: "2026-12-01", StartTime: "08:00", EndTime: "10:00",
+			SlotMinutes: 30, CapacityPerSlot: 101,
+		}
+		if validateCreateSchedule(req) == nil {
+			t.Error("expected error for capacity_per_slot > 100")
+		}
+	})
+}
+
+func TestValidateUpdateSchedule(t *testing.T) {
+	validFacility := "550e8400-e29b-41d4-a716-446655440000"
+	validUnit := "550e8400-e29b-41d4-a716-446655440001"
+	validPrac := "550e8400-e29b-41d4-a716-446655440002"
+	date := "2026-12-01"
+	start := "09:00"
+	end := "11:00"
+	slot := 60
+	cap := 10
+	active := true
+
+	t.Run("valid partial", func(t *testing.T) {
+		req := UpdateScheduleRequest{SlotMinutes: &slot}
+		if err := validateUpdateSchedule(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("valid facility_id", func(t *testing.T) {
+		req := UpdateScheduleRequest{FacilityID: &validFacility}
+		if err := validateUpdateSchedule(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("invalid facility_id", func(t *testing.T) {
+		bad := "bad"
+		req := UpdateScheduleRequest{FacilityID: &bad}
+		if validateUpdateSchedule(req) == nil {
+			t.Error("expected error for invalid facility_id")
+		}
+	})
+	t.Run("set null practitioner", func(t *testing.T) {
+		empty := ""
+		req := UpdateScheduleRequest{PractitionerID: &empty}
+		if err := validateUpdateSchedule(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("valid practitioner", func(t *testing.T) {
+		req := UpdateScheduleRequest{PractitionerID: &validPrac}
+		if err := validateUpdateSchedule(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("invalid practitioner", func(t *testing.T) {
+		bad := "not-uuid"
+		req := UpdateScheduleRequest{PractitionerID: &bad}
+		if validateUpdateSchedule(req) == nil {
+			t.Error("expected error for invalid practitioner_id")
+		}
+	})
+	t.Run("valid service_unit_id", func(t *testing.T) {
+		req := UpdateScheduleRequest{ServiceUnitID: &validUnit}
+		if err := validateUpdateSchedule(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("invalid service_unit_id", func(t *testing.T) {
+		bad := "not-uuid"
+		req := UpdateScheduleRequest{ServiceUnitID: &bad}
+		if validateUpdateSchedule(req) == nil {
+			t.Error("expected error for invalid service_unit_id")
+		}
+	})
+	t.Run("valid date", func(t *testing.T) {
+		req := UpdateScheduleRequest{ScheduleDate: &date}
+		if err := validateUpdateSchedule(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("invalid date", func(t *testing.T) {
+		bad := "13-13-2026"
+		req := UpdateScheduleRequest{ScheduleDate: &bad}
+		if validateUpdateSchedule(req) == nil {
+			t.Error("expected error for invalid date")
+		}
+	})
+	t.Run("empty date", func(t *testing.T) {
+		bad := ""
+		req := UpdateScheduleRequest{ScheduleDate: &bad}
+		if validateUpdateSchedule(req) == nil {
+			t.Error("expected error for empty date")
+		}
+	})
+	t.Run("valid times", func(t *testing.T) {
+		req := UpdateScheduleRequest{StartTime: &start, EndTime: &end}
+		if err := validateUpdateSchedule(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("invalid start_time", func(t *testing.T) {
+		bad := "9:00"
+		req := UpdateScheduleRequest{StartTime: &bad}
+		if validateUpdateSchedule(req) == nil {
+			t.Error("expected error for invalid start_time")
+		}
+	})
+	t.Run("invalid end_time", func(t *testing.T) {
+		bad := "20-00"
+		req := UpdateScheduleRequest{EndTime: &bad}
+		if validateUpdateSchedule(req) == nil {
+			t.Error("expected error for invalid end_time")
+		}
+	})
+	t.Run("end before start", func(t *testing.T) {
+		s := "12:00"
+		e := "08:00"
+		req := UpdateScheduleRequest{StartTime: &s, EndTime: &e}
+		if validateUpdateSchedule(req) == nil {
+			t.Error("expected error for end_time <= start_time")
+		}
+	})
+	t.Run("valid slot_minutes", func(t *testing.T) {
+		req := UpdateScheduleRequest{SlotMinutes: &slot}
+		if err := validateUpdateSchedule(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("invalid slot_minutes", func(t *testing.T) {
+		bad := 3
+		req := UpdateScheduleRequest{SlotMinutes: &bad}
+		if validateUpdateSchedule(req) == nil {
+			t.Error("expected error for slot_minutes < 5")
+		}
+	})
+	t.Run("valid capacity_per_slot", func(t *testing.T) {
+		req := UpdateScheduleRequest{CapacityPerSlot: &cap}
+		if err := validateUpdateSchedule(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("invalid capacity_per_slot", func(t *testing.T) {
+		bad := 0
+		req := UpdateScheduleRequest{CapacityPerSlot: &bad}
+		if validateUpdateSchedule(req) == nil {
+			t.Error("expected error for capacity_per_slot <= 0")
+		}
+	})
+	t.Run("valid is_active", func(t *testing.T) {
+		req := UpdateScheduleRequest{IsActive: &active}
+		if err := validateUpdateSchedule(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestExtractScheduleID(t *testing.T) {
+	t.Run("valid id", func(t *testing.T) {
+		id := "550e8400-e29b-41d4-a716-446655440000"
+		got := extractScheduleID("/api/v1/admin/schedules/" + id)
+		if got != id {
+			t.Errorf("got %s want %s", got, id)
+		}
+	})
+	t.Run("invalid uuid", func(t *testing.T) {
+		if extractScheduleID("/api/v1/admin/schedules/not-a-uuid") != "" {
+			t.Error("expected empty for invalid uuid")
+		}
+	})
+	t.Run("empty", func(t *testing.T) {
+		if extractScheduleID("/api/v1/admin/schedules/") != "" {
+			t.Error("expected empty for trailing slash only")
+		}
+	})
+}
+
+func TestListAppointments(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/appointments", nil)
+	rec := httptest.NewRecorder()
+	NewAdminHandler(nil).ListAppointments(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("ListAppointments with nil pool: got %d want 500", rec.Code)
+	}
+}
+
+func TestUpdateAppointmentStatus(t *testing.T) {
+	h := NewAdminHandler(nil)
+	body := map[string]any{"status": "checked_in"}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/appointments/550e8400-e29b-41d4-a716-446655440000/status", strings.NewReader(string(b)))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.UpdateAppointmentStatus(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("UpdateAppointmentStatus with nil pool: got %d want 500", rec.Code)
+	}
+}
+
+func TestExtractAppointmentID(t *testing.T) {
+	t.Run("valid id with status suffix", func(t *testing.T) {
+		id := "550e8400-e29b-41d4-a716-446655440000"
+		got := extractAppointmentID("/api/v1/admin/appointments/" + id + "/status")
+		if got != id {
+			t.Errorf("got %s want %s", got, id)
+		}
+	})
+	t.Run("valid id without suffix", func(t *testing.T) {
+		id := "550e8400-e29b-41d4-a716-446655440000"
+		got := extractAppointmentID("/api/v1/admin/appointments/" + id)
+		if got != id {
+			t.Errorf("got %s want %s", got, id)
+		}
+	})
+	t.Run("invalid uuid", func(t *testing.T) {
+		if extractAppointmentID("/api/v1/admin/appointments/not-a-uuid/status") != "" {
+			t.Error("expected empty for invalid uuid")
+		}
+	})
+	t.Run("empty", func(t *testing.T) {
+		if extractAppointmentID("/api/v1/admin/appointments/") != "" {
+			t.Error("expected empty for trailing slash only")
+		}
+	})
+}
+
+func TestIsValidAppointmentTransition(t *testing.T) {
+	tests := []struct {
+		from, to string
+		want     bool
+	}{
+		{"scheduled", "checked_in", true},
+		{"scheduled", "cancelled", true},
+		{"scheduled", "completed", false},
+		{"checked_in", "queued", true},
+		{"checked_in", "cancelled", true},
+		{"checked_in", "scheduled", false},
+		{"queued", "completed", true},
+		{"queued", "cancelled", true},
+		{"queued", "checked_in", false},
+		{"completed", "cancelled", false},
+		{"cancelled", "scheduled", false},
+		{"no_show", "scheduled", false},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s->%s", tt.from, tt.to), func(t *testing.T) {
+			got := isValidAppointmentTransition(tt.from, tt.to)
+			if got != tt.want {
+				t.Errorf("isValidAppointmentTransition(%q,%q)=%v want %v", tt.from, tt.to, got, tt.want)
+			}
+		})
+	}
 }

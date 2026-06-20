@@ -60,3 +60,54 @@ perm_ids AS (
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM role_ids r CROSS JOIN perm_ids p
 WHERE r.name = 'viewer' AND p.key IN ('queue.read', 'facility.read');
+
+-- New appointment and schedule permissions (forward-only)
+INSERT INTO permissions (key, description) VALUES
+  ('appointment.read', 'View appointments and their status'),
+  ('appointment.manage', 'Create, update, and cancel appointments; perform digital check-in'),
+  ('schedule.read', 'View practitioner schedules and availability'),
+  ('schedule.manage', 'Create and update practitioner schedules');
+
+-- Assign new permissions to super_admin
+WITH role_ids AS (
+  SELECT id, name FROM roles WHERE name IN ('super_admin')
+),
+perm_ids AS (
+  SELECT id, key FROM permissions WHERE key IN ('appointment.read', 'appointment.manage', 'schedule.read', 'schedule.manage')
+)
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM role_ids r CROSS JOIN perm_ids p
+WHERE r.name = 'super_admin';
+
+-- Assign new permissions to facility_admin
+WITH role_ids AS (
+  SELECT id, name FROM roles WHERE name IN ('facility_admin')
+),
+perm_ids AS (
+  SELECT id, key FROM permissions WHERE key IN ('appointment.read', 'appointment.manage', 'schedule.read', 'schedule.manage')
+)
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM role_ids r CROSS JOIN perm_ids p
+WHERE r.name = 'facility_admin';
+
+-- Assign new permissions to operator (read + appointment.manage only)
+WITH role_ids AS (
+  SELECT id, name FROM roles WHERE name IN ('operator')
+),
+perm_ids AS (
+  SELECT id, key FROM permissions WHERE key IN ('appointment.read', 'appointment.manage', 'schedule.read')
+)
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM role_ids r CROSS JOIN perm_ids p
+WHERE r.name = 'operator' AND p.key IN ('appointment.read', 'appointment.manage', 'schedule.read');
+
+-- Assign new permissions to viewer (read only)
+WITH role_ids AS (
+  SELECT id, name FROM roles WHERE name IN ('viewer')
+),
+perm_ids AS (
+  SELECT id, key FROM permissions WHERE key IN ('appointment.read', 'schedule.read')
+)
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM role_ids r CROSS JOIN perm_ids p
+WHERE r.name = 'viewer' AND p.key IN ('appointment.read', 'schedule.read');

@@ -44,6 +44,16 @@ func TestMatch(t *testing.T) {
 		{http.MethodGet, "/api/v1/admin/queues", true},
 		{http.MethodGet, "/api/v1/admin/queues/550e8400-e29b-41d4-a716-446655440000", true},
 		{http.MethodPatch, "/api/v1/admin/queues/550e8400-e29b-41d4-a716-446655440000/status", true},
+		{http.MethodGet, "/api/v1/admin/service-units", true},
+		{http.MethodGet, "/api/v1/admin/service-units/550e8400-e29b-41d4-a716-446655440000", true},
+		{http.MethodPost, "/api/v1/admin/service-units", true},
+		{http.MethodPatch, "/api/v1/admin/service-units/550e8400-e29b-41d4-a716-446655440000", true},
+		{http.MethodGet, "/api/v1/admin/schedules", true},
+		{http.MethodGet, "/api/v1/admin/schedules/550e8400-e29b-41d4-a716-446655440000", true},
+		{http.MethodPost, "/api/v1/admin/schedules", true},
+		{http.MethodPatch, "/api/v1/admin/schedules/550e8400-e29b-41d4-a716-446655440000", true},
+		{http.MethodGet, "/api/v1/admin/appointments", true},
+		{http.MethodPatch, "/api/v1/admin/appointments/550e8400-e29b-41d4-a716-446655440000/status", true},
 		{http.MethodGet, "/api/v1/unknown", false},
 	}
 	for _, c := range cases {

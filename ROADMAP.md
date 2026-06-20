@@ -60,11 +60,24 @@ This document outlines the phased evolution of Sigap from its current MVP scaffo
 - [x] Security, Dev Setup, and Contributing docs updated
 - [x] Go tests pass (41 tests, 10 packages), `go vet` clean
 
-### Phase 6: Final Verification & Summary
-- [ ] `make test` passes (Go + Rust)
-- [ ] Web check/build passes
-- [ ] `docker compose up -d --build` boots healthy
-- [ ] `docs/FERMENT_REPORT.md` with completed phases, commits, and next-phase backlog
+### Phase 6: Final Verification & Summary (Foundation phases complete)
+- [x] `make test` passes (Go + Rust + Web)
+- [x] Web check/build passes (`svelte-check` 0 errors)
+- [x] `docker compose up -d --build` boots healthy
+- [x] `docs/FERMENT_REPORT.md` with completed phases
+
+### Phase 7: Appointment Scheduling & Check-In Module (✅ Complete)
+- [x] Forward-only migration: `service_units`, `practitioners`, `practitioner_schedules`, `appointments` tables
+- [x] Forward-only seed: `appointment.read`, `appointment.manage`, `schedule.read`, `schedule.manage` permissions
+- [x] Admin API: `GET/POST/PATCH /api/v1/admin/service-units`, `GET/POST/PATCH /api/v1/admin/schedules`, `GET /api/v1/admin/appointments`, `PATCH /api/v1/admin/appointments/{id}/status`
+- [x] Public Booking API: `POST /api/v1/appointments` with check-in code, rate limiting by phone, capacity enforcement
+- [x] Check-in API: `POST /api/v1/appointments/{id}/check-in` validates code → gRPC GenerateQueueNumber → updates status `scheduled→checked_in→queued`
+- [x] Status transitions enforced: `scheduled→checked_in→queued→completed`, `cancelled`, `no_show`
+- [x] Privacy-safe audit: `appointment.created`, `appointment.status_updated`, `appointment.checked_in` with sanitized metadata (no raw phone)
+- [x] SvelteKit admin UI: `/admin/schedules`, `/admin/appointments` with loading/error/empty states, dark/light support
+- [x] Patient UI: `/appointments/new`, `/appointments/check-in`
+- [x] svelte-check 0 errors; production build succeeds
+- [x] All CI green (`make test`, `make lint`, `make security`)
 
 ---
 
