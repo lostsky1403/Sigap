@@ -215,56 +215,68 @@
 </div>
 
 {#if showForm}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onclick={() => showForm = false}>
-		<div class="w-full max-w-lg rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl p-6" onclick={(e) => e.stopPropagation()}>
-			<h2 class="text-lg font-semibold mb-4">{editing ? 'Edit Jadwal' : 'Jadwal Baru'}</h2>
+	<div class="fixed inset-0 z-50 flex items-center justify-center px-4">
+		<button
+			type="button"
+			class="absolute inset-0 bg-black/40 cursor-default"
+			aria-label="Tutup formulir"
+			onclick={() => (showForm = false)}
+		></button>
+		<div
+			class="relative w-full max-w-lg rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl p-6"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="schedule-form-title"
+			tabindex="-1"
+		>
+			<h2 id="schedule-form-title" class="text-lg font-semibold mb-4">{editing ? 'Edit Jadwal' : 'Jadwal Baru'}</h2>
 			<div class="space-y-3">
 				<div class="grid grid-cols-2 gap-3">
 					<div>
-						<label class="block text-xs font-medium text-slate-500 mb-1">ID Fasilitas</label>
-						<input bind:value={formFacilityId} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+						<label for="form-facility-id" class="block text-xs font-medium text-slate-500 mb-1">ID Fasilitas</label>
+						<input id="form-facility-id" bind:value={formFacilityId} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
 					</div>
 					<div>
-						<label class="block text-xs font-medium text-slate-500 mb-1">ID Layanan</label>
-						<input bind:value={formServiceUnitId} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+						<label for="form-service-unit-id" class="block text-xs font-medium text-slate-500 mb-1">ID Layanan</label>
+						<input id="form-service-unit-id" bind:value={formServiceUnitId} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
 					</div>
 				</div>
 				<div>
-					<label class="block text-xs font-medium text-slate-500 mb-1">ID Dokter (opsional)</label>
-					<input bind:value={formPractitionerId} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+					<label for="form-practitioner-id" class="block text-xs font-medium text-slate-500 mb-1">ID Dokter (opsional)</label>
+					<input id="form-practitioner-id" bind:value={formPractitionerId} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
 				</div>
 				<div class="grid grid-cols-3 gap-3">
 					<div>
-						<label class="block text-xs font-medium text-slate-500 mb-1">Tanggal</label>
-						<input type="date" bind:value={formScheduleDate} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+						<label for="form-schedule-date" class="block text-xs font-medium text-slate-500 mb-1">Tanggal</label>
+						<input id="form-schedule-date" type="date" bind:value={formScheduleDate} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
 					</div>
 					<div>
-						<label class="block text-xs font-medium text-slate-500 mb-1">Mulai</label>
-						<input type="time" bind:value={formStartTime} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+						<label for="form-start-time" class="block text-xs font-medium text-slate-500 mb-1">Mulai</label>
+						<input id="form-start-time" type="time" bind:value={formStartTime} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
 					</div>
 					<div>
-						<label class="block text-xs font-medium text-slate-500 mb-1">Selesai</label>
-						<input type="time" bind:value={formEndTime} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+						<label for="form-end-time" class="block text-xs font-medium text-slate-500 mb-1">Selesai</label>
+						<input id="form-end-time" type="time" bind:value={formEndTime} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
 					</div>
 				</div>
 				<div class="grid grid-cols-2 gap-3">
 					<div>
-						<label class="block text-xs font-medium text-slate-500 mb-1">Slot (menit)</label>
-						<input type="number" min="5" bind:value={formSlotMinutes} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+						<label for="form-slot-minutes" class="block text-xs font-medium text-slate-500 mb-1">Slot (menit)</label>
+						<input id="form-slot-minutes" type="number" min="5" bind:value={formSlotMinutes} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
 					</div>
 					<div>
-						<label class="block text-xs font-medium text-slate-500 mb-1">Kapasitas/slot</label>
-						<input type="number" min="1" bind:value={formCapacity} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+						<label for="form-capacity" class="block text-xs font-medium text-slate-500 mb-1">Kapasitas/slot</label>
+						<input id="form-capacity" type="number" min="1" bind:value={formCapacity} class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
 					</div>
 				</div>
-				<label class="flex items-center gap-2 text-sm">
-					<input type="checkbox" bind:checked={formIsActive} class="rounded" />
+				<label for="form-is-active" class="flex items-center gap-2 text-sm">
+					<input id="form-is-active" type="checkbox" bind:checked={formIsActive} class="rounded" />
 					<span class="text-slate-700 dark:text-slate-300">Aktif</span>
 				</label>
 			</div>
 			<div class="mt-6 flex justify-end gap-2">
-				<button onclick={() => { showForm = false; resetForm(); }} class="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Batal</button>
-				<button onclick={saveSchedule} disabled={busyId === 'form'} class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60">
+				<button type="button" onclick={() => { showForm = false; resetForm(); }} class="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Batal</button>
+				<button type="button" onclick={saveSchedule} disabled={busyId === 'form'} class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60">
 					{busyId === 'form' ? 'Menyimpan…' : 'Simpan'}
 				</button>
 			</div>
