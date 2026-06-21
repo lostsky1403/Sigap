@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"regexp"
@@ -18,6 +19,7 @@ import (
 	"github.com/sigap/sigap/apps/api/internal/audit"
 	"github.com/sigap/sigap/apps/api/internal/identity"
 	"github.com/sigap/sigap/apps/api/internal/limiter"
+	"github.com/sigap/sigap/apps/api/internal/notification"
 	"github.com/sigap/sigap/apps/api/internal/service"
 )
 
@@ -27,6 +29,7 @@ type BookingHandler struct {
 	audit    *audit.Service
 	limiter  *limiter.RateLimiter
 	queueSvc service.QueueService
+	notify   *notification.Service
 }
 
 // NewBookingHandler creates a handler with db pool and optional rate limiter.
@@ -195,6 +198,12 @@ func (h *BookingHandler) BookAppointment(w http.ResponseWriter, r *http.Request)
 	// Audit — sanitize: no raw phone
 	h.logBookingEvent(r, "appointment.created", "ok",
 		fmt.Sprintf("facility=%s service_unit=%s schedule=%s", req.FacilityID, req.ServiceUnitID, req.PractitionerScheduleID))
+
+	// Notification outbox trigger (fire-and-forget). We pass the
+	// booking-id and the patient contact to the enqueue helper; the
+	// helper consumes the contact transiently, computes mask + hash,
+	// and discards the raw value before any persistence or return.
+	h.fireBookingConfirmation(id, req.PatientDisplayName, phone, req.FacilityID)
 }
 
 // validateBookAppointment performs structural validation.
@@ -261,6 +270,120 @@ func strPtr(s string) *string {
 func (h *BookingHandler) WithQueueService(s service.QueueService) *BookingHandler {
 	h.queueSvc = s
 	return h
+}
+
+// WithNotificationService attaches the notification outbox service.
+// After booking and check-in, the handler fires a fire-and-forget
+// goroutine that enqueues the corresponding confirmation; the service
+// is allowed to be nil (in which case the goroutine is skipped).
+func (h *BookingHandler) WithNotificationService(s *notification.Service) *BookingHandler {
+	h.notify = s
+	return h
+}
+
+// fireBookingConfirmation enqueues a booking-confirmation notification
+// on a fire-and-forget goroutine. The HTTP response is never blocked
+// by enqueue failures; any panic in the goroutine is recovered and
+// logged without PII.
+//
+// patientName and patientPhone are transient: the notification
+// service consumes the contact, computes mask + hash, and discards the
+// raw value. patientName is NOT passed to the notification service
+// (templates use {appointment_id} / {facility_name} placeholders
+// only — never raw PII placeholders).
+func (h *BookingHandler) fireBookingConfirmation(appointmentID, patientName, patientPhone, facilityID string) {
+	if h.notify == nil {
+		return
+	}
+	apptUUID, err := uuid.Parse(appointmentID)
+	if err != nil {
+		return // ignore — appointmentID must always be a UUID, this is just defensive
+	}
+	var facUUIDPtr *uuid.UUID
+	if facilityID != "" {
+		if f, err := uuid.Parse(facilityID); err == nil {
+			facUUIDPtr = &f
+		}
+	}
+	_ = patientName // currently unused; reserved for future templates that need display-name placeholders
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Warn("notification: panic in booking-enqueue goroutine",
+					"appointment_id", apptUUID.String(), "err", fmt.Sprintf("%v", r))
+			}
+		}()
+		// Use a background context because r.Context() is cancelled
+		// when the HTTP response completes. The DB pool enforces its
+		// own timeouts.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := h.notify.Enqueue(ctx, notification.EnqueueInput{
+			FacilityID:          facUUIDPtr,
+			Channel:             notification.ChannelDev,
+			TemplateKey:         "appointment.booked.confirmation",
+			Subject:             "Konfirmasi Janji Temu Sigap",
+			BodyTemplate:        "Janji temu Anda berhasil dicatat. Kode check-in: {checkin_code}.",
+			RecipientType:       notification.RecipientPatient,
+			RecipientContact:    patientPhone,
+			RelatedResourceType: "appointment",
+			RelatedResourceID:   apptUUID.String(),
+		})
+		if err != nil {
+			slog.Warn("notification: booking enqueue failed",
+				"appointment_id", apptUUID.String(), "err", err.Error())
+		}
+	}()
+}
+
+// fireCheckInConfirmation enqueues a check-in-confirmation notification
+// on a fire-and-forget goroutine. Same fire-and-forget contract as
+// fireBookingConfirmation.
+func (h *BookingHandler) fireCheckInConfirmation(appointmentID, patientPhone, facilityID, formattedQueueNumber string) {
+	if h.notify == nil {
+		return
+	}
+	apptUUID, err := uuid.Parse(appointmentID)
+	if err != nil {
+		return
+	}
+	var facUUIDPtr *uuid.UUID
+	if facilityID != "" {
+		if f, err := uuid.Parse(facilityID); err == nil {
+			facUUIDPtr = &f
+		}
+	}
+	queueNumber := formattedQueueNumber
+	if queueNumber == "" {
+		queueNumber = "(sedang diproses)"
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Warn("notification: panic in check-in-enqueue goroutine",
+					"appointment_id", apptUUID.String(), "err", fmt.Sprintf("%v", r))
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := h.notify.Enqueue(ctx, notification.EnqueueInput{
+			FacilityID:          facUUIDPtr,
+			Channel:             notification.ChannelDev,
+			TemplateKey:         "appointment.checked_in.confirmation",
+			Subject:             "Status Check-in Sigap",
+			BodyTemplate:        "Check-in Anda berhasil. Nomor antrean: " + queueNumber + ".",
+			RecipientType:       notification.RecipientPatient,
+			RecipientContact:    patientPhone,
+			RelatedResourceType: "appointment",
+			RelatedResourceID:   apptUUID.String(),
+		})
+		if err != nil {
+			slog.Warn("notification: check-in enqueue failed",
+				"appointment_id", apptUUID.String(), "err", err.Error())
+		}
+	}()
 }
 
 // CheckIn handles POST /api/v1/appointments/{id}/check-in (public).
@@ -383,6 +506,9 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 
 	h.logBookingEvent(r, "appointment.checked_in", "ok",
 		fmt.Sprintf("facility=%s appointment=%s ticket=%s", facilityID, id, res.TicketID))
+
+	// Notification outbox trigger (fire-and-forget).
+	h.fireCheckInConfirmation(id, patientPhone, facilityID, res.FormattedNumber)
 }
 
 // PublicAppointmentsRouter dispatches public appointment endpoints.

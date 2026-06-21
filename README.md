@@ -19,6 +19,7 @@ Tujuan: memberikan transparansi ketersediaan fasilitas kesehatan dan kemudahan p
 - **Janji temu digital**: booking publik dengan kode check-in, validasi kapasitas slot, rate limiting by phone
 - **Check-in terintegrasi**: validasi kode check-in → gRPC GenerateQueueNumber → update status `scheduled→checked_in→queued`
 - **Admin jadwal & janji temu**: CRUD jadwal praktik, daftar & update status janji temu
+- **Notification outbox (dev provider)**: foundation untuk appointment/check-in confirmation. Mask + SHA-256 dedup, dev/local provider only, no real vendor. Lihat [docs/NOTIFICATIONS_REPORT.md](docs/NOTIFICATIONS_REPORT.md).
 - Dashboard Ketersediaan Kasur yang clean & minimalis (Svelte 5)
 - Dukungan penuh dark mode & light mode dengan desain sistem yang disiplin
 - Arsitektur monorepo polyglot berperforma tinggi (Go + Rust + SvelteKit)

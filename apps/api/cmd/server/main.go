@@ -19,6 +19,7 @@ import (
 	"github.com/sigap/sigap/apps/api/internal/handler"
 	"github.com/sigap/sigap/apps/api/internal/identity"
 	"github.com/sigap/sigap/apps/api/internal/limiter"
+	"github.com/sigap/sigap/apps/api/internal/notification"
 	"github.com/sigap/sigap/apps/api/internal/router"
 	"github.com/sigap/sigap/apps/api/internal/service"
 )
@@ -205,6 +206,21 @@ func main() {
 		slog.Info("booking routes registered", "paths", []string{
 			"/api/v1/appointments",
 			"/api/v1/appointments/",
+		})
+
+		// Notification outbox admin routes. Always require dev identity
+		// (the same X-Sigap-Dev-User-ID pattern as other admin routes).
+		// The notifications package is imported above; the service is
+		// constructed here so it shares the same DB pool and audit
+		// service as the rest of the admin surface.
+		notifySvc := notification.NewService(dbPool)
+		notifyH := handler.NewNotificationsHandler(notifySvc).WithAudit(auditSvc)
+		bookingH.WithNotificationService(notifySvc)
+		mux.HandleFunc("/api/v1/admin/notifications", enableCORS(notifyH.NotificationsRouter))
+		mux.HandleFunc("/api/v1/admin/notifications/", enableCORS(notifyH.NotificationsRouter))
+		slog.Info("notification routes registered", "paths", []string{
+			"/api/v1/admin/notifications",
+			"/api/v1/admin/notifications/",
 		})
 	} else {
 		slog.Warn("admin handler skipped: no database connection")
