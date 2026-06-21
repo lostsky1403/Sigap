@@ -554,6 +554,43 @@ pnpm --filter sigap-web run build
 - **Use `.env.example`** as the source of truth for required environment variables.
 - **Run `make security`** before submitting PRs.
 
+## PR Autopilot
+
+`scripts/dev/pr-autopilot.ps1` automates the safe parts of the PR
+workflow — local verification, push, PR create/reuse, CI watch, and
+review/comment summary. **Auto-merge is disabled by default** and
+requires an explicit `-MergeWhenGreen` flag.
+
+Three one-liners for the common cases:
+
+```powershell
+# 1. Dry-run local verification (no push, no gh call)
+pwsh -File scripts/dev/pr-autopilot.ps1 -VerifyOnly
+
+# 2. Push, create PR (or reuse existing), watch CI, print summary
+pwsh -File scripts/dev/pr-autopilot.ps1 `
+    -Title "fix(smoke): harden demo script" `
+    -Body  "Address WarpFix review comments."
+
+# 3. Same as 2, plus merge --squash --delete-branch IF every gate is green
+pwsh -File scripts/dev/pr-autopilot.ps1 -MergeWhenGreen
+```
+
+The script logs use `[INFO]` / `[PASS]` / `[FAIL]` / `[SKIP]` consistently
+and exit with one of these codes:
+
+| Code | Meaning |
+|------|---------|
+| `0`  | Success |
+| `1`  | Local verification failed |
+| `2`  | Environment / config error |
+| `3`  | GitHub checks failed |
+| `4`  | Review gate requires human attention |
+| `5`  | Merge refused |
+
+See [`scripts/dev/README.md`](../scripts/dev/README.md) for the full
+parameter list, examples, safety guarantees, and tool installation hints.
+
 ## Further Reading
 
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md) — PR workflow, commit conventions, code review standards
