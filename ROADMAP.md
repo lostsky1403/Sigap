@@ -85,6 +85,22 @@ This document outlines the phased evolution of Sigap from its current MVP scaffo
 
 > **These are NOT in scope for the current foundation work.** They represent the superapp vision and will be scheduled in subsequent phases.
 
+### Phase 8: Demo Readiness & Smoke Suite (✅ Completed)
+
+This stabilisation phase makes the MVP demonstrable end-to-end on a fresh
+local checkout without external services, real patient data, or a heavy
+test framework.
+
+- [x] `packages/db/seed/demo.sql` — additive, idempotent synthetic demo data (2 service units, 2 practitioners, 2 schedules tied to facility `f1`, scheduled for "tomorrow")
+- [x] `scripts/smoke/sigap-demo-smoke.ps1` — PowerShell 7+ smoke suite covering health → facility list → public booking → check-in → queue list → appointment status update
+- [x] `scripts/smoke/README.md` — invocation and troubleshooting for the smoke suite
+- [x] `docs/DEMO_FLOW.md` — canonical 10-minute demo walkthrough (prerequisites, three-terminal start, smoke suite, UI tour, troubleshooting)
+- [x] `README.md` — "Demo Ready (10 menit)" section above Quickstart
+- [x] `docs/DEV_SETUP.md` — top-of-file pointer to the demo flow
+- [x] All existing quality gates green: `go test ./...`, `cargo test`, `pnpm --filter sigap-web run check`, `govulncheck`, `cargo audit`, `gitleaks detect --source . --redact`
+- [x] No new Go/Rust/Svelte source files modified
+- [x] No destructive migrations; no new dependencies
+
 ### Phase 7: Authentication, Authorization, Facility Admin & Queue Console (Auth Provider & Admin Boundary — ✅ Completed)
 
 The auth provider interface, JWT scaffold, protected admin routes, facility CRUD, queue operator console, and bootstrap CLI are now complete. Foundation RBAC and audit services from Phase 6 are leveraged for real enforcement.

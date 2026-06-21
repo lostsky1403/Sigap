@@ -95,6 +95,37 @@ flowchart TD
 └── README.md
 ```
 
+## Demo Ready (10 menit)
+
+Sigap MVP siap di-demo-kan secara lokal tanpa layanan eksternal. Tiga URL
+utama saat stack hidup:
+
+| Layanan | URL |
+|---------|-----|
+| Web (SvelteKit) | <http://localhost:5173> |
+| API (Go) | <http://localhost:8080> |
+| gRPC (Rust) | `localhost:50051` |
+
+Tiga perintah curl untuk verifikasi cepat:
+
+```bash
+# 1. Health
+curl http://localhost:8080/health
+
+# 2. Daftar fasilitas (dev identity)
+curl http://localhost:8080/api/v1/admin/facilities \
+  -H "X-Sigap-Dev-User-ID: dev-user-42"
+
+# 3. Booking janji temu publik (mengembalikan checkin_code)
+curl -X POST http://localhost:8080/api/v1/appointments \
+  -H "Content-Type: application/json" \
+  -d '{"facility_id":"<UUID>","service_unit_id":"00000000-0000-0000-0000-00000000d001","patient_display_name":"Pasien Demo","patient_phone":"+62-555-0199","appointment_time":"2026-06-22T09:00:00Z"}'
+```
+
+Untuk alur lengkap (PowerShell-friendly, dengan smoke suite otomatis dan
+walkthrough UI admin + patient), lihat
+[`docs/DEMO_FLOW.md`](./docs/DEMO_FLOW.md).
+
 ## Quickstart (Lokal)
 
 1. Clone & install

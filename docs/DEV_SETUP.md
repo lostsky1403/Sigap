@@ -2,6 +2,10 @@
 
 This guide walks you through setting up Sigap for local development.
 
+> **Want to demo Sigap in 10 minutes?** See [`docs/DEMO_FLOW.md`](./DEMO_FLOW.md)
+> for the PowerShell-friendly happy-path walkthrough plus the
+> `scripts/smoke/sigap-demo-smoke.ps1` smoke suite.
+
 ## Prerequisites
 
 - **Go** 1.22+
