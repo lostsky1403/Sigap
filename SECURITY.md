@@ -125,6 +125,34 @@ The queue operator console (`/api/v1/admin/queues`) is designed with **PHI minim
 - Queue ticket reassignment between facilities.
 - Real-time queue updates via SSE for admin console (currently polling-based via SvelteKit UI).
 
+## Notification Outbox (Notification Foundation — ✅ Completed)
+
+A privacy-first notification foundation for appointment/check-in communication. **No real vendor is integrated** (no Twilio, WhatsApp Cloud API, SMTP, SendGrid, MessageBird, etc.) — the only delivery provider shipped is an offline, deterministic `DevProvider`. Real vendor integration is **intentionally deferred** to a later phase and is documented in [`docs/NOTIFICATIONS_REPORT.md`](docs/NOTIFICATIONS_REPORT.md).
+
+### What is implemented
+- **Forward-only schema** (`packages/db/migrations/0006_notifications.sql`): three new tables — `notification_templates`, `notification_outbox`, `notification_delivery_attempts`. No existing table, column, index, sequence, or row is modified. Indexes on `(facility_id, status, created_at)`, `(template_key, status)`, and a partial index on `(next_attempt_at) WHERE status='pending'`.
+- **RBAC additions** (additive): `notification.read`, `notification.manage`. Assigned to `super_admin` and `facility_admin` for both; `operator` and `viewer` get `notification.read` only. Enforced by the existing `RequirePermission` middleware against the `notification.manage` policy declared in `router/router.go`.
+- **Privacy model enforced at three layers**:
+  - **Go service**: `MaskPhone` / `MaskEmail` strip the bulk of digits / local-part before insert; denylist regex rejects 8+ consecutive digits in `subject` / `body_template`; raw contact is consumed transiently and goes out of scope after the call returns.
+  - **Database**: `recipient_contact_masked` is the only contact-shape column; CHECK constraints `subject !~ '[0-9]{8,}'` and `body_template !~ '[0-9]{8,}'` reject raw-phone-like digit sequences at insert time as defence-in-depth.
+  - **API**: `notification.OutboxRow` has **no** `RecipientContact` field and **no** `RecipientContactHash` field. Compile-time test `TestOutboxRowHasNoRawContactField` guarantees the struct never grows such a field.
+- **Audit sanitisation**: metadata restricted to `notification_id`, `facility_id`, `channel`, `template_key`, `status`, `outcome`. The audit sanitizer's forbidden-key list (`phone`, `nama`, `alamat`, `email`, `patient`, `pasien`, `name`) catches every accidental PII leak even if a future contributor adds an unknown key.
+- **API endpoints** (all require dev identity headers, none are public):
+  - `GET /api/v1/admin/notifications` (`notification.read`)
+  - `GET /api/v1/admin/notifications/{id}` (`notification.read`)
+  - `POST /api/v1/admin/notifications/{id}/retry` (`notification.manage`) — returns `409 Conflict` on `delivered`
+  - `POST /api/v1/admin/notifications/{id}/cancel` (`notification.manage`) — idempotent on already-cancelled, returns `409 Conflict` on `delivered`
+- **Fire-and-forget triggers**: `BookAppointment` and `CheckIn` fire a goroutine that enqueues a confirmation. The HTTP response is written **before** the goroutine launches, so a slow enqueue never blocks the patient. Enqueue failures never roll back the booking or check-in. Any panic is recovered and logged via `slog.Warn` with no PII.
+- **Dev provider is offline and deterministic**: `DevProvider` makes no network calls (no `http.Client`, no `net.Dial`, no DNS). Outcome is derived from `fnv32a(uuid) % 100` and bucketed `delivered` (< 75) vs `failed` (≥ 75). Two calls with the same outbox id always produce the same outcome.
+- **Web UI** at `/admin/notifications`: list, status badge, channel, template key, **masked** recipient, created time, retry/cancel actions. **No raw contact, hash, or PII is ever rendered to the DOM.**
+
+### What is NOT implemented (backlogged)
+- Real vendor providers (Twilio, WhatsApp Cloud API, SMTP, SendGrid, …) — intentionally deferred.
+- Outbox worker / cron / exponential-backoff scheduler — `next_attempt_at` is set but no background consumer drains pending rows yet.
+- Email / phone normalisation library (currently a hand-rolled `MaskPhone` / `MaskEmail` / `HashContact`).
+- Template `{placeholder}` substitution engine — templates are stored verbatim; placeholders in the demo seeds are illustrative.
+- Public opt-in / opt-out endpoints — explicitly out of scope per the spec.
+
 ## Bootstrap Admin (Bootstrap — ✅ Completed)
 
 A one-time CLI tool at `cmd/bootstrap` creates a synthetic admin user and assigns the `super_admin` role.
