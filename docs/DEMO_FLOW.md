@@ -25,6 +25,19 @@ mode (`SIGAP_ENGINE_FALLBACK=dev`). The smoke script's check-in step will
 fail in fallback mode because no real queue ticket is generated — see
 [§ Troubleshooting](#troubleshooting).
 
+> **Timezone notes**
+>
+> - The demo seed schedules use `CURRENT_DATE + INTERVAL '1 day'` in the
+>   **PostgreSQL server's** timezone, not the client's.
+> - The smoke script computes `appointment_time` using
+>   `(Get-Date).ToUniversalTime().Date.AddDays(1).AddHours(9)` and formats
+>   the timestamp as `yyyy-MM-ddTHH:mm:ssZ` (UTC). The API server then
+>   validates the timestamp against its own clock.
+> - If the PostgreSQL server, the API server, and your shell all use
+>   different timezone settings, `appointment_time` may appear "in the
+>   past" and the booking will return **400 — "Waktu janji temu harus di
+>   masa depan."** See [§ Troubleshooting](#troubleshooting) for fixes.
+
 ---
 
 ## 2. One-time setup
@@ -271,6 +284,40 @@ The smoke script generates a fresh random phone per run, but if you re-run
 it many times on the same day, the per-phone limit can still hit. Edit
 the script's `$phone` calculation or use the `-SkipSeed` parameter to book
 without capacity validation.
+
+### `[FAIL] public.booking` — "Waktu janji temu harus di masa depan" (past appointment)
+
+The API server rejected `appointment_time` because, in its own clock view,
+the timestamp is in the past. This is a **clock/timezone mismatch** between
+your shell, the PostgreSQL server, and/or the API server.
+
+Quick checks:
+
+```powershell
+# Compare three clocks. All three must agree within a minute or two.
+Get-Date                                                # your shell
+Invoke-RestMethod http://localhost:8080/health           # API server
+psql $env:DATABASE_URL -c "SELECT NOW() AT TIME ZONE 'UTC' AS pg_utc"   # Postgres
+```
+
+Fixes (pick one):
+
+1. **Send an explicit UTC ISO 8601 timestamp** with a `Z` suffix (the smoke
+   script already does this; do the same in ad-hoc curls):
+   `-d '{\"appointment_time\":\"2026-06-22T09:00:00Z\"}'`
+2. **Align the clocks** so PostgreSQL, the API server, and your shell all
+   run NTP-synced UTC.
+3. **Re-run after a few seconds** if the API just booted and `appointment_time`
+   is computed on the very second the API calls `time.Now().UTC()`.
+
+### `[FAIL] public.booking` — schedule slot is full
+
+The demo seed creates 3 slots per 30-minute window, so on a fresh DB you
+have 18 bookable slots (2 service units × 6 slots × 3 capacity). If you
+re-run the smoke script ~18 times the same day, capacity will be exhausted
+for that schedule. Use `-SkipSeed` to book without capacity validation,
+or remove the schedule with
+`psql $env:DATABASE_URL -c "DELETE FROM practitioner_schedules WHERE id='00000000-0000-0000-0000-00000000d021'"`.
 
 ### `pnpm install` warns about Svelte 5 + vite-plugin-svelte version
 

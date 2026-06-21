@@ -66,19 +66,54 @@ pwsh -File scripts/smoke/sigap-demo-smoke.ps1 `
 | `-DevUserId` | `dev-user-smoke` | Value of `X-Sigap-Dev-User-ID` header |
 | `-SkipSeed` | off | Skip sending `practitioner_schedule_id` (booking still works) |
 
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0`  | All smoke steps passed. Safe to treat the demo flow as green. |
+| `1`  | At least one smoke step failed (network error, non-2xx HTTP, null/missing response field, or a step assertion failed). The last block of stdout lists which step(s) `[FAIL]`. |
+| `2`  | Parameter validation failed. One or more of `-ApiBase`, `-FacilityShortCode`, `-ServiceUnitCode`, `-PractitionerScheduleId`, `-DevUserId` was empty or malformed. The script did not contact the API. |
+
+Use the exit code in CI:
+
+```powershell
+pwsh -File scripts/smoke/sigap-demo-smoke.ps1
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Smoke suite failed with exit code $LASTEXITCODE"
+    exit $LASTEXITCODE
+}
+```
+
 ## Troubleshooting
 
-- **`[FAIL] health` — connection refused** — the Go API isn't running.
-  Start it: `cd apps/api; go run ./cmd/server`.
-- **`[FAIL] admin.facilities.list` — HTTP 403** — `SIGAP_AUTH_MODE=dev` and
-  `SIGAP_DEV_IDENTITY=true` must both be set in `.env`.
-- **`[FAIL] public.booking` — invalid time** — the smoke script books at
-  09:00 UTC tomorrow; if the API server clock is far off, re-sync or change
-  the `apptTime` calculation in the script.
-- **`[FAIL] public.checkin` — daily rate limit** — the script generates a
-  fresh random phone per run (`+62-555-01xxx`). If you re-run it many times
-  on the same day, the per-phone limit can still hit. Edit the script or
-  use `-SkipSeed` to book without capacity validation.
+The four most common failures:
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `[FAIL] parameters` — exit code `2` | `-ApiBase` empty, missing scheme, or whitespace; `-PractitionerScheduleId` not a UUID; one of the other parameters empty | Pass a valid `-ApiBase http://localhost:8080` (or set `$env:SIGAP_API_BASE`); check the script header for parameter shapes |
+| `[FAIL] health` — "Network unreachable" | Go API is not running, or the wrong port | `cd apps/api; go run ./cmd/server` and confirm `:8080` is listening |
+| `[FAIL] admin.facilities.list` — HTTP 403 | Dev identity is disabled in `.env` | Set `SIGAP_AUTH_MODE=dev` and `SIGAP_DEV_IDENTITY=true`, then restart the API |
+| `[FAIL] public.booking` — "appointment_time is in the API's past" | Timezone/clock mismatch between your shell, the API server, and PostgreSQL | Send an explicit UTC timestamp (`...T09:00:00Z`); align clocks via NTP; see [`docs/DEMO_FLOW.md` § Troubleshooting](../../docs/DEMO_FLOW.md#troubleshooting) |
+
+Additional notes:
+
+- **`[FAIL] public.checkin` — Rust engine unavailable.** Start Terminal 1
+  (`cd apps/queue-engine; cargo run`). The check-in step needs the gRPC
+  server on `:50051`.
+- **`[FAIL] public.booking` — schedule slot is full.** The demo seed gives
+  you 18 bookable slots per day (2 service units × 6 slots × 3 capacity).
+  If you re-run the smoke many times the same day, capacity is exhausted.
+  Use `-SkipSeed` to book without capacity validation.
+- **`[FAIL] public.checkin` — daily rate limit (HTTP 429).** The script
+  generates a fresh random phone per run. If you re-run very rapidly on
+  the same day, the per-phone limit (3/day) can still hit.
+- **`[FAIL]` with `success=false` in body.** The HTTP status was 2xx but
+  the API wrapper reported `success=false`. The body is printed in the
+  `[FAIL]` detail; cross-reference the relevant handler in
+  `apps/api/internal/handler/`.
+- **All steps `[FAIL]` with the same `Network error`.** The `ApiBase`
+  resolved but no service is listening. Confirm the API started cleanly
+  (look for `listening on :8080` in its stdout).
 
 ## Privacy
 
@@ -87,3 +122,6 @@ pwsh -File scripts/smoke/sigap-demo-smoke.ps1 `
   range.
 - Dev identity is **local-only**. Do not run with `SIGAP_DEV_IDENTITY=true`
   in any shared environment.
+- The script never prints JWTs, passwords, or API keys. The only
+  "identifier" it logs is `DevUserId`, which is a synthetic string
+  consumed by the local `DevIdentityProvider`.
