@@ -547,6 +547,55 @@ rm -rf apps/web/.svelte-kit apps/web/build
 pnpm --filter sigap-web run build
 ```
 
+## Notification Outbox
+
+A privacy-first notification foundation for appointment/check-in communication. **No real vendor is integrated** in this milestone — the only delivery provider shipped is an offline, deterministic DevProvider. Real vendor integration (Twilio, WhatsApp Cloud API, SMTP, SendGrid, …) is intentionally deferred to a later phase; see [docs/NOTIFICATIONS_REPORT.md](NOTIFICATIONS_REPORT.md) for the full design.
+
+### Apply the notification migration
+
+The migration is forward-only. Apply it once, after the existing migrations and the RBAC seed:
+
+`powershell
+psql  -f packages/db/migrations/0006_notifications.sql
+psql  -f packages/db/seed/rbac.sql   # additive: adds notification.read / notification.manage
+`
+
+The migration creates three tables (
+otification_templates,
+otification_outbox,
+otification_delivery_attempts) and seeds two demo templates (ppointment.booked.confirmation, ppointment.checked_in.confirmation). No existing table, column, or row is modified.
+
+### Inspect the outbox
+
+`powershell
+# Most recent outbox rows (newest first). Note recipient_contact_masked:
+# the raw contact is NEVER stored or returned.
+psql  -c "SELECT id, channel, template_key, recipient_contact_masked, status, attempt_count, created_at FROM notification_outbox ORDER BY created_at DESC LIMIT 20;"
+
+# Delivery attempts (append-only audit per attempt):
+psql  -c "SELECT outbox_id, attempt_number, status, provider_response_excerpt, duration_ms FROM notification_delivery_attempts ORDER BY attempted_at DESC LIMIT 20;"
+`
+
+### Admin UI
+
+Open /admin/notifications in the SvelteKit web. The page lists outbox rows with the masked recipient, status badge, channel, template key, created time, attempts, and retry / cancel buttons where safe. The raw contact, the dedup hash, and any other PII are NEVER rendered to the DOM.
+
+### API endpoints
+
+Four protected admin endpoints (all require dev identity headers):
+
+- GET    /api/v1/admin/notifications (policy
+otification.read)
+- GET    /api/v1/admin/notifications/{id} (policy
+otification.read)
+- POST   /api/v1/admin/notifications/{id}/retry (policy
+otification.manage) — returns 409 Conflict on delivered
+- POST   /api/v1/admin/notifications/{id}/cancel (policy
+otification.manage) — idempotent on already-cancelled
+
+The privacy model is enforced at three layers (Go service → DB CHECK constraints → API struct shape). The mask + SHA-256 hash contract is documented in [docs/NOTIFICATIONS_REPORT.md](NOTIFICATIONS_REPORT.md).
+
+
 ## Security Notes
 
 - **Never use real patient data** in local development.

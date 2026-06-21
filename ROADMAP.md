@@ -155,6 +155,30 @@ Backlogged for future phases:
 - **Emergency**: Triage queue, ambulance dispatch, bed reservation
 - **Referral**: Smart routing, queue transfer, capacity alerts
 
+### Phase 9b: Notification Outbox & Patient Communication Foundation (✅ Completed)
+
+Privacy-first notification foundation for appointment/check-in communication. No real vendor is integrated in this milestone — the only delivery provider shipped is an offline, deterministic DevProvider. Real vendor integration (Twilio, WhatsApp Cloud API, SMTP, SendGrid, MessageBird, …) is intentionally deferred to a later phase.
+
+- [x] **Forward-only DB**: packages/db/migrations/0006_notifications.sql creates three tables (
+otification_templates,
+otification_outbox,
+otification_delivery_attempts). No destructive SQL; no existing rows modified.
+- [x] **RBAC additions**:
+otification.read and
+otification.manage added to packages/db/seed/rbac.sql. super_admin and acility_admin get both; operator and iewer get
+otification.read only.
+- [x] **Go service** (pps/api/internal/notification/): Service.Enqueue, Service.List, Service.GetByID, Service.Retry, Service.Cancel. Dev provider (DevProvider) is offline (no network) and deterministic.
+- [x] **Privacy model**: mask + SHA-256 dedup, denylist regex (8+ digits), DB CHECK constraints as defence-in-depth, OutboxRow struct has no RecipientContact or RecipientContactHash field (compile-time test guarantees this).
+- [x] **API endpoints**: 4 protected admin endpoints under /api/v1/admin/notifications/… — list, get, retry, cancel — gated by
+otification.read /
+otification.manage.
+- [x] **Web UI**: /admin/notifications page with masked-recipient rendering, status badges, retry/cancel actions.
+- [x] **Fire-and-forget triggers** in handler/booking.go: BookAppointment enqueues ppointment.booked.confirmation, CheckIn enqueues ppointment.checked_in.confirmation. HTTP response is never blocked by enqueue failures.
+- [x] **Audit sanitisation**: metadata keys restricted to
+otification_id, acility_id, channel, 	emplate_key, status, outcome. The audit sanitizer's forbidden-key list catches accidental PII leaks.
+- [x] **Docs**: docs/NOTIFICATIONS_REPORT.md documents the design, privacy model, dev provider, and future vendor integration seam.
+- [x] **No new external dependencies**: go.mod and package.json are unchanged.
+
 ### Phase 10: Production Deployment Hardening
 - Kubernetes manifests and Helm charts
 - TLS termination at ingress
