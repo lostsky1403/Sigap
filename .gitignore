@@ -53,3 +53,6 @@ apps/api/server
 
 
 skills-lock.json
+
+# Trae local spec artifacts
+.trae/
