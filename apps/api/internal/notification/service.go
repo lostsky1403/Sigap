@@ -155,10 +155,15 @@ WHERE id = $1`
 	return out, nil
 }
 
-// List returns the most recent N outbox rows, newest first. The
-// optional facilityID filter scopes to a single facility; pass
-// uuid.Nil to list across all facilities (requires an admin actor).
-func (s *Service) List(ctx context.Context, facilityID uuid.UUID, limit int) ([]OutboxRow, error) {
+// List returns the most recent N outbox rows, newest first, optionally
+// scoped by the filters in p. A zero-valued field on ListParams is
+// treated as "no filter"; the SQL relies on the empty/zero value to
+// short-circuit each predicate, so callers do not have to distinguish
+// "not provided" from "explicitly empty".
+//
+// The default limit is 100; values <= 0 or > 500 are clamped to 100.
+func (s *Service) List(ctx context.Context, p ListParams) ([]OutboxRow, error) {
+	limit := p.Limit
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
@@ -169,9 +174,22 @@ SELECT id, facility_id, channel, template_key, subject, body_template,
        related_resource_id, created_at, updated_at
 FROM notification_outbox
 WHERE ($1 = '00000000-0000-0000-0000-000000000000' OR facility_id = $1::uuid)
+  AND ($2 = '' OR status = $2)
+  AND ($3 = '' OR channel = $3)
+  AND ($4 = '' OR template_key = $4)
+  AND ($5::timestamptz IS NULL OR created_at >= $5)
+  AND ($6::timestamptz IS NULL OR created_at <= $6)
 ORDER BY created_at DESC
-LIMIT $2`
-	rows, err := s.pool.Query(ctx, sel, facilityID.String(), limit)
+LIMIT $7`
+	rows, err := s.pool.Query(ctx, sel,
+		p.FacilityID.String(),
+		p.Status,
+		p.Channel,
+		p.TemplateKey,
+		nullableTime(p.CreatedFrom),
+		nullableTime(p.CreatedTo),
+		limit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -193,6 +211,41 @@ LIMIT $2`
 		r.RelatedResourceType = relType
 		r.RelatedResourceID = relID
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// Summary returns a per-status count of the outbox, optionally scoped
+// to a single facility. The result map is keyed by Status string
+// ("pending", "processing", "delivered", "failed", "cancelled") and
+// always contains an entry for every declared status — statuses with
+// zero rows are reported as 0 so the UI can render the full card set
+// without a second pass.
+//
+// Pass uuid.Nil as facilityID to count across all facilities (the
+// super_admin path).
+func (s *Service) Summary(ctx context.Context, facilityID uuid.UUID) (map[string]int, error) {
+	const sel = `
+SELECT status, COUNT(*) AS count
+FROM notification_outbox
+WHERE ($1 = '00000000-0000-0000-0000-000000000000' OR facility_id = $1::uuid)
+GROUP BY status`
+	rows, err := s.pool.Query(ctx, sel, facilityID.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for _, s := range AllStatuses() {
+		out[s] = 0
+	}
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		out[status] = count
 	}
 	return out, rows.Err()
 }
@@ -304,4 +357,14 @@ func nullableString(s string) any {
 		return nil
 	}
 	return s
+}
+
+// nullableTime mirrors nullableString for time.Time: the SQL guards
+// use `IS NULL` on the parameter so a zero-value time is treated as
+// "no bound" rather than as the unix epoch.
+func nullableTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
 }

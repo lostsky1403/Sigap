@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -69,7 +70,46 @@ func (h *NotificationsHandler) ListNotifications(w http.ResponseWriter, r *http.
 		facility = parsed
 	}
 
-	rows, err := h.svc.List(r.Context(), facility, limit)
+	status := r.URL.Query().Get("status")
+	if status != "" && !isAllowedStatus(status) {
+		writeError(w, http.StatusBadRequest, "Status tidak valid.")
+		h.log(actor, "notification.list", "error", "invalid status")
+		return
+	}
+	channel := r.URL.Query().Get("channel")
+	if channel != "" && !isAllowedChannel(channel) {
+		writeError(w, http.StatusBadRequest, "Channel tidak valid.")
+		h.log(actor, "notification.list", "error", "invalid channel")
+		return
+	}
+	templateKey := strings.TrimSpace(r.URL.Query().Get("template_key"))
+	if len(templateKey) > 128 {
+		writeError(w, http.StatusBadRequest, "template_key terlalu panjang (maks 128 karakter).")
+		h.log(actor, "notification.list", "error", "template_key too long")
+		return
+	}
+	createdFrom, err := parseOptionalTime(r, "created_from")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		h.log(actor, "notification.list", "error", "invalid created_from")
+		return
+	}
+	createdTo, err := parseOptionalTime(r, "created_to")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		h.log(actor, "notification.list", "error", "invalid created_to")
+		return
+	}
+
+	rows, err := h.svc.List(r.Context(), notification.ListParams{
+		FacilityID:  facility,
+		Limit:       limit,
+		Status:      status,
+		Channel:     channel,
+		TemplateKey: templateKey,
+		CreatedFrom: createdFrom,
+		CreatedTo:   createdTo,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Gagal mengambil data notifikasi.")
 		h.log(actor, "notification.list", "error", err.Error())
@@ -77,6 +117,70 @@ func (h *NotificationsHandler) ListNotifications(w http.ResponseWriter, r *http.
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": rows})
 	h.log(actor, "notification.list", "ok", fmt.Sprintf("count=%d", len(rows)))
+}
+
+// GetNotificationSummary handles GET /api/v1/admin/notifications/summary
+// and returns aggregated per-status counts as a flat object. The shape
+// is a map[string]int keyed by status, e.g. {"pending":5,"delivered":23,...}.
+// Every declared status is always present in the response (zero when
+// no rows match), so the UI can render the full card set without a
+// second pass.
+func (h *NotificationsHandler) GetNotificationSummary(w http.ResponseWriter, r *http.Request) {
+	actor := identity.ActorFromContext(r.Context())
+
+	var facility uuid.UUID
+	if v := r.URL.Query().Get("facility_id"); v != "" {
+		parsed, err := uuid.Parse(v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "facility_id tidak valid.")
+			h.log(actor, "notification.summary", "error", "invalid facility_id")
+			return
+		}
+		facility = parsed
+	}
+
+	counts, err := h.svc.Summary(r.Context(), facility)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Gagal mengambil ringkasan notifikasi.")
+		h.log(actor, "notification.summary", "error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": counts})
+	h.log(actor, "notification.summary", "ok", "")
+}
+
+func isAllowedStatus(s string) bool {
+	for _, v := range notification.AllStatuses() {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllowedChannel(c string) bool {
+	for _, v := range notification.AllChannels() {
+		if v == c {
+			return true
+		}
+	}
+	return false
+}
+
+// parseOptionalTime reads an RFC3339 timestamp from the named query
+// parameter. An empty value yields a zero time.Time ("no bound"). An
+// invalid value returns an error with a user-friendly Indonesian
+// message — the handler maps that to a 400 response.
+func parseOptionalTime(r *http.Request, name string) (time.Time, error) {
+	v := strings.TrimSpace(r.URL.Query().Get(name))
+	if v == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("Format tanggal tidak valid. Gunakan ISO 8601 (YYYY-MM-DDTHH:mm:ssZ).")
+	}
+	return t, nil
 }
 
 // GetNotification handles GET /api/v1/admin/notifications/{id}.
@@ -177,6 +281,10 @@ func (h *NotificationsHandler) NotificationsRouter(w http.ResponseWriter, r *htt
 	case http.MethodGet:
 		if rest == "" || rest == "/" {
 			h.ListNotifications(w, r)
+			return
+		}
+		if rest == "summary" {
+			h.GetNotificationSummary(w, r)
 			return
 		}
 		id, ok := parseNotificationIDFromTail(rest)
