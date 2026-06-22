@@ -32,6 +32,6 @@ async function proxy(request: Request, path: string, method?: string): Promise<R
 
 export const GET: RequestHandler = async ({ request }) => {
 	const url = new URL(request.url);
-	const path = `/api/v1/admin/notifications${url.search}`;
+	const path = `/api/v1/admin/notifications/summary${url.search}`;
 	return proxy(request, path);
 };

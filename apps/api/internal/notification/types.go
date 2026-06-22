@@ -74,6 +74,33 @@ func (s Status) Valid() bool {
 	return false
 }
 
+// AllStatuses returns the canonical list of all Status values. It is
+// used by the admin handler to validate the ?status= query parameter
+// against a fixed allow-list — unknown values are rejected with 400.
+// The returned slice is in declaration order.
+func AllStatuses() []string {
+	return []string{
+		string(StatusPending),
+		string(StatusProcessing),
+		string(StatusDelivered),
+		string(StatusFailed),
+		string(StatusCancelled),
+	}
+}
+
+// AllChannels returns the canonical list of all Channel values. It is
+// used by the admin handler to validate the ?channel= query parameter
+// against a fixed allow-list — unknown values are rejected with 400.
+// The returned slice is in declaration order.
+func AllChannels() []string {
+	return []string{
+		string(ChannelDev),
+		string(ChannelSMS),
+		string(ChannelWhatsApp),
+		string(ChannelEmail),
+	}
+}
+
 // RecipientType is who the notification is for.
 type RecipientType string
 
@@ -138,8 +165,37 @@ type DeliveryAttemptRow struct {
 	Status                Status    `json:"status"`
 	ProviderResponseExcerpt *string `json:"provider_response_excerpt,omitempty"`
 	ErrorCode             *string    `json:"error_code,omitempty"`
-	AttemptedAt           time.Time  `json:"attempted_at"`
+	AttemptedAt           time.Time `json:"attempted_at"`
 	DurationMs            *int       `json:"duration_ms,omitempty"`
+}
+
+// ListParams is the input contract for Service.List. The zero value of
+// every field is treated as "no filter" — the SQL is built to use the
+// empty / zero value as a pass-through, so callers do not need to
+// distinguish "not provided" from "explicitly empty".
+//
+// The string fields (Status, Channel, TemplateKey) are validated by the
+// HTTP handler against the AllStatuses / AllChannels allow-lists (or
+// passed through verbatim for TemplateKey, which is a primary-key
+// equality match via pgx parameter binding). The time fields use the
+// zero value to mean "no bound" — the SQL casts them to timestamptz and
+// the IS NULL guard is checked before comparison.
+type ListParams struct {
+	FacilityID   uuid.UUID
+	Limit        int
+	Status       string
+	Channel      string
+	TemplateKey  string
+	CreatedFrom  time.Time
+	CreatedTo    time.Time
+}
+
+// SummaryItem is one row of the aggregated per-status count returned by
+// Service.Summary. The HTTP layer flattens these into a
+// map[string]int (status -> count) keyed by Status.
+type SummaryItem struct {
+	Status string
+	Count  int
 }
 
 // Domain-level errors. The HTTP handler maps these to status codes.
