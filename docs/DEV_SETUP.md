@@ -595,6 +595,62 @@ otification.manage) — idempotent on already-cancelled
 
 The privacy model is enforced at three layers (Go service → DB CHECK constraints → API struct shape). The mask + SHA-256 hash contract is documented in [docs/NOTIFICATIONS_REPORT.md](NOTIFICATIONS_REPORT.md).
 
+### Notification Worker (manual run)
+
+The notification worker drains pending rows from `notification_outbox`
+and delivers them through `DevProvider`. It is shipped in this milestone
+as a separate Go binary (`apps/api/cmd/notification-worker/`) but is
+**not** started by `docker compose up`. You must run it manually.
+
+This worker does not start automatically with `docker compose up`. You
+must run it manually.
+
+Uses DevProvider only (offline, deterministic). No real SMS/WhatsApp/email.
+
+#### Two execution modes
+
+**Loop mode (daemon)** — poll periodically until interrupted:
+
+```bash
+SIGAP_NOTIFICATION_WORKER_ENABLED=true \
+SIGAP_NOTIFICATION_WORKER_ONCE=false \
+SIGAP_DATABASE_URL="postgresql://sigap:sigap@localhost:5432/sigap" \
+  go run ./cmd/notification-worker
+```
+
+**ONCE mode (one-shot)** — drain pending rows once and exit (useful for
+smoke tests and CI):
+
+```bash
+SIGAP_NOTIFICATION_WORKER_ONCE=true \
+SIGAP_DATABASE_URL="postgresql://sigap:sigap@localhost:5432/sigap" \
+  go run ./cmd/notification-worker
+```
+
+Or via Makefile:
+
+```bash
+make dev-notification-worker
+```
+
+#### Environment variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SIGAP_DATABASE_URL` | Yes | — | Connection string (same as the API) |
+| `SIGAP_NOTIFICATION_WORKER_ENABLED` | No | `true` | Set to `false` to disable the loop tick (ONCE mode is unaffected) |
+| `SIGAP_NOTIFICATION_WORKER_ONCE` | No | `false` | Set to `true` to drain once and exit instead of looping |
+| `SIGAP_NOTIFICATION_WORKER_INTERVAL_SECONDS` | No | `30` | Loop tick interval (ignored in ONCE mode) |
+| `SIGAP_NOTIFICATION_WORKER_BATCH_SIZE` | No | `25` | Maximum rows claimed per tick |
+
+#### What the worker logs
+
+The worker logs only `notification_id`, `template_key`, `status`, and
+`attempt_number`. It never logs the raw recipient contact, the dedup
+hash, or the rendered message body. See
+[docs/NOTIFICATIONS_REPORT.md](NOTIFICATIONS_REPORT.md) for the full
+claim strategy, backoff schedule, and privacy model.
+
 
 ## Security Notes
 

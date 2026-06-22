@@ -44,13 +44,19 @@ testable, and free of secrets.
                                           │   subject, body_template,  │
                                           │   attempt_count=0          │
                                           └──────────┬────────────────┘
-                                                     │
-                                          (future worker / cron —
-                                           intentionally NOT shipped)
-                                                     │
-                                                     ▼
-                                          ┌────────────────────────────┐
-                                          │ DevProvider.Deliver        │
+                                                      │
+                                           ┌────────────────────────────┐
+                                           │ notification-worker        │
+                                           │ (apps/api/cmd/             │
+                                           │  notification-worker/)     │
+                                           │  - FOR UPDATE SKIP LOCKED  │
+                                           │  - MaxAttempts=3           │
+                                           │  - backoff 1m→5m→15m       │
+                                           └──────────┬─────────────────┘
+                                                      │
+                                                      ▼
+                                           ┌────────────────────────────┐
+                                           │ DevProvider.Deliver        │
                                           │   - no network call         │
                                           │   - deterministic outcome  │
                                           │     on UUID hash            │
@@ -61,10 +67,15 @@ testable, and free of secrets.
                                           └────────────────────────────┘
 ```
 
-The future worker (cron / queue consumer) that drains pending rows is
-**not** shipped in this milestone. The dev provider is invoked
-synchronously by future code; in this milestone the dev provider exists
-only as a deterministic helper that is exercised by tests.
+The notification worker drains pending rows out of `notification_outbox` in
+this milestone. It is a separate binary under
+`apps/api/cmd/notification-worker/` and depends on the existing
+`internal/notification` package (DevProvider included). The worker ships
+in this PR with DevProvider only; no real vendor provider is wired.
+Execution is manual via `go run ./cmd/notification-worker` — there is no
+docker-compose service for the worker in this PR. See the **Notification
+Worker** subsection below for the full claim strategy, backoff schedule,
+and privacy guards.
 
 ---
 
@@ -249,6 +260,162 @@ migration.
 
 ---
 
+## Notification Worker
+
+The notification worker is shipped in this milestone as a separate binary
+under `apps/api/cmd/notification-worker/`. It depends on the existing
+`internal/notification` package and uses `DevProvider.Deliver` for all
+delivery in this PR. There is no real vendor wired in this PR and no
+external network call is made.
+
+### Architecture
+
+- Separate CLI binary: `apps/api/cmd/notification-worker/main.go`.
+- Shares the existing `internal/notification` package (Service,
+  DevProvider, renderer).
+- Two execution modes:
+  - **Loop mode (daemon)**: poll every `SIGAP_NOTIFICATION_WORKER_INTERVAL_SECONDS` seconds.
+  - **ONCE mode (one-shot)**: drain pending rows once and exit.
+- Reads `SIGAP_DATABASE_URL` (same as the API); batch size controlled by
+  `SIGAP_NOTIFICATION_WORKER_BATCH_SIZE`.
+
+### Claim strategy
+
+- Uses `SELECT ... FOR UPDATE SKIP LOCKED` against
+  `notification_outbox WHERE status = 'pending' AND next_attempt_at <= now()`,
+  ordered by `next_attempt_at ASC`.
+- Sets `status = 'processing'` and increments `attempt_count` inside the
+  same transaction so concurrent workers cannot double-deliver the same
+  row.
+- Commits the claim; only then calls the provider.
+
+### Retry / backoff
+
+- `MaxAttempts = 3` (constant, not configurable per template in this PR).
+- Backoff schedule on transient failure: `1 minute → 5 minutes → 15 minutes`,
+  applied by updating `next_attempt_at` via `scheduleRetry()`.
+- After the third failure, the row is marked `failed` (terminal).
+
+### Status state machine
+
+`pending → processing → delivered | failed` (terminal). `cancelled` rows
+are skipped (already terminal). `processing` rows are not picked up by
+the next poll until `next_attempt_at` elapses again.
+
+### Delivery
+
+- The worker calls `DevProvider.Deliver(...)` only. No `http.Client`,
+  `net.Dial`, DNS resolver, or external socket is opened.
+- The dev provider's deterministic outcome (`fnv32a(uuid) % 100`, bucketed
+  `delivered` < 75 / `failed` >= 75) is recorded in
+  `notification_delivery_attempts` and reflected on the outbox row.
+
+### Privacy guards
+
+- Logs include only `notification_id`, `template_key`, `status`,
+  `attempt_number`, and the rendered outcome — never the recipient
+  contact, the dedup hash, or the rendered message body.
+- The recipient contact exists only inside `DevProvider.Deliver` as a
+  function-local variable (already masked / hashed upstream by the
+  service that enqueued the row). The worker never sees the raw
+  contact.
+
+### Execution
+
+- Manual: `cd apps/api && go run ./cmd/notification-worker`.
+- No docker-compose service for the worker in this PR.
+- Safe to run multiple instances locally; `FOR UPDATE SKIP LOCKED`
+  prevents duplicate work. A production deployment should still use a
+  single instance per environment until the rate limiter / dedup model
+  is extended.
+
+---
+
+## Template Renderer
+
+The template renderer (`apps/api/internal/notification/renderer.go`)
+performs `{placeholder}` substitution for the body_template. It is
+**not** `text/template`; it is a hand-rolled, deliberately boring
+substitution engine with a closed allow-list and multiple pre-flight /
+post-flight guards.
+
+### Signature
+
+```go
+func RenderTemplate(tpl string, vars map[string]string) (string, error)
+```
+
+### Closed allow-list (8 variables)
+
+| Variable           | Used by                                    |
+|--------------------|--------------------------------------------|
+| `appointment_code` | seeded confirmation templates              |
+| `appointment_time` | seeded confirmation templates              |
+| `checkin_code`     | seeded check-in confirmation template      |
+| `checked_in_at`    | seeded check-in confirmation template      |
+| `facility_name`    | both seeded templates                      |
+| `patient_name`     | both seeded templates                      |
+| `queue_number`     | seeded check-in confirmation template      |
+| `template_key`     | both seeded templates (audit-friendly)     |
+
+The allow-list matches the `{placeholder}` occurrences used by the demo
+seed templates. Adding a new variable requires editing the allow-list
+intentionally; unknown keys are rejected before any substitution.
+
+### Pre-flight checks
+
+1. **Allow-list check**: every key in `vars` must be in the 8-element
+   allow-list. A key like `raw_phone` is rejected with
+   `ErrUnsafeVariable` before any substitution occurs.
+2. **Placeholder completeness**: every `{placeholder}` occurrence in
+   `tpl` must have a matching key in `vars`. Otherwise
+   `ErrMissingPlaceholder` is returned.
+3. **Empty template**: an empty `tpl` returns `ErrEmptyTemplate`.
+
+### Substitution
+
+- Regex `{[a-z_]{1,64}}` (placeholder names are lowercase + underscore,
+  1..64 chars).
+- Pure string replacement; no expression evaluation, no logic, no I/O.
+
+### Post-check
+
+- The rendered output is scanned for any run of **10 or more
+  consecutive digits**. If found, the renderer returns
+  `ErrRenderedOutputContainsRawDigits`. This is a phone-number guard:
+  even if an upstream caller accidentally passed an unmasked contact
+  via a variable, the post-check blocks the rendered message from
+  ever being delivered.
+
+### Domain errors
+
+```
+ErrMissingPlaceholder                  — tpl references an unknown placeholder
+ErrUnsafeVariable                      — vars contains a key not in the allow-list
+ErrRenderedOutputContainsRawDigits     — rendered body has 10+ consecutive digits
+ErrEmptyTemplate                       — tpl is empty
+```
+
+### Why hand-rolled and not `text/template`
+
+`text/template` was explicitly avoided to keep the surface area
+minimal and to prevent accidental logic injection (e.g., a
+`{{.Env}}`-style construct slipping through). The renderer is a pure
+function with no globals, no I/O, and no file access.
+
+### Privacy and security model (renderer)
+
+| Guard                              | Where applied   | What it blocks                                  |
+|------------------------------------|-----------------|-------------------------------------------------|
+| Allow-list of 8 variable names     | pre-flight      | Unknown keys (e.g. `raw_phone`, `recipient_*`)  |
+| Placeholder completeness check     | pre-flight      | Half-substituted output leaking template source |
+| Empty template rejection           | pre-flight      | Empty / blank messages                          |
+| 10+ consecutive digits post-check  | post-substitution | Raw phone number, raw NIK, raw numeric PII    |
+| Pure function, no I/O              | runtime         | Side channels, file system, network             |
+| No `text/template` evaluation      | design choice   | Expression injection, control flow injection    |
+
+---
+
 ## 8. Inspecting the outbox locally
 
 After applying the migration and the seed:
@@ -282,18 +449,22 @@ You should see rows whose `recipient_contact_masked` is `+62••••7890`,
 
 ## 9. Future vendor integration (intentionally deferred)
 
-The seam is already in place. A future phase adds a real provider by:
+The seam is already in place. The notification worker (see **Notification
+Worker** above) closes the execution gap in this PR: it drains pending
+rows and invokes the provider. What is still deferred is the **provider
+integration** itself — no real vendor is wired. A future phase adds a
+real provider by:
 
 1. Adding `apps/api/internal/notification/<vendor>.go` with a struct that
-   implements `Provider` and is constructor-injected in `cmd/server/main.go`.
+   implements `Provider` and is constructor-injected in
+   `cmd/server/main.go` and `cmd/notification-worker/main.go`.
 2. Adding the vendor's API key as a config value (never committed;
    read from env or secret manager).
-3. Implementing a worker (cron / queue consumer) that drains
-   `notification_outbox WHERE status='pending'` and calls
-   `provider.Deliver(...)`. The partial index on `next_attempt_at`
-   already exists for this.
-4. Wiring exponential-backoff via `next_attempt_at` and a configurable
-   `max_attempts` per template.
+3. Toggling the worker's `channel` selection so the appropriate provider
+   is invoked per row. The partial index on `next_attempt_at` already
+   exists for this.
+4. Wiring per-template `max_attempts` / `channel` overrides (today the
+   constant `MaxAttempts = 3` is hard-coded for the DevProvider).
 
 None of these changes the schema, the API, or the privacy model.
 
@@ -301,18 +472,27 @@ None of these changes the schema, the API, or the privacy model.
 
 ## 10. Limitations and non-goals
 
-- **No real vendor**: messages never leave the host.
-- **No outbox worker**: rows sit in `pending` until something else
-  invokes `DevProvider.Deliver`.
+- **No real vendor**: messages never leave the host. The worker
+  delivers only via `DevProvider` in this PR.
+- **Worker ships in this PR, but is not wired to docker-compose**: it
+  must be started manually with
+  `cd apps/api && go run ./cmd/notification-worker`. Production deploys
+  should add their own orchestrator (systemd, k8s, supervisord, …).
+  See `docs/DEV_SETUP.md` for the manual run commands and env vars.
+- **Template renderer shipped, allow-list closed at 8 variables**: the
+  renderer is hand-rolled (no `text/template`), rejects unknown
+  variable keys, and post-checks the output for raw digit runs.
+  Adding a new placeholder requires editing the allow-list in
+  `renderer.go` deliberately; the seeded demo templates cover the
+  current allow-list.
 - **No multi-channel orchestration**: a row has exactly one channel.
 - **No email/phone normalisation library**: we use a hand-rolled
   `MaskPhone` / `MaskEmail` / `HashContact`. A future phase may swap in
   `google/libphonenumber` for full E.164 normalisation; the interface
   does not change.
-- **No template rendering**: `body_template` is stored verbatim. A
-  future phase adds a small `{placeholder}` substitution engine; the
-  `{appointment_id}` / `{checkin_code}` placeholders in the demo
-  templates are illustrative, not yet substituted.
 - **No rate-limit on enqueue**: the service has no upper bound on
   inserts-per-second. Real production needs a per-recipient per-day
   quota enforced by the worker before `Deliver`.
+- **No per-template `max_attempts` override**: the constant
+  `MaxAttempts = 3` is hard-coded in this PR. Per-template tuning is
+  deferred until a real provider is wired.

@@ -1,7 +1,7 @@
 # Sigap Makefile — cross-language dev orchestration (KISS, no heavy runner)
 SHELL := /bin/bash
 
-.PHONY: help dev dev-down db-migrate db-seed bootstrap dev-api dev-engine dev-web build test clean lint security
+.PHONY: help dev dev-down db-migrate db-seed bootstrap dev-api dev-engine dev-web dev-notification-worker build test clean lint security
 
 help:
 	@echo "Sigap — available targets:"
@@ -13,6 +13,7 @@ help:
 	@echo "  make dev-api      # Go HTTP gateway (:8080)"
 	@echo "  make dev-engine   # Rust gRPC engine (:50051)"
 	@echo "  make dev-web      # SvelteKit (:5173)"
+	@echo "  make dev-notification-worker  # notification outbox worker (manual; no docker-compose service)"
 	@echo "  make lint         # run linters across all services"
 	@echo "  make security     # run security checks (gitleaks, cargo audit, govulncheck)"
 	@echo "  make build        # build all"
@@ -47,6 +48,9 @@ dev-engine:
 
 dev-web:
 	pnpm --filter sigap-web dev
+
+dev-notification-worker:
+	cd apps/api && go run ./cmd/notification-worker
 
 build:
 	cd apps/api && go build -o bin/sigap-api ./cmd/server

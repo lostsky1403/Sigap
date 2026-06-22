@@ -178,6 +178,10 @@ otification.manage.
 otification_id, acility_id, channel, 	emplate_key, status, outcome. The audit sanitizer's forbidden-key list catches accidental PII leaks.
 - [x] **Docs**: docs/NOTIFICATIONS_REPORT.md documents the design, privacy model, dev provider, and future vendor integration seam.
 - [x] **No new external dependencies**: go.mod and package.json are unchanged.
+- [x] Notification worker + template renderer (DevProvider only):
+  `apps/api/internal/notification/{worker,renderer}.go` +
+  `apps/api/cmd/notification-worker/main.go`.
+  Manual execution; no docker-compose service in this PR.
 
 ### Phase 10: Production Deployment Hardening
 - Kubernetes manifests and Helm charts
