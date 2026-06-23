@@ -113,34 +113,99 @@ func backoffSchedule(attempt int) time.Duration {
 // assert the schedule without depending on private internals.
 func BackoffFor(attempt int) time.Duration { return backoffSchedule(attempt) }
 
-// RunOnce drains up to batchSize due rows. It returns the number of
-// rows processed (claimed + delivered-or-failed or skipped) and the
-// first error encountered, if any. Per-row errors are logged via
-// slog.Warn and the loop continues; RunOnce only returns a non-nil
-// error if the initial SELECT itself fails.
-func (w *Worker) RunOnce(ctx context.Context, batchSize int) (int, error) {
+// RunOnce drains up to batchSize due rows and returns a RunResult with
+// counters per the type's documented semantics. The preview parameter
+// switches between two execution modes:
+//
+//   - preview == false (real mode): claim() selects one row per
+//     iteration via FOR UPDATE SKIP LOCKED, processRow() calls the
+//     provider and applies state-machine transitions, and the
+//     counters reflect what actually happened.
+//
+//   - preview == true (dry-run / preview mode): no row is mutated.
+//     A plain SELECT (no FOR UPDATE, no transaction) returns the
+//     same eligibility set claim() would have picked, and for each
+//     row DevSimulateOutcome (pure function) is called to predict
+//     the delivery outcome. Only InspectedPending is populated; the
+//     other counters remain exactly zero. This mode is safe to run
+//     against production data.
+//
+// Per-row errors are logged via slog.Warn and the loop continues.
+// RunOnce returns a non-nil error only if the initial SELECT itself
+// fails.
+func (w *Worker) RunOnce(ctx context.Context, batchSize int, preview bool) (RunResult, error) {
 	if batchSize <= 0 {
 		batchSize = 25
 	}
 
-	processed := 0
+	if preview {
+		return w.runOncePreview(ctx, batchSize)
+	}
+
+	return w.runOnceReal(ctx, batchSize)
+}
+
+// runOnceReal is the production-mode path: claim() transitions a row
+// to processing, processRow() hands it to the provider, scheduleRetry()
+// reschedules failures. Counters reflect the actual transitions.
+func (w *Worker) runOnceReal(ctx context.Context, batchSize int) (RunResult, error) {
+	var r RunResult
 	for i := 0; i < batchSize; i++ {
-		// Claim one row per iteration. SKIP LOCKED means a row that
-		// is currently locked by another worker (or by our own
-		// in-flight claim) is invisible; if no row is due, we exit
-		// early.
 		row, ok, err := w.claim(ctx)
 		if err != nil {
-			return processed, fmt.Errorf("worker: claim: %w", err)
+			return r, fmt.Errorf("worker: claim: %w", err)
 		}
 		if !ok {
-			// No more due rows.
 			break
 		}
-		w.processRow(ctx, row)
-		processed++
+		r.Claimed++
+		w.processRow(ctx, &row, &r)
 	}
-	return processed, nil
+	r.InspectedPending = r.Claimed
+	return r, nil
+}
+
+// previewSelectSQL is the dry-run SELECT. The string must remain
+// free of UPDATE, INSERT, DELETE, FOR UPDATE, and BEGIN; the
+// TestPreviewSelectSQL_NoMutationKeywords contract enforces this.
+const previewSelectSQL = `
+SELECT id FROM notification_outbox
+WHERE status = 'pending' AND next_attempt_at <= NOW()
+ORDER BY next_attempt_at ASC
+LIMIT $1`
+
+// runOncePreview is the dry-run path. It performs a read-only SELECT
+// of the same eligibility set claim() would use, calls DevSimulateOutcome
+// (a pure function) per row to predict the outcome, and counts rows.
+// It does NOT call claim(), processRow(), scheduleRetry(), or
+// provider.Deliver(); it does NOT use pool.Exec / Begin / BeginTx;
+// it does NOT write to notification_outbox or
+// notification_delivery_attempts.
+func (w *Worker) runOncePreview(ctx context.Context, batchSize int) (RunResult, error) {
+	rows, err := w.pool.Query(ctx, previewSelectSQL, batchSize)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("worker: preview select: %w", err)
+	}
+	defer rows.Close()
+
+	var r RunResult
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return r, fmt.Errorf("worker: preview scan: %w", err)
+		}
+		// Pure-function prediction; no DB I/O. The outcome is
+		// computed so callers can later read it via the slog
+		// layer without re-running DevSimulateOutcome, but the
+		// preview-mode invariant is that Delivered / Failed
+		// remain exactly zero.
+		_ = DevSimulateOutcome(id)
+		r.InspectedPending++
+	}
+	if err := rows.Err(); err != nil {
+		return r, fmt.Errorf("worker: preview rows: %w", err)
+	}
+	return r, nil
 }
 
 // claim selects one due row, transitions it to status='processing',
@@ -209,14 +274,14 @@ RETURNING id, facility_id, channel, template_key, subject, body_template,
 // itself never substitutes placeholders; substitution is the
 // caller's responsibility (because substitution requires an
 // `appointment` / `queue` lookup which the worker does not perform).
-func (w *Worker) processRow(ctx context.Context, row OutboxRow) {
+func (w *Worker) processRow(ctx context.Context, row *OutboxRow, r *RunResult) {
 	if w.RenderSubject != nil {
-		if s, err := w.RenderSubject(nil, row); err == nil && s != "" {
+		if s, err := w.RenderSubject(nil, *row); err == nil && s != "" {
 			row.Subject = s
 		}
 	}
 	if w.RenderBody != nil {
-		if b, err := w.RenderBody(nil, row); err == nil && b != "" {
+		if b, err := w.RenderBody(nil, *row); err == nil && b != "" {
 			row.BodyTemplate = b
 		}
 	}
@@ -225,7 +290,7 @@ func (w *Worker) processRow(ctx context.Context, row OutboxRow) {
 	// the row) and writes a single notification_delivery_attempts row
 	// plus an UPDATE on notification_outbox.status / attempt_count /
 	// next_attempt_at / last_error_code.
-	attempt, err := w.provider.Deliver(ctx, row)
+	attempt, err := w.provider.Deliver(ctx, *row)
 	if err != nil {
 		slog.Warn("worker: provider.Deliver error",
 			"notification_id", row.ID.String(),
@@ -244,6 +309,7 @@ func (w *Worker) processRow(ctx context.Context, row OutboxRow) {
 			"notification_id", row.ID.String(),
 			"template_key", row.TemplateKey,
 			"attempt_number", attempt.AttemptNumber)
+		r.Delivered++
 		return
 	}
 
@@ -255,6 +321,7 @@ func (w *Worker) processRow(ctx context.Context, row OutboxRow) {
 			"notification_id", row.ID.String(),
 			"template_key", row.TemplateKey,
 			"attempt_number", attempt.AttemptNumber)
+		r.Failed++
 		return
 	}
 
@@ -266,6 +333,7 @@ func (w *Worker) processRow(ctx context.Context, row OutboxRow) {
 			"err", err.Error())
 		return
 	}
+	r.Retried++
 	slog.Info("worker: retry scheduled",
 		"notification_id", row.ID.String(),
 		"template_key", row.TemplateKey,
@@ -287,7 +355,8 @@ WHERE id = $1`
 }
 
 // Run loops every interval until ctx is cancelled. Each tick calls
-// RunOnce. Errors are logged via slog.Warn and the loop continues.
+// RunOnce in real mode. Errors are logged via slog.Warn and the loop
+// continues.
 func (w *Worker) Run(ctx context.Context, interval time.Duration) error {
 	if interval <= 0 {
 		interval = 30 * time.Second
@@ -299,7 +368,7 @@ func (w *Worker) Run(ctx context.Context, interval time.Duration) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			n, err := w.RunOnce(ctx, 25)
+			res, err := w.RunOnce(ctx, 25, false)
 			if err != nil {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return err
@@ -307,10 +376,14 @@ func (w *Worker) Run(ctx context.Context, interval time.Duration) error {
 				slog.Warn("worker: RunOnce error", "err", err.Error())
 				continue
 			}
-			if n == 0 {
+			if res.Claimed == 0 {
 				slog.Debug("worker: idle tick", "interval", interval.String())
 			} else {
-				slog.Info("worker: tick processed", "count", n)
+				slog.Info("worker: tick processed",
+					"claimed", res.Claimed,
+					"delivered", res.Delivered,
+					"failed", res.Failed,
+					"retried", res.Retried)
 			}
 		}
 	}
