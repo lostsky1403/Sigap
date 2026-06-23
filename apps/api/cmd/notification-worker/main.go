@@ -17,6 +17,7 @@
 //
 //	SIGAP_NOTIFICATION_WORKER_ENABLED=true|false  (default true)
 //	SIGAP_NOTIFICATION_WORKER_ONCE=true|false    (default false)
+//	SIGAP_NOTIFICATION_WORKER_DRY_RUN=true|false (default false)
 //	SIGAP_NOTIFICATION_WORKER_INTERVAL_SECONDS=NN (default 30)
 //	SIGAP_NOTIFICATION_WORKER_BATCH_SIZE=NN       (default 25)
 //	SIGAP_DATABASE_URL=postgres://...            (required)
@@ -25,6 +26,9 @@
 //
 //   * ONCE=true: process one batch and exit.
 //   * ONCE=false: loop every INTERVAL_SECONDS until SIGINT/SIGTERM.
+//   * DRY_RUN=true: regardless of ONCE, run a read-only preview pass
+//     (no claim, no provider.Deliver, no outbox / delivery_attempts
+//     writes) and exit. The completion log line includes dry_run=true.
 //   * The in-flight row is allowed to finish before the process exits.
 //
 // The command is intentionally minimal. There is no web admin, no
@@ -85,16 +89,42 @@ func run() error {
 
 	slog.Info("notification-worker started",
 		"mode", modeLabel(cfg.Once),
+		"dry_run", cfg.DryRun,
 		"interval", cfg.Interval.String(),
 		"batch_size", cfg.BatchSize,
 	)
 
-	if cfg.Once {
-		n, err := worker.RunOnce(ctx, cfg.BatchSize)
+	if cfg.DryRun {
+		res, err := worker.RunOnce(ctx, cfg.BatchSize, true)
 		if err != nil {
 			slog.Warn("notification-worker RunOnce error", "err", err.Error())
 		}
-		slog.Info("notification-worker ONCE complete", "processed", n)
+		slog.Info("worker run complete",
+			"dry_run", true,
+			"inspected_pending", res.InspectedPending,
+			"claimed", res.Claimed,
+			"delivered", res.Delivered,
+			"failed", res.Failed,
+			"retried", res.Retried,
+			"skipped", res.Skipped,
+		)
+		return nil
+	}
+
+	if cfg.Once {
+		res, err := worker.RunOnce(ctx, cfg.BatchSize, false)
+		if err != nil {
+			slog.Warn("notification-worker RunOnce error", "err", err.Error())
+		}
+		slog.Info("worker run complete",
+			"dry_run", false,
+			"inspected_pending", res.InspectedPending,
+			"claimed", res.Claimed,
+			"delivered", res.Delivered,
+			"failed", res.Failed,
+			"retried", res.Retried,
+			"skipped", res.Skipped,
+		)
 		return nil
 	}
 
@@ -110,6 +140,7 @@ func run() error {
 type config struct {
 	Enabled   bool
 	Once      bool
+	DryRun    bool
 	Interval  time.Duration
 	BatchSize int
 }
@@ -118,6 +149,7 @@ func loadConfig() (config, error) {
 	cfg := config{
 		Enabled:   boolEnv("SIGAP_NOTIFICATION_WORKER_ENABLED", true),
 		Once:      boolEnv("SIGAP_NOTIFICATION_WORKER_ONCE", false),
+		DryRun:    boolEnv("SIGAP_NOTIFICATION_WORKER_DRY_RUN", false),
 		Interval:  durationSecondsEnv("SIGAP_NOTIFICATION_WORKER_INTERVAL_SECONDS", 30*time.Second),
 		BatchSize: intEnv("SIGAP_NOTIFICATION_WORKER_BATCH_SIZE", 25),
 	}
