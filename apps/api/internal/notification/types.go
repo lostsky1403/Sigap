@@ -198,6 +198,51 @@ type SummaryItem struct {
 	Count  int
 }
 
+// RunResult summarises one RunOnce invocation. It is the structured
+// counter set returned to callers and the slog layer. The dry-run /
+// preview mode populates only InspectedPending; the other fields
+// remain exactly zero in that mode.
+//
+// Semantics per field:
+//
+//   - InspectedPending: eligible pending rows seen before any
+//     mutation. In real mode this equals the number of rows returned
+//     by claim(). In preview mode this is the total number of rows
+//     matching the eligibility WHERE clause (status='pending' AND
+//     next_attempt_at <= NOW()).
+//
+//   - Claimed: rows transitioned to status='processing' by claim().
+//     Always 0 in preview / dry-run mode (claim is not invoked).
+//
+//   - Delivered: rows for which the provider reported StatusDelivered.
+//     Always 0 in preview / dry-run mode (provider.Deliver is not
+//     invoked).
+//
+//   - Failed: rows for which the provider reported StatusFailed.
+//     Always 0 in preview / dry-run mode.
+//
+//   - Retried: rows that failed but were rescheduled for retry
+//     (i.e. attempt < MaxAttempts). Always 0 in preview / dry-run mode.
+//
+//   - Skipped: rows intentionally skipped between claim and process.
+//     Always 0 in the current code; reserved for future eligibility
+//     filters (e.g. stale-row detection). The field exists so the
+//     log line shape is stable when such filters are added.
+//
+// Dry-run invariants: when RunOnce is called with preview=true, only
+// InspectedPending is populated; Claimed, Delivered, Failed, Retried,
+// and Skipped are always exactly zero. This is a load-bearing
+// property — see TestWorker_PreviewMode_DoesNotCallClaim and the
+// Ops Runbook's dry-run sample output.
+type RunResult struct {
+	InspectedPending int
+	Claimed          int
+	Delivered        int
+	Failed           int
+	Retried          int
+	Skipped          int
+}
+
 // Domain-level errors. The HTTP handler maps these to status codes.
 var (
 	ErrEmptySubject          = errors.New("notification: empty subject")

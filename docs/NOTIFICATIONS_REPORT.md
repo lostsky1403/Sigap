@@ -496,3 +496,74 @@ None of these changes the schema, the API, or the privacy model.
 - **No per-template `max_attempts` override**: the constant
   `MaxAttempts = 3` is hard-coded in this PR. Per-template tuning is
   deferred until a real provider is wired.
+## Ops Runbook
+
+This section is the operator-facing guide to the `notification-worker`
+binary: how to run it, how to dry-run it, how to read its output, and
+how to fix the common failure modes. All commands assume
+`SIGAP_DATABASE_URL` is exported in the shell.
+
+### How to run the worker once (real processing)
+
+```bash
+SIGAP_NOTIFICATION_WORKER_ENABLED=true \
+SIGAP_NOTIFICATION_WORKER_ONCE=true \
+go run ./cmd/notification-worker
+```
+
+The worker claims up to `SIGAP_NOTIFICATION_WORKER_BATCH_SIZE` rows
+(default 25), processes each one through `DevProvider`, applies the
+backoff schedule on failures, and exits.
+
+Sample real-run output:
+
+```
+INFO worker run complete dry_run=false inspected_pending=12 claimed=12 delivered=8 failed=3 retried=1 skipped=0
+```
+
+### How to run a dry-run (preview — zero database mutation)
+
+```bash
+SIGAP_NOTIFICATION_WORKER_DRY_RUN=true \
+SIGAP_NOTIFICATION_WORKER_ENABLED=true \
+go run ./cmd/notification-worker
+```
+
+Preview only. The worker performs a plain read-only SELECT of the
+eligibility set, runs `DevSimulateOutcome` (a pure deterministic
+function) per row to predict the outcome, and reports counts. It
+does NOT call `claim()`, `processRow()`, `scheduleRetry()`, or
+`provider.Deliver()`. It does NOT use `pool.Exec`, `Begin`, or
+`BeginTx`. It does NOT write to `notification_outbox` or
+`notification_delivery_attempts`. Safe to run on production data.
+
+Sample dry-run output:
+
+```
+INFO worker run complete dry_run=true inspected_pending=15 claimed=0 delivered=0 failed=0 retried=0 skipped=0
+```
+
+The `claimed=0` and all-zero delivery counters are the visual
+confirmation that no mutation occurred. Only `inspected_pending` is
+populated; the rest of the counters are pinned to zero by the
+preview-mode invariant.
+
+### How to troubleshoot pending / failed notifications
+
+- **Status summary** (read-only): `GET /api/v1/admin/notifications/summary`
+- **Filtered list**: `GET /api/v1/admin/notifications?status=failed&channel=dev`
+- **Retry a single row**: `POST /api/v1/admin/notifications/<id>/retry`
+  (requires `notification.manage` scope)
+- **Cancel a stuck row**: `POST /api/v1/admin/notifications/<id>/cancel`
+- **Worker logs**: look for the per-row `worker: delivered`,
+  `worker: retry scheduled`, or `worker: terminal failure` slog lines.
+
+### Limitations of DevProvider-only mode
+
+- All outcomes are simulated via `DevSimulateOutcome` (fnv32a-based
+  deterministic split: ~75% delivered, ~25% failed).
+- `DevProvider.Deliver()` does not validate recipient format.
+- The worker's `Delivered` count is always artificial until a real
+  Provider is wired in.
+- No SMS, WhatsApp, or email can actually be sent until a real
+  Provider implements the `notification.Provider` interface.
