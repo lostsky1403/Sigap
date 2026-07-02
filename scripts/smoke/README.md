@@ -7,6 +7,7 @@ PASS/FAIL assertions.
 ## Files
 
 - `sigap-demo-smoke.ps1` — main script; runs the documented happy path.
+- `sigap-notification-smoke.ps1` — notification pipeline smoke; verifies outbox, worker dry-run, and delivery.
 
 ## Prerequisites
 

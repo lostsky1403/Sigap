@@ -158,6 +158,68 @@ WHERE f.short_code = 'f1'
       AND ps.start_time = '09:00:00'::time
   );
 
+-- ============================================================
+-- 4. Notification outbox demo rows for the notification smoke test.
+--    Two deterministic rows with status='pending' and next_attempt_at <= NOW().
+--    Natural-key guard: (template_key, recipient_contact_hash).
+--    No raw PII: only masked contact and SHA-256 hash are stored.
+-- ============================================================
+INSERT INTO notification_outbox
+    (id, facility_id, channel, template_key, subject, body_template,
+     recipient_type, recipient_contact_masked, recipient_contact_hash,
+     status, attempt_count, next_attempt_at,
+     related_resource_type, related_resource_id)
+SELECT
+    '00000000-0000-0000-0000-00000000d031'::uuid,
+    f.id,
+    'dev',
+    'appointment.booked.confirmation',
+    'Konfirmasi Janji Temu Sigap',
+    'Janji temu demo Anda di {facility_name} telah tercatat. Kode check-in: {checkin_code}.',
+    'patient',
+    '+62••••1234',
+    '\xd1dbfab149200afb849e3a6a1c82447ec4fb86fb9b8f124897797fb1a867c824'::bytea,
+    'pending',
+    0,
+    NOW(),
+    'smoke_seed',
+    '00000000-0000-0000-0000-00000000d041'::uuid
+FROM facilities f
+WHERE f.short_code = 'f1'
+  AND NOT EXISTS (
+    SELECT 1 FROM notification_outbox no
+    WHERE no.template_key = 'appointment.booked.confirmation'
+      AND no.recipient_contact_hash = '\xd1dbfab149200afb849e3a6a1c82447ec4fb86fb9b8f124897797fb1a867c824'::bytea
+  );
+
+INSERT INTO notification_outbox
+    (id, facility_id, channel, template_key, subject, body_template,
+     recipient_type, recipient_contact_masked, recipient_contact_hash,
+     status, attempt_count, next_attempt_at,
+     related_resource_type, related_resource_id)
+SELECT
+    '00000000-0000-0000-0000-00000000d032'::uuid,
+    f.id,
+    'dev',
+    'appointment.checked_in.confirmation',
+    'Status Check-in Sigap',
+    'Check-in demo Anda di {facility_name} berhasil. Nomor antrean Anda: {queue_number}.',
+    'patient',
+    '+62••••1567',
+    '\xc5af62ba6bb72c87d3921ac6fbaf48a1ca97964dbdb1315661cf2588c9c2eb1a'::bytea,
+    'pending',
+    0,
+    NOW(),
+    'smoke_seed',
+    '00000000-0000-0000-0000-00000000d042'::uuid
+FROM facilities f
+WHERE f.short_code = 'f1'
+  AND NOT EXISTS (
+    SELECT 1 FROM notification_outbox no
+    WHERE no.template_key = 'appointment.checked_in.confirmation'
+      AND no.recipient_contact_hash = '\xc5af62ba6bb72c87d3921ac6fbaf48a1ca97964dbdb1315661cf2588c9c2eb1a'::bytea
+  );
+
 COMMIT;
 
 -- ============================================================
