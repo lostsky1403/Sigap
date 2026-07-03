@@ -270,7 +270,7 @@ INSERT INTO notification_outbox
      status, attempt_count, next_attempt_at,
      created_at, updated_at)
 VALUES ($1,'dev',$2,'Subject','Body template', 'patient','+62••••0001',
-        E'\\x00'::bytea, $3, 0, $4, $4, $4)`,
+        decode('1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef', 'hex'), $3, 0, $4, $4, $4)`,
 		id, templateKey, status, createdAt,
 	)
 	if err != nil {
