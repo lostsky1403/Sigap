@@ -286,3 +286,83 @@ func TestPatientStatusLookup_NoPIIInResponse(t *testing.T) {
 		}
 	}
 }
+
+func TestPatientStatusLookup_CodeTooLong(t *testing.T) {
+	_, h := setupPatientTest(t)
+
+	longCode := strings.Repeat("A", 65)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/patient/status?code="+longCode, nil)
+	rec := httptest.NewRecorder()
+	h.PatientStatusLookup(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body["error"] != "Kode tidak valid." {
+		t.Errorf("expected error 'Kode tidak valid.', got %v", body["error"])
+	}
+}
+
+func TestPatientStatusLookup_InvalidCharacters(t *testing.T) {
+	_, h := setupPatientTest(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/patient/status?code=%3Cscript%3E", nil)
+	rec := httptest.NewRecorder()
+	h.PatientStatusLookup(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body["error"] != "Kode tidak valid." {
+		t.Errorf("expected error 'Kode tidak valid.', got %v", body["error"])
+	}
+}
+
+func TestPatientStatusLookup_RateLimited(t *testing.T) {
+	dbURL := os.Getenv("SIGAP_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("SIGAP_DATABASE_URL not set; skipping integration test")
+	}
+	pool, err := pgxpool.New(context.Background(), dbURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	// Limit=1: first request allowed, second denied.
+	rl := limiter.NewRateLimiter(1, 1*time.Minute)
+	h := NewPatientHandler(pool, rl)
+
+	// First request — should be allowed (may return 404 or 200 depending on DB state, but not 429).
+	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/patient/status?code=RATETEST1", nil)
+	rec1 := httptest.NewRecorder()
+	h.PatientStatusLookup(rec1, req1)
+
+	if rec1.Code == http.StatusTooManyRequests {
+		t.Fatalf("first request should not be rate limited, got 429")
+	}
+
+	// Second request from same IP — should be rate limited.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/patient/status?code=RATETEST1", nil)
+	rec2 := httptest.NewRecorder()
+	h.PatientStatusLookup(rec2, req2)
+
+	if rec2.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec2.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body["error"] != "Terlalu banyak permintaan. Coba lagi nanti." {
+		t.Errorf("expected rate limit error, got %v", body["error"])
+	}
+}

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,16 +13,21 @@ import (
 	"github.com/sigap/sigap/apps/api/internal/limiter"
 )
 
+const maxPatientCodeLen = 64
+
+var safeCodeRe = regexp.MustCompile(`^[A-Za-z0-9\-]+$`)
+
 // PatientHandler handles public patient status lookup endpoints.
 // Unlike admin handlers, these endpoints require no authentication
 // and expose only non-PII status information.
 type PatientHandler struct {
 	pool *pgxpool.Pool
+	rl   *limiter.RateLimiter
 }
 
-// NewPatientHandler creates a handler backed by a pgx pool.
-func NewPatientHandler(pool *pgxpool.Pool, _ *limiter.RateLimiter) *PatientHandler {
-	return &PatientHandler{pool: pool}
+// NewPatientHandler creates a handler backed by a pgx pool and rate limiter.
+func NewPatientHandler(pool *pgxpool.Pool, rl *limiter.RateLimiter) *PatientHandler {
+	return &PatientHandler{pool: pool, rl: rl}
 }
 
 // PatientStatusResponse is the public-facing status payload.
@@ -55,6 +61,17 @@ func (h *PatientHandler) PatientStatusLookup(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if len(code) > maxPatientCodeLen || !safeCodeRe.MatchString(code) {
+		writeError(w, http.StatusBadRequest, "Kode tidak valid.")
+		return
+	}
+
+	// Rate limit by client IP.
+	if h.rl != nil && !h.rl.Allow(extractIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "Terlalu banyak permintaan. Coba lagi nanti.")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -82,13 +99,15 @@ func (h *PatientHandler) PatientStatusLookup(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		// Attempt 2: lookup by formatted_number on queue_tickets table.
+		// ORDER BY + LIMIT 1 ensures deterministic result when multiple rows match.
 		err = h.pool.QueryRow(ctx,
 			`SELECT f.name, a.status, a.appointment_time,
 			        qt.queue_number, qt.status, qt.formatted_number
 			 FROM queue_tickets qt
 			 JOIN facilities f ON f.id = qt.facility_id
 			 LEFT JOIN appointments a ON a.queue_ticket_id = qt.id
-			 WHERE LOWER(qt.formatted_number) = LOWER($1)`, code,
+			 WHERE LOWER(qt.formatted_number) = LOWER($1)
+			 ORDER BY qt.registered_at DESC LIMIT 1`, code,
 		).Scan(&resp.FacilityName, &aptStatus, &aptTime,
 			&qNum, &qStatus, &qFmtNum)
 
@@ -120,6 +139,15 @@ func (h *PatientHandler) PatientStatusLookup(w http.ResponseWriter, r *http.Requ
 		"success": true,
 		"data":    resp,
 	})
+}
+
+// extractIP returns the client IP from RemoteAddr (host:port format).
+func extractIP(r *http.Request) string {
+	addr := r.RemoteAddr
+	if idx := strings.LastIndex(addr, ":"); idx != -1 {
+		return addr[:idx]
+	}
+	return addr
 }
 
 // mapCheckinStatus translates internal appointment status values into
