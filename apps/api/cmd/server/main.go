@@ -208,6 +208,12 @@ func main() {
 			"/api/v1/appointments/",
 		})
 
+		// Patient portal: public status lookup (no auth required)
+		patientRL := limiter.NewRateLimiter(30, 1*time.Minute)
+		patientH := handler.NewPatientHandler(dbPool, patientRL)
+		mux.HandleFunc("/api/v1/patient/status", enableCORS(patientH.PatientStatusLookup))
+		slog.Info("patient portal routes registered", "paths", []string{"/api/v1/patient/status"})
+
 		// Notification outbox admin routes. Always require dev identity
 		// (the same X-Sigap-Dev-User-ID pattern as other admin routes).
 		// The notifications package is imported above; the service is
