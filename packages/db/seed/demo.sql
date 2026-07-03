@@ -220,6 +220,37 @@ WHERE f.short_code = (SELECT short_code FROM facilities ORDER BY created_at LIMI
       AND no.recipient_contact_hash = '\xc5af62ba6bb72c87d3921ac6fbaf48a1ca97964dbdb1315661cf2588c9c2eb1a'::bytea
   );
 
+-- ============================================================
+-- 5. Demo appointment with known checkin_code for patient portal lookup.
+--    Uses the first facility (via dynamic lookup) and the first demo schedule.
+--    Natural-key guard: (checkin_code).
+--    No real PII: synthetic patient data only.
+-- ============================================================
+INSERT INTO appointments (
+    id, facility_id, service_unit_id, practitioner_schedule_id,
+    appointment_time, status,
+    patient_display_name, patient_phone, checkin_code,
+    created_at, updated_at
+)
+SELECT
+    '00000000-0000-0000-0000-00000000d051'::uuid,
+    f.id,
+    '00000000-0000-0000-0000-00000000d001'::uuid,  -- -> Poli Umum Demo
+    '00000000-0000-0000-0000-00000000d021'::uuid,  -- -> schedule for tomorrow 09:00
+    (CURRENT_DATE + INTERVAL '1 day' + INTERVAL '9 hours')::timestamptz,
+    'scheduled',
+    'Pasien Demo Portal',
+    '085550000001',
+    'SMOKE01',                                      -- known checkin_code for lookup
+    NOW(),
+    NOW()
+FROM facilities f
+WHERE f.short_code = (SELECT short_code FROM facilities ORDER BY created_at LIMIT 1)
+  AND NOT EXISTS (
+    SELECT 1 FROM appointments a
+    WHERE a.checkin_code = 'SMOKE01'
+  );
+
 COMMIT;
 
 -- ============================================================
