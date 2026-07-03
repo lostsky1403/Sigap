@@ -177,11 +177,10 @@ function Invoke-ApiJson {
     foreach ($k in $Headers.Keys) { $reqHeaders[$k] = $Headers[$k] }
 
     $params = @{
-        Method              = $Method
-        Uri                 = $uri
-        Headers             = $reqHeaders
-        TimeoutSec          = $TimeoutSec
-        StatusCodeVariable  = 'sc'
+        Method  = $Method
+        Uri     = $uri
+        Headers = $reqHeaders
+        TimeoutSec = $TimeoutSec
     }
     if ($null -ne $Body) {
         try {

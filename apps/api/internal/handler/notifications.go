@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -382,7 +383,7 @@ func (h *NotificationsHandler) log(actor identity.Actor, action, status, detail 
 	if detail != "" {
 		metadata["detail"] = detail
 	}
-	h.audit.LogEvent(nil, audit.Event{
+	h.audit.LogEvent(context.Background(), audit.Event{
 		Action:       action,
 		ResourceType: "notification",
 		ActorType:    string(actor.Type),

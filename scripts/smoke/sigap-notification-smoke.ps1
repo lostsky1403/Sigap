@@ -47,7 +47,7 @@
     pwsh -File scripts/smoke/sigap-notification-smoke.ps1
 
 .EXAMPLE
-    $env:SIGAP_API_BASE = "http://localhost:8080"
+    $env:SIGAP_API_BASE = "http://[::1]:8080"
     $env:SIGAP_DATABASE_URL = "postgres://user:pass@localhost:5432/sigap"
     pwsh -File scripts/smoke/sigap-notification-smoke.ps1
 
@@ -64,9 +64,9 @@
 
 [CmdletBinding()]
 param(
-    [string]$ApiBase = $(if ($env:SIGAP_API_BASE) { $env:SIGAP_API_BASE } else { 'http://localhost:8080' }),
+    [string]$ApiBase = $(if ($env:SIGAP_API_BASE) { $env:SIGAP_API_BASE } else { 'http://[::1]:8080' }),
     [string]$DevUserId = 'dev-user-smoke',
-    [string]$WorkerDir = $(Join-Path (Split-Path $PSScriptRoot -Parent) 'apps\api')
+    [string]$WorkerDir = $(Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'apps\api')
 )
 
 # Capture and restore the original ErrorActionPreference on exit so we never
@@ -167,11 +167,10 @@ function Invoke-ApiJson {
     foreach ($k in $Headers.Keys) { $reqHeaders[$k] = $Headers[$k] }
 
     $params = @{
-        Method              = $Method
-        Uri                 = $uri
-        Headers             = $reqHeaders
-        TimeoutSec          = $TimeoutSec
-        StatusCodeVariable  = 'sc'
+        Method  = $Method
+        Uri     = $uri
+        Headers = $reqHeaders
+        TimeoutSec = $TimeoutSec
     }
     if ($null -ne $Body) {
         try {
@@ -211,22 +210,26 @@ function Invoke-ApiJson {
             CallOk     = $true
         }
     } catch [System.Net.Http.HttpRequestException] {
+        $errMsg = $_.Exception.Message
+        if ($_.Exception.InnerException) { $errMsg += " | " + $_.Exception.InnerException.Message }
         return [pscustomobject]@{
             StatusCode = 0
             Body       = ''
             Json       = $null
             Success    = $false
-            Error      = "Network error: $($_.Exception.Message)"
+            Error      = "Network error: $errMsg"
             NetworkOk  = $false
             CallOk     = $true
         }
     } catch [System.Net.WebException] {
+        $errMsg = $_.Exception.Message
+        if ($_.Exception.InnerException) { $errMsg += " | " + $_.Exception.InnerException.Message }
         return [pscustomobject]@{
             StatusCode = 0
             Body       = ''
             Json       = $null
             Success    = $false
-            Error      = "Network error: $($_.Exception.Message)"
+            Error      = "Network error: $errMsg"
             NetworkOk  = $false
             CallOk     = $true
         }
@@ -440,6 +443,7 @@ Write-Host ""
 
 # Track whether worker steps are skipped (e.g. build failure in step 5).
 $workerSkipped = $false
+$apiHealthy = $false
 
 # Track whether step 5 (dry-run) reported the log line.
 $workerDryRunParsed = [pscustomobject]@{
@@ -461,9 +465,11 @@ Invoke-Step -Name 'api.health' -Body {
         return
     }
     if ($resp.StatusCode -eq 200 -and $resp.Success) {
+        $script:apiHealthy = $true
         Add-Result -Name 'api.health' -Pass $true -Detail "HTTP 200 — $($resp.Body)"
     } else {
-        Add-Result -Name 'api.health' -Pass $false -Detail "HTTP $($resp.StatusCode) — body: $($resp.Body)"
+        $errDetail = if ($resp.Error) { $resp.Error } else { "body: $($resp.Body)" }
+        Add-Result -Name 'api.health' -Pass $false -Detail "HTTP $($resp.StatusCode) — $errDetail"
     }
 }
 
@@ -473,6 +479,10 @@ Invoke-Step -Name 'api.health' -Body {
 $facilityId = $null
 Invoke-Step -Name 'dev.identity' -Body {
     Write-Step "Step 2/9: GET /api/v1/admin/facilities (dev identity)"
+    if (-not $script:apiHealthy) {
+        Add-Result -Name 'dev.identity' -Pass $false -Detail 'Skipped: API health check failed — is the API running?'
+        return
+    }
     $resp = Invoke-ApiJson -Method GET -Path '/api/v1/admin/facilities' -Headers @{ 'X-Sigap-Dev-User-ID' = $DevUserId }
     if (-not $resp.CallOk -or -not $resp.NetworkOk) {
         Add-Result -Name 'dev.identity' -Pass $false -Detail "Network/transport error: $($resp.Error)"
@@ -505,6 +515,10 @@ Invoke-Step -Name 'dev.identity' -Body {
 $pendingBefore = 0
 Invoke-Step -Name 'notification.summary.before' -Body {
     Write-Step "Step 3/9: GET /api/v1/admin/notifications/summary (before worker)"
+    if (-not $script:apiHealthy) {
+        Add-Result -Name 'notification.summary.before' -Pass $false -Detail 'Skipped: API health check failed — is the API running?'
+        return
+    }
     $script:pendingBefore = Get-NotificationPendingCount
     Add-Result -Name 'notification.summary.before' -Pass $true -Detail "pending=$($script:pendingBefore)"
 }
@@ -514,6 +528,10 @@ Invoke-Step -Name 'notification.summary.before' -Body {
 # ---------------------------------------------------------------
 Invoke-Step -Name 'notification.list.before' -Body {
     Write-Step "Step 4/9: GET /api/v1/admin/notifications?status=pending (before worker)"
+    if (-not $script:apiHealthy) {
+        Add-Result -Name 'notification.list.before' -Pass $false -Detail 'Skipped: API health check failed — is the API running?'
+        return
+    }
     $resp = Invoke-ApiJson -Method GET -Path '/api/v1/admin/notifications?status=pending' -Headers @{ 'X-Sigap-Dev-User-ID' = $DevUserId }
     if (-not $resp.CallOk -or -not $resp.NetworkOk) {
         Add-Result -Name 'notification.list.before' -Pass $false -Detail "Network/transport error: $($resp.Error)"
@@ -592,6 +610,10 @@ Invoke-Step -Name 'worker.dry_run' -Body {
 # ---------------------------------------------------------------
 Invoke-Step -Name 'notification.summary.dry_run_verify' -Body {
     Write-Step "Step 6/9: Re-query summary to verify dry run had no effect"
+    if (-not $script:apiHealthy) {
+        Add-Result -Name 'notification.summary.dry_run_verify' -Pass $false -Detail 'Skipped: API health check failed — is the API running?'
+        return
+    }
     if ($workerSkipped) {
         Add-Result -Name 'notification.summary.dry_run_verify' -Pass $false -Detail 'Skipped: worker.dry_run failed or worker was not executed.'
         return
@@ -657,6 +679,10 @@ Invoke-Step -Name 'worker.once' -Body {
 # ---------------------------------------------------------------
 Invoke-Step -Name 'notification.summary.after' -Body {
     Write-Step "Step 8/9: Re-query summary after real worker run"
+    if (-not $script:apiHealthy) {
+        Add-Result -Name 'notification.summary.after' -Pass $false -Detail 'Skipped: API health check failed — is the API running?'
+        return
+    }
     if ($null -eq $script:workerRealResult) {
         Add-Result -Name 'notification.summary.after' -Pass $false -Detail 'Skipped: worker.once did not produce results.'
         return
@@ -700,6 +726,10 @@ Invoke-Step -Name 'notification.summary.after' -Body {
 # ---------------------------------------------------------------
 Invoke-Step -Name 'notification.list.after' -Body {
     Write-Step "Step 9/9: GET /api/v1/admin/notifications?status=delivered and ?status=failed"
+    if (-not $script:apiHealthy) {
+        Add-Result -Name 'notification.list.after' -Pass $false -Detail 'Skipped: API health check failed — is the API running?'
+        return
+    }
     if ($null -eq $script:workerRealResult) {
         Add-Result -Name 'notification.list.after' -Pass $false -Detail 'Skipped: worker.once did not produce results.'
         return

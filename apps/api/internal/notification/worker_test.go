@@ -157,62 +157,73 @@ func integrationWorkerPool(t *testing.T) *pgxpool.Pool {
 }
 
 // TestWorker_PreviewMode_DoesNotMutate inserts a deterministic set
-// of pending outbox rows inside a transaction, calls RunOnce in
-// preview mode, and asserts that the rows are unchanged and no new
-// notification_delivery_attempts rows were created. The transaction
-// is rolled back at the end.
+// of pending outbox rows (committed via pool so the worker can see
+// them), calls RunOnce in preview mode, and asserts that the rows
+// are unchanged and no new notification_delivery_attempts rows were
+// created. The seed rows are cleaned up deterministically at the end.
 func TestWorker_PreviewMode_DoesNotMutate(t *testing.T) {
 	pool := integrationWorkerPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	defer tx.Rollback(ctx)
+	const tplKey = "preview_test_vis"
 
+	// Idempotent cleanup: remove any leftover rows from a prior run.
+	cleanup := func() {
+		_, _ = pool.Exec(ctx,
+			`DELETE FROM notification_delivery_attempts WHERE outbox_id IN (SELECT id FROM notification_outbox WHERE template_key = $1)`, tplKey)
+		_, _ = pool.Exec(ctx,
+			`DELETE FROM notification_outbox WHERE template_key = $1`, tplKey)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	// Seed 3 rows via pool.Exec (committed immediately) so the
+	// worker can see them through its own pool connection.
 	const seedSQL = `
 INSERT INTO notification_outbox
     (id, channel, template_key, subject, body_template,
-     recipient_type, recipient_contact_masked, status,
+     recipient_type, recipient_contact_masked, recipient_contact_hash, status,
      attempt_count, next_attempt_at, created_at, updated_at)
-VALUES ($1, 'dev', 'preview_test', 'subj', 'body',
-        'patient', '***', 'pending',
+VALUES ($1, 'dev', $2, 'subj', 'body',
+        'patient', '***', decode('1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef', 'hex'), 'pending',
         0, NOW() - INTERVAL '1 minute', NOW(), NOW()),
-       ($2, 'dev', 'preview_test', 'subj', 'body',
-        'patient', '***', 'pending',
+       ($3, 'dev', $2, 'subj', 'body',
+        'patient', '***', decode('1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef', 'hex'), 'pending',
         0, NOW() - INTERVAL '1 minute', NOW(), NOW()),
-       ($3, 'dev', 'preview_test', 'subj', 'body',
-        'patient', '***', 'pending',
+       ($4, 'dev', $2, 'subj', 'body',
+        'patient', '***', decode('1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef', 'hex'), 'pending',
         0, NOW() - INTERVAL '1 minute', NOW(), NOW())`
 	id1, id2, id3 := uuid.New(), uuid.New(), uuid.New()
-	if _, err := tx.Exec(ctx, seedSQL, id1, id2, id3); err != nil {
+	if _, err := pool.Exec(ctx, seedSQL, id1, tplKey, id2, id3); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
+	// Snapshot pre-state.
+	ids := []uuid.UUID{id1, id2, id3}
 	var preOutboxCount, preAttemptsCount int
-	if err := tx.QueryRow(ctx,
+	if err := pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM notification_outbox WHERE id = ANY($1)`,
-		[]uuid.UUID{id1, id2, id3},
+		ids,
 	).Scan(&preOutboxCount); err != nil {
 		t.Fatalf("pre-count outbox: %v", err)
 	}
-	if err := tx.QueryRow(ctx,
+	if err := pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM notification_delivery_attempts WHERE outbox_id = ANY($1)`,
-		[]uuid.UUID{id1, id2, id3},
+		ids,
 	).Scan(&preAttemptsCount); err != nil {
 		t.Fatalf("pre-count attempts: %v", err)
 	}
 	var preStatus string
 	var preAC int
-	if err := tx.QueryRow(ctx,
+	if err := pool.QueryRow(ctx,
 		`SELECT status, attempt_count FROM notification_outbox WHERE id = $1`,
 		id1,
 	).Scan(&preStatus, &preAC); err != nil {
 		t.Fatalf("pre-snapshot row 1: %v", err)
 	}
 
+	// Run the worker in preview (dry-run) mode.
 	worker := NewWorker(pool, &DevProvider{pool: pool}, nil)
 	res, err := worker.RunOnce(ctx, 10, true)
 	if err != nil {
@@ -225,10 +236,11 @@ VALUES ($1, 'dev', 'preview_test', 'subj', 'body',
 		t.Errorf("dry-run invariants violated: %+v", res)
 	}
 
+	// Snapshot post-state and assert no mutation.
 	var postOutboxCount, postAttemptsCount int
-	if err := tx.QueryRow(ctx,
+	if err := pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM notification_outbox WHERE id = ANY($1)`,
-		[]uuid.UUID{id1, id2, id3},
+		ids,
 	).Scan(&postOutboxCount); err != nil {
 		t.Fatalf("post-count outbox: %v", err)
 	}
@@ -236,9 +248,9 @@ VALUES ($1, 'dev', 'preview_test', 'subj', 'body',
 		t.Errorf("preview mutated notification_outbox row count: pre=%d post=%d",
 			preOutboxCount, postOutboxCount)
 	}
-	if err := tx.QueryRow(ctx,
+	if err := pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM notification_delivery_attempts WHERE outbox_id = ANY($1)`,
-		[]uuid.UUID{id1, id2, id3},
+		ids,
 	).Scan(&postAttemptsCount); err != nil {
 		t.Fatalf("post-count attempts: %v", err)
 	}
@@ -248,7 +260,7 @@ VALUES ($1, 'dev', 'preview_test', 'subj', 'body',
 	}
 	var postStatus string
 	var postAC int
-	if err := tx.QueryRow(ctx,
+	if err := pool.QueryRow(ctx,
 		`SELECT status, attempt_count FROM notification_outbox WHERE id = $1`,
 		id1,
 	).Scan(&postStatus, &postAC); err != nil {
