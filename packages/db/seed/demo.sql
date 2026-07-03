@@ -185,7 +185,7 @@ SELECT
     'smoke_seed',
     '00000000-0000-0000-0000-00000000d041'::uuid
 FROM facilities f
-WHERE f.short_code = 'f1'
+WHERE f.short_code = (SELECT short_code FROM facilities ORDER BY created_at LIMIT 1)
   AND NOT EXISTS (
     SELECT 1 FROM notification_outbox no
     WHERE no.template_key = 'appointment.booked.confirmation'
@@ -213,7 +213,7 @@ SELECT
     'smoke_seed',
     '00000000-0000-0000-0000-00000000d042'::uuid
 FROM facilities f
-WHERE f.short_code = 'f1'
+WHERE f.short_code = (SELECT short_code FROM facilities ORDER BY created_at LIMIT 1)
   AND NOT EXISTS (
     SELECT 1 FROM notification_outbox no
     WHERE no.template_key = 'appointment.checked_in.confirmation'

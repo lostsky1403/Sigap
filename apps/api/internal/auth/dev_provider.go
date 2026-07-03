@@ -60,6 +60,8 @@ func (p *DevIdentityProvider) Authenticate(r *http.Request) (identity.Actor, err
 			"facility.read",
 			"facility.manage",
 			"audit.read",
+			"notification.read",
+			"notification.manage",
 		},
 	}, nil
 }

@@ -14,6 +14,10 @@ use std::env;
 // Re-export the engine module path via the crate
 use sigap_queue_engine::queue_engine::{GenerateQueueRequest, PatientInfo};
 
+/// Deterministic facility UUID for this test. The INSERT uses
+/// ON CONFLICT DO NOTHING so repeated runs are idempotent.
+const TEST_FACILITY_ID: &str = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
+
 #[tokio::test]
 async fn concurrent_queue_requests_produce_unique_numbers() {
     let database_url = env::var("DATABASE_URL")
@@ -30,9 +34,19 @@ async fn concurrent_queue_requests_produce_unique_numbers() {
         }
     };
 
-    // Use a known seeded facility from migrations (RSUD Kota Sehat — uuid from seeds).
-    // If the seed data is absent, the test will fail fast with a clear error.
-    let facility_id = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11".to_string();
+    // Ensure a deterministic test facility exists. Using ON CONFLICT
+    // DO NOTHING makes this idempotent across repeated test runs.
+    sqlx::query(
+        "INSERT INTO facilities (id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, total_beds, available_beds, is_active, short_code)
+         VALUES ($1, 'Test Facility Concurrency', 'puskesmas', 'Jl. Test No. 1', 'TestKec', 'TestKota', 'TestProv', '021-000000', 100, 50, true, 'TST')
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(uuid::Uuid::parse_str(TEST_FACILITY_ID).expect("valid UUID"))
+    .execute(&pool)
+    .await
+    .expect("failed to seed test facility");
+
+    let facility_id = TEST_FACILITY_ID.to_string();
 
     let n = 10usize;
     let mut handles = Vec::with_capacity(n);
