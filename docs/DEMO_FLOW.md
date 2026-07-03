@@ -146,6 +146,20 @@ Passed: 6 / 6
 Exit code is `0` on success. If any step fails, the offending HTTP status
 and response body are printed.
 
+### Other smoke scripts
+
+Two additional smoke scripts cover the notification pipeline and patient portal:
+
+```powershell
+# Notification pipeline smoke (requires dev identity + notification seed)
+pwsh -File scripts/smoke/sigap-notification-smoke.ps1
+
+# Patient portal smoke (public endpoint, no auth required)
+pwsh -File scripts/smoke/sigap-patient-portal-smoke.ps1
+```
+
+See [`scripts/smoke/README.md`](../scripts/smoke/README.md) for parameters and exit codes.
+
 ---
 
 ## 5. Walk through the UIs
