@@ -145,10 +145,11 @@ function Invoke-ApiJson {
     $reqHeaders = @{ 'Accept' = 'application/json' }
 
     $params = @{
-        Method     = $Method
-        Uri        = $uri
-        Headers    = $reqHeaders
-        TimeoutSec = $TimeoutSec
+        Method             = $Method
+        Uri                = $uri
+        Headers            = $reqHeaders
+        TimeoutSec         = $TimeoutSec
+        SkipHttpErrorCheck = $true
     }
 
     try {
