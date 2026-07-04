@@ -222,34 +222,95 @@ WHERE f.short_code = (SELECT short_code FROM facilities ORDER BY created_at LIMI
 
 -- ============================================================
 -- 5. Demo appointment with known checkin_code for patient portal lookup.
---    Uses the first facility (via dynamic lookup) and the first demo schedule.
---    Natural-key guard: (checkin_code).
+--    Uses a single deterministic facility and the first demo schedule.
+--    Idempotency guard: deterministic primary key with conflict update.
 --    No real PII: synthetic patient data only.
 -- ============================================================
-INSERT INTO appointments (
-    id, facility_id, service_unit_id, practitioner_schedule_id,
-    appointment_time, status,
-    patient_display_name, patient_phone, checkin_code,
-    created_at, updated_at
-)
-SELECT
-    '00000000-0000-0000-0000-00000000d051'::uuid,
-    f.id,
-    '00000000-0000-0000-0000-00000000d001'::uuid,  -- -> Poli Umum Demo
-    '00000000-0000-0000-0000-00000000d021'::uuid,  -- -> schedule for tomorrow 09:00
-    (CURRENT_DATE + INTERVAL '1 day' + INTERVAL '9 hours')::timestamptz,
-    'scheduled',
-    'Pasien Demo Portal',
-    '085550000001',
-    'SMOKE01',                                      -- known checkin_code for lookup
-    NOW(),
-    NOW()
-FROM facilities f
-WHERE f.short_code = (SELECT short_code FROM facilities ORDER BY created_at LIMIT 1)
-  AND NOT EXISTS (
-    SELECT 1 FROM appointments a
-    WHERE a.checkin_code = 'SMOKE01'
-  );
+-- Clear any duplicate SMOKE01 checkin_codes from other appointment rows
+-- so the query returns exactly one row after seeding.
+UPDATE appointments
+SET checkin_code = 'SMOKE01-' || LEFT(REPLACE(id::text, '-', ''), 8),
+    updated_at = NOW()
+WHERE checkin_code = 'SMOKE01'
+  AND id <> '00000000-0000-0000-0000-00000000d051'::uuid;
+
+-- Use a DO block with INSERT...VALUES to guarantee exactly one source row.
+-- INSERT...SELECT can produce duplicates when the FROM source has multiple
+-- rows (duplicate facilities from older seeds), causing
+-- "ON CONFLICT DO UPDATE command cannot affect row a second time".
+-- The block resolves facility_id and service_unit_id dynamically so the
+-- seed works on dirty/local DBs with missing demo service units.
+DO $$
+DECLARE
+    v_facility_id UUID;
+    v_service_unit_id UUID;
+BEGIN
+    -- Pick one facility deterministically (prefer RSK).
+    SELECT id INTO v_facility_id
+    FROM facilities
+    ORDER BY CASE WHEN short_code = 'RSK' THEN 0 ELSE 1 END, id
+    LIMIT 1;
+
+    IF v_facility_id IS NULL THEN
+        RAISE NOTICE 'No facilities found; skipping SMOKE01 appointment seed';
+        RETURN;
+    END IF;
+
+    -- Resolve a valid service_unit_id for this facility.
+    -- 1) Prefer the deterministic demo service unit (d001) if it belongs
+    --    to this facility.
+    -- 2) Otherwise pick any active service unit for this facility.
+    -- 3) As a last resort, insert a minimal service unit so the FK is satisfied.
+    SELECT id INTO v_service_unit_id
+    FROM service_units
+    WHERE id = '00000000-0000-0000-0000-00000000d001'::uuid
+      AND facility_id = v_facility_id
+    LIMIT 1;
+
+    IF v_service_unit_id IS NULL THEN
+        SELECT id INTO v_service_unit_id
+        FROM service_units
+        WHERE facility_id = v_facility_id
+        ORDER BY is_active DESC, id
+        LIMIT 1;
+    END IF;
+
+    IF v_service_unit_id IS NULL THEN
+        v_service_unit_id := '00000000-0000-0000-0000-00000000d001'::uuid;
+        INSERT INTO service_units (id, facility_id, name, code, is_active)
+        VALUES (v_service_unit_id, v_facility_id, 'Poli Umum Demo', 'DEMO-UMUM', TRUE)
+        ON CONFLICT (id) DO NOTHING;
+    END IF;
+
+    INSERT INTO appointments (
+        id, facility_id, service_unit_id, practitioner_schedule_id,
+        appointment_time, status,
+        patient_display_name, patient_phone, checkin_code,
+        created_at, updated_at
+    ) VALUES (
+        '00000000-0000-0000-0000-00000000d051'::uuid,
+        v_facility_id,
+        v_service_unit_id,
+        NULL,
+        (CURRENT_DATE + INTERVAL '1 day' + INTERVAL '9 hours')::timestamptz,
+        'scheduled',
+        'Pasien Demo Portal',
+        '085550000001',
+        'SMOKE01',
+        NOW(),
+        NOW()
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        facility_id = EXCLUDED.facility_id,
+        service_unit_id = EXCLUDED.service_unit_id,
+        practitioner_schedule_id = EXCLUDED.practitioner_schedule_id,
+        appointment_time = EXCLUDED.appointment_time,
+        status = EXCLUDED.status,
+        patient_display_name = EXCLUDED.patient_display_name,
+        patient_phone = EXCLUDED.patient_phone,
+        checkin_code = EXCLUDED.checkin_code,
+        updated_at = NOW();
+END $$;
 
 COMMIT;
 
