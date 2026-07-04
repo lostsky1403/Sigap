@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Runs the documented local demo flow against an already-running Sigap
-    stack (API on $API_BASE, default http://localhost:8080).
+    stack (API on $API_BASE, default http://[::1]:8080).
 
     Steps:
       1. GET  /health
@@ -19,11 +19,11 @@
     response field.
 
 .PARAMETER ApiBase
-    Override the API base URL. Defaults to http://localhost:8080 or $env:SIGAP_API_BASE.
+    Override the API base URL. Defaults to http://[::1]:8080 or $env:SIGAP_API_BASE.
     MUST be non-empty and start with "http://" or "https://".
 
 .PARAMETER FacilityShortCode
-    The short_code of the facility to book against. Defaults to 'f1'.
+    The short_code of the facility to book against. Defaults to 'RSK'.
     MUST be non-empty.
 
 .PARAMETER ServiceUnitCode
@@ -65,8 +65,8 @@
 
 [CmdletBinding()]
 param(
-    [string]$ApiBase = $(if ($env:SIGAP_API_BASE) { $env:SIGAP_API_BASE } else { 'http://localhost:8080' }),
-    [string]$FacilityShortCode = 'f1',
+    [string]$ApiBase = $(if ($env:SIGAP_API_BASE) { $env:SIGAP_API_BASE } else { 'http://[::1]:8080' }),
+    [string]$FacilityShortCode = 'RSK',
     [string]$ServiceUnitCode = 'DEMO-UMUM',
     [string]$PractitionerScheduleId = '00000000-0000-0000-0000-00000000d021',
     [string]$DevUserId = 'dev-user-smoke',
