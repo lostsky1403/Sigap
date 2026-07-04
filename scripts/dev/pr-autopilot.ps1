@@ -742,19 +742,63 @@ function Invoke-Pr {
 
 # ---------------------------------------------------------------
 # Phase 6: CI watch + summary.
+#
+# GitHub check runs may not be available immediately after PR creation.
+# If `gh pr checks` exits non-zero due to transient unavailability,
+# we retry with a bounded wait before declaring failure.
 # ---------------------------------------------------------------
 function Invoke-CiWatch {
     Write-Host ""
     Write-Info "Phase 6: CI watch"
 
-    & gh pr checks --watch --fail-fast 2>&1 | Out-Null
-    $json = (& gh pr checks --json name,bucket,state,workflow,link 2>$null)
-    if ($LASTEXITCODE -ne 0 -or -not $json) {
-        Write-Fail "gh pr checks failed (exit $LASTEXITCODE)"
+    $maxRetries = 6
+    $retryDelaySec = 10
+
+    # --- Watch: wait for checks to complete (with retries).
+    $watchOk = $false
+    for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+        Write-Info "ci watch: attempt $attempt/$maxRetries"
+        & gh pr checks --watch --fail-fast 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            $watchOk = $true
+            break
+        }
+        if ($attempt -lt $maxRetries) {
+            Write-Info "ci watch: gh pr checks exited $LASTEXITCODE; retrying in ${retryDelaySec}s..."
+            Start-Sleep -Seconds $retryDelaySec
+        }
+    }
+
+    # --- JSON summary: fetch check details (with retries).
+    $json = $null
+    $checksExitCode = 0
+    $summaryAttempts = 0
+    for ($summaryAttempt = 1; $summaryAttempt -le $maxRetries; $summaryAttempt++) {
+        $summaryAttempts = $summaryAttempt
+        Write-Info "ci summary: attempt $summaryAttempt/$maxRetries"
+        $json = (& gh pr checks --json name,bucket,state,workflow,link 2>$null)
+        $checksExitCode = $LASTEXITCODE
+        if ($checksExitCode -eq 0 -and $json) {
+            break
+        }
+        if ($summaryAttempt -lt $maxRetries) {
+            Write-Info "ci summary: gh pr checks exited $checksExitCode; retrying in ${retryDelaySec}s..."
+            Start-Sleep -Seconds $retryDelaySec
+        }
+    }
+
+    if ($checksExitCode -ne 0 -or -not $json) {
+        # Bounded failure output: exit code, attempt count, and a short excerpt.
+        $excerpt = if ($json -is [string] -and $json.Length -gt 200) { $json.Substring(0, 200) + '...' } else { $json }
+        Write-Fail "gh pr checks failed after $summaryAttempts attempts (exit $checksExitCode, watch_ok=$watchOk)"
+        if ($excerpt) { Write-Fail "  last output excerpt (${($excerpt -split "`n").Count} line(s)): $excerpt" }
         Set-ExitCode -Code 3
         return $false
     }
 
+    # Defensive: initialize $checks before parsing so null/unexpected $json
+    # does not flow into the foreach bucket loop below.
+    $checks = @()
     try {
         $checks = $json | ConvertFrom-Json
     } catch {
