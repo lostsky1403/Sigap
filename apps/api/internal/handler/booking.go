@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -181,6 +182,12 @@ func (h *BookingHandler) BookAppointment(w http.ResponseWriter, r *http.Request)
 		req.FacilityID, req.ServiceUnitID, strPtr(req.PractitionerScheduleID),
 		req.PatientDisplayName, phone, aptTime, code, strPtr(req.Notes)).Scan(&id)
 	if err != nil {
+		slog.Error("booking insert failed",
+			"facility_id", req.FacilityID,
+			"service_unit_id", req.ServiceUnitID,
+			"practitioner_schedule_id", req.PractitionerScheduleID,
+			"appointment_time", req.AppointmentTime,
+			"err", err.Error())
 		writeError(w, http.StatusInternalServerError, "Gagal menyimpan janji temu.")
 		return
 	}
@@ -394,14 +401,15 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract appointment ID from path
+	// Extract appointment ID from path: POST /api/v1/appointments/{id}/check-in
+	// parts = ["api","v1","appointments","<uuid>","check-in"]
 	path := r.URL.Path
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) < 4 {
 		writeError(w, http.StatusBadRequest, "URL tidak valid.")
 		return
 	}
-	id := parts[2]
+	id := parts[3]
 	if _, err := uuid.Parse(id); err != nil {
 		writeError(w, http.StatusBadRequest, "ID janji temu tidak valid.")
 		return
@@ -480,8 +488,45 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Gagal mengambil nomor antrean.")
-		return
+		slog.Error("queue generation failed",
+			"appointment_id", id,
+			"facility_id", facilityID,
+			"err", err.Error())
+		// Roll back to scheduled so the appointment can be retried.
+		_, rbErr := h.pool.Exec(ctx,
+			`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1`, id)
+		if rbErr != nil {
+			slog.Error("rollback to scheduled failed",
+				"appointment_id", id, "err", rbErr.Error())
+		}
+		// Dev fallback: retry with FakeQueueService when SIGAP_ENGINE_FALLBACK=dev.
+		if os.Getenv("SIGAP_ENGINE_FALLBACK") == "dev" {
+			slog.Warn("SIGAP_ENGINE_FALLBACK=dev: retrying queue generation with FakeQueueService",
+				"appointment_id", id)
+			fake := service.NewFakeQueueService()
+			res, err = fake.Generate(ctx, service.GenerateInput{
+				FacilityID: facilityID,
+				Patient: service.PatientInput{
+					FullName: patientName,
+					Phone:    patientPhone,
+				},
+			})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "Gagal mengambil nomor antrean.")
+				return
+			}
+			// Re-transition to checked_in after successful fallback
+			_, err = h.pool.Exec(ctx,
+				`UPDATE appointments SET status = 'checked_in', checkin_at = NOW(), updated_at = NOW() WHERE id = $1`,
+				id)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "Gagal memperbarui status check-in.")
+				return
+			}
+		} else {
+			writeError(w, http.StatusInternalServerError, "Gagal mengambil nomor antrean.")
+			return
+		}
 	}
 
 	// Transition to queued with queue_ticket_id

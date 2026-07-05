@@ -55,6 +55,7 @@ CREATE TABLE appointments (
   patient_display_name TEXT NOT NULL,
   patient_phone TEXT NOT NULL,
   checkin_code TEXT NOT NULL,
+  notes TEXT,
   queue_ticket_id UUID REFERENCES queue_tickets(id) ON DELETE SET NULL,
   checkin_at TIMESTAMPTZ,
   completed_at TIMESTAMPTZ,

@@ -182,6 +182,12 @@ Open <http://localhost:5173> in your browser.
 | New appointment | `/appointments/new` | Public booking form. Submit with a fake name and `+62-555-01xx` phone. You receive a 6-character check-in code. |
 | Check-in | `/appointments/check-in` | Enter the code from the previous step. A queue number is issued and the appointment moves to `queued`. |
 
+### Patient status portal
+
+| Page | URL | What to check |
+|------|-----|---------------|
+| Status lookup | `/patient/status` | Enter synthetic code `SMOKE01` (from demo seed). Shows facility name, appointment status, scheduled time, and check-in status. No PII is displayed. |
+
 ### Real-time dashboard
 
 The home page renders the **Bed Availability Dashboard** with live SSE

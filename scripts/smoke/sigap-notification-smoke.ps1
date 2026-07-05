@@ -36,8 +36,8 @@
 
 .PARAMETER DevUserId
     Synthetic value sent in the X-Sigap-Dev-User-ID header for admin routes.
-    Defaults to 'dev-user-smoke'. This is a NON-secret identifier for the
-    local dev identity provider; no real credentials are involved.
+    Defaults to a deterministic synthetic UUID. This is a NON-secret identifier
+    for the local dev identity provider; no real credentials are involved.
 
 .PARAMETER WorkerDir
     Path to the Go module root containing cmd/notification-worker.
@@ -65,7 +65,7 @@
 [CmdletBinding()]
 param(
     [string]$ApiBase = $(if ($env:SIGAP_API_BASE) { $env:SIGAP_API_BASE } else { 'http://[::1]:8080' }),
-    [string]$DevUserId = 'dev-user-smoke',
+    [string]$DevUserId = '00000000-0000-0000-0000-00000000d999',
     [string]$WorkerDir = $(Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'apps\api')
 )
 
