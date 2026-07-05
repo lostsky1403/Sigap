@@ -8,11 +8,19 @@
 
     Steps:
       1. GET  /health
-      2. GET  /api/v1/admin/facilities                (dev identity)
-      3. POST /api/v1/appointments                    (public booking)
-      4. POST /api/v1/appointments/{id}/check-in      (public check-in)
-      5. GET  /api/v1/admin/queues?facility_id=...    (dev identity)
-      6. PATCH /api/v1/admin/appointments/{id}/status (dev identity, queued->completed)
+      2. GET  /api/v1/admin/facilities                  (dev identity)
+      3. GET  /api/v1/admin/service-units               (dev identity, discover service_unit_id)
+      4. GET  /api/v1/admin/schedules                   (dev identity, discover schedule_id for tomorrow)
+      5. POST /api/v1/appointments                      (public booking, uses discovered IDs)
+      6. POST /api/v1/appointments/{id}/check-in        (public check-in)
+      7. GET  /api/v1/admin/queues?facility_id=...      (dev identity)
+      8. PATCH /api/v1/admin/appointments/{id}/status   (dev identity, queued->completed)
+
+    Steps 3–4 discover the service_unit_id and practitioner_schedule_id that
+    belong to the selected facility, so the booking payload always contains
+    valid cross-references. If discovery finds nothing and $SkipSeed is not
+    set, booking proceeds without those fields (the API accepts optional
+    capacity validation).
 
     Each step prints [INFO] / [PASS] / [FAIL]. Exit code is 0 on full PASS,
     non-zero on any FAIL or on a network error / invalid response / null
@@ -28,21 +36,24 @@
 
 .PARAMETER ServiceUnitCode
     The code of the seeded service unit. Defaults to 'DEMO-UMUM'.
-    MUST be non-empty. (Informational — the actual UUID is hardcoded below.)
+    MUST be non-empty. (Informational — the actual UUID is discovered from
+    the admin API; the hardcoded fallback is only used when -SkipSeed is set.)
 
 .PARAMETER PractitionerScheduleId
-    Optional seeded schedule id. Defaults to the demo seed UUID
-    '00000000-0000-0000-0000-00000000d021'. If not present in the DB,
-    booking still succeeds but skips capacity validation.
+    Override practitioner schedule id. Normally discovered automatically
+    from the admin schedules API (step 4). Only used as a fallback when
+    -SkipSeed is set. Defaults to the demo seed UUID
+    '00000000-0000-0000-0000-00000000d021'.
 
 .PARAMETER DevUserId
     Synthetic value sent in the X-Sigap-Dev-User-ID header for admin routes.
-    Defaults to 'dev-user-smoke'. This is a NON-secret identifier for the
-    local dev identity provider; no real credentials are involved.
+    Defaults to a deterministic synthetic UUID. This is a NON-secret identifier
+    for the local dev identity provider; no real credentials are involved.
 
 .PARAMETER SkipSeed
-    Set to $true to skip sending practitioner_schedule_id in the booking
-    payload (booking still works, but capacity is not validated).
+    Set to $true to skip auto-discovery and use only the hardcoded fallback
+    IDs for service_unit_id and practitioner_schedule_id in the booking
+    payload (booking still works, but capacity may not be validated).
 
 .EXAMPLE
     pwsh -File scripts/smoke/sigap-demo-smoke.ps1
@@ -69,7 +80,7 @@ param(
     [string]$FacilityShortCode = 'RSK',
     [string]$ServiceUnitCode = 'DEMO-UMUM',
     [string]$PractitionerScheduleId = '00000000-0000-0000-0000-00000000d021',
-    [string]$DevUserId = 'dev-user-smoke',
+    [string]$DevUserId = '00000000-0000-0000-0000-00000000d999',
     [switch]$SkipSeed
 )
 
@@ -82,6 +93,11 @@ $ErrorActionPreference = 'Continue'
 # Constants (synthetic identifiers only — never replace with real data)
 # ---------------------------------------------------------------
 $DemoServiceUnitId = '00000000-0000-0000-0000-00000000d001'
+
+# Discovered IDs — populated by steps 3–4 from the admin API.
+$script:discoveredServiceUnitId  = $null
+$script:discoveredScheduleId     = $null
+$script:discoveredScheduleUnitId = $null  # service_unit_id from the matched schedule
 
 # Results aggregator — one row per smoke step.
 $results = New-Object System.Collections.Generic.List[object]
@@ -177,10 +193,11 @@ function Invoke-ApiJson {
     foreach ($k in $Headers.Keys) { $reqHeaders[$k] = $Headers[$k] }
 
     $params = @{
-        Method  = $Method
-        Uri     = $uri
-        Headers = $reqHeaders
-        TimeoutSec = $TimeoutSec
+        Method              = $Method
+        Uri                 = $uri
+        Headers             = $reqHeaders
+        TimeoutSec          = $TimeoutSec
+        SkipHttpErrorCheck  = $true
     }
     if ($null -ne $Body) {
         try {
@@ -300,8 +317,8 @@ if ($paramErrors.Count -gt 0) {
 Write-Host "Sigap demo smoke suite"
 Write-Host "API base       : $ApiBase"
 Write-Host "Facility code  : $FacilityShortCode"
-Write-Host "Service unit   : $ServiceUnitCode ($DemoServiceUnitId)"
-Write-Host "Schedule id    : $PractitionerScheduleId"
+Write-Host "Service unit   : $ServiceUnitCode (fallback: $DemoServiceUnitId)"
+Write-Host "Schedule id    : $PractitionerScheduleId (fallback; auto-discovered)"
 Write-Host "Dev user       : $DevUserId (local-only synthetic identifier)"
 Write-Host ""
 
@@ -309,7 +326,7 @@ Write-Host ""
 # Step 1: Health check
 # ---------------------------------------------------------------
 Invoke-Step -Name 'health' -Body {
-    Write-Step "Step 1/6: GET /health"
+    Write-Step "Step 1/8: GET /health"
     $resp = Invoke-ApiJson -Method GET -Path '/health'
     if (-not $resp.CallOk) {
         Add-Result -Name 'health' -Pass $false -Detail "Could not call API: $($resp.Error)"
@@ -331,7 +348,7 @@ Invoke-Step -Name 'health' -Body {
 # ---------------------------------------------------------------
 $facilityId = $null
 Invoke-Step -Name 'admin.facilities.list' -Body {
-    Write-Step "Step 2/6: GET /api/v1/admin/facilities (dev identity)"
+    Write-Step "Step 2/8: GET /api/v1/admin/facilities (dev identity)"
     $resp = Invoke-ApiJson -Method GET -Path '/api/v1/admin/facilities' -Headers @{ 'X-Sigap-Dev-User-ID' = $DevUserId }
     if (-not $resp.CallOk -or -not $resp.NetworkOk) {
         Add-Result -Name 'admin.facilities.list' -Pass $false -Detail "Network/transport error: $($resp.Error)"
@@ -365,12 +382,87 @@ Invoke-Step -Name 'admin.facilities.list' -Body {
 }
 
 # ---------------------------------------------------------------
-# Step 3: Public booking
+# Step 3: Discover service_unit_id (dev identity)
+# ---------------------------------------------------------------
+Invoke-Step -Name 'admin.service-units.discover' -Body {
+    Write-Step "Step 3/8: GET /api/v1/admin/service-units (discover service_unit_id)"
+    if (-not $facilityId) {
+        Add-Result -Name 'admin.service-units.discover' -Pass $false -Detail 'Skipped: no facility id from step 2.'
+        return
+    }
+    $resp = Invoke-ApiJson -Method GET -Path '/api/v1/admin/service-units' -Headers @{ 'X-Sigap-Dev-User-ID' = $DevUserId }
+    if (-not $resp.CallOk -or -not $resp.NetworkOk) {
+        Add-Result -Name 'admin.service-units.discover' -Pass $false -Detail "Network/transport error: $($resp.Error)"
+        return
+    }
+    if (-not $resp.Success -or $null -eq $resp.Json -or -not $resp.Json.success) {
+        Add-Result -Name 'admin.service-units.discover' -Pass $false -Detail "HTTP $($resp.StatusCode) — body: $($resp.Body)"
+        return
+    }
+    $units = @($resp.Json.data)
+    if ($units.Count -eq 0) {
+        Add-Result -Name 'admin.service-units.discover' -Pass $true -Detail "HTTP 200 — no service units returned; will use fallback."
+        return
+    }
+    # Prefer the service unit matching $ServiceUnitCode (DEMO-UMUM/d001).
+    $match = $units | Where-Object { $_.facility_id -eq $facilityId -and $_.is_active -eq $true -and $_.code -eq $ServiceUnitCode } | Select-Object -First 1
+    if (-not $match) {
+        # Fall back to any active service unit for this facility.
+        $match = $units | Where-Object { $_.facility_id -eq $facilityId -and $_.is_active -eq $true } | Select-Object -First 1
+    }
+    if ($match) {
+        $script:discoveredServiceUnitId = [string]$match.id
+        Add-Result -Name 'admin.service-units.discover' -Pass $true -Detail "HTTP 200 — discovered service_unit id=$($script:discoveredServiceUnitId) name='$($match.name)' for facility=$facilityId"
+    } else {
+        Add-Result -Name 'admin.service-units.discover' -Pass $true -Detail "HTTP 200 — no active service unit for facility=$facilityId; will use fallback."
+    }
+}
+
+# ---------------------------------------------------------------
+# Step 4: Discover schedule_id for tomorrow (dev identity)
+# ---------------------------------------------------------------
+Invoke-Step -Name 'admin.schedules.discover' -Body {
+    Write-Step "Step 4/8: GET /api/v1/admin/schedules (discover schedule_id for tomorrow)"
+    if (-not $facilityId) {
+        Add-Result -Name 'admin.schedules.discover' -Pass $false -Detail 'Skipped: no facility id from step 2.'
+        return
+    }
+    $resp = Invoke-ApiJson -Method GET -Path '/api/v1/admin/schedules' -Headers @{ 'X-Sigap-Dev-User-ID' = $DevUserId }
+    if (-not $resp.CallOk -or -not $resp.NetworkOk) {
+        Add-Result -Name 'admin.schedules.discover' -Pass $false -Detail "Network/transport error: $($resp.Error)"
+        return
+    }
+    if (-not $resp.Success -or $null -eq $resp.Json -or -not $resp.Json.success) {
+        Add-Result -Name 'admin.schedules.discover' -Pass $false -Detail "HTTP $($resp.StatusCode) — body: $($resp.Body)"
+        return
+    }
+    $schedules = @($resp.Json.data)
+    if ($schedules.Count -eq 0) {
+        Add-Result -Name 'admin.schedules.discover' -Pass $true -Detail "HTTP 200 — no schedules returned; will use fallback."
+        return
+    }
+    $tomorrowStr = (Get-Date).ToUniversalTime().Date.AddDays(1).ToString('yyyy-MM-dd')
+    $match = $schedules | Where-Object {
+        $_.facility_id -eq $facilityId -and $_.is_active -eq $true -and $_.schedule_date -eq $tomorrowStr
+    } | Select-Object -First 1
+    if ($match) {
+        $script:discoveredScheduleId = [string]$match.id
+        if ($match.service_unit_id) {
+            $script:discoveredScheduleUnitId = [string]$match.service_unit_id
+        }
+        Add-Result -Name 'admin.schedules.discover' -Pass $true -Detail "HTTP 200 — discovered schedule id=$($script:discoveredScheduleId) date=$tomorrowStr service_unit=$($script:discoveredScheduleUnitId) for facility=$facilityId"
+    } else {
+        Add-Result -Name 'admin.schedules.discover' -Pass $true -Detail "HTTP 200 — no active schedule for facility=$facilityId on $tomorrowStr; will use fallback."
+    }
+}
+
+# ---------------------------------------------------------------
+# Step 5: Public booking
 # ---------------------------------------------------------------
 $apptId = $null
 $checkinCode = $null
 Invoke-Step -Name 'public.booking' -Body {
-    Write-Step "Step 3/6: POST /api/v1/appointments (public booking)"
+    Write-Step "Step 5/8: POST /api/v1/appointments (public booking)"
     if (-not $facilityId) {
         Add-Result -Name 'public.booking' -Pass $false -Detail 'Skipped: no facility id from step 2 (facility list failed or returned empty).'
         return
@@ -380,26 +472,53 @@ Invoke-Step -Name 'public.booking' -Body {
     $rand = Get-Random -Minimum 1000 -Maximum 9999
     $phone = "+62-555-01$($rand.ToString().Substring(0,3))"
     $patientName = "Pasien Demo $rand"
-    $apptTime = (Get-Date).ToUniversalTime().Date.AddDays(1).AddHours(9).ToString('yyyy-MM-ddTHH:mm:ssZ')
-    Write-Info "Synthetic booking payload: facility=$facilityId, service_unit=$DemoServiceUnitId, time=$apptTime (UTC), phone=$phone (reserved test range)."
+    $apptTime = (Get-Date).ToUniversalTime().Date.AddDays(1).AddHours(9).ToString('yyyy-MM-ddTHH\:mm\:ssZ')
+
+    # Resolve service_unit_id: prefer the schedule's service_unit_id for consistency,
+    # then independently discovered, then fallback when SkipSeed is set.
+    $resolvedServiceUnitId = $null
+    if ($script:discoveredScheduleUnitId) {
+        # Schedule carries its own service_unit_id — use it to guarantee consistency.
+        $resolvedServiceUnitId = $script:discoveredScheduleUnitId
+        if ($script:discoveredServiceUnitId -and $script:discoveredServiceUnitId -ne $script:discoveredScheduleUnitId) {
+            Write-Info "Note: independently discovered service_unit ($($script:discoveredServiceUnitId)) differs from schedule's service_unit ($($script:discoveredScheduleUnitId)); using schedule's unit for consistency."
+        }
+    } elseif ($script:discoveredServiceUnitId) {
+        $resolvedServiceUnitId = $script:discoveredServiceUnitId
+    } elseif ($SkipSeed) {
+        $resolvedServiceUnitId = $DemoServiceUnitId
+    }
+
+    # Resolve schedule_id: prefer discovered, then fallback when SkipSeed is set.
+    $resolvedScheduleId = $null
+    if ($script:discoveredScheduleId) {
+        $resolvedScheduleId = $script:discoveredScheduleId
+    } elseif ($SkipSeed) {
+        $resolvedScheduleId = $PractitionerScheduleId
+    }
+
+    Write-Info "Synthetic booking payload: facility=$facilityId, service_unit=$resolvedServiceUnitId, schedule=$resolvedScheduleId, time=$apptTime (UTC), phone=$phone (reserved test range)."
 
     $bookingBody = @{
         facility_id          = $facilityId
-        service_unit_id      = $DemoServiceUnitId
         patient_display_name = $patientName
         patient_phone        = $phone
         appointment_time     = $apptTime
     }
-    if (-not $SkipSeed) {
-        $bookingBody.practitioner_schedule_id = $PractitionerScheduleId
+    if ($resolvedServiceUnitId) {
+        $bookingBody.service_unit_id = $resolvedServiceUnitId
+    }
+    if ($resolvedScheduleId) {
+        $bookingBody.practitioner_schedule_id = $resolvedScheduleId
     }
     $resp = Invoke-ApiJson -Method POST -Path '/api/v1/appointments' -Body $bookingBody
     if (-not $resp.CallOk -or -not $resp.NetworkOk) {
         Add-Result -Name 'public.booking' -Pass $false -Detail "Network/transport error: $($resp.Error)"
         return
     }
-    if ($resp.StatusCode -eq 400 -and $resp.Body -match 'Waktu janji temu harus di masa depan') {
-        Add-Result -Name 'public.booking' -Pass $false -Detail "HTTP 400 — appointment_time is in the API's past. Check timezone/clock (see docs/DEMO_FLOW.md § Troubleshooting)."
+    if ($resp.StatusCode -eq 400) {
+        $excerpt = if ($resp.Body) { $resp.Body.Substring(0, [Math]::Min(300, $resp.Body.Length)) } else { '(empty body)' }
+        Add-Result -Name 'public.booking' -Pass $false -Detail "HTTP 400 — $excerpt"
         return
     }
     if (-not $resp.Success -or $null -eq $resp.Json -or -not $resp.Json.success) {
@@ -416,13 +535,14 @@ Invoke-Step -Name 'public.booking' -Body {
 }
 
 # ---------------------------------------------------------------
-# Step 4: Public check-in
+# Step 6: Public check-in
 # ---------------------------------------------------------------
 $queueTicketId = $null
+$queueEngineUnavailable = $false
 Invoke-Step -Name 'public.checkin' -Body {
-    Write-Step "Step 4/6: POST /api/v1/appointments/{id}/check-in"
+    Write-Step "Step 6/8: POST /api/v1/appointments/{id}/check-in"
     if (-not $apptId -or -not $checkinCode) {
-        Add-Result -Name 'public.checkin' -Pass $false -Detail 'Skipped: no appointment id or checkin_code from step 3.'
+        Add-Result -Name 'public.checkin' -Pass $false -Detail 'Skipped: no appointment id or checkin_code from step 5.'
         return
     }
     $resp = Invoke-ApiJson -Method POST -Path "/api/v1/appointments/$apptId/check-in" -Body @{ checkin_code = $checkinCode }
@@ -430,8 +550,9 @@ Invoke-Step -Name 'public.checkin' -Body {
         Add-Result -Name 'public.checkin' -Pass $false -Detail "Network/transport error: $($resp.Error)"
         return
     }
-    if ($resp.StatusCode -eq 500 -and $resp.Body -match 'Layanan antrean tidak tersedia') {
-        Add-Result -Name 'public.checkin' -Pass $false -Detail "HTTP 500 — Rust queue engine is unavailable. Start Terminal 1 (cargo run in apps/queue-engine)."
+    if ($resp.StatusCode -eq 500 -and ($resp.Body -match 'Layanan antrean tidak tersedia' -or $resp.Body -match 'Gagal mengambil nomor antrean')) {
+        $script:queueEngineUnavailable = $true
+        Add-Result -Name 'public.checkin' -Pass $false -Detail "HTTP 500 — Queue engine unavailable. Start it: cargo run in apps/queue-engine, or set SIGAP_ENGINE_FALLBACK=dev in .env and restart API."
         return
     }
     if (-not $resp.Success -or $null -eq $resp.Json -or -not $resp.Json.success) {
@@ -447,10 +568,10 @@ Invoke-Step -Name 'public.checkin' -Body {
 }
 
 # ---------------------------------------------------------------
-# Step 5: Admin queue list
+# Step 7: Admin queue list
 # ---------------------------------------------------------------
 Invoke-Step -Name 'admin.queues.list' -Body {
-    Write-Step "Step 5/6: GET /api/v1/admin/queues?facility_id={id}"
+    Write-Step "Step 7/8: GET /api/v1/admin/queues?facility_id={id}"
     if (-not $facilityId) {
         Add-Result -Name 'admin.queues.list' -Pass $false -Detail 'Skipped: no facility id from step 2.'
         return
@@ -468,17 +589,21 @@ Invoke-Step -Name 'admin.queues.list' -Body {
     if ($ticketCount -gt 0) {
         Add-Result -Name 'admin.queues.list' -Pass $true -Detail "HTTP 200 — found $ticketCount ticket(s) for facility"
     } else {
-        Add-Result -Name 'admin.queues.list' -Pass $false -Detail "HTTP 200 but zero tickets found for facility (expected ≥1 after step 4 check-in)."
+        Add-Result -Name 'admin.queues.list' -Pass $false -Detail "HTTP 200 but zero tickets found for facility (expected ≥1 after step 6 check-in)."
     }
 }
 
 # ---------------------------------------------------------------
-# Step 6: Admin appointment status update (queued -> completed)
+# Step 8: Admin appointment status update (queued -> completed)
 # ---------------------------------------------------------------
 Invoke-Step -Name 'admin.appointments.status' -Body {
-    Write-Step "Step 6/6: PATCH /api/v1/admin/appointments/{id}/status"
+    Write-Step "Step 8/8: PATCH /api/v1/admin/appointments/{id}/status"
+    if ($queueEngineUnavailable) {
+        Add-Result -Name 'admin.appointments.status' -Pass $false -Detail 'Skipped: queue engine was unavailable at check-in; appointment did not reach queued status.'
+        return
+    }
     if (-not $apptId) {
-        Add-Result -Name 'admin.appointments.status' -Pass $false -Detail 'Skipped: no appointment id from step 3.'
+        Add-Result -Name 'admin.appointments.status' -Pass $false -Detail 'Skipped: no appointment id from step 5.'
         return
     }
     $resp = Invoke-ApiJson -Method PATCH -Path "/api/v1/admin/appointments/$apptId/status" -Headers @{ 'X-Sigap-Dev-User-ID' = $DevUserId } -Body @{ status = 'completed' }

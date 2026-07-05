@@ -8,6 +8,29 @@ PASS/FAIL assertions.
 
 - `sigap-demo-smoke.ps1` — main script; runs the documented happy path.
 - `sigap-notification-smoke.ps1` — notification pipeline smoke; verifies outbox, worker dry-run, and delivery.
+- `sigap-patient-portal-smoke.ps1` — patient portal smoke; validates public status lookup API.
+
+## Quick Usage
+
+```powershell
+# Demo smoke — full happy path (6 steps)
+pwsh -File scripts/smoke/sigap-demo-smoke.ps1
+
+# Notification pipeline smoke — outbox, worker dry-run, delivery (9 steps)
+pwsh -File scripts/smoke/sigap-notification-smoke.ps1
+
+# Patient portal smoke — public status lookup API (5 steps)
+pwsh -File scripts/smoke/sigap-patient-portal-smoke.ps1
+```
+
+Override the API base if needed:
+
+```powershell
+$env:SIGAP_API_BASE = 'http://[::1]:8080'
+pwsh -File scripts/smoke/sigap-patient-portal-smoke.ps1
+```
+
+See the detailed sections below for parameters, exit codes, and troubleshooting.
 
 ## Prerequisites
 
@@ -60,7 +83,7 @@ pwsh -File scripts/smoke/sigap-demo-smoke.ps1 `
 
 | Parameter | Default | Purpose |
 |-----------|---------|---------|
-| `-ApiBase` | `http://localhost:8080` (or `$env:SIGAP_API_BASE`) | API root |
+| `-ApiBase` | `http://[::1]:8080` (or `$env:SIGAP_API_BASE`) | API root (IPv6 loopback) |
 | `-FacilityShortCode` | `f1` | Facility to book against |
 | `-ServiceUnitCode` | `DEMO-UMUM` | Demo seed service unit code (informational) |
 | `-PractitionerScheduleId` | demo seed `d021` | Optional schedule for capacity-aware booking |
@@ -126,3 +149,175 @@ Additional notes:
 - The script never prints JWTs, passwords, or API keys. The only
   "identifier" it logs is `DevUserId`, which is a synthetic string
   consumed by the local `DevIdentityProvider`.
+
+---
+
+## Notification smoke
+
+`sigap-notification-smoke.ps1` exercises the notification pipeline
+end-to-end: API summary/listing, worker dry-run (no mutation), and
+worker once-mode delivery.
+
+### Prerequisites
+
+- PowerShell 7+ (`pwsh`).
+- A running Sigap API at `http://[::1]:8080` (or `$env:SIGAP_API_BASE`).
+  On Windows, Go's `ListenAndServe(":8080")` creates an IPv6-only
+  socket. The script defaults to `http://[::1]:8080` (IPv6 loopback).
+- PostgreSQL running with `$env:SIGAP_DATABASE_URL` set.
+- Dev seed loaded (`psql $DATABASE_URL -f packages/db/seed/dev.sql`)
+  — creates the demo facilities (short_codes: `RSK`, `PKM`, `RSM`,
+  `PMI`, `RSJ`, `PHB`). The notification smoke rows insert against
+  the first facility found.
+- Demo seed loaded (`psql $DATABASE_URL -f packages/db/seed/demo.sql`)
+  — this seeds 2 pending `notification_outbox` rows.
+- Go 1.22+ available for `go run ./cmd/notification-worker`.
+- Dev identity enabled (`SIGAP_AUTH_MODE=dev`, `SIGAP_DEV_IDENTITY=true`).
+- **No Rust queue engine required.**
+
+### Quickstart
+
+```powershell
+# Terminal 1: start the API
+cd apps/api
+go run ./cmd/server
+
+# Terminal 2: load seeds and run the notification smoke
+psql $env:DATABASE_URL -f packages/db/seed/dev.sql
+psql $env:DATABASE_URL -f packages/db/seed/demo.sql
+pwsh -File scripts/smoke/sigap-notification-smoke.ps1
+```
+
+Expected output: `Passed: 9 / 9` and exit code `0`.
+
+### What it covers
+
+| # | Step | Auth | Description |
+|---|------|------|-------------|
+| 1 | `GET /health` | none | API is up |
+| 2 | `GET /api/v1/admin/facilities` | dev | Dev identity works, obtain facility_id |
+| 3 | `GET /api/v1/admin/notifications/summary` | dev | Snapshot pending count before worker |
+| 4 | `GET /api/v1/admin/notifications?status=pending` | dev | Verify seeded pending rows exist |
+| 5 | Worker dry-run | — | `DRY_RUN=true ONCE=true` subprocess; parses slog output |
+| 6 | Summary re-check | dev | Pending count unchanged after dry-run |
+| 7 | Worker once-mode | — | `ONCE=true` subprocess; real delivery |
+| 8 | Summary after | dev | Pending decreased or delivered/failed increased |
+| 9 | List after | dev | Delivered or failed rows exist |
+
+### Parameters
+
+```powershell
+pwsh -File scripts/smoke/sigap-notification-smoke.ps1 `
+    -ApiBase 'http://[::1]:8080' `
+    -DevUserId 'dev-user-smoke' `
+    -WorkerDir 'apps\api'
+```
+
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| `-ApiBase` | `http://localhost:8080` (or `$env:SIGAP_API_BASE`) | API root |
+| `-DevUserId` | `dev-user-smoke` | Value of `X-Sigap-Dev-User-ID` header |
+| `-WorkerDir` | `apps\api` (relative to script) | Go module root for `cmd/notification-worker` |
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | All 9 notification smoke steps passed. |
+| `1` | At least one step failed. The summary block lists `[FAIL]` steps. |
+| `2` | Parameter validation failed. |
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `[FAIL] api.health` — "connection forcibly closed" or timeout | IPv4 connection intercepted on Windows | Use `http://[::1]:8080` as `-ApiBase`. Windows' IP Helper service (`iphlpsvc`) may bind `0.0.0.0:8080`, eating IPv4 connections. The script's IPv6 default avoids this. |
+| `[FAIL] api.health` — "Network unreachable" | Go API not running | `cd apps/api; go run ./cmd/server` |
+| `[FAIL] dev.identity` — HTTP 403 | Dev identity disabled | Set `SIGAP_AUTH_MODE=dev` and `SIGAP_DEV_IDENTITY=true` in `.env` |
+| `[FAIL] notification.list.before` — 0 rows | Demo seed not loaded | `psql $DATABASE_URL -f packages/db/seed/demo.sql` |
+| `[FAIL] worker.dry_run` — build error | Go not installed or `WorkerDir` wrong | Install Go 1.22+; pass correct `-WorkerDir` |
+| `[FAIL] worker.dry_run` — timeout | Worker hung or DB unreachable | Check `$env:SIGAP_DATABASE_URL` is set and PostgreSQL is running |
+| `[FAIL] notification.summary.after` — unchanged | Worker processed 0 rows | Check `SIGAP_DATABASE_URL` in the worker process; verify outbox has due rows |
+
+### Privacy
+
+- This script never prints `recipient_contact_masked`,
+  `recipient_contact_hash`, `subject`, `body_template`, raw phone
+  numbers, emails, or rendered notification bodies.
+- Only counts, UUIDs, status strings, and slog-parsed counters are
+  displayed.
+- Dev identity is **local-only**; never enable in shared environments.
+
+---
+
+## Patient portal smoke
+
+`sigap-patient-portal-smoke.ps1` validates the public patient status
+lookup endpoint (`GET /api/v1/patient/status`) using synthetic demo data.
+No authentication required — the endpoint is public.
+
+### Prerequisites
+
+- PowerShell 7+ (`pwsh`).
+- A running Sigap API at `http://[::1]:8080` (or `$env:SIGAP_API_BASE`).
+- Demo seed loaded (`psql $DATABASE_URL -f packages/db/seed/demo.sql`)
+  — creates a deterministic appointment with `checkin_code = 'SMOKE01'`.
+- **No Rust queue engine required.**
+- **No dev identity required** (public endpoint).
+
+### Quickstart
+
+```powershell
+# Terminal 1: start the API
+cd apps/api
+go run ./cmd/server
+
+# Terminal 2: load demo seed and run the patient portal smoke
+psql $env:DATABASE_URL -f packages/db/seed/demo.sql
+pwsh -File scripts/smoke/sigap-patient-portal-smoke.ps1
+```
+
+Expected output: `Passed: 5 / 5` and exit code `0`.
+
+### What it covers
+
+| # | Step | Auth | Description |
+|---|------|------|-------------|
+| 1 | `GET /health` | none | API is up |
+| 2 | `GET /api/v1/patient/status?code=SMOKE01` | none | Valid lookup returns 200 with `found_by=checkin_code` |
+| 3 | `GET /api/v1/patient/status?code=<script>` | none | Invalid characters return 400 |
+| 4 | `GET /api/v1/patient/status?code=ZZZZZXXXXX999` | none | Unknown code returns 404 |
+| 5 | PII absence check | none | Response body does not contain forbidden PII field names |
+
+### Parameters
+
+```powershell
+pwsh -File scripts/smoke/sigap-patient-portal-smoke.ps1 `
+    -ApiBase 'http://[::1]:8080'
+```
+
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| `-ApiBase` | `http://[::1]:8080` (or `$env:SIGAP_API_BASE`) | API root |
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | All 5 patient portal smoke steps passed. |
+| `1` | At least one step failed. |
+| `2` | Parameter validation failed. |
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `[FAIL] api.health` — "Network unreachable" | Go API not running | `cd apps/api; go run ./cmd/server` |
+| `[FAIL] patient.status.valid_lookup` — 404 | Demo seed not loaded | `psql $DATABASE_URL -f packages/db/seed/demo.sql` |
+| `[FAIL] patient.status.invalid_code` — not 400 | Input validation not applied | Ensure latest code is running (rebuild API) |
+
+### Privacy
+
+- This script never prints patient data, phone numbers, or any PII.
+- Only HTTP status codes, boolean flags, and field-name presence
+  checks are displayed.

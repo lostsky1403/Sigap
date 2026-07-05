@@ -28,33 +28,48 @@
 -- DATA POLICY (synthetic only — never replace with real data)
 -- ============================================================
 --   * No real patient names, no real NIK, no real phone.
---   * Facility scope: targets the seeded facility with short_code = 'f1'
---     (the first row inserted by packages/db/seed/dev.sql).
+--   * Facility scope: selects exactly one facility deterministically:
+--     RSK first, then f1, then any (ordered by id). LIMIT 1.
 --   * Phone numbers use the +62-555-01xx reserved-for-testing range
 --     (ITU-T E.164 reserved for fictional use).
 --   * Schedule date is rolled forward to "tomorrow" (CURRENT_DATE + 1) in
 --     the PostgreSQL server's timezone so the demo slot is always bookable.
 
+-- Idempotent schema guard: add notes column if missing (added after initial
+-- migration; existing local DBs may lack it).
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS notes TEXT;
+
 BEGIN;
 
 -- ============================================================
--- 1. Service units (Poli Umum, Poli Gigi) tied to facility f1.
+-- 1. Service units (Poli Umum, Poli Gigi) tied to a single
+--    deterministic facility.
 --    Natural-key guard: (facility_id, code).
 -- ============================================================
 INSERT INTO service_units (id, facility_id, name, code, description, is_active)
 SELECT
     '00000000-0000-0000-0000-00000000d001'::uuid,  -- deterministic UUID (d001)
-    f.id,                                          -- facility f1 (joined below)
+    f.id,                                          -- single deterministic facility
     'Poli Umum Demo',
     'DEMO-UMUM',                                   -- natural key part 2
     'Pelayanan umum untuk demo lokal Sigap. Data sintetis.',
     TRUE
 FROM facilities f
-WHERE f.short_code = 'f1'
+WHERE f.id = (
+    SELECT id FROM facilities
+    ORDER BY
+        CASE WHEN short_code = 'RSK' THEN 0
+             WHEN short_code = 'f1' THEN 1
+             ELSE 2
+        END,
+        id
+    LIMIT 1
+)
   AND NOT EXISTS (
     SELECT 1 FROM service_units su
     WHERE su.facility_id = f.id AND su.code = 'DEMO-UMUM'  -- natural-key guard
-  );
+  )
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO service_units (id, facility_id, name, code, description, is_active)
 SELECT
@@ -65,11 +80,21 @@ SELECT
     'Pelayanan gigi untuk demo lokal Sigap. Data sintetis.',
     TRUE
 FROM facilities f
-WHERE f.short_code = 'f1'
+WHERE f.id = (
+    SELECT id FROM facilities
+    ORDER BY
+        CASE WHEN short_code = 'RSK' THEN 0
+             WHEN short_code = 'f1' THEN 1
+             ELSE 2
+        END,
+        id
+    LIMIT 1
+)
   AND NOT EXISTS (
     SELECT 1 FROM service_units su
     WHERE su.facility_id = f.id AND su.code = 'DEMO-GIGI'
-  );
+  )
+ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================
 -- 2. Practitioners (generic providers, no real PII).
@@ -83,11 +108,21 @@ SELECT
     'dokter_umum',
     TRUE
 FROM facilities f
-WHERE f.short_code = 'f1'
+WHERE f.id = (
+    SELECT id FROM facilities
+    ORDER BY
+        CASE WHEN short_code = 'RSK' THEN 0
+             WHEN short_code = 'f1' THEN 1
+             ELSE 2
+        END,
+        id
+    LIMIT 1
+)
   AND NOT EXISTS (
     SELECT 1 FROM practitioners p
     WHERE p.facility_id = f.id AND p.display_name = 'Dokter Demo A'
-  );
+  )
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO practitioners (id, facility_id, display_name, role, is_active)
 SELECT
@@ -97,14 +132,24 @@ SELECT
     'dokter_gigi',
     TRUE
 FROM facilities f
-WHERE f.short_code = 'f1'
+WHERE f.id = (
+    SELECT id FROM facilities
+    ORDER BY
+        CASE WHEN short_code = 'RSK' THEN 0
+             WHEN short_code = 'f1' THEN 1
+             ELSE 2
+        END,
+        id
+    LIMIT 1
+)
   AND NOT EXISTS (
     SELECT 1 FROM practitioners p
     WHERE p.facility_id = f.id AND p.display_name = 'Dokter Demo B'
-  );
+  )
+ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================
--- 3. Schedules for tomorrow: two slots at the same facility, two service units.
+-- 3. Schedules for tomorrow: two slots at the deterministic facility, two service units.
 --    Slot 09:00-12:00, 30-minute slots, capacity 3 per slot.
 --    Natural-key guard: (facility_id, service_unit_id, schedule_date, start_time).
 -- ============================================================
@@ -124,14 +169,24 @@ SELECT
     3,
     TRUE
 FROM facilities f
-WHERE f.short_code = 'f1'
+WHERE f.id = (
+    SELECT id FROM facilities
+    ORDER BY
+        CASE WHEN short_code = 'RSK' THEN 0
+             WHEN short_code = 'f1' THEN 1
+             ELSE 2
+        END,
+        id
+    LIMIT 1
+)
   AND NOT EXISTS (
     SELECT 1 FROM practitioner_schedules ps
     WHERE ps.facility_id = f.id
       AND ps.service_unit_id = '00000000-0000-0000-0000-00000000d001'::uuid
       AND ps.schedule_date = (CURRENT_DATE + INTERVAL '1 day')::date
       AND ps.start_time = '09:00:00'::time
-  );
+  )
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO practitioner_schedules (
     id, facility_id, practitioner_id, service_unit_id,
@@ -149,14 +204,24 @@ SELECT
     3,
     TRUE
 FROM facilities f
-WHERE f.short_code = 'f1'
+WHERE f.id = (
+    SELECT id FROM facilities
+    ORDER BY
+        CASE WHEN short_code = 'RSK' THEN 0
+             WHEN short_code = 'f1' THEN 1
+             ELSE 2
+        END,
+        id
+    LIMIT 1
+)
   AND NOT EXISTS (
     SELECT 1 FROM practitioner_schedules ps
     WHERE ps.facility_id = f.id
       AND ps.service_unit_id = '00000000-0000-0000-0000-00000000d002'::uuid
       AND ps.schedule_date = (CURRENT_DATE + INTERVAL '1 day')::date
       AND ps.start_time = '09:00:00'::time
-  );
+  )
+ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================
 -- 4. Notification outbox demo rows for the notification smoke test.
@@ -185,7 +250,16 @@ SELECT
     'smoke_seed',
     '00000000-0000-0000-0000-00000000d041'::uuid
 FROM facilities f
-WHERE f.short_code = (SELECT short_code FROM facilities ORDER BY created_at LIMIT 1)
+WHERE f.id = (
+    SELECT id FROM facilities
+    ORDER BY
+        CASE WHEN short_code = 'RSK' THEN 0
+             WHEN short_code = 'f1' THEN 1
+             ELSE 2
+        END,
+        id
+    LIMIT 1
+)
   AND NOT EXISTS (
     SELECT 1 FROM notification_outbox no
     WHERE no.template_key = 'appointment.booked.confirmation'
@@ -213,12 +287,36 @@ SELECT
     'smoke_seed',
     '00000000-0000-0000-0000-00000000d042'::uuid
 FROM facilities f
-WHERE f.short_code = (SELECT short_code FROM facilities ORDER BY created_at LIMIT 1)
+WHERE f.id = (
+    SELECT id FROM facilities
+    ORDER BY
+        CASE WHEN short_code = 'RSK' THEN 0
+             WHEN short_code = 'f1' THEN 1
+             ELSE 2
+        END,
+        id
+    LIMIT 1
+)
   AND NOT EXISTS (
     SELECT 1 FROM notification_outbox no
     WHERE no.template_key = 'appointment.checked_in.confirmation'
       AND no.recipient_contact_hash = '\xc5af62ba6bb72c87d3921ac6fbaf48a1ca97964dbdb1315661cf2588c9c2eb1a'::bytea
   );
+
+-- Reset deterministic smoke notification rows to pending on rerun.
+-- Previous worker runs may have consumed these rows. Rerunning demo.sql
+-- must always leave them as pending so the notification smoke script
+-- finds >= 1 pending row.
+UPDATE notification_outbox
+SET status = 'pending',
+    attempt_count = 0,
+    next_attempt_at = NOW(),
+    updated_at = NOW()
+WHERE id IN (
+    '00000000-0000-0000-0000-00000000d031'::uuid,
+    '00000000-0000-0000-0000-00000000d032'::uuid
+)
+AND status <> 'pending';
 
 -- ============================================================
 -- 5. Demo appointment with known checkin_code for patient portal lookup.
@@ -245,10 +343,10 @@ DECLARE
     v_facility_id UUID;
     v_service_unit_id UUID;
 BEGIN
-    -- Pick one facility deterministically (prefer RSK).
+    -- Pick one facility deterministically (prefer RSK, then f1, then any).
     SELECT id INTO v_facility_id
     FROM facilities
-    ORDER BY CASE WHEN short_code = 'RSK' THEN 0 ELSE 1 END, id
+    ORDER BY CASE WHEN short_code = 'RSK' THEN 0 WHEN short_code = 'f1' THEN 1 ELSE 2 END, id
     LIMIT 1;
 
     IF v_facility_id IS NULL THEN
