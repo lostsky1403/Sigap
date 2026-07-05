@@ -9,6 +9,62 @@ PASS/FAIL assertions.
 - `sigap-demo-smoke.ps1` — main script; runs the documented happy path.
 - `sigap-notification-smoke.ps1` — notification pipeline smoke; verifies outbox, worker dry-run, and delivery.
 - `sigap-patient-portal-smoke.ps1` — patient portal smoke; validates public status lookup API.
+- `sigap-full-local-demo.ps1` — orchestrates seed + smoke in one command; runs all three seeds then all three smoke suites.
+
+## Full local demo — one command
+
+`sigap-full-local-demo.ps1` runs the complete local demo readiness suite:
+seeds the database (dev, rbac, demo) then runs all three smoke suites.
+
+### When to use
+
+- Before merging a feature branch that touches the API, queue engine, or
+  notification pipeline.
+- After a fresh `git clone` or database reset to verify the stack works
+  end-to-end.
+- As a pre-push sanity check (faster than full CI).
+
+### Required environment variables
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `DATABASE_URL` | yes | PostgreSQL connection string for psql seed commands |
+| `SIGAP_API_BASE` | no | API base URL (default `http://[::1]:8080`) |
+
+The Sigap API **must already be running** before you start the script.
+The script does not start or stop any services.
+
+### Command
+
+```powershell
+pwsh -NoProfile -File scripts/smoke/sigap-full-local-demo.ps1
+```
+
+Skip re-seeding (use when DB is already seeded):
+
+```powershell
+pwsh -NoProfile -File scripts/smoke/sigap-full-local-demo.ps1 -SkipSeed
+```
+
+### What it runs
+
+| Phase | Step | Description |
+|-------|------|-------------|
+| Seed | `dev.sql` | Facilities, service units, synthetic dev user |
+| Seed | `rbac.sql` | Roles, permissions, role_permissions |
+| Seed | `demo.sql` | Schedules, demo appointments, notification outbox |
+| Smoke | `sigap-demo-smoke.ps1` | 8-step booking / check-in / queue flow |
+| Smoke | `sigap-notification-smoke.ps1` | 9-step notification pipeline |
+| Smoke | `sigap-patient-portal-smoke.ps1` | 5-step public status lookup |
+
+The script fails fast: any non-zero exit code stops the run immediately.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | All seeds and smoke suites passed |
+| `1` | DATABASE_URL not set, a seed command failed, or a smoke suite failed |
 
 ## Quick Usage
 
