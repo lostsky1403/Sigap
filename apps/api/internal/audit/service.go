@@ -117,6 +117,35 @@ func (s *Service) LogEvent(ctx context.Context, e Event) {
 		hash,
 	)
 	if err != nil {
+		// Dev fallback: if the FK on actor_user_id failed (dev user not in
+		// app_users), retry without actor_user_id. The actor_type='dev' column
+		// is sufficient to identify the actor; the FK is not needed for dev.
+		if actorUserID != nil && e.ActorType == "dev" {
+			_, retryErr := s.pool.Exec(ctx, sql,
+				time.Now().UTC(),
+				e.ActorType,
+				e.Action,
+				e.ResourceType,
+				resourceID,
+				nil, // no actor_user_id
+				facilityID,
+				requestID,
+				ipHash,
+				uaHash,
+				metaJSON,
+				nullIfEmpty(prevHash),
+				hash,
+			)
+			if retryErr == nil {
+				return
+			}
+			slog.Warn("audit: dev fallback also failed",
+			"action", e.Action,
+			"resource_type", e.ResourceType,
+			"original_err", err,
+			"retry_err", retryErr)
+			return
+		}
 		slog.Warn("audit: failed to insert event",
 			"action", e.Action,
 			"resource_type", e.ResourceType,
