@@ -140,9 +140,10 @@ func (s *Service) LogEvent(ctx context.Context, e Event) {
 				return
 			}
 			slog.Warn("audit: dev fallback also failed",
-				"action", e.Action,
-				"resource_type", e.ResourceType,
-				"err", retryErr)
+			"action", e.Action,
+			"resource_type", e.ResourceType,
+			"original_err", err,
+			"retry_err", retryErr)
 			return
 		}
 		slog.Warn("audit: failed to insert event",
