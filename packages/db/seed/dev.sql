@@ -9,4 +9,12 @@ INSERT INTO facilities (name, type, address, kecamatan, kabupaten_kota, provinsi
 ('RSUD Sejahtera', 'rumah_sakit', 'Jl. Merdeka No. 88', 'Cibadak', 'Kab. Sukabumi', 'Jawa Barat', '0266-212121', 120, 68, 'RSJ', true),
 ('Puskesmas Harapan Baru', 'puskesmas', 'Jl. Raya No. 3', 'Parung', 'Kab. Bogor', 'Jawa Barat', '0251-876543', 22, 5, 'PHB', true);
 
--- Note: patient and queue seed data added during runtime tests or later seed script
+-- Synthetic dev identity for local smoke/dev audit logging.
+-- The UUID matches the default DevUserId in smoke scripts (d999).
+INSERT INTO app_users (id, display_name, status)
+VALUES (
+    '00000000-0000-0000-0000-00000000d999'::uuid,
+    'dev-smoke (synthetic)',
+    'active'
+)
+ON CONFLICT (id) DO NOTHING;
