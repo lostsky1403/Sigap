@@ -28,8 +28,7 @@
 -- DATA POLICY (synthetic only — never replace with real data)
 -- ============================================================
 --   * No real patient names, no real NIK, no real phone.
---   * Facility scope: selects exactly one facility deterministically:
---     RSK first, then f1, then any (ordered by id). LIMIT 1.
+--   * Facility scope: uses the canonical demo facility (d000) exclusively.
 --   * Phone numbers use the +62-555-01xx reserved-for-testing range
 --     (ITU-T E.164 reserved for fictional use).
 --   * Schedule date is rolled forward to "tomorrow" (CURRENT_DATE + 1) in
@@ -48,11 +47,12 @@ BEGIN;
 --     run multiple times creating duplicate RSK rows.
 --
 --     ON CONFLICT (id) DO UPDATE re-upserts the canonical row on
---     every seed run instead of creating a duplicate. This matters
---     because dev.sql inserts RSK facilities with random UUIDs and
---     no idempotency guard — each re-run adds another short_code='RSK'
---     row. The smoke script relies on this canonical facility (d000)
---     owning the DEMO-UMUM service unit for deterministic booking.
+--     every seed run instead of creating a duplicate. This guards
+--     against older dev.sql versions (pre-idempotent) that inserted
+--     RSK facilities with random UUIDs and no ON CONFLICT — each
+--     re-run added another short_code='RSK' row. The smoke script
+--     relies on this canonical facility (d000) owning the DEMO-UMUM
+--     service unit for deterministic booking.
 -- ============================================================
 INSERT INTO facilities (id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, total_beds, available_beds, short_code, is_active)
 VALUES (
