@@ -46,6 +46,13 @@ BEGIN;
 --     All demo seed rows link to this facility so the smoke script
 --     always finds the correct facility even if dev.sql has been
 --     run multiple times creating duplicate RSK rows.
+--
+--     ON CONFLICT (id) DO UPDATE re-upserts the canonical row on
+--     every seed run instead of creating a duplicate. This matters
+--     because dev.sql inserts RSK facilities with random UUIDs and
+--     no idempotency guard — each re-run adds another short_code='RSK'
+--     row. The smoke script relies on this canonical facility (d000)
+--     owning the DEMO-UMUM service unit for deterministic booking.
 -- ============================================================
 INSERT INTO facilities (id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, total_beds, available_beds, short_code, is_active)
 VALUES (

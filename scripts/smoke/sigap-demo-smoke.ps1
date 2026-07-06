@@ -93,6 +93,7 @@ $ErrorActionPreference = 'Continue'
 # Constants (synthetic identifiers only — never replace with real data)
 # ---------------------------------------------------------------
 $DemoServiceUnitId = '00000000-0000-0000-0000-00000000d001'
+$DemoFacilityId    = '00000000-0000-0000-0000-00000000d000'
 
 # Discovered IDs — populated by steps 3–4 from the admin API.
 $script:discoveredServiceUnitId  = $null
@@ -407,26 +408,23 @@ Invoke-Step -Name 'admin.service-units.discover' -Body {
         Add-Result -Name 'admin.service-units.discover' -Pass $true -Detail "HTTP 200 — no service units returned; will use fallback."
         return
     }
-    # First, search DEMO-UMUM across ALL facilities (not just the one
+    # Search for DEMO-UMUM across ALL facilities (not just the one
     # from step 2) so we always find the canonical demo facility (d000)
     # even when step 2 picked a duplicate RSK row.
+    # Do NOT fall back to an arbitrary active service unit — booking
+    # must always target the known demo service unit to stay deterministic.
     $demoUnit = $units | Where-Object { $_.is_active -eq $true -and $_.code -eq $ServiceUnitCode } | Select-Object -First 1
-    $match = $demoUnit
-    if (-not $match) {
-        # Fall back to any active service unit for the step 2 facility.
-        $match = $units | Where-Object { $_.facility_id -eq $facilityId -and $_.is_active -eq $true } | Select-Object -First 1
-    }
-    if ($match) {
-        $script:discoveredServiceUnitId = [string]$match.id
+    if ($demoUnit) {
+        $script:discoveredServiceUnitId = [string]$demoUnit.id
         # Prefer the facility that owns DEMO-UMUM — this is the canonical
         # demo facility (d000) and is always the correct target for booking.
-        if ($demoUnit -and $match.facility_id -ne $facilityId) {
-            Write-Info "DEMO-UMUM belongs to facility $($match.facility_id), overriding step 2 selection ($facilityId)."
-            $script:facilityId = [string]$match.facility_id
+        if ($demoUnit.facility_id -ne $facilityId) {
+            Write-Info "DEMO-UMUM belongs to facility $($demoUnit.facility_id), overriding step 2 selection ($facilityId)."
+            $script:facilityId = [string]$demoUnit.facility_id
         }
-        Add-Result -Name 'admin.service-units.discover' -Pass $true -Detail "HTTP 200 — discovered service_unit id=$($script:discoveredServiceUnitId) name='$($match.name)' for facility=$facilityId"
+        Add-Result -Name 'admin.service-units.discover' -Pass $true -Detail "HTTP 200 — discovered service_unit id=$($script:discoveredServiceUnitId) name='$($demoUnit.name)' for facility=$facilityId"
     } else {
-        Add-Result -Name 'admin.service-units.discover' -Pass $true -Detail "HTTP 200 — no active service unit for facility=$facilityId; will use fallback."
+        Add-Result -Name 'admin.service-units.discover' -Pass $true -Detail "HTTP 200 — DEMO-UMUM not found; will use deterministic fallback in step 5."
     }
 }
 
@@ -486,23 +484,29 @@ Invoke-Step -Name 'public.booking' -Body {
     $patientName = "Pasien Demo $rand"
     $apptTime = (Get-Date).ToUniversalTime().Date.AddDays(1).AddHours(9).ToString('yyyy-MM-ddTHH\:mm\:ssZ')
 
-    # Resolve service_unit_id: prefer the schedule's service_unit_id for consistency,
-    # then independently discovered, then fallback when SkipSeed is set.
+    # Resolve service_unit_id with strict fallback tiers:
+    #   1. Schedule's service_unit_id (consistent with the matched schedule)
+    #   2. Independently discovered DEMO-UMUM from step 3
+    #   3. Deterministic fallback: d001 with canonical facility d000
+    #   4. Fail — never silently book against an arbitrary active unit
+    #      from the wrong facility.
     $resolvedServiceUnitId = $null
     if ($script:discoveredScheduleUnitId) {
-        # Schedule carries its own service_unit_id — use it to guarantee consistency.
+        # Schedule carries its own service_unit_id — use it for consistency.
         $resolvedServiceUnitId = $script:discoveredScheduleUnitId
         if ($script:discoveredServiceUnitId -and $script:discoveredServiceUnitId -ne $script:discoveredScheduleUnitId) {
             Write-Info "Note: independently discovered service_unit ($($script:discoveredServiceUnitId)) differs from schedule's service_unit ($($script:discoveredScheduleUnitId)); using schedule's unit for consistency."
         }
     } elseif ($script:discoveredServiceUnitId) {
         $resolvedServiceUnitId = $script:discoveredServiceUnitId
-    } elseif ($SkipSeed) {
+    } else {
+        # Last resort: deterministic demo service unit (d001) always belongs
+        # to the canonical demo facility (d000). Force facility to d000 so
+        # the booking never targets an arbitrary active service unit from a
+        # duplicate RSK row or the wrong facility.
         $resolvedServiceUnitId = $DemoServiceUnitId
-    }
-    # Last resort: always use the deterministic demo service unit if still null.
-    if (-not $resolvedServiceUnitId) {
-        $resolvedServiceUnitId = $DemoServiceUnitId
+        $script:facilityId = $DemoFacilityId
+        Write-Info "Using deterministic service unit $DemoServiceUnitId with canonical facility $DemoFacilityId."
     }
 
     # Resolve schedule_id: prefer discovered, then fallback when SkipSeed is set.
