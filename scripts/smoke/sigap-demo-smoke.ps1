@@ -371,14 +371,17 @@ Invoke-Step -Name 'admin.facilities.list' -Body {
         Add-Result -Name 'admin.facilities.list' -Pass $false -Detail "HTTP 200 but no facilities returned. Did you run dev.sql?"
         return
     }
-    $script:facilityId = ($facilities | Where-Object { $_.short_code -eq $FacilityShortCode } | Select-Object -First 1).id
-    if (-not $script:facilityId) {
-        $script:facilityId = $facilities[0].id
-        Write-Info "No facility matched short_code='$FacilityShortCode'; falling back to first facility (id=$($script:facilityId))."
-        Add-Result -Name 'admin.facilities.list' -Pass $true -Detail "HTTP 200 — found $($facilities.Count) facilities; using first (id=$($script:facilityId))"
-    } else {
-        Add-Result -Name 'admin.facilities.list' -Pass $true -Detail "HTTP 200 — found $($facilities.Count) facilities; matched short_code='$FacilityShortCode' (id=$($script:facilityId))"
+    # Store facilities for cross-referencing with service units in step 3.
+    $script:allFacilities = $facilities
+    # Initial selection by short_code; step 3 may override if DEMO-UMUM
+    # belongs to a different facility.
+    $matched = $facilities | Where-Object { $_.short_code -eq $FacilityShortCode } | Select-Object -First 1
+    if (-not $matched) {
+        $matched = $facilities[0]
+        Write-Info "No facility matched short_code='$FacilityShortCode'; falling back to first facility (id=$($matched.id))."
     }
+    $script:facilityId = [string]$matched.id
+    Add-Result -Name 'admin.facilities.list' -Pass $true -Detail "HTTP 200 — found $($facilities.Count) facilities; selected id=$($script:facilityId) short_code='$($matched.short_code)' (may be refined in step 3)"
 }
 
 # ---------------------------------------------------------------
@@ -404,14 +407,23 @@ Invoke-Step -Name 'admin.service-units.discover' -Body {
         Add-Result -Name 'admin.service-units.discover' -Pass $true -Detail "HTTP 200 — no service units returned; will use fallback."
         return
     }
-    # Prefer the service unit matching $ServiceUnitCode (DEMO-UMUM/d001).
-    $match = $units | Where-Object { $_.facility_id -eq $facilityId -and $_.is_active -eq $true -and $_.code -eq $ServiceUnitCode } | Select-Object -First 1
+    # First, search DEMO-UMUM across ALL facilities (not just the one
+    # from step 2) so we always find the canonical demo facility (d000)
+    # even when step 2 picked a duplicate RSK row.
+    $demoUnit = $units | Where-Object { $_.is_active -eq $true -and $_.code -eq $ServiceUnitCode } | Select-Object -First 1
+    $match = $demoUnit
     if (-not $match) {
-        # Fall back to any active service unit for this facility.
+        # Fall back to any active service unit for the step 2 facility.
         $match = $units | Where-Object { $_.facility_id -eq $facilityId -and $_.is_active -eq $true } | Select-Object -First 1
     }
     if ($match) {
         $script:discoveredServiceUnitId = [string]$match.id
+        # Prefer the facility that owns DEMO-UMUM — this is the canonical
+        # demo facility (d000) and is always the correct target for booking.
+        if ($demoUnit -and $match.facility_id -ne $facilityId) {
+            Write-Info "DEMO-UMUM belongs to facility $($match.facility_id), overriding step 2 selection ($facilityId)."
+            $script:facilityId = [string]$match.facility_id
+        }
         Add-Result -Name 'admin.service-units.discover' -Pass $true -Detail "HTTP 200 — discovered service_unit id=$($script:discoveredServiceUnitId) name='$($match.name)' for facility=$facilityId"
     } else {
         Add-Result -Name 'admin.service-units.discover' -Pass $true -Detail "HTTP 200 — no active service unit for facility=$facilityId; will use fallback."
@@ -486,6 +498,10 @@ Invoke-Step -Name 'public.booking' -Body {
     } elseif ($script:discoveredServiceUnitId) {
         $resolvedServiceUnitId = $script:discoveredServiceUnitId
     } elseif ($SkipSeed) {
+        $resolvedServiceUnitId = $DemoServiceUnitId
+    }
+    # Last resort: always use the deterministic demo service unit if still null.
+    if (-not $resolvedServiceUnitId) {
         $resolvedServiceUnitId = $DemoServiceUnitId
     }
 

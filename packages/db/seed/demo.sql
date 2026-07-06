@@ -42,6 +42,32 @@ ALTER TABLE appointments ADD COLUMN IF NOT EXISTS notes TEXT;
 BEGIN;
 
 -- ============================================================
+-- 0. Canonical demo facility (deterministic UUID, always exists).
+--     All demo seed rows link to this facility so the smoke script
+--     always finds the correct facility even if dev.sql has been
+--     run multiple times creating duplicate RSK rows.
+-- ============================================================
+INSERT INTO facilities (id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, total_beds, available_beds, short_code, is_active)
+VALUES (
+    '00000000-0000-0000-0000-00000000d000'::uuid,
+    'Sigap Demo Facility',
+    'rumah_sakit',
+    'Jl. Demo No. 1',
+    'Demo',
+    'Kota Demo',
+    'Jawa Barat',
+    '000-000000',
+    50,
+    50,
+    'DEMO',
+    TRUE
+)
+ON CONFLICT (id) DO UPDATE SET
+    name = EXCLUDED.name,
+    short_code = EXCLUDED.short_code,
+    is_active = EXCLUDED.is_active;
+
+-- ============================================================
 -- 1. Service units (Poli Umum, Poli Gigi) tied to a single
 --    deterministic facility.
 --    Natural-key guard: (facility_id, code).
@@ -55,16 +81,7 @@ SELECT
     'Pelayanan umum untuk demo lokal Sigap. Data sintetis.',
     TRUE
 FROM facilities f
-WHERE f.id = (
-    SELECT id FROM facilities
-    ORDER BY
-        CASE WHEN short_code = 'RSK' THEN 0
-             WHEN short_code = 'f1' THEN 1
-             ELSE 2
-        END,
-        id
-    LIMIT 1
-)
+WHERE f.id = '00000000-0000-0000-0000-00000000d000'::uuid
   AND NOT EXISTS (
     SELECT 1 FROM service_units su
     WHERE su.facility_id = f.id AND su.code = 'DEMO-UMUM'  -- natural-key guard
@@ -80,16 +97,7 @@ SELECT
     'Pelayanan gigi untuk demo lokal Sigap. Data sintetis.',
     TRUE
 FROM facilities f
-WHERE f.id = (
-    SELECT id FROM facilities
-    ORDER BY
-        CASE WHEN short_code = 'RSK' THEN 0
-             WHEN short_code = 'f1' THEN 1
-             ELSE 2
-        END,
-        id
-    LIMIT 1
-)
+WHERE f.id = '00000000-0000-0000-0000-00000000d000'::uuid
   AND NOT EXISTS (
     SELECT 1 FROM service_units su
     WHERE su.facility_id = f.id AND su.code = 'DEMO-GIGI'
@@ -108,16 +116,7 @@ SELECT
     'dokter_umum',
     TRUE
 FROM facilities f
-WHERE f.id = (
-    SELECT id FROM facilities
-    ORDER BY
-        CASE WHEN short_code = 'RSK' THEN 0
-             WHEN short_code = 'f1' THEN 1
-             ELSE 2
-        END,
-        id
-    LIMIT 1
-)
+WHERE f.id = '00000000-0000-0000-0000-00000000d000'::uuid
   AND NOT EXISTS (
     SELECT 1 FROM practitioners p
     WHERE p.facility_id = f.id AND p.display_name = 'Dokter Demo A'
@@ -132,16 +131,7 @@ SELECT
     'dokter_gigi',
     TRUE
 FROM facilities f
-WHERE f.id = (
-    SELECT id FROM facilities
-    ORDER BY
-        CASE WHEN short_code = 'RSK' THEN 0
-             WHEN short_code = 'f1' THEN 1
-             ELSE 2
-        END,
-        id
-    LIMIT 1
-)
+WHERE f.id = '00000000-0000-0000-0000-00000000d000'::uuid
   AND NOT EXISTS (
     SELECT 1 FROM practitioners p
     WHERE p.facility_id = f.id AND p.display_name = 'Dokter Demo B'
@@ -169,16 +159,7 @@ SELECT
     3,
     TRUE
 FROM facilities f
-WHERE f.id = (
-    SELECT id FROM facilities
-    ORDER BY
-        CASE WHEN short_code = 'RSK' THEN 0
-             WHEN short_code = 'f1' THEN 1
-             ELSE 2
-        END,
-        id
-    LIMIT 1
-)
+WHERE f.id = '00000000-0000-0000-0000-00000000d000'::uuid
   AND NOT EXISTS (
     SELECT 1 FROM practitioner_schedules ps
     WHERE ps.facility_id = f.id
@@ -204,16 +185,7 @@ SELECT
     3,
     TRUE
 FROM facilities f
-WHERE f.id = (
-    SELECT id FROM facilities
-    ORDER BY
-        CASE WHEN short_code = 'RSK' THEN 0
-             WHEN short_code = 'f1' THEN 1
-             ELSE 2
-        END,
-        id
-    LIMIT 1
-)
+WHERE f.id = '00000000-0000-0000-0000-00000000d000'::uuid
   AND NOT EXISTS (
     SELECT 1 FROM practitioner_schedules ps
     WHERE ps.facility_id = f.id
@@ -250,16 +222,7 @@ SELECT
     'smoke_seed',
     '00000000-0000-0000-0000-00000000d041'::uuid
 FROM facilities f
-WHERE f.id = (
-    SELECT id FROM facilities
-    ORDER BY
-        CASE WHEN short_code = 'RSK' THEN 0
-             WHEN short_code = 'f1' THEN 1
-             ELSE 2
-        END,
-        id
-    LIMIT 1
-)
+WHERE f.id = '00000000-0000-0000-0000-00000000d000'::uuid
   AND NOT EXISTS (
     SELECT 1 FROM notification_outbox no
     WHERE no.template_key = 'appointment.booked.confirmation'
@@ -287,16 +250,7 @@ SELECT
     'smoke_seed',
     '00000000-0000-0000-0000-00000000d042'::uuid
 FROM facilities f
-WHERE f.id = (
-    SELECT id FROM facilities
-    ORDER BY
-        CASE WHEN short_code = 'RSK' THEN 0
-             WHEN short_code = 'f1' THEN 1
-             ELSE 2
-        END,
-        id
-    LIMIT 1
-)
+WHERE f.id = '00000000-0000-0000-0000-00000000d000'::uuid
   AND NOT EXISTS (
     SELECT 1 FROM notification_outbox no
     WHERE no.template_key = 'appointment.checked_in.confirmation'
@@ -343,42 +297,16 @@ DECLARE
     v_facility_id UUID;
     v_service_unit_id UUID;
 BEGIN
-    -- Pick one facility deterministically (prefer RSK, then f1, then any).
-    SELECT id INTO v_facility_id
-    FROM facilities
-    ORDER BY CASE WHEN short_code = 'RSK' THEN 0 WHEN short_code = 'f1' THEN 1 ELSE 2 END, id
-    LIMIT 1;
+    -- Use the canonical demo facility.
+    v_facility_id := '00000000-0000-0000-0000-00000000d000'::uuid;
 
     IF v_facility_id IS NULL THEN
         RAISE NOTICE 'No facilities found; skipping SMOKE01 appointment seed';
         RETURN;
     END IF;
 
-    -- Resolve a valid service_unit_id for this facility.
-    -- 1) Prefer the deterministic demo service unit (d001) if it belongs
-    --    to this facility.
-    -- 2) Otherwise pick any active service unit for this facility.
-    -- 3) As a last resort, insert a minimal service unit so the FK is satisfied.
-    SELECT id INTO v_service_unit_id
-    FROM service_units
-    WHERE id = '00000000-0000-0000-0000-00000000d001'::uuid
-      AND facility_id = v_facility_id
-    LIMIT 1;
-
-    IF v_service_unit_id IS NULL THEN
-        SELECT id INTO v_service_unit_id
-        FROM service_units
-        WHERE facility_id = v_facility_id
-        ORDER BY is_active DESC, id
-        LIMIT 1;
-    END IF;
-
-    IF v_service_unit_id IS NULL THEN
-        v_service_unit_id := '00000000-0000-0000-0000-00000000d001'::uuid;
-        INSERT INTO service_units (id, facility_id, name, code, is_active)
-        VALUES (v_service_unit_id, v_facility_id, 'Poli Umum Demo', 'DEMO-UMUM', TRUE)
-        ON CONFLICT (id) DO NOTHING;
-    END IF;
+    -- Use the deterministic demo service unit (always linked to d000).
+    v_service_unit_id := '00000000-0000-0000-0000-00000000d001'::uuid;
 
     INSERT INTO appointments (
         id, facility_id, service_unit_id, practitioner_schedule_id,
