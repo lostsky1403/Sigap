@@ -572,11 +572,12 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"data": map[string]any{
-			"queue_ticket_id":      res.TicketID,
-			"formatted_number":     res.FormattedNumber,
-			"status":               "queued",
+			"appointment_id":         id,
+			"queue_ticket_id":        res.TicketID,
+			"formatted_number":       res.FormattedNumber,
+			"status":                 "queued",
 			"estimated_wait_minutes": res.EstimatedWaitMinutes,
-			"processing_time":      res.ProcessingTime,
+			"processing_time":        res.ProcessingTime,
 		},
 	})
 
