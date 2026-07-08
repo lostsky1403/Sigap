@@ -500,6 +500,8 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 				"appointment_id", id, "err", rbErr.Error())
 		}
 		// Dev fallback: retry with FakeQueueService when SIGAP_ENGINE_FALLBACK=dev.
+		// Creates a real queue_tickets row so the FK constraint on
+		// appointments.queue_ticket_id is satisfied.
 		if os.Getenv("SIGAP_ENGINE_FALLBACK") == "dev" {
 			slog.Warn("SIGAP_ENGINE_FALLBACK=dev: retrying queue generation with FakeQueueService",
 				"appointment_id", id)
@@ -515,6 +517,35 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "Gagal mengambil nomor antrean.")
 				return
 			}
+
+			// Insert a real queue_tickets row so the UUID FK on
+			// appointments.queue_ticket_id is valid. Creates or reuses
+			// a synthetic patient matched by phone number.
+			ticketUUID := uuid.New().String()
+			err = h.pool.QueryRow(ctx,
+				`WITH p AS (
+				    INSERT INTO patients (id, full_name, phone, date_of_birth)
+				    VALUES ($1::uuid, $2, $3, '2000-01-01')
+				    ON CONFLICT (phone) DO UPDATE SET full_name = EXCLUDED.full_name
+				    RETURNING id
+				),
+				q AS (
+				    INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status)
+				    SELECT $4::uuid, $5::uuid, p.id,
+				           COALESCE((SELECT MAX(qt2.queue_number) FROM queue_tickets qt2 WHERE qt2.facility_id = $5::uuid AND qt2.registered_at::date = CURRENT_DATE), 0) + 1,
+				           $6, 'waiting'
+				    FROM p
+				    RETURNING id
+				)
+				SELECT id FROM q`,
+				uuid.New().String(), patientName, patientPhone, ticketUUID, facilityID, res.FormattedNumber,
+			).Scan(&ticketUUID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "Gagal membuat tiket antrean.")
+				return
+			}
+			res.TicketID = ticketUUID
+
 			// Re-transition to checked_in after successful fallback
 			_, err = h.pool.Exec(ctx,
 				`UPDATE appointments SET status = 'checked_in', checkin_at = NOW(), updated_at = NOW() WHERE id = $1`,

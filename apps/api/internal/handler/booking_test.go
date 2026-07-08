@@ -2,11 +2,17 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/sigap/sigap/apps/api/internal/service"
 )
 
 func TestBookAppointment_NilPool_Returns500(t *testing.T) {
@@ -205,5 +211,181 @@ func TestPublicAppointmentsRouter_NotFound(t *testing.T) {
 	NewBookingHandler(nil, nil).PublicAppointmentsRouter(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405 for GET, got %d", rec.Code)
+	}
+}
+
+// failingQueueService always returns an error on Generate.
+// Used to simulate a queue engine that is unreachable.
+type failingQueueService struct{}
+
+func (f *failingQueueService) Generate(ctx context.Context, input service.GenerateInput) (service.GenerateResult, error) {
+	return service.GenerateResult{}, context.DeadlineExceeded
+}
+
+func (f *failingQueueService) Probe(ctx context.Context) error {
+	return context.DeadlineExceeded
+}
+
+// seedCheckinData creates minimal test data for a check-in integration test.
+// Returns (appointmentID, checkinCode, cleanup func).
+func seedCheckinData(t *testing.T, pool *pgxpool.Pool) (string, string, func()) {
+	t.Helper()
+	ctx := context.Background()
+
+	facID := "00000000-0000-0000-0000-00000000aaa1"
+	patientID := "00000000-0000-0000-0000-00000000aaa2"
+	svcUnitID := "00000000-0000-0000-0000-00000000aaa3"
+	apptID := "00000000-0000-0000-0000-00000000aaa4"
+	code := "TESTCHK1"
+
+	pool.Exec(ctx,
+		`INSERT INTO facilities (id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, short_code)
+		 VALUES ($1, 'Test Fac', 'rumah_sakit', 'Addr', 'Kec', 'Kab', 'Prov', '000', 'TST')
+		 ON CONFLICT (id) DO NOTHING`, facID)
+	pool.Exec(ctx,
+		`INSERT INTO patients (id, full_name, phone, date_of_birth)
+		 VALUES ($1, 'Test Patient', '085550009999', '1990-01-01')
+		 ON CONFLICT (phone) DO NOTHING`, patientID)
+	pool.Exec(ctx,
+		`INSERT INTO service_units (id, facility_id, name, code)
+		 VALUES ($1, $2, 'Test Unit', 'TST-U')
+		 ON CONFLICT (id) DO NOTHING`, svcUnitID, facID)
+	pool.Exec(ctx,
+		`INSERT INTO appointments (id, facility_id, service_unit_id, patient_display_name, patient_phone, appointment_time, status, checkin_code)
+		 VALUES ($1, $2, $3, 'Test Patient', '085550009999', NOW() + INTERVAL '1 day', 'scheduled', $4)
+		 ON CONFLICT (id) DO NOTHING`, apptID, facID, svcUnitID, code)
+
+	cleanup := func() {
+		pool.Exec(ctx, `DELETE FROM appointments WHERE id = $1`, apptID)
+		pool.Exec(ctx, `DELETE FROM queue_tickets WHERE facility_id = $1`, facID)
+		pool.Exec(ctx, `DELETE FROM service_units WHERE id = $1`, svcUnitID)
+		pool.Exec(ctx, `DELETE FROM patients WHERE id = $1`, patientID)
+		pool.Exec(ctx, `DELETE FROM facilities WHERE id = $1`, facID)
+	}
+
+	return apptID, code, cleanup
+}
+
+// TestCheckIn_QueueFallback_Disabled_Returns500 verifies that when the queue
+// engine fails and SIGAP_ENGINE_FALLBACK is not set, check-in returns 500.
+// Requires DATABASE_URL to be set; skipped otherwise.
+func TestCheckIn_QueueFallback_Disabled_Returns500(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	pool, err := pgxpool.New(context.Background(), dbURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	apptID, code, cleanup := seedCheckinData(t, pool)
+	defer cleanup()
+
+	os.Unsetenv("SIGAP_ENGINE_FALLBACK")
+	defer os.Unsetenv("SIGAP_ENGINE_FALLBACK")
+
+	h := NewBookingHandler(pool, nil).WithQueueService(&failingQueueService{})
+
+	body, _ := json.Marshal(map[string]string{"checkin_code": code})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/appointments/"+apptID+"/check-in", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.CheckIn(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 when fallback disabled, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify appointment was rolled back to scheduled
+	var status string
+	err = pool.QueryRow(context.Background(),
+		`SELECT status FROM appointments WHERE id = $1`, apptID).Scan(&status)
+	if err != nil {
+		t.Fatalf("verify status: %v", err)
+	}
+	if status != "scheduled" {
+		t.Errorf("expected status 'scheduled' after failed check-in, got %q", status)
+	}
+}
+
+// TestCheckIn_QueueFallback_Enabled_Succeeds verifies that when the queue
+// engine fails but SIGAP_ENGINE_FALLBACK=dev is set, check-in succeeds
+// by creating a real queue_tickets row with a valid UUID.
+// Requires DATABASE_URL to be set; skipped otherwise.
+func TestCheckIn_QueueFallback_Enabled_Succeeds(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	pool, err := pgxpool.New(context.Background(), dbURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	apptID, code, cleanup := seedCheckinData(t, pool)
+	defer cleanup()
+
+	os.Setenv("SIGAP_ENGINE_FALLBACK", "dev")
+	defer os.Unsetenv("SIGAP_ENGINE_FALLBACK")
+
+	h := NewBookingHandler(pool, nil).WithQueueService(&failingQueueService{})
+
+	body, _ := json.Marshal(map[string]string{"checkin_code": code})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/appointments/"+apptID+"/check-in", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.CheckIn(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with fallback enabled, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Parse response
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	success, _ := resp["success"].(bool)
+	if !success {
+		t.Fatalf("expected success=true, got %v", resp)
+	}
+	data, _ := resp["data"].(map[string]any)
+	if data == nil {
+		t.Fatal("expected data in response")
+	}
+	ticketID, _ := data["queue_ticket_id"].(string)
+	if ticketID == "" {
+		t.Fatal("expected queue_ticket_id in response")
+	}
+
+	// Verify queue_tickets row exists with valid UUID
+	var qStatus string
+	err = pool.QueryRow(context.Background(),
+		`SELECT status FROM queue_tickets WHERE id = $1`, ticketID).Scan(&qStatus)
+	if err != nil {
+		t.Fatalf("queue_tickets row not found for %s: %v", ticketID, err)
+	}
+	if qStatus != "waiting" {
+		t.Errorf("expected queue_tickets.status 'waiting', got %q", qStatus)
+	}
+
+	// Verify appointment is queued with the ticket
+	var apptStatus string
+	var qTicketID *string
+	err = pool.QueryRow(context.Background(),
+		`SELECT status, queue_ticket_id FROM appointments WHERE id = $1`, apptID).Scan(&apptStatus, &qTicketID)
+	if err != nil {
+		t.Fatalf("verify appointment: %v", err)
+	}
+	if apptStatus != "queued" {
+		t.Errorf("expected appointment status 'queued', got %q", apptStatus)
+	}
+	if qTicketID == nil || *qTicketID != ticketID {
+		t.Errorf("expected queue_ticket_id=%s, got %v", ticketID, qTicketID)
 	}
 }
