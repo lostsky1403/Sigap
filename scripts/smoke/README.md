@@ -29,7 +29,19 @@ seeds the database (dev, rbac, demo) then runs all three smoke suites.
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `DATABASE_URL` | yes | PostgreSQL connection string for psql seed commands |
+| `SIGAP_DATABASE_URL` | yes (worker) | Same as `DATABASE_URL`; used by the notification worker |
+| `SIGAP_AUTH_MODE` | yes | Set to `dev` for local dev-identity auth |
+| `SIGAP_DEV_IDENTITY` | yes | Set to `true` to enable `X-Sigap-Dev-User-ID` header |
+| `SIGAP_ENGINE_FALLBACK` | Mode A only | Set to `dev` to skip the Rust queue engine |
 | `SIGAP_API_BASE` | no | API base URL (default `http://[::1]:8080`) |
+
+> **Restart-safe**: Env vars are shell-scoped. After a terminal restart or
+> new shell, re-export them. If `psql` prompts for a user/password,
+> `DATABASE_URL` is not set.
+
+> **Seed idempotency**: All seed files (`dev.sql`, `rbac.sql`, `demo.sql`)
+> are idempotent. Re-running them does not create duplicate facilities,
+> roles, or demo data.
 
 The Sigap API **must already be running** before you start the script.
 The script does not start or stop any services.
@@ -173,13 +185,16 @@ The four most common failures:
 | `[FAIL] parameters` — exit code `2` | `-ApiBase` empty, missing scheme, or whitespace; `-PractitionerScheduleId` not a UUID; one of the other parameters empty | Pass a valid `-ApiBase http://localhost:8080` (or set `$env:SIGAP_API_BASE`); check the script header for parameter shapes |
 | `[FAIL] health` — "Network unreachable" | Go API is not running, or the wrong port | `cd apps/api; go run ./cmd/server` and confirm `:8080` is listening |
 | `[FAIL] admin.facilities.list` — HTTP 403 | Dev identity is disabled in `.env` | Set `SIGAP_AUTH_MODE=dev` and `SIGAP_DEV_IDENTITY=true`, then restart the API |
+| `[FAIL] public.checkin` — "Gagal mengambil nomor antrean" | Queue engine unavailable and fallback not enabled | Start the engine (`cd apps/queue-engine; cargo run`) **or** restart the API with `SIGAP_ENGINE_FALLBACK=dev` |
 | `[FAIL] public.booking` — "appointment_time is in the API's past" | Timezone/clock mismatch between your shell, the API server, and PostgreSQL | Send an explicit UTC timestamp (`...T09:00:00Z`); align clocks via NTP; see [`docs/DEMO_FLOW.md` § Troubleshooting](../../docs/DEMO_FLOW.md#troubleshooting) |
+| `psql` prompts for user/password | `DATABASE_URL` is not set in the current shell | Re-export `$env:DATABASE_URL` (env vars are lost on terminal restart) |
 
 Additional notes:
 
-- **`[FAIL] public.checkin` — Rust engine unavailable.** Start Terminal 1
-  (`cd apps/queue-engine; cargo run`). The check-in step needs the gRPC
-  server on `:50051`.
+- **`[FAIL] public.checkin` — Rust engine unavailable.** Either start
+  Terminal 1 (`cd apps/queue-engine; cargo run`) or restart the API with
+  `SIGAP_ENGINE_FALLBACK=dev`. Fallback mode now creates a real queue
+  ticket in the database, so all downstream steps work.
 - **`[FAIL] public.booking` — schedule slot is full.** The demo seed gives
   you 18 bookable slots per day (2 service units × 6 slots × 3 capacity).
   If you re-run the smoke many times the same day, capacity is exhausted.

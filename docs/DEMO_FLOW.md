@@ -20,10 +20,10 @@ the happy path end-to-end, and explore the admin and patient UIs.
 | PowerShell | 7+ | for the smoke script (`pwsh`) |
 | `psql` | any recent | for loading migrations and seeds |
 
-If you are missing `protoc`, you can still run the API + web in fallback
-mode (`SIGAP_ENGINE_FALLBACK=dev`). The smoke script's check-in step will
-fail in fallback mode because no real queue ticket is generated — see
-[§ Troubleshooting](#troubleshooting).
+If you are missing `protoc`, you can still run the full demo in fallback
+mode (`SIGAP_ENGINE_FALLBACK=dev`). The API creates a real queue ticket
+in the database, so check-in, queue listing, and status transitions all
+work. See [§ Runtime Modes](#runtime-modes) below.
 
 > **Timezone notes**
 >
@@ -84,7 +84,98 @@ cd apps/api; go mod download; cd ../..
 
 ---
 
-## 3. Start the stack (three PowerShell terminals)
+## 3. Runtime Modes
+
+Sigap supports two local runtime modes. Choose based on what you need.
+
+### Mode A — Fast local demo (no Rust engine)
+
+The API falls back to an in-memory queue service that persists a real
+`queue_tickets` row in the database. No Rust engine or `protoc` needed.
+
+```powershell
+# Required env vars (export before starting the API)
+$env:DATABASE_URL          = "postgresql://postgres:sigap@localhost:5432/sigap"
+$env:SIGAP_DATABASE_URL    = $env:DATABASE_URL   # notification worker uses this
+$env:SIGAP_AUTH_MODE       = "dev"
+$env:SIGAP_DEV_IDENTITY    = "true"
+$env:SIGAP_ENGINE_FALLBACK = "dev"
+```
+
+```powershell
+# Terminal 1: Go API
+cd apps/api
+go run ./cmd/server
+
+# Terminal 2: SvelteKit web (optional)
+pnpm --filter sigap-web dev
+
+# Terminal 3: run demo smoke
+pwsh -File scripts/smoke/sigap-demo-smoke.ps1
+```
+
+The demo smoke (`sigap-demo-smoke.ps1`) passes in this mode.
+
+### Mode B — Full integration (Rust queue engine)
+
+The real gRPC queue engine generates tickets with microsecond-level
+traceability and SHA-256 signatures.
+
+```powershell
+# Required env vars (export before starting the API)
+$env:DATABASE_URL       = "postgresql://postgres:sigap@localhost:5432/sigap"
+$env:SIGAP_DATABASE_URL = $env:DATABASE_URL
+$env:SIGAP_AUTH_MODE    = "dev"
+$env:SIGAP_DEV_IDENTITY = "true"
+# Do NOT set SIGAP_ENGINE_FALLBACK — the API connects to the real engine
+```
+
+```powershell
+# Terminal 1: Rust queue engine
+cd apps/queue-engine
+cargo run
+
+# Terminal 2: Go API (after engine is listening on :50051)
+cd apps/api
+go run ./cmd/server
+
+# Terminal 3: SvelteKit web (optional)
+pnpm --filter sigap-web dev
+
+# Terminal 4: full local demo (seeds + all 3 smoke suites)
+pwsh -File scripts/smoke/sigap-full-local-demo.ps1
+```
+
+The full local demo (`sigap-full-local-demo.ps1`) passes in this mode.
+
+### Environment variables
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `DATABASE_URL` | yes | PostgreSQL connection string for `psql` seeds and Go API |
+| `SIGAP_DATABASE_URL` | yes (worker) | Same as `DATABASE_URL`; used by the notification worker |
+| `SIGAP_AUTH_MODE` | yes | Set to `dev` for local dev-identity auth |
+| `SIGAP_DEV_IDENTITY` | yes | Set to `true` to enable `X-Sigap-Dev-User-ID` header |
+| `SIGAP_ENGINE_FALLBACK` | Mode A only | Set to `dev` to skip the Rust queue engine |
+| `SIGAP_API_BASE` | no | Override API base URL (default `http://[::1]:8080`) |
+
+> **Restart-safe**: These env vars live in your shell session. After a
+> terminal restart or new shell, re-export them (or source your `.env`).
+> If `psql` prompts for a user/password, `DATABASE_URL` is not set.
+
+### Seed idempotency
+
+All seed files (`dev.sql`, `rbac.sql`, `demo.sql`) are idempotent. Re-running
+them does not create duplicate facilities, roles, or demo data. The `RSK`
+facility count stays at 6 regardless of how many times you seed.
+
+---
+
+## 4. Start the stack
+
+The stack setup depends on your chosen runtime mode (see [§ 3](#3-runtime-modes)).
+Below is the full-integration layout (Mode B). For Mode A (fast demo),
+skip Terminal 1 (Rust engine) and add `SIGAP_ENGINE_FALLBACK=dev` to your env.
 
 Open **three** PowerShell 7 terminals side by side.
 
@@ -116,7 +207,7 @@ Wait for the line `Local: http://localhost:5173/`.
 
 ---
 
-## 4. Run the smoke suite
+## 5. Run the smoke suite
 
 In a fourth terminal (or Terminal 3 once the web is up):
 
@@ -162,7 +253,7 @@ See [`scripts/smoke/README.md`](../scripts/smoke/README.md) for parameters and e
 
 ---
 
-## 5. Walk through the UIs
+## 6. Walk through the UIs
 
 Open <http://localhost:5173> in your browser.
 
@@ -197,7 +288,7 @@ refresh.
 
 ---
 
-## 6. One-liner verification (no scripts)
+## 7. One-liner verification (no scripts)
 
 If you only want to spot-check the API without running the full smoke
 suite, here are six PowerShell-friendly curl-equivalents.
@@ -261,7 +352,7 @@ Invoke-RestMethod -Method Patch -Headers @{ 'X-Sigap-Dev-User-ID' = 'dev-user-de
 
 ---
 
-## 7. Demo data
+## 8. Demo data
 
 `packages/db/seed/demo.sql` adds **synthetic** demo data only:
 
@@ -280,11 +371,11 @@ replace this data with real patient information.**
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 ### `[FAIL] health` — connection refused
 
-The Go API isn't running. Start it (see [§ 3](#3-start-the-stack-three-powershell-terminals)).
+The Go API isn't running. Start it (see [§ 4](#4-start-the-stack)).
 
 ### `[FAIL] admin.facilities.list` — HTTP 403
 
@@ -294,9 +385,30 @@ rejects every request.
 
 ### `[FAIL] public.checkin` — queue service unavailable
 
-The Rust engine isn't running, or `SIGAP_ENGINE_FALLBACK=dev` is set
-but the gRPC client is still trying to reach it. Either start the engine
-(Terminal 1) or accept that check-in will fail until the engine is up.
+The Rust engine isn't running. Two options:
+
+1. **Start the engine**: `cd apps/queue-engine; cargo run` (Terminal 1).
+2. **Use fallback mode**: restart the API with `SIGAP_ENGINE_FALLBACK=dev`.
+   The API creates a real `queue_tickets` row in the database, so check-in
+   and all downstream steps work.
+
+If you see "Gagal mengambil nomor antrean" but no fallback log, the API
+was started without `SIGAP_ENGINE_FALLBACK=dev`. Restart it with the env
+var set.
+
+### Terminal restart lost my env vars
+
+Env vars are shell-scoped. After closing a terminal, re-export them:
+
+```powershell
+$env:DATABASE_URL          = "postgresql://postgres:sigap@localhost:5432/sigap"
+$env:SIGAP_DATABASE_URL    = $env:DATABASE_URL
+$env:SIGAP_AUTH_MODE       = "dev"
+$env:SIGAP_DEV_IDENTITY    = "true"
+$env:SIGAP_ENGINE_FALLBACK = "dev"   # Mode A only
+```
+
+If `psql` prompts for a user/password, `DATABASE_URL` is not set.
 
 ### `[FAIL] public.checkin` — daily rate limit
 
@@ -352,7 +464,7 @@ on Debian/Ubuntu. The Rust engine needs it to compile the gRPC stubs.
 
 ---
 
-## 9. Next steps
+## 10. Next steps
 
 - Browse [`docs/APPOINTMENTS_REPORT.md`](./APPOINTMENTS_REPORT.md) for the
   full appointments/check-in design.
