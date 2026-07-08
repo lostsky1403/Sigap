@@ -653,8 +653,9 @@ func (h *AdminHandler) UpdateQueueStatus(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"data": map[string]any{
-			"id":     id,
-			"status": req.Status,
+			"id":         id,
+			"status":     req.Status,
+			"updated_at": time.Now().UTC(),
 		},
 	})
 	h.logQueueAccess(r, actor, "queue.status_updated", "ok",
@@ -1757,7 +1758,11 @@ func (h *AdminHandler) UpdateAppointmentStatus(w http.ResponseWriter, r *http.Re
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
-		"data":    map[string]string{"id": id, "status": status},
+		"data": map[string]any{
+			"id":         id,
+			"status":     status,
+			"updated_at": time.Now().UTC(),
+		},
 	})
 	h.logAppointmentAccess(r, actor, "appointment.status_updated", "ok", fmt.Sprintf("%s->%s", current, status))
 }
