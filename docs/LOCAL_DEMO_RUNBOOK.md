@@ -39,7 +39,8 @@ data, offline notification delivery, and no external services.
 
 If `protoc` is not installed, the Rust engine cannot compile its gRPC
 stubs. Use `SIGAP_ENGINE_FALLBACK=dev` to skip the engine and run API +
-web only. The check-in step of the demo smoke will fail in fallback mode.
+web only. In fallback mode, the API creates a real queue ticket in the
+database, so check-in, queue listing, and status transitions all work.
 
 ---
 
@@ -123,7 +124,9 @@ psql $env:DATABASE_URL -f packages/db/seed/demo.sql    # synthetic appointments,
 
 The RBAC seed is additive — re-applying it after the notification
 migration adds `notification.read` and `notification.manage` permissions.
-The demo seed is idempotent; re-running it does not duplicate rows.
+All seed files are idempotent; re-running them does not duplicate
+facilities, roles, or demo data. The `RSK` facility count stays at 6
+regardless of how many times you seed.
 
 ---
 
@@ -142,8 +145,8 @@ Wait for the line confirming the tonic server is listening on `:50051`.
 
 > **No protoc / no Rust?** Skip this terminal and set
 > `SIGAP_ENGINE_FALLBACK=dev` in your `.env`. The API will use an
-> in-memory fake queue service. Check-in will not produce real queue
-> tickets.
+> in-memory fake queue service that persists a real queue ticket to the
+> database. Check-in and all downstream steps work.
 
 ### Terminal 2 — Go API (HTTP on :8080)
 
@@ -316,6 +319,33 @@ script or reset the schedule row.
 
 Install: `winget install Google.Protobuf` (Windows), `brew install protobuf` (macOS), or `apt-get install -y protobuf-compiler` (Debian/Ubuntu).
 
+### Terminal restart lost my env vars
+
+Env vars are shell-scoped. After closing a terminal, re-export them:
+
+```powershell
+$env:DATABASE_URL          = "postgresql://postgres:sigap@localhost:5432/sigap"
+$env:SIGAP_DATABASE_URL    = $env:DATABASE_URL
+$env:SIGAP_AUTH_MODE       = "dev"
+$env:SIGAP_DEV_IDENTITY    = "true"
+$env:SIGAP_ENGINE_FALLBACK = "dev"   # only if not running the Rust engine
+```
+
+If `psql` prompts for a user/password, `DATABASE_URL` is not set.
+
+### Check-in 500 with fallback enabled
+
+If the API logs show `SIGAP_ENGINE_FALLBACK=dev: retrying queue generation`
+but check-in still returns 500, the API was likely started before the
+fallback fix (PR #26). Rebuild and restart the API:
+
+```powershell
+cd apps/api
+go build ./cmd/server
+# Re-export env vars, then:
+go run ./cmd/server
+```
+
 ---
 
 ## Known Limitations
@@ -326,7 +356,8 @@ Install: `winget install Google.Protobuf` (Windows), `brew install protobuf` (ma
 | Notification provider is dev/local only | `DevProvider` is offline and deterministic. No real SMS, WhatsApp, or email delivery occurs. |
 | Patient portal is foundation only | `/patient/status` is a read-only status lookup, not a full patient account system. |
 | Rust engine needs protoc | Without `protoc`, the queue engine cannot compile. Use `SIGAP_ENGINE_FALLBACK=dev` as a workaround. |
-| Fallback mode skips queue tickets | Check-in succeeds at the API layer but no real queue ticket is generated in fallback mode. |
+| Fallback mode creates real queue tickets | `SIGAP_ENGINE_FALLBACK=dev` creates a real `queue_tickets` row in the database so check-in and downstream steps work. For full microsecond traceability and SHA-256 signatures, use the Rust engine. |
+| Env vars are shell-scoped | After a terminal restart, re-export `DATABASE_URL`, `SIGAP_DATABASE_URL`, `SIGAP_AUTH_MODE`, `SIGAP_DEV_IDENTITY`, and optionally `SIGAP_ENGINE_FALLBACK`. If `psql` prompts for a user/password, `DATABASE_URL` is not set. |
 
 ---
 
