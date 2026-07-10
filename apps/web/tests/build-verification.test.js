@@ -31,10 +31,30 @@ const walletPath = path.join(root, 'src/routes/wallet/+page.svelte');
 const walletContent = fs.readFileSync(walletPath, 'utf-8');
 assert(!walletContent.includes(': any'), 'Wallet should not contain untyped any');
 
+// Demo polish: surface additive API response fields already returned by backend
+const checkInPath = path.join(root, 'src/routes/appointments/check-in/+page.svelte');
+const checkInContent = fs.readFileSync(checkInPath, 'utf-8');
+assert(checkInContent.includes('appointment_id'), 'Check-in success UI should surface appointment_id');
+assert(checkInContent.includes('queue_ticket_id'), 'Check-in success UI should surface queue_ticket_id');
+assert(checkInContent.includes('formatted_number'), 'Check-in success UI should show formatted queue number');
+
+const bookingPath = path.join(root, 'src/routes/appointments/new/+page.svelte');
+const bookingContent = fs.readFileSync(bookingPath, 'utf-8');
+assert(bookingContent.includes('checkin_code'), 'Booking success UI should surface checkin_code');
+assert(bookingContent.includes('result.id'), 'Booking success UI should surface appointment id');
+
+const adminQueuesPath = path.join(root, 'src/routes/admin/queues/+page.svelte');
+const adminQueuesContent = fs.readFileSync(adminQueuesPath, 'utf-8');
+assert(adminQueuesContent.includes('updated_at'), 'Admin queue status update UI should surface updated_at');
+
+const adminApptsPath = path.join(root, 'src/routes/admin/appointments/+page.svelte');
+const adminApptsContent = fs.readFileSync(adminApptsPath, 'utf-8');
+assert(adminApptsContent.includes('updated_at'), 'Admin appointment status update UI should surface updated_at');
+
 // Verify build output exists (signal that vite build succeeded)
 const buildDir = path.join(root, 'build');
 assert(fs.existsSync(buildDir), 'Build directory should exist after vite build');
 assert(fs.existsSync(path.join(buildDir, 'index.js')), 'Build should include server entry point (index.js)');
 assert(fs.existsSync(path.join(buildDir, 'client')), 'Build should include client assets directory');
 
-console.log('✅ Build verification passed: types exported, no any types, build artifacts present.');
+console.log('✅ Build verification passed: types exported, no any types, demo polish fields, build artifacts present.');

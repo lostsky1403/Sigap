@@ -15,11 +15,18 @@
 		completed_at?: string;
 	};
 
+	type StatusUpdateResult = {
+		id?: string;
+		status?: string;
+		updated_at?: string;
+	};
+
 	let tickets = $state<QueueTicket[]>([]);
 	let loading = $state(false);
 	let error = $state('');
 	let facilityId = $state('');
 	let busyId = $state<string | null>(null);
+	let lastUpdate = $state<StatusUpdateResult | null>(null);
 
 	const statusLabels: Record<string, string> = {
 		waiting: 'Menunggu',
@@ -44,6 +51,15 @@
 		called: ['in_service', 'cancelled', 'skipped'],
 		in_service: ['completed']
 	};
+
+	function formatTs(value?: string): string {
+		if (!value) return '—';
+		try {
+			return new Date(value).toLocaleString('id-ID');
+		} catch {
+			return value;
+		}
+	}
 
 	async function apiFetch(path: string, opts?: RequestInit) {
 		const res = await fetch(`/api/v1${path}`, {
@@ -71,8 +87,8 @@
 			} else {
 				error = json.error || 'Gagal memuat antrean.';
 			}
-		} catch (e: any) {
-			error = e.message || 'Tidak dapat menghubungi API.';
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Tidak dapat menghubungi API.';
 		} finally {
 			loading = false;
 		}
@@ -88,12 +104,25 @@
 			});
 			const json = await res.json();
 			if (json.success) {
+				// Surface additive response fields (id, status, updated_at) for demo feedback.
+				const data = (json.data || {}) as StatusUpdateResult;
+				lastUpdate = {
+					id: data.id || ticket.id,
+					status: data.status || newStatus,
+					updated_at: data.updated_at
+				};
+				// Optimistic local patch keeps ticket number visible while list reloads.
+				tickets = tickets.map((t) =>
+					t.id === ticket.id
+						? { ...t, status: (data.status || newStatus) as QueueTicket['status'] }
+						: t
+				);
 				await loadTickets();
 			} else {
 				error = json.error || 'Gagal memperbarui status.';
 			}
-		} catch (e: any) {
-			error = e.message || 'Gagal memperbarui status.';
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Gagal memperbarui status.';
 		} finally {
 			busyId = null;
 		}
@@ -134,6 +163,19 @@
 		<div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">{error}</div>
 	{/if}
 
+	{#if lastUpdate}
+		<div class="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
+			<div class="font-medium">Status antrean diperbarui</div>
+			<div class="mt-1 text-xs font-mono break-all">
+				id: {lastUpdate.id}
+				· status: {statusLabels[lastUpdate.status || ''] || lastUpdate.status}
+				{#if lastUpdate.updated_at}
+					· updated_at: {formatTs(lastUpdate.updated_at)}
+				{/if}
+			</div>
+		</div>
+	{/if}
+
 	{#if loading}
 		<div class="py-12 text-center text-sm text-slate-500">Memuat antrean…</div>
 	{:else if tickets.length === 0}
@@ -161,7 +203,7 @@
 					{#each tickets as t (t.id)}
 						<tr class="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900/50">
 							<td class="px-4 py-3">
-								<div class="font-mono font-medium text-base">{t.formatted_number}</div>
+								<div class="font-mono font-semibold text-base tracking-wide">{t.formatted_number}</div>
 								<div class="text-[10px] text-slate-400">#{t.queue_number}</div>
 							</td>
 							<td class="px-4 py-3 font-mono text-xs text-slate-500">{t.facility_id.slice(0, 8)}…</td>
@@ -171,7 +213,7 @@
 								</span>
 							</td>
 							<td class="px-4 py-3 text-slate-500 dark:text-slate-400 text-xs">
-								{new Date(t.registered_at).toLocaleString('id-ID')}
+								{formatTs(t.registered_at)}
 							</td>
 							<td class="px-4 py-3 text-right">
 								{#if busyId === t.id}
