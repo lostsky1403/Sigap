@@ -1,6 +1,6 @@
 module github.com/sigap/sigap/apps/api
 
-go 1.25.11
+go 1.25.12
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
