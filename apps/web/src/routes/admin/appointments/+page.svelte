@@ -19,11 +19,18 @@
 		updated_at?: string;
 	};
 
+	type StatusUpdateResult = {
+		id?: string;
+		status?: string;
+		updated_at?: string;
+	};
+
 	let appointments = $state<Appointment[]>([]);
 	let loading = $state(false);
 	let error = $state('');
 	let busyId = $state<string | null>(null);
 	let filterStatus = $state('');
+	let lastUpdate = $state<StatusUpdateResult | null>(null);
 
 	const statusLabels: Record<string, string> = {
 		scheduled: 'Terjadwal',
@@ -44,6 +51,15 @@
 	};
 
 	const allStatuses = ['scheduled','checked_in','queued','completed','cancelled','no_show'];
+
+	function formatTs(value?: string): string {
+		if (!value) return '—';
+		try {
+			return new Date(value).toLocaleString('id-ID');
+		} catch {
+			return value;
+		}
+	}
 
 	async function apiFetch(path: string, opts?: RequestInit) {
 		const res = await fetch(`/api/v1${path}`, {
@@ -70,8 +86,8 @@
 			} else {
 				error = json.error || 'Gagal memuat janji temu.';
 			}
-		} catch (e: any) {
-			error = e.message || 'Tidak dapat menghubungi API.';
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Tidak dapat menghubungi API.';
 		} finally {
 			loading = false;
 		}
@@ -87,12 +103,28 @@
 			});
 			const json = await res.json();
 			if (json.success) {
+				// Surface additive response fields (id, status, updated_at) for demo feedback.
+				const data = (json.data || {}) as StatusUpdateResult;
+				lastUpdate = {
+					id: data.id || a.id,
+					status: data.status || newStatus,
+					updated_at: data.updated_at
+				};
+				appointments = appointments.map((item) =>
+					item.id === a.id
+						? {
+								...item,
+								status: (data.status || newStatus) as Appointment['status'],
+								updated_at: data.updated_at || item.updated_at
+							}
+						: item
+				);
 				await loadAppointments();
 			} else {
 				error = json.error || 'Gagal memperbarui status.';
 			}
-		} catch (e: any) {
-			error = e.message || 'Gagal memperbarui status.';
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Gagal memperbarui status.';
 		} finally {
 			busyId = null;
 		}
@@ -135,6 +167,19 @@
 		<div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">{error}</div>
 	{/if}
 
+	{#if lastUpdate}
+		<div class="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
+			<div class="font-medium">Status janji temu diperbarui</div>
+			<div class="mt-1 text-xs font-mono break-all">
+				id: {lastUpdate.id}
+				· status: {statusLabels[lastUpdate.status || ''] || lastUpdate.status}
+				{#if lastUpdate.updated_at}
+					· updated_at: {formatTs(lastUpdate.updated_at)}
+				{/if}
+			</div>
+		</div>
+	{/if}
+
 	{#if loading}
 		<div class="py-12 text-center text-sm text-slate-500">Memuat janji temu…</div>
 	{:else if filtered().length === 0}
@@ -155,6 +200,7 @@
 						<th class="px-4 py-3 font-medium">Waktu</th>
 						<th class="px-4 py-3 font-medium">Kode</th>
 						<th class="px-4 py-3 font-medium">Status</th>
+						<th class="px-4 py-3 font-medium">Diperbarui</th>
 						<th class="px-4 py-3 font-medium text-right">Aksi</th>
 					</tr>
 				</thead>
@@ -163,11 +209,11 @@
 						<tr class="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900/50">
 							<td class="px-4 py-3">
 								<div class="font-medium">{a.patient_display_name}</div>
-								<div class="text-[10px] text-slate-400 font-mono">{a.facility_id.slice(0,8)}…/{a.service_unit_id.slice(0,8)}…</div>
+								<div class="text-[10px] text-slate-400 font-mono" title={a.id}>{a.id.slice(0, 8)}… · {a.facility_id.slice(0,8)}…/{a.service_unit_id.slice(0,8)}…</div>
 							</td>
 							<td class="px-4 py-3">
 								{#if a.appointment_time}
-									{new Date(a.appointment_time).toLocaleString('id-ID')}
+									{formatTs(a.appointment_time)}
 								{:else}
 									<span class="text-slate-400">—</span>
 								{/if}
@@ -184,8 +230,11 @@
 									{statusLabels[a.status] || a.status}
 								</span>
 								{#if a.queue_ticket_id}
-									<div class="text-[10px] text-slate-400 mt-0.5">Ticket: {a.queue_ticket_id.slice(0,8)}…</div>
+									<div class="text-[10px] text-slate-400 mt-0.5 font-mono" title={a.queue_ticket_id}>Ticket: {a.queue_ticket_id.slice(0,8)}…</div>
 								{/if}
+							</td>
+							<td class="px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
+								{formatTs(a.updated_at)}
 							</td>
 							<td class="px-4 py-3 text-right">
 								{#if busyId === a.id}
