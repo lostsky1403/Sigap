@@ -58,3 +58,8 @@ skills-lock.json
 # Spec documents live under .trae/specs/<change-id>/ and are intentionally
 # excluded — they are agent scratch space, not project documentation.
 .trae/
+
+.trae/
+.trae-html-share-packages/
+.omo/
+.grok/
