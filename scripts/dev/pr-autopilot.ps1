@@ -328,9 +328,9 @@ function Invoke-VerifyStep {
             # Windows PowerShell -File quoting issue when the tool
             # path contains spaces (e.g. pnpm.ps1).
             $job = Start-Job -ScriptBlock {
-                param($tp, $args)
-                & $tp @args 2>&1
-                exit $LASTEXITCODE
+                param($tp, $toolArgs)
+                & $tp @toolArgs 2>&1
+                $LASTEXITCODE
             } -ArgumentList $ToolPath, $ToolArgs
 
             $completed = Wait-Job -Job $job -Timeout $TimeoutSec
@@ -340,13 +340,17 @@ function Invoke-VerifyStep {
                 Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
                 $timedOut = $true
             } else {
-                $output = Receive-Job -Job $job -Keep
+                $allOutput = @(Receive-Job -Job $job -Keep)
                 Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
-                $combined = ($output | ForEach-Object { [string]$_ }) -join "`n"
-                # PowerShell Jobs do not propagate the child's exit code
-                # via $LASTEXITCODE; treat completed-without-output as 0
-                # and any signal of non-zero return as 1.
-                $exitCode = if ($job.State -eq 'Completed') { 0 } else { 1 }
+                # The scriptblock emits $LASTEXITCODE as the last value.
+                # Peel it so it does not appear in combined output text.
+                if ($allOutput.Count -gt 0 -and $allOutput[-1] -is [int]) {
+                    $exitCode = [int]$allOutput[-1]
+                    $combined = (($allOutput | Select-Object -SkipLast 1) | ForEach-Object { [string]$_ }) -join "`n"
+                } else {
+                    $exitCode = if ($job.State -eq 'Completed') { 0 } else { 1 }
+                    $combined = ($allOutput | ForEach-Object { [string]$_ }) -join "`n"
+                }
             }
         } else {
             # Subprocess invocation via [System.Diagnostics.Process].
@@ -1012,7 +1016,11 @@ if (-not $VerifyOnly) {
 } else {
     Write-Host ""
     Write-Info "VerifyOnly mode: skipping git safety, push, PR creation, CI watch, and merge."
-    Write-Pass "verify-only completed"
+    if ($script:ExitCode -eq 0) {
+        Write-Pass "verify-only completed"
+    } else {
+        Write-Fail "verify-only completed — one or more verification checks failed (exit $($script:ExitCode))"
+    }
     $ErrorActionPreference = $originalErrorActionPreference
     exit $script:ExitCode
 }
