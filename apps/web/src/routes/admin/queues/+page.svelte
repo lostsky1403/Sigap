@@ -61,6 +61,18 @@
 		}
 	}
 
+	async function readApi(res: Response): Promise<{ ok: boolean; data: any }> {
+		const contentType = res.headers.get('content-type') || '';
+		if (!contentType.includes('application/json')) {
+			return { ok: false, data: null };
+		}
+		try {
+			return { ok: true, data: await res.json() };
+		} catch {
+			return { ok: false, data: null };
+		}
+	}
+
 	async function apiFetch(path: string, opts?: RequestInit) {
 		const res = await fetch(`/api/v1${path}`, {
 			...opts,
@@ -81,7 +93,12 @@
 		try {
 			const query = facilityId ? `?facility_id=${encodeURIComponent(facilityId)}` : '';
 			const res = await apiFetch(`/admin/queues${query}`);
-			const json = await res.json();
+			const parsed = await readApi(res);
+			if (!parsed.ok) {
+				error = 'Gagal menghubungi layanan. Silakan coba lagi.';
+				return;
+			}
+			const json = parsed.data;
 			if (json.success && json.data) {
 				tickets = json.data;
 			} else {
@@ -102,7 +119,12 @@
 				method: 'PATCH',
 				body: JSON.stringify({ status: newStatus })
 			});
-			const json = await res.json();
+			const parsed = await readApi(res);
+			if (!parsed.ok) {
+				error = 'Gagal menghubungi layanan. Silakan coba lagi.';
+				return;
+			}
+			const json = parsed.data;
 			if (json.success) {
 				// Surface additive response fields (id, status, updated_at) for demo feedback.
 				const data = (json.data || {}) as StatusUpdateResult;

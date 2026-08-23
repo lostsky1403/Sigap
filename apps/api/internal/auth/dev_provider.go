@@ -57,6 +57,7 @@ func (p *DevIdentityProvider) Authenticate(r *http.Request) (identity.Actor, err
 		Permissions: []string{
 			"queue.generate",
 			"queue.read",
+			"queue.manage",
 			"facility.read",
 			"facility.manage",
 			"audit.read",
