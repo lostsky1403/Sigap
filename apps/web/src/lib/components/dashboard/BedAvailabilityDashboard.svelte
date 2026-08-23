@@ -316,7 +316,7 @@
 			disabled={chaosRunning}
 			class="rounded-lg px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-60 flex items-center gap-1 border-2 border-[#B91C1C] bg-[#B91C1C] hover:invert"
 			style="background-image: repeating-linear-gradient(45deg, #B91C1C, #B91C1C 4px, #fff 4px, #fff 8px); border-image: repeating-linear-gradient(45deg, #B91C1C, #B91C1C 4px, #fff 4px, #fff 8px) 1;"
-			title="Fire 50 rapid queue requests (unique phones for successes + repeats for 429s). Watch beds + SSE fly + anti-calo log fill!"
+			title="Uji cepat 50 permintaan antrean: lihat pembaruan bed dan antrean secara langsung serta deteksi calo bekerja."
 		>
 			{chaosRunning ? '⏳ Chaos Mode (50x running...)' : '🚀 Chaos Mode (Load Test 50x)'}
 		</button>
@@ -362,7 +362,7 @@
 	<div class="mb-6">
 		<div class="mb-1 flex items-center gap-2 text-[10px] font-medium uppercase tracking-[1px] text-red-600 dark:text-red-400">
 			🛡️ Log Radar Anti-Calo (Gamifikasi)
-			<span class="font-mono text-[9px] normal-case text-red-500/70 dark:text-red-400/70">— deteksi calo real-time via 429</span>
+			<span class="font-mono text-[9px] normal-case text-red-500/70 dark:text-red-400/70">— deteksi calo real-time</span>
 		</div>
 		<div
 			class="h-36 overflow-y-auto rounded-xl border border-red-200 bg-red-50 p-3 text-[10px] font-mono leading-tight text-red-700 dark:border-red-900 dark:bg-red-950/60 dark:text-red-300"

@@ -17,6 +17,6 @@
 	</div>
 
 	<div class="mt-10 text-xs text-slate-500">
-		Endpoint antrean utama ada di Go API. Mesin pemrosesan antrean & sinkronisasi kasur berjalan di Rust (gRPC).
+		Info bed dan antrean diperbarui secara langsung, sehingga pasien dan petugas selalu melihat status terkini.
 	</div>
 </div>
