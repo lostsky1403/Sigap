@@ -1,370 +1,258 @@
-# Sigap Local Demo and Operator Runbook
+# Sigap Live Presentation Runbook
 
-## Purpose
+> **Bahasa Indonesia**: [LOCAL_DEMO_RUNBOOK.id.md](./LOCAL_DEMO_RUNBOOK.id.md) (synchronized translation — update both files in the same PR).
 
-This runbook gives reviewers and operators a single, end-to-end reference
-for running the Sigap local demo on a Windows workstation. It covers
-environment setup, database provisioning, service startup, automated
-smoke verification, and the manual UI walkthrough — all using synthetic
-data, offline notification delivery, and no external services.
-
-> **Audience**: code reviewers, demo recipients, QA operators.
-> **Goal**: prove the full appointment → check-in → queue → notification
-> → patient-status flow works on a fresh checkout.
-
----
-
-## Safety and Privacy Rules
-
-| Rule | Detail |
-|------|--------|
-| **Synthetic data only** | Never insert real patient names, phone numbers, or medical records. All demo data uses `+62-555-01xx` (ITU-T reserved range) and `Pasien Demo` names. |
-| **No real notification vendor** | The only delivery provider shipped is `DevProvider` (offline, deterministic). No SMS, WhatsApp, or email is ever sent. |
-| **No secrets in docs/logs** | Never print JWTs, passwords, API keys, or raw patient contacts in documentation, log output, or screenshots. |
-| **Dev identity is local-only** | `SIGAP_DEV_IDENTITY=true` is trivially bypassable. Never enable it in staging, production, or any shared environment. |
+| | |
+|---|---|
+| **Audience** | The presenter driving the 5–10 minute live demo, and the operator keeping the stack healthy |
+| **Job** | Set up, present the standardized 7-screen story, recover from common failures, and run the final pre-presentation checklist |
+| **Type** | Operational how-to (runbook) |
+| **Source of truth** | This file is the single canonical demo guide. `DEMO_FLOW.md` is a retired stub; `DEMO_HANDOFF.md` is a point-in-time checkpoint, not a guide. Do not add a second demo guide. |
+| **Last verified** | 2026-08-23 @ main `c755042`, Windows bare-metal bootstrap |
+| **Update trigger** | If ports, `Start-LocalDev.ps1`, any screen in the demo flow, seed behavior, or smoke step count changes — update this doc and its Indonesian twin **in the same PR** |
 
 ---
 
-## Prerequisites
+## What the demo shows
 
-| Tool | Version | Notes |
-|------|---------|-------|
-| Go | 1.22+ | Runs the API server and notification worker |
-| Rust | 1.78+ with `cargo` | Runs the queue engine (also needs `protoc`) |
-| Node.js | 20+ with `pnpm` | Runs the SvelteKit web frontend |
-| PostgreSQL | 16+ | Local server or Docker container |
-| PowerShell | 7+ (`pwsh`) | Required for smoke scripts and `pr-autopilot` |
-| `psql` | any recent | For applying migrations and loading seed data |
-| GitHub CLI (`gh`) | optional | Only needed for PR workflow (`pr-autopilot`) |
+Sigap is a regional health information and queueing platform: patients book
+appointments and check in from a phone, facility staff run the queue console,
+and administrators see live facility/bed status across the region — without
+real-time data plumbing being visible to anyone.
 
-If `protoc` is not installed, the Rust engine cannot compile its gRPC
-stubs. Use `SIGAP_ENGINE_FALLBACK=dev` to skip the engine and run API +
-web only. In fallback mode, the API creates a real queue ticket in the
-database, so check-in, queue listing, and status transitions all work.
+**Users:** patients (booking, check-in, status lookup), facility staff (queue
+console, appointment management), regional administrators (facilities, beds,
+notifications).
 
----
+**Core flow:** book an appointment → receive a check-in code → check in → get a
+queue number with an estimated wait → staff serve the visit → status is
+verifiable publicly without exposing personal data.
 
-## Environment Variables
+**Demo-only vs production-ready:**
 
-All values below use placeholders. Replace `<…>` with your local values.
-**No real passwords should appear in this document.**
+| Capability | Status during demo |
+|---|---|
+| Booking / check-in / queue APIs, validation, rate limits | Production-grade design |
+| RBAC + audit events on admin routes | Production-grade design |
+| PII masking & privacy-safe public status lookup | Production-grade design (synthetic data only) |
+| Queue engine (Rust) with traceability signatures | Real service locally; fallback mode is demo-only |
+| Dev identity headers (`X-Sigap-Dev-User-ID`) | **Demo-only** — never outside local development |
+| Notification delivery provider | **Demo-only** — offline deterministic provider, nothing is actually sent |
 
-| Variable | Example / Default | Purpose |
-|----------|-------------------|---------|
-| `DATABASE_URL` | `postgresql://<user>:<password>@<host>:<port>/<database>` | Primary connection string for the Go API |
-| `SIGAP_DATABASE_URL` | `postgresql://<user>:<password>@<host>:<port>/<database>` | Connection string for the notification worker (typically same as `DATABASE_URL`) |
-| `SIGAP_API_BASE` | `http://[::1]:8080` | Override API base URL used by smoke scripts |
-| `SIGAP_AUTH_MODE` | `dev` | Auth mode; `dev` enables synthetic dev-identity for local demo |
-| `SIGAP_DEV_IDENTITY` | `true` | Enables the `X-Sigap-Dev-User-ID` header injection |
-| `SIGAP_ENGINE_FALLBACK` | `dev` | Optional; use in-memory fake queue when Rust engine is unavailable |
-| `SIGAP_NOTIFICATION_WORKER_DRY_RUN` | `true` / `false` | If `true`, worker logs but does not mutate outbox rows |
-| `SIGAP_NOTIFICATION_WORKER_ONCE` | `true` / `false` | If `true`, drain pending rows once and exit (useful for smoke/CI) |
-| `SIGAP_NOTIFICATION_WORKER_ENABLED` | `true` / `false` | Set `false` to disable the loop tick (ONCE mode is unaffected) |
-| `SIGAP_NOTIFICATION_WORKER_INTERVAL_SECONDS` | `30` | Loop tick interval; ignored in ONCE mode |
-| `SIGAP_NOTIFICATION_WORKER_BATCH_SIZE` | `25` | Maximum outbox rows claimed per tick |
-
-> **Reminder**: Replace `<user>`, `<password>`, `<host>`, `<port>`, and
-> `<database>` with your own values. Never hard-code real credentials in
-> `.env.example` or version-controlled files.
+All demo data is synthetic: names like `Pasien Demo*` and phone numbers in the
+ITU-T reserved-for-fiction range `+62-555-01xx`. Never substitute real patient
+data.
 
 ---
 
-## Database Setup
+## Pre-demo setup
 
-### 1. Start PostgreSQL
+### 1. Bootstrap (one command)
 
-Using Docker with a placeholder password:
-
-```powershell
-docker run --name sigap-db `
-    -e POSTGRES_PASSWORD=<password> `
-    -e POSTGRES_DB=sigap `
-    -p 5432:5432 `
-    -d postgres:16
-```
-
-Set the connection string in your environment:
+Requires PowerShell 7+, Go, Rust+`cargo` (+`protoc`), Node 20+/pnpm, PostgreSQL,
+and `psql` on PATH.
 
 ```powershell
-$env:DATABASE_URL = "postgresql://<user>:<password>@localhost:5432/sigap"
+# DATABASE_URL must be set in the calling shell (never commit it).
+$env:DATABASE_URL = "postgresql://<user>:<password>@localhost:5434/sigap"
+pwsh -NoProfile -File scripts/dev/Start-LocalDev.ps1
 ```
 
-### 2. Apply migrations (in order)
+The script spawns three windows:
 
-The migration directory (`packages/db/migrations/`) contains six
-forward-only SQL files:
+| Window | Service | Address |
+|---|---|---|
+| 1 | Rust queue engine (gRPC) | `127.0.0.1:50051` |
+| 2 | Go API | `http://127.0.0.1:18080` |
+| 3 | SvelteKit web | `http://localhost:5173` |
 
-| # | File | Purpose |
-|---|------|---------|
-| 1 | `0001_init.sql` | Core tables — facilities, service units, practitioners, beds |
-| 2 | `0002_medical_records.sql` | Medical record and encounter tables |
-| 3 | `0003_identity_rbac.sql` | Identity, users, roles, and RBAC permission tables |
-| 4 | `0004_audit_events.sql` | Audit event log table |
-| 5 | `0005_appointments.sql` | Appointment, schedule, and check-in tables |
-| 6 | `0006_notifications.sql` | Notification templates, outbox, and delivery attempt tables |
-
-Apply them:
+It also sets `SIGAP_API_BASE=http://127.0.0.1:18080` inside its own shell — if
+you run smoke scripts from a *different* terminal, set it there too:
 
 ```powershell
-psql $env:DATABASE_URL -f packages/db/migrations/0001_init.sql
-psql $env:DATABASE_URL -f packages/db/migrations/0002_medical_records.sql
-psql $env:DATABASE_URL -f packages/db/migrations/0003_identity_rbac.sql
-psql $env:DATABASE_URL -f packages/db/migrations/0004_audit_events.sql
-psql $env:DATABASE_URL -f packages/db/migrations/0005_appointments.sql
-psql $env:DATABASE_URL -f packages/db/migrations/0006_notifications.sql
+$env:SIGAP_API_BASE = "http://127.0.0.1:18080"
 ```
 
-### 3. Load seed data
+Wait ~5–10 seconds after launch before checking health.
+
+### 2. Verify everything is up
 
 ```powershell
-psql $env:DATABASE_URL -f packages/db/seed/rbac.sql    # roles + permissions
-psql $env:DATABASE_URL -f packages/db/seed/dev.sql     # 6 demo facilities
-psql $env:DATABASE_URL -f packages/db/seed/demo.sql    # synthetic appointments, schedules, notification rows
+Invoke-RestMethod http://127.0.0.1:18080/health    # -> ok / status json
+Invoke-RestMethod http://127.0.0.1:18080/readyz    # -> ready (DB reachable)
+Invoke-WebRequest -UseBasicParsing http://localhost:5173   # -> 200 OK
 ```
 
-The RBAC seed is additive — re-applying it after the notification
-migration adds `notification.read` and `notification.manage` permissions.
-All seed files are idempotent; re-running them does not duplicate
-facilities, roles, or demo data. The `RSK` facility count stays at 6
-regardless of how many times you seed.
+Engine: the queue-engine window should show the gRPC server listening on
+`:50051`. (If the engine cannot run, restart the API with
+`SIGAP_ENGINE_FALLBACK=dev` — see Recovery.)
+
+Ports that must be free: **5434** (PostgreSQL), **18080** (API),
+**50051** (engine), **5173** (web). Check:
+`netstat -ano | findstr ":18080 :50051 :5173"`.
+
+### 3. Reset / seed (safe, idempotent)
+
+Seeds are additive and idempotent — re-running never duplicates rows:
+
+```powershell
+psql $env:DATABASE_URL -f packages/db/seed/rbac.sql
+psql $env:DATABASE_URL -f packages/db/seed/dev.sql     # facilities
+psql $env:DATABASE_URL -f packages/db/seed/demo.sql    # schedules, SMOKE01, outbox
+```
+
+- All seeded data is synthetic (`+62-555-01xx`, `Pasien Demo*`). Nothing is
+  sent to real recipients.
+- **SMOKE01 baseline restore**: re-running `demo.sql` restores the seeded
+  appointment with check-in code `SMOKE01` (status `scheduled`) and resets the
+  deterministic notification outbox rows to `pending`.
+- Full reset alternative: `pwsh -NoProfile -File scripts/smoke/sigap-full-local-demo.ps1`
+  seeds and runs all three smoke suites in one command (needs `DATABASE_URL`,
+  `SIGAP_DATABASE_URL`, and `SIGAP_API_BASE` exported in that shell).
 
 ---
 
-## Starting Services
+## Demo script
 
-Open **three** PowerShell 7 terminals side by side.
+Synthetic presenter identity: name **Demo Rehearsal Patient**, phone
+**08555001999** (reserved test range). Copy IDs into a scratchpad as you go —
+screens 4–6 reuse them.
 
-### Terminal 1 — Rust queue engine (gRPC on :50051)
+### Screen 1 — Homepage (live overview)
 
-```powershell
-cd apps/queue-engine
-cargo run
-```
+- **URL:** <http://localhost:5173>
+- **Do:** point at the bed availability board; open DevTools → Network tab and
+  highlight the `/api/v1/events/beds` event stream row (live updates without
+  refresh).
+- **Say:** "Every facility's bed status streams to this dashboard the moment it
+  changes — this is the same live view administrators use region-wide."
+- **Expected:** dashboard renders with bed counts; SSE connection stays open;
+  no console errors.
+- **Copy:** nothing.
+- **Don't show:** network payload details, terminal windows.
 
-Wait for the line confirming the tonic server is listening on `:50051`.
+### Screen 2 — Appointment booking
 
-> **No protoc / no Rust?** Skip this terminal and set
-> `SIGAP_ENGINE_FALLBACK=dev` in your `.env`. The API will use an
-> in-memory fake queue service that persists a real queue ticket to the
-> database. Check-in and all downstream steps work.
+- **URL:** <http://localhost:5173/appointments/new>
+- **Do:** pick **Sigap Demo Facility** → **Poli Umum Demo** from the dropdowns;
+  date = tomorrow, time = 09:30; name `Demo Rehearsal Patient`; phone
+  `08555001999`; submit.
+- **Say:** "A patient picks a facility and clinic like choosing a product — no
+  codes, no paperwork. The system validates capacity and returns a check-in
+  code instantly."
+- **Expected:** green success card showing the 6-character check-in code plus
+  appointment reference.
+- **Copy:** the **check-in code** and the **appointment_id**.
+- **Don't show:** raw JSON responses, dev headers, UUIDs typed by hand.
 
-### Terminal 2 — Go API (HTTP on :8080)
+### Screen 3 — Patient check-in
 
-```powershell
-cd apps/api
-go run ./cmd/server
-```
+- **URL:** use the success card's "→ Check-In sekarang" deep link (or
+  <http://localhost:5173/appointments/check-in> and paste the code).
+- **Do:** confirm both fields are prefilled (appointment ID + code); click
+  **Check-In**.
+- **Say:** "At the door the patient checks in with one code and gets a fair
+  queue number with an honest wait estimate."
+- **Expected:** success panel: queue number `RSK-000x`, estimated wait (~25
+  minutes), status `queued`.
+- **Copy:** the **queue number** (e.g. `RSK-0002`).
+- **Don't show:** the gRPC/engine internals behind ticket generation.
 
-Wait for the line `listening on :8080`.
+### Screen 4 — Patient status (privacy-safe public lookup)
 
-### Terminal 3 — SvelteKit web (Vite on :5173)
+- **URL:** <http://localhost:5173/patient/status>
+- **Do:** look up your fresh code first (shows queue number + waiting status);
+  then click "Cek kode lain" and enter **SMOKE01** (shows the seeded
+  appointment still *Belum check-in*).
+- **Say:** "Anyone holding a code can verify their visit state — and only that.
+  No names, no phone numbers, no medical record leaves the building."
+- **Expected:** clean status cards for both codes; zero personal data rendered.
+- **Copy:** nothing.
+- **Don't show:** API response bodies (keep the privacy claim visual).
 
-```powershell
-pnpm --filter sigap-web dev
-```
+### Screen 5 — Admin queue console
 
-Wait for `Local: http://localhost:5173/`.
+- **URL:** <http://localhost:5173/admin/queues>
+- **Do:** find your ticket (`RSK-000x`, badge **Menunggu**). Click **→ Dipanggil**
+  (patient called to the counter), then **→ Dilayani** (being served). Press
+  **Muat** or reload the page and show the state persisted.
+- **Say:** "Staff move patients through the visit with one click. Every change
+  is validated against allowed transitions and written to an audit trail."
+- **Expected:** badges progress Menunggu → Dipanggil → Dilayani; state survives
+  reload.
+- **Copy:** nothing.
+- **Don't show:** cancel/skip paths, DB tooling.
 
-### Optional Terminal 4 — Notification worker
+### Screen 6 — Admin appointments
 
-```powershell
-$env:SIGAP_DATABASE_URL = $env:DATABASE_URL
-$env:SIGAP_NOTIFICATION_WORKER_ENABLED = "true"
-cd apps/api
-go run ./cmd/notification-worker
-```
+- **URL:** <http://localhost:5173/admin/appointments>
+- **Do:** find today's booking ("Demo Rehearsal Patient", badge **Antre**);
+  click **Selesai**; press **Muat ulang** to prove persistence. Optionally use
+  the status filter to show list narrowing.
+- **Say:** "The appointment lifecycle mirrors reality end-to-end — scheduled,
+  checked in, queued, completed."
+- **Expected:** badge flips to **Selesai** and stays after reload.
+- **Copy:** nothing.
+- **Don't show:** Batal/Tidak Hadir flows (avoid implying patient-facing blame).
 
-Or for a one-shot drain (smoke/CI):
+### Screen 7 — Admin facilities (overview only)
 
-```powershell
-$env:SIGAP_NOTIFICATION_WORKER_ONCE = "true"
-$env:SIGAP_DATABASE_URL = $env:DATABASE_URL
-cd apps/api
-go run ./cmd/notification-worker
-```
-
----
-
-## Verification
-
-### Full automated verification
-
-Runs all lint, vet, type-check, and security gates in one command:
-
-```powershell
-pwsh -NoProfile -File .\scripts\dev\pr-autopilot.ps1 -VerifyOnly -CommandTimeoutSeconds 300
-```
-
-### Individual checks
-
-| Check | Command |
-|-------|---------|
-| Go unit tests | `cd apps/api; go test ./...` |
-| Go vet | `cd apps/api; go vet ./...` |
-| SvelteKit type-check | `pnpm --filter sigap-web run check` |
-| Secrets scan | `gitleaks detect --source . --redact` |
-
----
-
-## Smoke Scripts
-
-Three PowerShell-native end-to-end smoke scripts in `scripts/smoke/`:
-
-| Script | Command | Covers |
-|--------|---------|--------|
-| **Demo smoke** | `pwsh -File scripts/smoke/sigap-demo-smoke.ps1` | Health, admin facilities, public booking, check-in, queue listing, appointment status transition (6 steps) |
-| **Notification smoke** | `pwsh -File scripts/smoke/sigap-notification-smoke.ps1` | Health, dev identity, notification summary/listing, worker dry-run, worker once-mode delivery, post-delivery verification (9 steps) |
-| **Patient portal smoke** | `pwsh -File scripts/smoke/sigap-patient-portal-smoke.ps1` | Health, valid status lookup (`SMOKE01`), invalid-input rejection, unknown-code 404, PII absence check (5 steps) |
-
-All scripts exit `0` on full pass, `1` on any step failure, `2` on
-parameter validation error.
-
----
-
-## Manual Demo Flow
-
-Open <http://localhost:5173> in your browser after starting all three
-services.
-
-### 1. Admin dashboard — Facilities
-
-Navigate to `/admin/facilities`. Verify 6 seeded facilities are listed.
-Try creating, editing, and deactivating a facility.
-
-### 2. Appointment booking
-
-Navigate to `/appointments/new`. Fill in the public booking form with
-synthetic data:
-
-- Select a facility and service unit (`DEMO-UMUM` or `DEMO-GIGI`).
-- Patient name: `Pasien Demo Manual`
-- Phone: `+62-555-0199`
-- Appointment time: tomorrow 10:00 UTC
-
-Submit. Save the returned **6-character check-in code**.
-
-### 3. Check-in
-
-Navigate to `/appointments/check-in`. Enter the check-in code from the
-previous step. A queue number is issued and the appointment moves to
-`queued` status.
-
-### 4. Queue operator
-
-Navigate to `/admin/queues`. Your smoke appointment appears as a queue
-ticket. Advance the status through `called` → `completed`.
-
-### 5. Notification admin
-
-Navigate to `/admin/notifications`. Verify outbox rows appear with
-masked recipients, status badges, and channel information. Use retry /
-cancel buttons where safe. Raw contacts and PII are never rendered.
-
-### 6. Patient status portal
-
-Navigate to `/patient/status` and enter code `SMOKE01`. The seeded demo
-appointment's status is returned without any PII exposure.
+- **URL:** <http://localhost:5173/admin/facilities>
+- **Do:** scroll briefly; mention capacity editing exists.
+- **Say:** "Facility registry powers everything upstream — beds on the
+  dashboard, dropdowns at booking, queues per site."
+- **Expected:** facility list loads.
+- **Copy:** nothing. **Do not perform CRUD operations live.**
 
 ---
 
-## Troubleshooting
+## Recovery steps
 
-### Windows localhost vs `[::1]`
-
-Go's `ListenAndServe(":8080")` on Windows creates an IPv6-only socket.
-If smoke scripts or manual curls fail with "connection refused" or
-"forcibly closed", use `http://[::1]:8080` instead of
-`http://localhost:8080`.
-
-### Port conflicts
-
-Ensure these ports are free before starting services:
-
-| Port | Service |
-|------|---------|
-| `5432` | PostgreSQL |
-| `8080` | Go API |
-| `50051` | Rust queue engine (gRPC) |
-| `5173` | SvelteKit web (Vite dev server) |
-
-Check with: `netstat -ano | findstr ":8080"` (PowerShell).
-
-### Reset notification smoke rows
-
-If re-running the notification smoke leaves stale rows:
-
-```powershell
-psql $env:DATABASE_URL -c "DELETE FROM notification_outbox WHERE template_key LIKE '%smoke%'"
-```
-
-### API health check
-
-```powershell
-Invoke-RestMethod http://[::1]:8080/health
-```
-
-### "Waktu janji temu harus di masa depan" (400 — past appointment)
-
-Timezone/clock mismatch between your shell, the API server, and
-PostgreSQL. Compare all three clocks and send an explicit UTC ISO 8601
-timestamp with a `Z` suffix.
-
-### Schedule slot full
-
-The demo seed creates 18 bookable slots per day (2 service units ×
-6 slots × 3 capacity). If exhausted, use `-SkipSeed` on the smoke
-script or reset the schedule row.
-
-### `protoc` not found
-
-Install: `winget install Google.Protobuf` (Windows), `brew install protobuf` (macOS), or `apt-get install -y protobuf-compiler` (Debian/Ubuntu).
-
-### Terminal restart lost my env vars
-
-Env vars are shell-scoped. After closing a terminal, re-export them:
-
-```powershell
-$env:DATABASE_URL          = "postgresql://postgres:sigap@localhost:5432/sigap"
-$env:SIGAP_DATABASE_URL    = $env:DATABASE_URL
-$env:SIGAP_AUTH_MODE       = "dev"
-$env:SIGAP_DEV_IDENTITY    = "true"
-$env:SIGAP_ENGINE_FALLBACK = "dev"   # only if not running the Rust engine
-```
-
-If `psql` prompts for a user/password, `DATABASE_URL` is not set.
-
-### Check-in 500 with fallback enabled
-
-If the API logs show `SIGAP_ENGINE_FALLBACK=dev: retrying queue generation`
-but check-in still returns 500, the API was likely started before the
-fallback fix (PR #26). Rebuild and restart the API:
-
-```powershell
-cd apps/api
-go build ./cmd/server
-# Re-export env vars, then:
-go run ./cmd/server
-```
+| Failure | Action |
+|---|---|
+| **API unavailable** (health fails) | Check the API window for a crash. Restart stack: close spawned windows, re-run `scripts/dev/Start-LocalDev.ps1`, wait ~10 s, re-check `/health` and `/readyz`. |
+| **Engine unreachable** (check-in fails with queue error) | Restart engine window (`cd apps/queue-engine; cargo run`). If it can't start, kill API window, set `$env:SIGAP_ENGINE_FALLBACK = "dev"`, relaunch via `Start-LocalDev.ps1` — check-in then works via database-backed fallback. |
+| **Port conflict** (window exits immediately) | `netstat -ano | findstr ":<port>"` for 5434/18080/50051/5173; stop the conflicting process or free the port, then relaunch that service. |
+| **Stale browser state** (old UI after code changes) | Hard reload: Ctrl+F5 / DevTools right-click reload clearing cache; reopen `http://localhost:5173/appointments/new`. |
+| **Queue already transitioned** (no Menunggu button) | Pick another ticket still showing **Menunggu**, or create a fresh one: book again (Screen 2) and check in (Screen 3). Transitions are one-way by design. |
+| **No waiting ticket** | Same as above — book + check in a fresh synthetic appointment; takes under a minute. |
+| **Seed drift** (SMOKE01 unknown, odd facility/unit lists) | Re-run the three seed commands from [Reset / seed](#3-reset--seed-safe-idempotent); `demo.sql` self-heals demo service-unit linkage and restores SMOKE01. Then hard-reload the browser. |
+| **Admin pages 401/403 / dev identity missing** | Admin routes need dev identity enabled at API start: ensure the API window was launched by `Start-LocalDev.ps1` (sets `SIGAP_AUTH_MODE=dev` + `SIGAP_DEV_IDENTITY=true`). Restart the stack if the API was started manually without them. |
+| **Booking says time must be in the future** | Use tomorrow's date; keep shell/API/PostgreSQL clocks NTP-synced. |
+| **Smoke script hits port 8080** | Pass `-ApiBase http://127.0.0.1:18080` (or export `SIGAP_API_BASE`) — the bare-metal runtime uses 18080, not the script default. |
 
 ---
 
-## Known Limitations
+## Final validation checklist (immediately before presenting)
 
-| Limitation | Detail |
-|------------|--------|
-| Dev identity is local-only | `SIGAP_DEV_IDENTITY=true` must never be enabled in production or shared environments. |
-| Notification provider is dev/local only | `DevProvider` is offline and deterministic. No real SMS, WhatsApp, or email delivery occurs. |
-| Patient portal is foundation only | `/patient/status` is a read-only status lookup, not a full patient account system. |
-| Rust engine needs protoc | Without `protoc`, the queue engine cannot compile. Use `SIGAP_ENGINE_FALLBACK=dev` as a workaround. |
-| Fallback mode creates real queue tickets | `SIGAP_ENGINE_FALLBACK=dev` creates a real `queue_tickets` row in the database so check-in and downstream steps work. For full microsecond traceability and SHA-256 signatures, use the Rust engine. |
-| Env vars are shell-scoped | After a terminal restart, re-export `DATABASE_URL`, `SIGAP_DATABASE_URL`, `SIGAP_AUTH_MODE`, `SIGAP_DEV_IDENTITY`, and optionally `SIGAP_ENGINE_FALLBACK`. If `psql` prompts for a user/password, `DATABASE_URL` is not set. |
+Run top to bottom; stop and fix anything unchecked:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:18080/health          # 200
+Invoke-RestMethod http://127.0.0.1:18080/readyz           # 200
+$env:SIGAP_API_BASE = "http://127.0.0.1:18080"
+pwsh -NoProfile -File scripts/smoke/sigap-demo-smoke.ps1  # 8/8 PASS
+```
+
+- [ ] `/health` returns 200
+- [ ] `/readyz` returns 200
+- [ ] Homepage loads (<http://localhost:5173>) with bed dashboard
+- [ ] Booking works (dropdowns populate; fresh code returned)
+- [ ] Check-in works (queue number issued)
+- [ ] Patient status works (fresh code + `SMOKE01`)
+- [ ] Queue admin works (list + transitions)
+- [ ] Appointment admin works (list + one transition)
+- [ ] Smoke suite: 8/8 PASS
+- [ ] Browser console: no errors (only a harmless favicon 404 may appear)
+
+Optional deeper gate: `sigap-full-local-demo.ps1` → expect
+**FULL LOCAL DEMO: PASS**.
 
 ---
 
-## Further Reading
+## Further reading
 
-- [`docs/DEMO_FLOW.md`](./DEMO_FLOW.md) — 10-minute happy-path demo walkthrough
-- [`docs/DEV_SETUP.md`](./DEV_SETUP.md) — Full developer setup, auth modes, notification worker, bootstrap admin
-- [`CONTRIBUTING.md`](../CONTRIBUTING.md) — PR workflow, commit conventions, code review standards
-- [`ROADMAP.md`](../ROADMAP.md) — Project phases, completed milestones, and future backlog
-- [`scripts/smoke/README.md`](../scripts/smoke/README.md) — Smoke script parameters, exit codes, and troubleshooting
+- [`LOCAL_DEMO_RUNBOOK.id.md`](./LOCAL_DEMO_RUNBOOK.id.md) — Bahasa Indonesia twin
+- [`../scripts/smoke/README.md`](../scripts/smoke/README.md) — smoke parameters, exit codes
+- [`DEV_SETUP.md`](./DEV_SETUP.md) — full developer setup and auth modes
+- [`DEMO_HANDOFF.md`](./DEMO_HANDOFF.md) — latest green checkpoint record
