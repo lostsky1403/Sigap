@@ -49,7 +49,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$ApiBase = $(if ($env:SIGAP_API_BASE) { $env:SIGAP_API_BASE } else { 'http://[::1]:8080' })
+    [string]$ApiBase = $(if ($env:SIGAP_API_BASE) { $env:SIGAP_API_BASE } else { 'http://127.0.0.1:8080' })
 )
 
 # Capture and restore the original ErrorActionPreference on exit so we never
