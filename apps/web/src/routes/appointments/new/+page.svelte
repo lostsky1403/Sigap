@@ -24,6 +24,18 @@
 	let patientName = $state('');
 	let notes = $state('');
 
+	async function readApi(res: Response): Promise<{ ok: boolean; data: any }> {
+		const contentType = res.headers.get('content-type') || '';
+		if (!contentType.includes('application/json')) {
+			return { ok: false, data: null };
+		}
+		try {
+			return { ok: true, data: await res.json() };
+		} catch {
+			return { ok: false, data: null };
+		}
+	}
+
 	async function submit() {
 		loading = true;
 		error = '';
@@ -45,7 +57,12 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(body)
 			});
-			const json = await res.json();
+			const parsed = await readApi(res);
+			if (!parsed.ok) {
+				error = 'Gagal menghubungi layanan. Silakan coba lagi.';
+				return;
+			}
+			const json = parsed.data;
 			if (json.success && json.data) {
 				success = true;
 				result = json.data as BookingResult;

@@ -32,6 +32,18 @@
 		if (code) checkinCode = code;
 	});
 
+	async function readApi(res: Response): Promise<{ ok: boolean; data: any }> {
+		const contentType = res.headers.get('content-type') || '';
+		if (!contentType.includes('application/json')) {
+			return { ok: false, data: null };
+		}
+		try {
+			return { ok: true, data: await res.json() };
+		} catch {
+			return { ok: false, data: null };
+		}
+	}
+
 	async function submit() {
 		loading = true;
 		error = '';
@@ -44,7 +56,12 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ checkin_code: checkinCode })
 			});
-			const json = await res.json();
+			const parsed = await readApi(res);
+			if (!parsed.ok) {
+				error = 'Gagal menghubungi layanan. Silakan coba lagi.';
+				return;
+			}
+			const json = parsed.data;
 			if (json.success && json.data) {
 				success = true;
 				ticket = json.data as CheckInResult;
@@ -160,7 +177,7 @@
 			</div>
 			<div>
 				<label for="code" class="block text-xs font-medium text-slate-500 mb-1">Kode Check-In <span class="text-red-500">*</span></label>
-				<input id="code" bind:value={checkinCode} required maxlength="6" class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-mono dark:border-slate-700 dark:bg-slate-800" placeholder="6 karakter" />
+				<input id="code" bind:value={checkinCode} required class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-mono dark:border-slate-700 dark:bg-slate-800" placeholder="Kode check-in" />
 			</div>
 			<button
 				type="submit"

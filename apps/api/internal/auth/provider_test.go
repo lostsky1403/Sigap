@@ -32,7 +32,12 @@ func TestDevIdentityProvider_EnabledWithHeader(t *testing.T) {
 		t.Error("IsDev = false, want true")
 	}
 	wantPerms := []string{
-		"queue.generate", "queue.read", "facility.read", "facility.manage", "audit.read",
+		"queue.generate", "queue.read", "queue.manage",
+		"facility.read", "facility.manage",
+		"audit.read",
+		"notification.read", "notification.manage",
+		"schedule.read",
+		"appointment.read", "appointment.manage",
 	}
 	for _, perm := range wantPerms {
 		if !actor.HasPermission(perm) {

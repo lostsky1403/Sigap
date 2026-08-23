@@ -67,13 +67,30 @@
 		}
 	}
 
+	async function readApi(res: Response): Promise<{ ok: boolean; data: any }> {
+		const contentType = res.headers.get('content-type') || '';
+		if (!contentType.includes('application/json')) {
+			return { ok: false, data: null };
+		}
+		try {
+			return { ok: true, data: await res.json() };
+		} catch {
+			return { ok: false, data: null };
+		}
+	}
+
 	async function lookup() {
 		loading = true;
 		error = '';
 		result = null;
 		try {
 			const res = await fetch(`/api/v1/patient/status?code=${encodeURIComponent(code)}`);
-			const json = await res.json();
+			const parsed = await readApi(res);
+			if (!parsed.ok) {
+				error = 'Gagal menghubungi layanan. Silakan coba lagi.';
+				return;
+			}
+			const json = parsed.data;
 			if (json.success && json.data) {
 				result = json.data;
 			} else {
@@ -152,7 +169,7 @@
 		<form onsubmit={(e) => { e.preventDefault(); lookup(); }} class="space-y-4">
 			<div>
 				<label for="code" class="block text-xs font-medium text-slate-500 mb-1">Kode Check-In <span class="text-red-500">*</span></label>
-				<input id="code" bind:value={code} required maxlength="6" class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-mono dark:border-slate-700 dark:bg-slate-800" placeholder="Masukkan kode 6 karakter" />
+				<input id="code" bind:value={code} required class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-mono dark:border-slate-700 dark:bg-slate-800" placeholder="Masukkan kode check-in" />
 			</div>
 			<button
 				type="submit"
