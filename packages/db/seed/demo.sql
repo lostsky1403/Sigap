@@ -111,6 +111,20 @@ WHERE f.id = '00000000-0000-0000-0000-00000000d000'::uuid
   )
 ON CONFLICT (id) DO NOTHING;
 
+-- Self-heal drift from older seed versions: rows created before the
+-- canonical facility existed may carry a legacy facility_id. Re-link any
+-- deterministic demo service unit (d001/d002) that points somewhere other
+-- than the canonical facility (d000). Scoped strictly by id, so non-demo
+-- rows are never touched; no-op when already correct.
+UPDATE service_units
+SET facility_id = '00000000-0000-0000-0000-00000000d000'::uuid,
+    updated_at = NOW()
+WHERE id IN (
+    '00000000-0000-0000-0000-00000000d001'::uuid,
+    '00000000-0000-0000-0000-00000000d002'::uuid
+)
+AND facility_id <> '00000000-0000-0000-0000-00000000d000'::uuid;
+
 -- ============================================================
 -- 2. Practitioners (generic providers, no real PII).
 --    Natural-key guard: (facility_id, display_name).

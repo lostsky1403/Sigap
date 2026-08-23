@@ -12,9 +12,9 @@
 		appointment_status: string;
 		appointment_time: string;
 		checkin_status: string;
-		queue_number: number | null;
-		queue_status: string | null;
-		queue_formatted_number: string | null;
+		queue_number?: number | null;
+		queue_status?: string | null;
+		queue_formatted_number?: string | null;
 	};
 
 	let result: StatusData | null = $state(null);
@@ -142,7 +142,7 @@
 					</div>
 				</div>
 
-				{#if result.queue_number !== null}
+				{#if result.queue_number != null}
 					<div>
 						<div class="text-xs text-slate-500 dark:text-slate-400">Nomor Antrean</div>
 						<div class="mt-1 inline-block rounded bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800 px-4 py-2 font-mono text-lg tracking-wider font-semibold text-slate-800 dark:text-slate-200">
