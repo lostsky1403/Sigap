@@ -76,7 +76,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$ApiBase = $(if ($env:SIGAP_API_BASE) { $env:SIGAP_API_BASE } else { 'http://[::1]:8080' }),
+    [string]$ApiBase = $(if ($env:SIGAP_API_BASE) { $env:SIGAP_API_BASE } else { 'http://127.0.0.1:8080' }),
     [string]$FacilityShortCode = 'RSK',
     [string]$ServiceUnitCode = 'DEMO-UMUM',
     [string]$PractitionerScheduleId = '00000000-0000-0000-0000-00000000d021',
