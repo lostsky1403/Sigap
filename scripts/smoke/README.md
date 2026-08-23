@@ -33,7 +33,7 @@ seeds the database (dev, rbac, demo) then runs all three smoke suites.
 | `SIGAP_AUTH_MODE` | yes | Set to `dev` for local dev-identity auth |
 | `SIGAP_DEV_IDENTITY` | yes | Set to `true` to enable `X-Sigap-Dev-User-ID` header |
 | `SIGAP_ENGINE_FALLBACK` | Mode A only | Set to `dev` to skip the Rust queue engine |
-| `SIGAP_API_BASE` | no | API base URL (default `http://[::1]:8080`) |
+| `SIGAP_API_BASE` | no | API base URL (default `http://127.0.0.1:8080`) |
 
 > **Restart-safe**: Env vars are shell-scoped. After a terminal restart or
 > new shell, re-export them. If `psql` prompts for a user/password,
@@ -94,7 +94,7 @@ pwsh -File scripts/smoke/sigap-patient-portal-smoke.ps1
 Override the API base if needed:
 
 ```powershell
-$env:SIGAP_API_BASE = 'http://[::1]:8080'
+$env:SIGAP_API_BASE = 'http://127.0.0.1:8080'
 pwsh -File scripts/smoke/sigap-patient-portal-smoke.ps1
 ```
 
@@ -151,7 +151,7 @@ pwsh -File scripts/smoke/sigap-demo-smoke.ps1 `
 
 | Parameter | Default | Purpose |
 |-----------|---------|---------|
-| `-ApiBase` | `http://[::1]:8080` (or `$env:SIGAP_API_BASE`) | API root (IPv6 loopback) |
+| `-ApiBase` | `http://127.0.0.1:8080` (or `$env:SIGAP_API_BASE`) | API root (IPv4 loopback) |
 | `-FacilityShortCode` | `f1` | Facility to book against |
 | `-ServiceUnitCode` | `DEMO-UMUM` | Demo seed service unit code (informational) |
 | `-PractitionerScheduleId` | demo seed `d021` | Optional schedule for capacity-aware booking |
@@ -232,9 +232,9 @@ worker once-mode delivery.
 ### Prerequisites
 
 - PowerShell 7+ (`pwsh`).
-- A running Sigap API at `http://[::1]:8080` (or `$env:SIGAP_API_BASE`).
-  On Windows, Go's `ListenAndServe(":8080")` creates an IPv6-only
-  socket. The script defaults to `http://[::1]:8080` (IPv6 loopback).
+- A running Sigap API at `http://127.0.0.1:8080` (or `$env:SIGAP_API_BASE`).
+  On bare-metal Windows, use `127.0.0.1` rather than `localhost` to avoid
+  IPv6 loopback resolution; Windows IP Helper service may occupy `0.0.0.0:8080`.
 - PostgreSQL running with `$env:SIGAP_DATABASE_URL` set.
 - Dev seed loaded (`psql $DATABASE_URL -f packages/db/seed/dev.sql`)
   — creates the demo facilities (short_codes: `RSK`, `PKM`, `RSM`,
@@ -279,14 +279,14 @@ Expected output: `Passed: 9 / 9` and exit code `0`.
 
 ```powershell
 pwsh -File scripts/smoke/sigap-notification-smoke.ps1 `
-    -ApiBase 'http://[::1]:8080' `
+    -ApiBase 'http://127.0.0.1:8080' `
     -DevUserId 'dev-user-smoke' `
     -WorkerDir 'apps\api'
 ```
 
 | Parameter | Default | Purpose |
 |-----------|---------|---------|
-| `-ApiBase` | `http://localhost:8080` (or `$env:SIGAP_API_BASE`) | API root |
+| `-ApiBase` | `http://127.0.0.1:8080` (or `$env:SIGAP_API_BASE`) | API root |
 | `-DevUserId` | `dev-user-smoke` | Value of `X-Sigap-Dev-User-ID` header |
 | `-WorkerDir` | `apps\api` (relative to script) | Go module root for `cmd/notification-worker` |
 
@@ -302,7 +302,7 @@ pwsh -File scripts/smoke/sigap-notification-smoke.ps1 `
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `[FAIL] api.health` — "connection forcibly closed" or timeout | IPv4 connection intercepted on Windows | Use `http://[::1]:8080` as `-ApiBase`. Windows' IP Helper service (`iphlpsvc`) may bind `0.0.0.0:8080`, eating IPv4 connections. The script's IPv6 default avoids this. |
+| `[FAIL] api.health` — "connection forcibly closed" or timeout | Port conflict on Windows | Use `http://127.0.0.1:18080` and start the API with `SIGAP_API_PORT=18080`. Windows IP Helper service (`iphlpsvc`) or WSL relay may occupy port 8080. |
 | `[FAIL] api.health` — "Network unreachable" | Go API not running | `cd apps/api; go run ./cmd/server` |
 | `[FAIL] dev.identity` — HTTP 403 | Dev identity disabled | Set `SIGAP_AUTH_MODE=dev` and `SIGAP_DEV_IDENTITY=true` in `.env` |
 | `[FAIL] notification.list.before` — 0 rows | Demo seed not loaded | `psql $DATABASE_URL -f packages/db/seed/demo.sql` |
@@ -330,7 +330,7 @@ No authentication required — the endpoint is public.
 ### Prerequisites
 
 - PowerShell 7+ (`pwsh`).
-- A running Sigap API at `http://[::1]:8080` (or `$env:SIGAP_API_BASE`).
+- A running Sigap API at `http://127.0.0.1:8080` (or `$env:SIGAP_API_BASE`).
 - Demo seed loaded (`psql $DATABASE_URL -f packages/db/seed/demo.sql`)
   — creates a deterministic appointment with `checkin_code = 'SMOKE01'`.
 - **No Rust queue engine required.**
@@ -364,12 +364,12 @@ Expected output: `Passed: 5 / 5` and exit code `0`.
 
 ```powershell
 pwsh -File scripts/smoke/sigap-patient-portal-smoke.ps1 `
-    -ApiBase 'http://[::1]:8080'
+    -ApiBase 'http://127.0.0.1:8080'
 ```
 
 | Parameter | Default | Purpose |
 |-----------|---------|---------|
-| `-ApiBase` | `http://[::1]:8080` (or `$env:SIGAP_API_BASE`) | API root |
+| `-ApiBase` | `http://127.0.0.1:8080` (or `$env:SIGAP_API_BASE`) | API root |
 
 ### Exit codes
 

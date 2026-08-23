@@ -12,7 +12,7 @@
       6. sigap-patient-portal-smoke.ps1 (5-step public status lookup)
 
     Fails fast on any error. The API must already be running at
-    $env:SIGAP_API_BASE (default http://[::1]:8080).
+    $env:SIGAP_API_BASE (default http://127.0.0.1:8080).
 
 .PARAMETER SkipSeed
     Skip the three psql seed commands (assume DB is already seeded).
@@ -27,7 +27,7 @@
     Requires PowerShell 7+, psql, and a running Sigap API.
     Environment variables:
       - DATABASE_URL        (required) PostgreSQL connection string
-      - SIGAP_API_BASE      (optional)  API base URL, default http://[::1]:8080
+      - SIGAP_API_BASE      (optional)  API base URL, default http://127.0.0.1:8080
 #>
 
 [CmdletBinding()]

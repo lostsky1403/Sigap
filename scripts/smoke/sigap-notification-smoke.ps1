@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Exercises the Sigap notification pipeline against an already-running
-    Sigap stack (API on $ApiBase, default http://localhost:8080). Runs the
+    Sigap stack (API on $ApiBase, default http://127.0.0.1:8080). Runs the
     notification worker as a subprocess to validate dry-run (no-mutation)
     and real-mode delivery.
 
@@ -47,7 +47,7 @@
     pwsh -File scripts/smoke/sigap-notification-smoke.ps1
 
 .EXAMPLE
-    $env:SIGAP_API_BASE = "http://[::1]:8080"
+    $env:SIGAP_API_BASE = "http://127.0.0.1:8080"
     $env:SIGAP_DATABASE_URL = "postgres://user:pass@localhost:5432/sigap"
     pwsh -File scripts/smoke/sigap-notification-smoke.ps1
 
@@ -64,7 +64,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$ApiBase = $(if ($env:SIGAP_API_BASE) { $env:SIGAP_API_BASE } else { 'http://[::1]:8080' }),
+    [string]$ApiBase = $(if ($env:SIGAP_API_BASE) { $env:SIGAP_API_BASE } else { 'http://127.0.0.1:8080' }),
     [string]$DevUserId = '00000000-0000-0000-0000-00000000d999',
     [string]$WorkerDir = $(Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'apps\api')
 )

@@ -523,6 +523,26 @@ ENGINE_PORT=50052
 
 Then update `docker-compose.yml` `ports:` mapping accordingly.
 
+#### Bare-metal Windows port 8080 conflict
+
+On Windows, `wslrelay` and the IP Helper service (`iphlpsvc`) commonly occupy
+port 8080 (both `0.0.0.0:8080` and `::1:8080`), blocking the Go API from
+binding. Additionally, `localhost` resolves to `::1` (IPv6) on many Windows
+configurations, but the Rust engine binds `0.0.0.0:50051` (IPv4 only), causing
+gRPC connection failures.
+
+Use `scripts/dev/Start-LocalDev.ps1` to bootstrap the local runtime. It
+handles both problems automatically:
+
+```powershell
+$env:DATABASE_URL = "postgresql://sigap:pass@localhost:5434/sigap?sslmode=require"
+pwsh -NoProfile -File scripts/dev/Start-LocalDev.ps1
+```
+
+This sets `SIGAP_API_PORT=18080` and `SIGAP_ENGINE_ADDR=127.0.0.1:50051`, and
+configures `SIGAP_API_BASE`/`SIGAP_API_INTERNAL` so smoke scripts and the
+SvelteKit proxy automatically target the correct local API endpoint.
+
 ### Database connection issues
 
 ```bash
