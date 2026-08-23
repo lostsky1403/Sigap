@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Exercises the public patient portal endpoint against a running local
-    Sigap stack (API on $ApiBase, default http://[::1]:8080). No auth
+    Sigap stack (API on $ApiBase, default http://127.0.0.1:8080). No auth
     required (public endpoint). No Rust engine required.
 
     Steps:
@@ -28,14 +28,14 @@
 
 .PARAMETER ApiBase
     Override the API base URL. Defaults to $env:SIGAP_API_BASE or
-    'http://[::1]:8080'. MUST be non-empty and start with "http://" or
+    'http://127.0.0.1:8080'. MUST be non-empty and start with "http://" or
     "https://".
 
 .EXAMPLE
     pwsh -File scripts/smoke/sigap-patient-portal-smoke.ps1
 
 .EXAMPLE
-    $env:SIGAP_API_BASE = "http://[::1]:8080"
+    $env:SIGAP_API_BASE = "http://127.0.0.1:8080"
     pwsh -File scripts/smoke/sigap-patient-portal-smoke.ps1
 
 .NOTES

@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Runs the documented local demo flow against an already-running Sigap
-    stack (API on $API_BASE, default http://[::1]:8080).
+    stack (API on $API_BASE, default http://127.0.0.1:8080).
 
     Steps:
       1. GET  /health
@@ -27,7 +27,7 @@
     response field.
 
 .PARAMETER ApiBase
-    Override the API base URL. Defaults to http://[::1]:8080 or $env:SIGAP_API_BASE.
+    Override the API base URL. Defaults to http://127.0.0.1:8080 or $env:SIGAP_API_BASE.
     MUST be non-empty and start with "http://" or "https://".
 
 .PARAMETER FacilityShortCode
