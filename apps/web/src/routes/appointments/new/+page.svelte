@@ -1,6 +1,7 @@
 <script lang="ts">
 	// /appointments/new — Public booking page
 	// Simple form to book an appointment. No auth required.
+	import { onMount } from 'svelte';
 
 	type BookingResult = {
 		id?: string;
@@ -8,6 +9,9 @@
 		status?: string;
 		appointment_time?: string;
 	};
+
+	type FacilityOption = { id: string; name: string; short_code?: string | null };
+	type ServiceUnitOption = { id: string; facility_id: string; name: string; code?: string | null };
 
 	let loading = $state(false);
 	let error = $state('');
@@ -24,6 +28,19 @@
 	let patientName = $state('');
 	let notes = $state('');
 
+	let facilities = $state<FacilityOption[]>([]);
+	let serviceUnits = $state<ServiceUnitOption[]>([]);
+
+	const unitsForFacility = $derived(
+		facilityId
+			? serviceUnits.filter((u) => u.facility_id === facilityId)
+			: serviceUnits
+	);
+
+	onMount(() => {
+		loadOptions();
+	});
+
 	async function readApi(res: Response): Promise<{ ok: boolean; data: any }> {
 		const contentType = res.headers.get('content-type') || '';
 		if (!contentType.includes('application/json')) {
@@ -33,6 +50,51 @@
 			return { ok: true, data: await res.json() };
 		} catch {
 			return { ok: false, data: null };
+		}
+	}
+
+	async function loadOptions() {
+		try {
+			const [fRes, sRes] = await Promise.all([
+				fetch('/api/v1/admin/facilities'),
+				fetch('/api/v1/admin/service-units')
+			]);
+			const fParsed = await readApi(fRes);
+			if (fParsed.ok && fParsed.data?.success && Array.isArray(fParsed.data.data)) {
+				const sortedFacilities = [...fParsed.data.data].sort(
+					(a: FacilityOption, b: FacilityOption) =>
+						(a.name || '').localeCompare(b.name || '') || (a.id || '').localeCompare(b.id || '')
+				);
+				const seenNames = new Set<string>();
+				facilities = sortedFacilities.filter((f: FacilityOption) => {
+					if (!f?.id || !f.name || seenNames.has(f.name)) return false;
+					seenNames.add(f.name);
+					return true;
+				});
+			}
+			const sParsed = await readApi(sRes);
+			if (sParsed.ok && sParsed.data?.success && Array.isArray(sParsed.data.data)) {
+				const seenUnits = new Set<string>();
+				serviceUnits = sParsed.data.data
+					.filter((u: ServiceUnitOption) => {
+						if (!u?.id || !u.facility_id || seenUnits.has(u.id)) return false;
+						seenUnits.add(u.id);
+						return true;
+					})
+					.sort((a: ServiceUnitOption, b: ServiceUnitOption) => a.name.localeCompare(b.name));
+			}
+		} catch {
+			// Lists unavailable — fall back to manual ID entry below.
+		}
+	}
+
+	function onFacilityChange() {
+		if (facilityId && serviceUnits.length > 0) {
+			const matched = serviceUnits.some((u) => u.facility_id === facilityId);
+			if (!matched) {
+				// No units for this facility in the loaded list — fall back to manual entry.
+				serviceUnitId = '';
+			}
 		}
 	}
 
@@ -162,12 +224,41 @@
 		<form onsubmit={(e) => { e.preventDefault(); submit(); }} class="space-y-4">
 			<div class="grid grid-cols-2 gap-3">
 				<div>
-					<label for="fac" class="block text-xs font-medium text-slate-500 mb-1">ID Fasilitas <span class="text-red-500">*</span></label>
-					<input id="fac" bind:value={facilityId} required class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+					<label for="fac" class="block text-xs font-medium text-slate-500 mb-1">Fasilitas <span class="text-red-500">*</span></label>
+					{#if facilities.length > 0}
+						<select
+							id="fac"
+							bind:value={facilityId}
+							onchange={onFacilityChange}
+							required
+							class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+						>
+							<option value="" disabled>Pilih fasilitas…</option>
+							{#each facilities as f (f.id)}
+								<option value={f.id}>{f.name}</option>
+							{/each}
+						</select>
+					{:else}
+						<input id="fac" bind:value={facilityId} required class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+					{/if}
 				</div>
 				<div>
-					<label for="su" class="block text-xs font-medium text-slate-500 mb-1">ID Layanan <span class="text-red-500">*</span></label>
-					<input id="su" bind:value={serviceUnitId} required class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+					<label for="su" class="block text-xs font-medium text-slate-500 mb-1">Layanan <span class="text-red-500">*</span></label>
+					{#if facilityId && unitsForFacility.length > 0}
+						<select
+							id="su"
+							bind:value={serviceUnitId}
+							required
+							class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+						>
+							<option value="" disabled>Pilih layanan…</option>
+							{#each unitsForFacility as u (u.id)}
+								<option value={u.id}>{u.name}</option>
+							{/each}
+						</select>
+					{:else}
+						<input id="su" bind:value={serviceUnitId} required class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+					{/if}
 				</div>
 			</div>
 			<div>
