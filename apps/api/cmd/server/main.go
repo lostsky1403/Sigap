@@ -21,6 +21,7 @@ import (
 	"github.com/sigap/sigap/apps/api/internal/events"
 	"github.com/sigap/sigap/apps/api/internal/grpc"
 	"github.com/sigap/sigap/apps/api/internal/handler"
+	"github.com/sigap/sigap/apps/api/internal/migrate"
 	"github.com/sigap/sigap/apps/api/internal/identity"
 	"github.com/sigap/sigap/apps/api/internal/limiter"
 	"github.com/sigap/sigap/apps/api/internal/notification"
@@ -154,6 +155,27 @@ func main() {
 		}
 	} else {
 		slog.Info("SIGAP_DATABASE_URL not set; audit logging disabled")
+	}
+
+	// Run tracked migrations on startup when SIGAP_AUTO_MIGRATE=true.
+	// Each migration is applied in its own transaction and recorded in
+	// schema_migrations.  This replaces the manual psql invocation.
+	if dbPool != nil && strings.EqualFold(os.Getenv("SIGAP_AUTO_MIGRATE"), "true") {
+		migDir, err := migrate.MigrateDir()
+		if err != nil {
+		slog.Error("migration directory not found", "err", err)
+		os.Exit(1)
+		}
+		applied, err := migrate.Run(context.Background(), dbPool, migDir)
+		if err != nil {
+			slog.Error("migration failed; refusing to start", "err", err)
+			os.Exit(1)
+		}
+		if applied > 0 {
+			slog.Info("migrations applied", "count", applied)
+		}
+	} else if dbPool != nil {
+		slog.Info("SIGAP_AUTO_MIGRATE not set; skipping auto-migration")
 	}
 	qh = qh.WithAudit(auditSvc)
 
