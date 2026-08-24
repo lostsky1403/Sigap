@@ -23,6 +23,7 @@
     Environment variables set:
       SIGAP_API_PORT=18080
       SIGAP_ENGINE_ADDR=127.0.0.1:50051
+      SIGAP_ENV=local
       SIGAP_AUTH_MODE=dev
       SIGAP_DEV_IDENTITY=true
       SIGAP_ENGINE_FALLBACK=dev
@@ -88,6 +89,7 @@ if ([string]::IsNullOrWhiteSpace($env:DATABASE_URL)) {
 $env:SIGAP_DATABASE_URL   = $env:DATABASE_URL
 $env:SIGAP_API_PORT        = '18080'
 $env:SIGAP_ENGINE_ADDR     = '127.0.0.1:50051'
+$env:SIGAP_ENV              = 'local'
 $env:SIGAP_AUTH_MODE       = 'dev'
 $env:SIGAP_DEV_IDENTITY    = 'true'
 $env:SIGAP_ENGINE_FALLBACK = 'dev'
@@ -98,6 +100,7 @@ $env:SIGAP_API_BASE        = 'http://127.0.0.1:18080'
 Write-Host "Environment configured:" -ForegroundColor Green
 Write-Host "  SIGAP_API_PORT        = $env:SIGAP_API_PORT"
 Write-Host "  SIGAP_ENGINE_ADDR     = $env:SIGAP_ENGINE_ADDR"
+Write-Host "  SIGAP_ENV              = $env:SIGAP_ENV"
 Write-Host "  SIGAP_AUTH_MODE       = $env:SIGAP_AUTH_MODE"
 Write-Host "  SIGAP_DEV_IDENTITY    = $env:SIGAP_DEV_IDENTITY"
 Write-Host "  SIGAP_ENGINE_FALLBACK = $env:SIGAP_ENGINE_FALLBACK"
@@ -145,6 +148,7 @@ $apiEnvBlock = @"
 `$env:SIGAP_DATABASE_URL   = '$env:SIGAP_DATABASE_URL'
 `$env:SIGAP_API_PORT        = '$env:SIGAP_API_PORT'
 `$env:SIGAP_ENGINE_ADDR     = '$env:SIGAP_ENGINE_ADDR'
+`$env:SIGAP_ENV              = '$env:SIGAP_ENV'
 `$env:SIGAP_AUTH_MODE       = '$env:SIGAP_AUTH_MODE'
 `$env:SIGAP_DEV_IDENTITY    = '$env:SIGAP_DEV_IDENTITY'
 `$env:SIGAP_ENGINE_FALLBACK = '$env:SIGAP_ENGINE_FALLBACK'
