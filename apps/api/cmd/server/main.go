@@ -277,7 +277,7 @@ func main() {
 			next.ServeHTTP(w, r.WithContext(identity.ContextWithAudit(r.Context(), auditSvc)))
 		})
 	}
-	if err := http.ListenAndServe(":"+port, router.SecurityHeaders(router.DenyByDefault(auth.Middleware(provider)(injectAudit(identity.RequirePermission(mux)))))); err != nil {
+	if err := http.ListenAndServe(":"+port, router.SecurityHeaders(router.TrustedProxy(router.DenyByDefault(auth.Middleware(provider)(injectAudit(identity.RequirePermission(mux))))))); err != nil {
 		slog.Error("server error", "err", err)
 		os.Exit(1)
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sigap/sigap/apps/api/internal/limiter"
+	"github.com/sigap/sigap/apps/api/internal/router"
 )
 
 const maxPatientCodeLen = 64
@@ -141,13 +142,10 @@ func (h *PatientHandler) PatientStatusLookup(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// extractIP returns the client IP from RemoteAddr (host:port format).
+// extractIP returns the sanitized client IP from TrustedProxy middleware
+// context; falls back to RemoteAddr if the middleware has not run.
 func extractIP(r *http.Request) string {
-	addr := r.RemoteAddr
-	if idx := strings.LastIndex(addr, ":"); idx != -1 {
-		return addr[:idx]
-	}
-	return addr
+	return router.ClientIPFromContext(r)
 }
 
 // mapCheckinStatus translates internal appointment status values into
