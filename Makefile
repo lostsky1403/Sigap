@@ -1,13 +1,14 @@
 # Sigap Makefile — cross-language dev orchestration (KISS, no heavy runner)
 SHELL := /bin/bash
 
-.PHONY: help dev dev-down db-migrate db-seed bootstrap dev-api dev-engine dev-web dev-notification-worker build test clean lint security
+.PHONY: help dev dev-down db-migrate db-migrate-all db-seed bootstrap dev-api dev-engine dev-web dev-notification-worker build test clean lint security
 
 help:
 	@echo "Sigap — available targets:"
 	@echo "  make dev          # bring up the full stack via docker compose (reads .env)"
 	@echo "  make dev-down     # stop the docker compose stack"
-	@echo "  make db-migrate   # apply 0001_init.sql"
+	@echo "  make db-migrate   # apply 0001_init.sql (legacy)"
+	@echo "  make db-migrate-all # apply all pending migrations (tracked)"
 	@echo "  make db-seed      # load realistic sample facilities"
 	@echo "  make bootstrap    # create bootstrap admin (requires SIGAP_BOOTSTRAP_ADMIN=true)"
 	@echo "  make dev-api      # Go HTTP gateway (:8080)"
@@ -31,6 +32,10 @@ dev-down:
 
 db-migrate:
 	psql "$$DATABASE_URL" -f packages/db/migrations/0001_init.sql
+
+db-migrate-all:
+	@echo "==> Running tracked migrations"
+	cd apps/api && SIGAP_AUTO_MIGRATE=true go run ./cmd/server
 
 db-seed:
 	psql "$$DATABASE_URL" -f packages/db/seed/dev.sql
