@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/sigap/sigap/apps/api/internal/audit"
 	"github.com/sigap/sigap/apps/api/internal/events"
 	"github.com/sigap/sigap/apps/api/internal/identity"
 	"github.com/sigap/sigap/apps/api/internal/limiter"
+	"github.com/sigap/sigap/apps/api/internal/router"
 	"github.com/sigap/sigap/apps/api/internal/service"
 )
 
@@ -126,18 +126,10 @@ type GenerateRequest struct {
 }
 
 // clientIP extracts a usable client identifier for rate limiting.
+// Uses the sanitized IP from TrustedProxy middleware context;
+// falls back to RemoteAddr if the middleware has not run.
 func clientIP(r *http.Request) string {
-	// Respect common proxy headers (first value only)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.Index(xff, ","); idx > 0 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return xff
-	}
-	if xr := r.Header.Get("X-Real-IP"); xr != "" {
-		return xr
-	}
-	return r.RemoteAddr
+	return router.ClientIPFromContext(r)
 }
 
 // writeError writes the standard error envelope with Indonesian user message.
