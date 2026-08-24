@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -76,7 +75,7 @@ func main() {
 		"env", sigapEnv,
 		"auth_mode", authMode,
 		"dev_identity", os.Getenv("SIGAP_DEV_IDENTITY"),
-		"demo_phi", os.Getenv("SIGAP_ENABLE_DEMO_PHI"),
+
 		"engine_fallback", os.Getenv("SIGAP_ENGINE_FALLBACK"),
 	)
 
@@ -180,21 +179,8 @@ func main() {
 	// Wrapped for CORS so browser EventSource from localhost:3005 works when not using proxy
 	mux.HandleFunc("/api/v1/events/beds", enableCORS(events.Bus.ServeSSE))
 
-	// Super App: Smart Referral (mapcn peta rujukan) + Health Wallet records.
-	// /facilities/nearby exposes only facility/bed info (non-PHI) and stays open.
-	// The medical-records endpoints serve patient-shaped data with NO authn/authz,
-	// so they are guarded: closed by default until real access control lands.
+	// Super App: facilities/nearby exposes only facility/bed info (non-PHI).
 	mux.HandleFunc("/api/v1/facilities/nearby", enableCORS(facilitiesNearbyHandler))
-	mux.HandleFunc("/api/v1/medical-records", enableCORS(guardDemoPHI(medicalRecordsHandler)))
-	mux.HandleFunc("/api/v1/records/", enableCORS(guardDemoPHI(func(w http.ResponseWriter, r *http.Request) {
-		phone := strings.TrimPrefix(r.URL.Path, "/api/v1/records/")
-		if phone == "" {
-			phone = r.URL.Query().Get("phone")
-		}
-		// Reuse the demo handler by setting query (for compatibility with existing medicalRecordsHandler)
-		r.URL.RawQuery = "phone=" + phone
-		medicalRecordsHandler(w, r)
-	})))
 
 	// Admin endpoints: protected by facility.read and facility.manage permissions via RequirePermission
 	if adminH != nil {
@@ -279,28 +265,6 @@ func main() {
 
 // --- Super App endpoints: mapcn Smart Routing + Health Wallet ---
 
-// guardDemoPHI gates patient-shaped (PHI) demo endpoints that currently have NO
-// authentication or authorization. They are closed by default and only served
-// when SIGAP_ENABLE_DEMO_PHI=true is explicitly set for local development.
-// This closes the live unauthenticated PHI exposure until real access control
-// (RBAC) is wired in a later phase. Never enable this in production.
-func guardDemoPHI(next http.HandlerFunc) http.HandlerFunc {
-	enabled := strings.EqualFold(os.Getenv("SIGAP_ENABLE_DEMO_PHI"), "true")
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !enabled {
-			writeJSON(w, http.StatusNotFound, map[string]any{
-				"success": false,
-				"error":   "Endpoint tidak tersedia: akses data medis dinonaktifkan hingga autentikasi tersedia.",
-			})
-			return
-		}
-		slog.Warn("serving demo PHI endpoint without authn/authz; dev only",
-			"path", r.URL.Path, "flag", "SIGAP_ENABLE_DEMO_PHI")
-		next(w, r)
-	}
-}
-
-
 // facilitiesNearbyHandler returns alternative facilities sorted by distance + availability (for rujukan when target penuh).
 // Uses same coords as UI samples for consistency. Real version would query DB with PostGIS.
 func facilitiesNearbyHandler(w http.ResponseWriter, r *http.Request) {
@@ -374,39 +338,8 @@ func haversine(lat1, lon1, lat2, lon2 float64) float64 {
 	return R * c
 }
 
-// medicalRecordsHandler for Health Wallet UI (/wallet page).
-// Returns patient history with signature (immutable SHA-256 proof from Rust engine).
-// In real: SELECT from medical_records WHERE patient_phone = ? ORDER BY visit_time DESC
-func medicalRecordsHandler(w http.ResponseWriter, r *http.Request) {
-	phone := r.URL.Query().Get("phone")
-	if phone == "" {
-		phone = "081234567890" // demo default
-	}
-
-	// Demo data (populated by Rust inserts on real queue success; signatures are SHA-256 style)
-	// Real query would use the DB + join facilities for names.
-	type rec struct {
-		VisitTime       string `json:"visit_time"`
-		FacilityName    string `json:"facility_name"`
-		FormattedNumber string `json:"formatted_number"`
-		Signature       string `json:"signature"`
-	}
-	demo := []rec{
-		{"2026-06-12T10:15:00Z", "Puskesmas Melati Indah", "PMI-0042", "a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef01"},
-		{"2026-06-11T09:05:00Z", "RSUD Kota Sehat", "RSK-0039", "b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0123"},
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": demo})
-}
-
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
-
-// init superapp routes (called implicitly on package load via main registration below)
-func init() {
-	// registered after main handlers in main() body via edits; see HandleFunc calls added below if needed
-}
-
-// Note: the HandleFunc registrations for /nearby and /medical-records are added at the end of main() setup in this file.

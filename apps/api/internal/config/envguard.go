@@ -35,13 +35,6 @@ var devOnlyFlags = []devFlag{
 		Label: "dev identity",
 	},
 	{
-		EnvVar: "SIGAP_ENABLE_DEMO_PHI",
-		IsDanger: func(v string) bool {
-			return strings.EqualFold(v, "true")
-		},
-		Label: "demo PHI",
-	},
-	{
 		EnvVar: "SIGAP_ENGINE_FALLBACK",
 		IsDanger: func(v string) bool {
 			return strings.EqualFold(v, "dev")
