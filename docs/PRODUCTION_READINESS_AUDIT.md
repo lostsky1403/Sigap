@@ -536,3 +536,16 @@ Verified strengths (evidence-backed):
 ---
 
 *End of audit. Findings reference the working tree at `b47e07d`; re-validate against newer commits before acting.*
+
+---
+
+## Post-Remediation Reconciliation
+
+12 remediation PRs (#40–#51) have been merged. See [`PRODUCTION_READINESS_AUDIT_RECONCILIATION.md`](./PRODUCTION_READINESS_AUDIT_RECONCILIATION.md) for the full re-evaluation including:
+
+- Merged PR mapping (15 P0/P1 findings closed)
+- Updated Top 10 Remaining Risks
+- Current maturity levels (demo ~95%, staging ~65%, production ~40%)
+- Recommended next PR: atomic check-in transitions (AUDIT-1004 + AUDIT-302)
+
+Reconciliation date: 2026-08-25 @ `d84fed9`
