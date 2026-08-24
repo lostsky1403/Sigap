@@ -71,7 +71,7 @@ func TestRequirePermission_MissingActor(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/medical-records", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/facilities", nil)
 	rec := httptest.NewRecorder()
 
 	RequirePermission(next).ServeHTTP(rec, req)
@@ -93,7 +93,7 @@ func TestRequirePermission_MissingPermission(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/medical-records", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/facilities", nil)
 	actor := Actor{UserID: "u1", Type: ActorUser, Permissions: []string{"queue.generate"}}
 	req = req.WithContext(ContextWithActor(req.Context(), actor))
 	rec := httptest.NewRecorder()
@@ -117,8 +117,8 @@ func TestRequirePermission_CorrectPermission(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/medical-records", nil)
-	actor := Actor{UserID: "u1", Type: ActorUser, Permissions: []string{"medical_records:read"}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/facilities", nil)
+	actor := Actor{UserID: "u1", Type: ActorUser, Permissions: []string{"facility.read"}}
 	req = req.WithContext(ContextWithActor(req.Context(), actor))
 	rec := httptest.NewRecorder()
 
@@ -138,8 +138,8 @@ func TestRequirePermission_PrefixRoute(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/records/081234567890", nil)
-	actor := Actor{UserID: "u1", Type: ActorUser, Permissions: []string{"medical_records:read"}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/facilities/550e8400-e29b-41d4-a716-446655440000", nil)
+	actor := Actor{UserID: "u1", Type: ActorUser, Permissions: []string{"facility.read"}}
 	req = req.WithContext(ContextWithActor(req.Context(), actor))
 	rec := httptest.NewRecorder()
 
