@@ -66,6 +66,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Boot banner: show auth mode + environment for operational visibility.
+	sigapEnv := os.Getenv("SIGAP_ENV")
+	authMode := os.Getenv("SIGAP_AUTH_MODE")
+	if authMode == "" {
+		authMode = "disabled"
+	}
+	slog.Info("sigap-api starting",
+		"env", sigapEnv,
+		"auth_mode", authMode,
+		"dev_identity", os.Getenv("SIGAP_DEV_IDENTITY"),
+		"demo_phi", os.Getenv("SIGAP_ENABLE_DEMO_PHI"),
+		"engine_fallback", os.Getenv("SIGAP_ENGINE_FALLBACK"),
+	)
+
 	port := os.Getenv("SIGAP_API_PORT")
 	if port == "" {
 		port = "8080"
