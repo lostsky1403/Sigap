@@ -287,6 +287,8 @@ func main() {
 		bookingH := handler.NewBookingHandler(dbPool, rl)
 		bookingH.WithAudit(auditSvc)
 		bookingH.WithQueueService(svc)
+		// AUDIT-302: check-in brute-force protection — 5 attempts per5 min per (IP, appointment).
+		bookingH.WithCheckinLimiter(limiter.NewRateLimiter(5, 5*time.Minute))
 		mux.HandleFunc("/api/v1/appointments", enableCORS(bookingH.PublicAppointmentsRouter))
 		mux.HandleFunc("/api/v1/appointments/", enableCORS(bookingH.PublicAppointmentsRouter))
 		slog.Info("booking routes registered", "paths", []string{
