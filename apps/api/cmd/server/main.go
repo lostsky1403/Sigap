@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -34,10 +35,22 @@ func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 	if allowed == "" {
 		allowed = "http://localhost:3005"
 	}
+	// The loopback exception (127.0.0.1 / localhost) only applies when the
+	// configured origin is itself a loopback URL.  In production this must
+	// not apply — only the exact configured origin is allowed.
+	loopbackOrigin := strings.HasPrefix(allowed, "http://localhost") || strings.HasPrefix(allowed, "http://127.0.0.1")
 	return func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		// Allow exact match or the configured origin
-		if origin == allowed || origin == "http://127.0.0.1:3005" && allowed == "http://localhost:3005" {
+		// Allow exact match, or the loopback counterpart when in loopback mode.
+		allow := origin == allowed
+		if !allow && loopbackOrigin {
+			// Match the other loopback form: localhost ↔ 127.0.0.1
+			if (strings.HasPrefix(origin, "http://localhost:") && strings.HasPrefix(allowed, "http://127.0.0.1:")) ||
+				(strings.HasPrefix(origin, "http://127.0.0.1:") && strings.HasPrefix(allowed, "http://localhost:")) {
+				allow = true
+			}
+		}
+		if allow {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		} else if origin == "" {
 			w.Header().Set("Access-Control-Allow-Origin", allowed)
