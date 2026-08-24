@@ -202,6 +202,15 @@ func main() {
 	// Super App: facilities/nearby exposes only facility/bed info (non-PHI).
 	mux.HandleFunc("/api/v1/facilities/nearby", enableCORS(facilitiesNearbyHandler))
 
+	// Public catalog endpoints: no auth required; return minimal fields for
+	// the patient booking flow (AUDIT-1801).
+	if dbPool != nil {
+		catalogH := handler.NewCatalogHandler(dbPool)
+		mux.HandleFunc("/api/v1/public/facilities", enableCORS(catalogH.ListPublicFacilities))
+		mux.HandleFunc("/api/v1/public/service-units", enableCORS(catalogH.ListPublicServiceUnits))
+		slog.Info("public catalog routes registered")
+	}
+
 	// Admin endpoints: protected by facility.read and facility.manage permissions via RequirePermission
 	if adminH != nil {
 		mux.HandleFunc("/api/v1/admin/facilities", enableCORS(adminH.ListFacilities))
