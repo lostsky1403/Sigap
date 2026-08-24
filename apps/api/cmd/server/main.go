@@ -65,6 +65,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Fail-fast: require TLS termination confirmation outside local.
+	if err := config.GuardTLS(); err != nil {
+		slog.Error("TLS guard failed", "err", err)
+		fmt.Fprintln(os.Stderr, "FATAL:", err)
+		os.Exit(1)
+	}
+
 	// Boot banner: show auth mode + environment for operational visibility.
 	sigapEnv := os.Getenv("SIGAP_ENV")
 	authMode := os.Getenv("SIGAP_AUTH_MODE")

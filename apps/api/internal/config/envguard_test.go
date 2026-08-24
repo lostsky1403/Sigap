@@ -241,3 +241,73 @@ func TestGuardDevCapabilities_MultipleViolations(t *testing.T) {
 		}
 	}
 }
+
+// TestGuardTLS verifies the TLS termination guard for non-local environments.
+func TestGuardTLS(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "local env skips TLS check",
+			env:     map[string]string{"SIGAP_ENV": "local"},
+			wantErr: false,
+		},
+		{
+			name:    "unset env skips TLS check",
+			env:     map[string]string{},
+			wantErr: false,
+		},
+		{
+			name:    "production + TLS confirmed",
+			env:     map[string]string{"SIGAP_ENV": "production", "SIGAP_TLS_TERMINATED": "true"},
+			wantErr: false,
+		},
+		{
+			name:    "staging + TLS confirmed",
+			env:     map[string]string{"SIGAP_ENV": "staging", "SIGAP_TLS_TERMINATED": "true"},
+			wantErr: false,
+		},
+		{
+			name:    "production + TLS not set",
+			env:     map[string]string{"SIGAP_ENV": "production"},
+			wantErr: true,
+			errMsg:  "SIGAP_TLS_TERMINATED must be set to true in production",
+		},
+		{
+			name:    "staging + TLS not set",
+			env:     map[string]string{"SIGAP_ENV": "staging"},
+			wantErr: true,
+			errMsg:  "SIGAP_TLS_TERMINATED must be set to true in staging",
+		},
+		{
+			name:    "production + TLS false",
+			env:     map[string]string{"SIGAP_ENV": "production", "SIGAP_TLS_TERMINATED": "false"},
+			wantErr: true,
+			errMsg:  "SIGAP_TLS_TERMINATED must be set to true in production",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, k := range []string{"SIGAP_ENV", "SIGAP_TLS_TERMINATED"} {
+				t.Setenv(k, "")
+			}
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			err := GuardTLS()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("GuardTLS() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr && tt.errMsg != "" {
+				if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("error = %q, want to contain %q", err.Error(), tt.errMsg)
+				}
+			}
+		})
+	}
+}

@@ -81,3 +81,28 @@ func GuardDevCapabilities() error {
 	msg += "Set SIGAP_ENV=local to allow dev flags, or remove them for staging/production."
 	return fmt.Errorf("%s", msg)
 }
+
+// GuardTLS verifies that non-local environments have TLS termination
+// confirmed by setting SIGAP_TLS_TERMINATED=true.  This prevents the
+// API from accepting plain HTTP traffic in staging or production.
+//
+// In local mode (SIGAP_ENV=local) or when SIGAP_ENV is unset, the
+// check is skipped — local development uses plain HTTP behind a reverse
+// proxy or directly.
+func GuardTLS() error {
+	env := strings.TrimSpace(os.Getenv("SIGAP_ENV"))
+	isLocal := strings.EqualFold(env, "local")
+	if isLocal || env == "" {
+		return nil
+	}
+
+	confirmed := strings.EqualFold(os.Getenv("SIGAP_TLS_TERMINATED"), "true")
+	if !confirmed {
+		return fmt.Errorf(
+			"SIGAP_TLS_TERMINATED must be set to true in %s environment; " +
+				"the API listens on plain HTTP and requires a TLS-terminating " +
+				"reverse proxy in front",
+			env)
+	}
+	return nil
+}
