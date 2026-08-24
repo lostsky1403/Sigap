@@ -55,10 +55,10 @@
 
 	async function loadOptions() {
 		try {
-			const [fRes, sRes] = await Promise.all([
-				fetch('/api/v1/admin/facilities'),
-				fetch('/api/v1/admin/service-units')
-			]);
+		const [fRes, sRes] = await Promise.all([
+			fetch('/api/v1/public/facilities'),
+			fetch('/api/v1/public/service-units')
+		]);
 			const fParsed = await readApi(fRes);
 			if (fParsed.ok && fParsed.data?.success && Array.isArray(fParsed.data.data)) {
 				const sortedFacilities = [...fParsed.data.data].sort(

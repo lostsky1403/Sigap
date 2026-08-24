@@ -37,6 +37,8 @@ func TestMatch(t *testing.T) {
 		{http.MethodGet, "/api/v1/queues/generate", false}, // wrong method
 		{http.MethodGet, "/api/v1/records/081234567890", false}, // PHI route removed (AUDIT-803)
 		{http.MethodGet, "/api/v1/facilities/nearby", true},
+		{http.MethodGet, "/api/v1/public/facilities", true},
+		{http.MethodGet, "/api/v1/public/service-units", true},
 		{http.MethodGet, "/api/v1/admin/facilities", true},
 		{http.MethodGet, "/api/v1/admin/facilities/550e8400-e29b-41d4-a716-446655440000", true},
 		{http.MethodPost, "/api/v1/admin/facilities", true},
