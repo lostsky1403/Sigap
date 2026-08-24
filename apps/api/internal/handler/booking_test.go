@@ -164,11 +164,10 @@ func TestCheckIn_InvalidID_Returns400(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
-	// Need a handler with pool=nil so nil pool check fires first, which means bad ID won't be reached.
-	// Instead test the ID extraction indirectly: since our CheckIn checks nil first, this returns 500.
+	// Invalid UUID is caught before nil pool check → 400.
 	NewBookingHandler(nil, nil).CheckIn(rec, req)
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500 for nil pool, got %d", rec.Code)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid UUID, got %d", rec.Code)
 	}
 }
 
