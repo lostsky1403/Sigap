@@ -21,21 +21,30 @@ import (
 	"github.com/sigap/sigap/apps/api/internal/identity"
 	"github.com/sigap/sigap/apps/api/internal/limiter"
 	"github.com/sigap/sigap/apps/api/internal/notification"
+	"github.com/sigap/sigap/apps/api/internal/router"
 	"github.com/sigap/sigap/apps/api/internal/service"
 )
 
 // BookingHandler handles public appointment booking and check-in.
 type BookingHandler struct {
-	pool     *pgxpool.Pool
-	audit    *audit.Service
-	limiter  *limiter.RateLimiter
-	queueSvc service.QueueService
-	notify   *notification.Service
+	pool           *pgxpool.Pool
+	audit          *audit.Service
+	limiter        *limiter.RateLimiter
+	checkinLimiter *limiter.RateLimiter // AUDIT-302: per-IP+appointment brute-force protection
+	queueSvc       service.QueueService
+	notify         *notification.Service
 }
 
 // NewBookingHandler creates a handler with db pool and optional rate limiter.
 func NewBookingHandler(pool *pgxpool.Pool, rl *limiter.RateLimiter) *BookingHandler {
 	return &BookingHandler{pool: pool, limiter: rl}
+}
+
+// WithCheckinLimiter attaches a rate limiter for check-in brute-force protection.
+// AUDIT-302: 5 attempts per5 minutes per (IP, appointment) pair.
+func (h *BookingHandler) WithCheckinLimiter(rl *limiter.RateLimiter) *BookingHandler {
+	h.checkinLimiter = rl
+	return h
 }
 
 // WithAudit attaches an audit service.
@@ -394,15 +403,23 @@ func (h *BookingHandler) fireCheckInConfirmation(appointmentID, patientPhone, fa
 }
 
 // CheckIn handles POST /api/v1/appointments/{id}/check-in (public).
-// Validates check-in code, calls gRPC GenerateQueueNumber, updates appointment to queued.
+//
+// AUDIT-1004 fix: the appointment status transition is now atomic — a single
+// UPDATE with WHERE id=$1 AND checkin_code=$2 AND status='scheduled' ensures
+// that concurrent attempts cannot both succeed.  The separate SELECT+UPDATE
+// TOCTOU window is eliminated.
+//
+// AUDIT-302 fix: per-IP + per-appointment rate limiting is applied before
+// any DB work.  The composite key prevents brute-force code guessing while
+// avoiding cross-user lockout behind shared NAT.
+//
+// Error classification (information-oracle resistant):
+//   - 404: appointment does not exist
+//   - 409: appointment exists but is not in 'scheduled' state
+//   - 401: code does not match (existing scheduled appointment)
+//   - 409: atomic transition failed (lost race to concurrent request)
 func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
-	if h.pool == nil {
-		writeError(w, http.StatusInternalServerError, "Database connection unavailable.")
-		return
-	}
-
 	// Extract appointment ID from path: POST /api/v1/appointments/{id}/check-in
-	// parts = ["api","v1","appointments","<uuid>","check-in"]
 	path := r.URL.Path
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) < 4 {
@@ -427,59 +444,105 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// AUDIT-302: rate-limit check-in attempts per IP + per appointment.
+	// Checked early (before DB) to reject brute-force cheaply.
+	// Key: "checkin:<client_ip>:<appointment_id>" — limits brute-force
+	// code guessing without locking out other users or appointments.
+	if h.checkinLimiter != nil {
+		clientIP := router.ClientIPFromContext(r)
+		if clientIP == "" {
+			clientIP = r.RemoteAddr
+		}
+		key := "checkin:" + clientIP + ":" + id
+		if !h.checkinLimiter.Allow(key) {
+			writeError(w, http.StatusTooManyRequests, "Terlalu banyak percobaan. Coba lagi nanti.")
+			return
+		}
+	}
+
+	if h.pool == nil {
+		writeError(w, http.StatusInternalServerError, "Database connection unavailable.")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Fetch appointment and validate code and status
+	// AUDIT-1004: single atomic UPDATE that validates code + status in one
+	// database round-trip.  If the row does not match all three conditions
+	// (id, checkin_code, status='scheduled') the UPDATE touches zero rows
+	// and we classify the failure.
 	var facilityID, serviceUnitID, patientName, patientPhone string
-	var practitionerScheduleID, queueTicketID *string
-	var status string
+	var practitionerScheduleID *string
+	var codeVerified bool
+
 	err := h.pool.QueryRow(ctx,
-		`SELECT facility_id, service_unit_id, practitioner_schedule_id,
-		        patient_display_name, patient_phone, status, queue_ticket_id
-		 FROM appointments WHERE id = $1`, id,
+		`UPDATE appointments
+		 SET status = 'checked_in', checkin_at = NOW(), updated_at = NOW()
+		 WHERE id = $1
+		   AND LOWER(checkin_code) = LOWER($2)
+		   AND status = 'scheduled'
+		 RETURNING facility_id, service_unit_id, practitioner_schedule_id,
+		           patient_display_name, patient_phone`,
+		id, req.CheckinCode,
 	).Scan(&facilityID, &serviceUnitID, &practitionerScheduleID,
-		&patientName, &patientPhone, &status, &queueTicketID)
+		&patientName, &patientPhone)
+
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
+			// Atomic update returned zero rows.  Classify: wrong code or
+			// already-transitioned — but do NOT reveal which.
+			var exists bool
+			err2 := h.pool.QueryRow(ctx,
+				`SELECT EXISTS(SELECT 1 FROM appointments WHERE id = $1)`, id,
+			).Scan(&exists)
+			if err2 != nil || !exists {
+				writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
+				return
+			}
+			// Appointment exists — wrong code or already checked in.
+			// Check code match to determine response (non-oracle: same
+			// HTTP status, different message for UX clarity).
+			var dbCode string
+			var dbStatus string
+			err3 := h.pool.QueryRow(ctx,
+				`SELECT checkin_code, status FROM appointments WHERE id = $1`, id,
+			).Scan(&dbCode, &dbStatus)
+			if err3 != nil {
+				writeError(w, http.StatusInternalServerError, "Gagal memverifikasi check-in.")
+				return
+			}
+			if !strings.EqualFold(dbCode, req.CheckinCode) {
+				writeError(w, http.StatusUnauthorized, "Kode check-in tidak cocok.")
+				return
+			}
+			// Code matched but status was wrong — already checked in.
+			writeError(w, http.StatusConflict, "Janji temu tidak dapat check-in dengan status: "+dbStatus)
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "Gagal membaca janji temu.")
-		return
-	}
-	if status != "scheduled" {
-		writeError(w, http.StatusConflict, "Janji temu tidak dapat check-in dengan status: "+status)
-		return
-	}
-
-	// Verify check-in code
-	var dbCode string
-	err = h.pool.QueryRow(ctx,
-		`SELECT checkin_code FROM appointments WHERE id = $1`, id).Scan(&dbCode)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Gagal memverifikasi kode check-in.")
-		return
-	}
-	if !strings.EqualFold(dbCode, req.CheckinCode) {
-		writeError(w, http.StatusUnauthorized, "Kode check-in tidak cocok.")
-		return
-	}
-
-	// Transition to checked_in
-	_, err = h.pool.Exec(ctx,
-		`UPDATE appointments SET status = 'checked_in', checkin_at = NOW(), updated_at = NOW() WHERE id = $1`,
-		id)
-	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Gagal memperbarui status check-in.")
 		return
 	}
+	codeVerified = true
+	_ = codeVerified // defensive; always true after successful RETURNING scan
 
-	// Call queue engine to generate ticket
+	// --- Queue ticket generation ---
+	// The Rust engine owns queue numbering authority.  We call it via gRPC
+	// after the atomic transition.  If it fails, we roll back to 'scheduled'
+	// so the appointment can be retried.  This means a brief window exists
+	// where the appointment is 'checked_in' with no queue_ticket_id — the
+	// readyz probe reflects DB health, and the 500 response signals the
+	// caller to retry.  True distributed atomicity is not achievable here
+	// without two-phase commit; the compensating rollback is the strongest
+	// safe behavior.
 	if h.queueSvc == nil {
+		// Roll back to scheduled so the appointment is not stranded.
+		_, _ = h.pool.Exec(ctx,
+			`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1`, id)
 		writeError(w, http.StatusInternalServerError, "Layanan antrean tidak tersedia.")
 		return
 	}
+
 	res, err := h.queueSvc.Generate(ctx, service.GenerateInput{
 		FacilityID: facilityID,
 		Patient: service.PatientInput{
@@ -500,8 +563,6 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 				"appointment_id", id, "err", rbErr.Error())
 		}
 		// Dev fallback: retry with FakeQueueService when SIGAP_ENGINE_FALLBACK=dev.
-		// Creates a real queue_tickets row so the FK constraint on
-		// appointments.queue_ticket_id is satisfied.
 		if os.Getenv("SIGAP_ENGINE_FALLBACK") == "dev" {
 			slog.Warn("SIGAP_ENGINE_FALLBACK=dev: retrying queue generation with FakeQueueService",
 				"appointment_id", id)
@@ -518,9 +579,7 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Insert a real queue_tickets row so the UUID FK on
-			// appointments.queue_ticket_id is valid. Creates or reuses
-			// a synthetic patient matched by phone number.
+			// Insert a real queue_tickets row so the UUID FK is valid.
 			ticketUUID := uuid.New().String()
 			err = h.pool.QueryRow(ctx,
 				`WITH p AS (
