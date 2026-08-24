@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sigap/sigap/apps/api/internal/audit"
 	"github.com/sigap/sigap/apps/api/internal/auth"
+	"github.com/sigap/sigap/apps/api/internal/config"
 	"github.com/sigap/sigap/apps/api/internal/events"
 	"github.com/sigap/sigap/apps/api/internal/grpc"
 	"github.com/sigap/sigap/apps/api/internal/handler"
@@ -57,6 +59,13 @@ func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 // early anti-spam rate limiting + service layer.
 // The real heavy logic will be delegated to the Rust gRPC engine in later phases.
 func main() {
+	// Fail-fast: reject dev-only capabilities in non-local environments.
+	if err := config.GuardDevCapabilities(); err != nil {
+		slog.Error("environment guard failed", "err", err)
+		fmt.Fprintln(os.Stderr, "FATAL:", err)
+		os.Exit(1)
+	}
+
 	port := os.Getenv("SIGAP_API_PORT")
 	if port == "" {
 		port = "8080"
