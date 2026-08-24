@@ -8,8 +8,10 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -304,16 +306,45 @@ func main() {
 	// per-route RBAC and audit logging attach to in later phases.
 	// RequirePermission enforces per-route RequiredPolicy using the actor
 	// injected by the selected auth provider. The order is:
-	//   DenyByDefault → AuthProvider → injectAudit → RequirePermission → mux.
+	//   LimitBody → SecurityHeaders → TrustedProxy → DenyByDefault → Auth → Audit → RBAC → mux.
 	injectAudit := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			next.ServeHTTP(w, r.WithContext(identity.ContextWithAudit(r.Context(), auditSvc)))
 		})
 	}
-	if err := http.ListenAndServe(":"+port, router.SecurityHeaders(router.TrustedProxy(router.DenyByDefault(auth.Middleware(provider)(injectAudit(identity.RequirePermission(mux))))))); err != nil {
+	handler := router.SecurityHeaders(router.TrustedProxy(router.DenyByDefault(auth.Middleware(provider)(injectAudit(identity.RequirePermission(mux))))))
+	handler = router.LimitRequestBody(256<<10)(handler) // AUDIT-1001: 256KB max request body
+
+	// AUDIT-1001: configured http.Server with timeouts to prevent
+	// slowloris and resource exhaustion.
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1MB
+	}
+
+	// Graceful shutdown on SIGTERM/SIGINT.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-quit
+		slog.Info("shutdown signal received, draining connections")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("graceful shutdown failed", "err", err)
+		}
+	}()
+
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("server error", "err", err)
 		os.Exit(1)
 	}
+	slog.Info("server stopped")
 }
 
 // --- Super App endpoints: mapcn Smart Routing + Health Wallet ---
