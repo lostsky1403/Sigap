@@ -272,7 +272,7 @@ MVP ini **hanya untuk tujuan scaffolding dan demonstrasi**.
 - Audit event mencatat semua mutasi dengan metadata yang disanitasi (redaksi phone/patient/name/address dari metadata keys).
 - Untuk produksi: audit keamanan, consent, minimization data, encryption at rest, dan logging yang sesuai regulasi kesehatan daerah wajib dilakukan.
 
-Lihat [`SECURITY.md`](./SECURITY.md) untuk daftar lengkap **security limitation** dan panduan pengungkapan kerentanan (responsible disclosure).
+Lihat [`SECURITY.md`](./SECURITY.md) untuk daftar lengkap **security limitation** dan panduan pengungkapan kerentanan (responsible disclosure), serta [`docs/PRODUCTION_READINESS_AUDIT.md`](./docs/PRODUCTION_READINESS_AUDIT.md) untuk audit kesiapan produksi (staging/production blockers & roadmap).
 
 ## Lisensi
 
