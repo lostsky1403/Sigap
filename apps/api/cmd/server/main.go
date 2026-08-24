@@ -183,14 +183,38 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
+
+		var details []string
+		ready := true
+
+		// Check engine connectivity.
 		if err := svc.Probe(ctx); err != nil {
-			slog.Warn("readyz probe failed", "err", err)
+			slog.Warn("readyz: engine probe failed", "err", err)
+			details = append(details, "engine unreachable")
+			ready = false
+		}
+
+		// Check database connectivity (AUDIT-1202).
+		if dbPool != nil {
+			if err := dbPool.Ping(ctx); err != nil {
+				slog.Warn("readyz: database ping failed", "err", err)
+				details = append(details, "database unreachable")
+				ready = false
+			}
+		}
+
+		if !ready {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"status":"unavailable","service":"sigap-api","detail":"engine unreachable"}`))
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"unavailable","service":"sigap-api","detail":"%s"}`, strings.Join(details, "; "))))
 			return
 		}
+
+		auditState := "disabled"
+		if auditSvc != nil {
+			auditState = "enabled"
+		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ready","service":"sigap-api"}`))
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"ready","service":"sigap-api","audit":"%s"}`, auditState)))
 	})
 
 	mux.HandleFunc("/api/v1/queues/generate", enableCORS(qh.Generate))
