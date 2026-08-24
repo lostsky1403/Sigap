@@ -18,57 +18,48 @@ func TestGuardDevCapabilities(t *testing.T) {
 		{
 			name: "local + auth mode dev",
 			env: map[string]string{
-				"SIGAP_ENV":        "local",
-				"SIGAP_AUTH_MODE":  "dev",
+				"SIGAP_ENV":       "local",
+				"SIGAP_AUTH_MODE": "dev",
 			},
 			wantErr: false,
 		},
 		{
 			name: "local + dev identity",
 			env: map[string]string{
-				"SIGAP_ENV":           "local",
-				"SIGAP_DEV_IDENTITY":  "true",
-			},
-			wantErr: false,
-		},
-		{
-			name: "local + demo PHI",
-			env: map[string]string{
-				"SIGAP_ENV":              "local",
-				"SIGAP_ENABLE_DEMO_PHI":  "true",
+				"SIGAP_ENV":          "local",
+				"SIGAP_DEV_IDENTITY": "true",
 			},
 			wantErr: false,
 		},
 		{
 			name: "local + engine fallback dev",
 			env: map[string]string{
-				"SIGAP_ENV":                "local",
-				"SIGAP_ENGINE_FALLBACK":    "dev",
+				"SIGAP_ENV":              "local",
+				"SIGAP_ENGINE_FALLBACK":  "dev",
 			},
 			wantErr: false,
 		},
 		{
 			name: "local + all dev flags",
 			env: map[string]string{
-				"SIGAP_ENV":                "local",
-				"SIGAP_AUTH_MODE":          "dev",
-				"SIGAP_DEV_IDENTITY":       "true",
-				"SIGAP_ENABLE_DEMO_PHI":    "true",
-				"SIGAP_ENGINE_FALLBACK":    "dev",
+				"SIGAP_ENV":             "local",
+				"SIGAP_AUTH_MODE":       "dev",
+				"SIGAP_DEV_IDENTITY":    "true",
+				"SIGAP_ENGINE_FALLBACK": "dev",
 			},
 			wantErr: false,
 		},
 		{
 			name: "production safe config",
 			env: map[string]string{
-				"SIGAP_ENV":        "production",
-				"SIGAP_AUTH_MODE":  "jwt",
+				"SIGAP_ENV":       "production",
+				"SIGAP_AUTH_MODE": "jwt",
 			},
 			wantErr: false,
 		},
 		{
-			name: "SIGAP_ENV unset + no dev flags",
-			env:  map[string]string{},
+			name:    "SIGAP_ENV unset + no dev flags",
+			env:     map[string]string{},
 			wantErr: false,
 		},
 		{
@@ -126,19 +117,10 @@ func TestGuardDevCapabilities(t *testing.T) {
 			errMsg:  "SIGAP_DEV_IDENTITY is only allowed when SIGAP_ENV=local",
 		},
 		{
-			name: "production + demo PHI",
-			env: map[string]string{
-				"SIGAP_ENV":             "production",
-				"SIGAP_ENABLE_DEMO_PHI": "true",
-			},
-			wantErr: true,
-			errMsg:  "SIGAP_ENABLE_DEMO_PHI is only allowed when SIGAP_ENV=local",
-		},
-		{
 			name: "production + engine fallback dev",
 			env: map[string]string{
-				"SIGAP_ENV":              "production",
-				"SIGAP_ENGINE_FALLBACK":  "dev",
+				"SIGAP_ENV":             "production",
+				"SIGAP_ENGINE_FALLBACK": "dev",
 			},
 			wantErr: true,
 			errMsg:  "SIGAP_ENGINE_FALLBACK is only allowed when SIGAP_ENV=local",
@@ -162,15 +144,13 @@ func TestGuardDevCapabilities(t *testing.T) {
 		{
 			name: "production + all dev flags",
 			env: map[string]string{
-				"SIGAP_ENV":              "production",
-				"SIGAP_AUTH_MODE":        "dev",
-				"SIGAP_DEV_IDENTITY":     "true",
-				"SIGAP_ENABLE_DEMO_PHI":  "true",
-				"SIGAP_ENGINE_FALLBACK":  "dev",
+				"SIGAP_ENV":             "production",
+				"SIGAP_AUTH_MODE":       "dev",
+				"SIGAP_DEV_IDENTITY":    "true",
+				"SIGAP_ENGINE_FALLBACK": "dev",
 			},
 			wantErr: true,
-			// All four should appear in the error
-			errMsg: "SIGAP_AUTH_MODE is only allowed when SIGAP_ENV=local",
+			errMsg:  "SIGAP_AUTH_MODE is only allowed when SIGAP_ENV=local",
 		},
 		{
 			name: "local env is case-insensitive",
@@ -196,7 +176,7 @@ func TestGuardDevCapabilities(t *testing.T) {
 			// Clear all relevant env vars first
 			envVars := []string{
 				"SIGAP_ENV", "SIGAP_AUTH_MODE", "SIGAP_DEV_IDENTITY",
-				"SIGAP_ENABLE_DEMO_PHI", "SIGAP_ENGINE_FALLBACK",
+				"SIGAP_ENGINE_FALLBACK",
 			}
 			for _, k := range envVars {
 				t.Setenv(k, "")
@@ -235,7 +215,7 @@ func TestGuardDevCapabilities(t *testing.T) {
 func TestGuardDevCapabilities_MultipleViolations(t *testing.T) {
 	envVars := []string{
 		"SIGAP_ENV", "SIGAP_AUTH_MODE", "SIGAP_DEV_IDENTITY",
-		"SIGAP_ENABLE_DEMO_PHI", "SIGAP_ENGINE_FALLBACK",
+		"SIGAP_ENGINE_FALLBACK",
 	}
 	for _, k := range envVars {
 		t.Setenv(k, "")
@@ -243,7 +223,6 @@ func TestGuardDevCapabilities_MultipleViolations(t *testing.T) {
 	t.Setenv("SIGAP_ENV", "production")
 	t.Setenv("SIGAP_AUTH_MODE", "dev")
 	t.Setenv("SIGAP_DEV_IDENTITY", "true")
-	t.Setenv("SIGAP_ENABLE_DEMO_PHI", "true")
 	t.Setenv("SIGAP_ENGINE_FALLBACK", "dev")
 
 	err := GuardDevCapabilities()
@@ -255,7 +234,6 @@ func TestGuardDevCapabilities_MultipleViolations(t *testing.T) {
 	for _, want := range []string{
 		"SIGAP_AUTH_MODE is only allowed when SIGAP_ENV=local",
 		"SIGAP_DEV_IDENTITY is only allowed when SIGAP_ENV=local",
-		"SIGAP_ENABLE_DEMO_PHI is only allowed when SIGAP_ENV=local",
 		"SIGAP_ENGINE_FALLBACK is only allowed when SIGAP_ENV=local",
 	} {
 		if !strings.Contains(msg, want) {
