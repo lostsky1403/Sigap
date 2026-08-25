@@ -204,22 +204,46 @@ type sigapClaims struct {
 // ---------------------------------------------------------------------------
 
 // JWTProvider validates JWT access tokens against an OIDC issuer JWKS endpoint.
+//
+// Trust boundary (AUDIT-101): the JWT is authoritative only for identity
+// (subject, issuer, audience, validity). Authorization permissions are resolved
+// server-side from the DB RBAC state via Resolver, never from token claims.
 type JWTProvider struct {
-	cfg  AuthConfig
-	jwks *jwksCache
+	cfg      AuthConfig
+	jwks     *jwksCache
+	resolver Resolver // nil means no DB-backed RBAC: fail closed (zero permissions)
 }
 
-// NewJWTProvider creates a JWT provider with the given configuration.
+// NewJWTProvider creates a JWT provider with the given configuration and no
+// DB-backed resolver. In jwt mode an unresolvable permissions source fails
+// closed. Use WithResolver to supply a server-side RBAC resolver.
 func NewJWTProvider(cfg AuthConfig) *JWTProvider {
-	var cache *jwksCache
+	p := &JWTProvider{cfg: cfg}
 	if cfg.JWKSURL != "" {
-		cache = newJWKSCache(cfg.JWKSURL)
+		p.jwks = newJWKSCache(cfg.JWKSURL)
 	}
-	return &JWTProvider{cfg: cfg, jwks: cache}
+	return p
+}
+
+// NewJWTProviderWithResolver creates a JWT provider with a server-side RBAC
+// resolver. Permissions come exclusively from the resolver in jwt mode.
+func NewJWTProviderWithResolver(cfg AuthConfig, resolver Resolver) *JWTProvider {
+	p := NewJWTProvider(cfg)
+	p.resolver = resolver
+	return p
+}
+
+// WithResolver returns a copy of the provider configured with a server-side
+// RBAC resolver. The receiver is not modified.
+func (p *JWTProvider) WithResolver(resolver Resolver) *JWTProvider {
+	np := &JWTProvider{cfg: p.cfg, jwks: p.jwks, resolver: resolver}
+	return np
 }
 
 // Authenticate extracts and validates a Bearer JWT from the request.
 // It enforces: alg ≠ none, signature verification, exp/nbf/iat, iss, aud.
+// Authorization permissions are resolved from the server-side RBAC resolver;
+// the token's `permissions` claim is ignored (AUDIT-101).
 func (p *JWTProvider) Authenticate(r *http.Request) (identity.Actor, error) {
 	h := r.Header.Get("Authorization")
 	if h == "" {
@@ -251,7 +275,8 @@ func (p *JWTProvider) Authenticate(r *http.Request) (identity.Actor, error) {
 		return identity.Actor{}, nil
 	}
 
-	// Build actor from validated claims.
+	// Build actor identity from validated claims. sub is identity, never
+	// authorization.
 	sub := ""
 	if claims.Subject != "" {
 		sub = claims.Subject
@@ -263,10 +288,30 @@ func (p *JWTProvider) Authenticate(r *http.Request) (identity.Actor, error) {
 		userType = identity.ActorDev
 	}
 
+	// Server-side RBAC resolution: permissions come from trusted DB state, not
+	// the token. Fail closed on unknown subject or resolver error.
+	if p.resolver != nil {
+		perms, err := p.resolver.Resolve(r.Context(), sub)
+		if err != nil {
+			slog.Warn("jwt permissions resolution failed; failing closed", "err", err)
+			return identity.Actor{}, nil
+		}
+		return identity.Actor{
+			UserID:      sub,
+			Type:        userType,
+			Permissions: perms.Permissions,
+			AppUserID:   perms.AppUserID,
+		}, nil
+	}
+
+	// No resolver configured (no DB-backed RBAC available). Fail closed: emit
+	// no permissions from the token. Identity is still authenticated so authn
+	// vs authz semantics stay intact, but the actor holds zero permissions.
+	slog.Warn("jwt mode has no server-side RBAC resolver; authorization permissions empty (fail closed)")
 	return identity.Actor{
 		UserID:      sub,
 		Type:        userType,
-		Permissions: claims.Permissions,
+		Permissions: nil,
 	}, nil
 }
 
