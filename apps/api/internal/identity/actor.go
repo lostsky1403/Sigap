@@ -19,11 +19,19 @@ const (
 
 // Actor represents the authenticated/identified principal for a request.
 // Zero value means no actor is present (unauthenticated).
+//
+// UserID holds the external identity for the actor (from the validated token
+// subject or dev header). In JWT mode it MUST NOT be used as an authorization
+// source: permissions are resolved server-side. AppUserID is the server-side
+// application user id that the subject mapped to (empty when unknown or when
+// no DB-backed RBAC is available); it is preserved so a later facility-scope
+// PR (AUDIT-202) can resolve user_roles.facility_id from trusted state.
 type Actor struct {
 	UserID      string
 	Type        ActorType
-	Permissions []string // permission keys, e.g. "queue.generate"
+	Permissions []string // permission keys, e.g. "queue.generate"; zero/empty is fail-closed
 	IsDev       bool     // true when the request was authenticated via the dev identity header
+	AppUserID   string   // server-side app user UUID the external subject mapped to
 }
 
 // IsZero reports whether the actor is absent (no identity attached).

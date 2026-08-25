@@ -192,7 +192,24 @@ func main() {
 		slog.Error("invalid auth configuration; refusing to start", "err", err)
 		os.Exit(1)
 	}
-	provider := auth.NewProvider(authCfg)
+	// Construct the auth provider. In jwt mode, authorization permissions are
+	// resolved server-side from the trusted DB RBAC state (AUDIT-101): the
+	// token is authoritative for identity only. If the DB pool is unavailable
+	// in jwt mode the provider fails closed (zero permissions), never falling
+	// back to token-claimed permissions.
+	var provider auth.Provider
+	if authCfg.Mode == auth.AuthModeJWT {
+		if dbPool != nil {
+			resolver := auth.NewRBACResolver(dbPool)
+			provider = auth.NewJWTProviderWithResolver(*authCfg, resolver)
+			slog.Info("jwt provider wired with server-side RBAC resolver")
+		} else {
+			provider = auth.NewJWTProvider(*authCfg)
+			slog.Warn("jwt mode without DB-backed RBAC resolver; authz fails closed (zero permissions)")
+		}
+	} else {
+		provider = auth.NewProvider(authCfg)
+	}
 	slog.Info("auth provider configured", "mode", authCfg.Mode)
 
 	mux := http.NewServeMux()
