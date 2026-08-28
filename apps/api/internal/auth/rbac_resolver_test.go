@@ -26,8 +26,10 @@ func testDBURL() string {
 // 0007_checkin_constraints.sql has a pre-existing defect (a STABLE
 // appointment_time::date cast inside a partial unique index, rejected on fresh
 // DBs with SQLSTATE 42P17) that is unrelated to AUDIT-101 and is out of scope
-// to modify here. The target DB is dedicated to these tests, so rebuilding its
-// public schema is safe and is what makes setup repeatable.
+// to modify here. It drops and rebuilds a dedicated, throwaway schema
+// (test_rbac) — never the shared "public" schema that other suites (e.g.
+// booking check-in) rely on as a pre-built full schema — so setup is
+// repeatable and does not race with those suites.
 func applyMigrations(t *testing.T, ctx context.Context, pool *pgxpool.Pool) error {
 	t.Helper()
 	dir, err := migrate.DefaultDir()
@@ -35,13 +37,14 @@ func applyMigrations(t *testing.T, ctx context.Context, pool *pgxpool.Pool) erro
 		t.Fatalf("migrate dir: %v", err)
 	}
 
-	// The dedicated test DB is owned by these tests; drop and rebuild its
-	// public schema so every run starts from a clean, known state.
-	if _, err := pool.Exec(ctx, `DROP SCHEMA public CASCADE`); err != nil {
-		return fmt.Errorf("drop public schema: %w", err)
+	// The dedicated test schema is owned by these tests; drop and rebuild it
+	// so every run starts from a clean, known state. The pool's search_path is
+	// set to test_rbac, so all unqualified relation references land there.
+	if _, err := pool.Exec(ctx, `DROP SCHEMA IF EXISTS test_rbac CASCADE`); err != nil {
+		return fmt.Errorf("drop test_rbac schema: %w", err)
 	}
-	if _, err := pool.Exec(ctx, `CREATE SCHEMA public`); err != nil {
-		return fmt.Errorf("create public schema: %w", err)
+	if _, err := pool.Exec(ctx, `CREATE SCHEMA test_rbac`); err != nil {
+		return fmt.Errorf("create test_rbac schema: %w", err)
 	}
 
 	// migrationFiles lists, in order, the real migration files the resolver
@@ -216,7 +219,17 @@ func newTestResolverPool(t *testing.T) (*pgxpool.Pool, func()) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	pool, err := pgxpool.New(ctx, dbURL)
+	cfg, err := pgxpool.ParseConfig(dbURL)
+	if err != nil {
+		t.Fatalf("parse pool config: %v", err)
+	}
+	// Route every unqualified relation/function reference to the throwaway
+	// test_rbac schema. "public" is kept on the path only so that any
+	// extension-backed functions (e.g. gen_random_uuid) resolve correctly;
+	// DDL always targets test_rbac because it is first in the list.
+	cfg.ConnConfig.RuntimeParams["search_path"] = "test_rbac, public"
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatalf("connect pool: %v", err)
 	}
