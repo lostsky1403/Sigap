@@ -40,6 +40,11 @@ jobs:
           go-version-file: apps/api/go.mod
           cache-dependency-path: apps/api/go.sum
 
+      - name: Apply database migrations
+        run: |
+          cd apps/api
+          go run ./cmd/ci-migrate
+
       - name: Test API (with coverage)
         run: |
           set -o pipefail
@@ -52,17 +57,28 @@ jobs:
       - name: Verify DB-backed security tests executed
         run: |
           cd apps/api
-          echo "=== Security test execution proof ==="
-          echo "RBAC resolver tests:"
-          grep -E "TestRBACResolver" test_output.log || true
-          echo "Facility scope tests:"
-          grep -E "TestFacilityScope" test_output.log || true
-          echo "Skip check (must be zero for security tests):"
-          if grep -E "SKIP.*DATABASE_URL" test_output.log; then
-            echo "FAIL: DB-backed security tests were skipped despite CI PostgreSQL service"
+          echo "=== DB-backed test execution proof ==="
+          echo "Checking TestRBACResolver..."
+          if ! grep -q "=== RUN.*TestRBACResolver" test_output.log; then
+            echo "FAIL: TestRBACResolver tests did not run"
             exit 1
           fi
-          echo "OK: no security tests skipped due to missing DATABASE_URL"
+          echo "Checking TestFacilityScope..."
+          if ! grep -q "=== RUN.*TestFacilityScope" test_output.log; then
+            echo "FAIL: TestFacilityScope tests did not run"
+            exit 1
+          fi
+          echo "Checking TestCheckIn..."
+          if ! grep -q "=== RUN.*TestCheckIn" test_output.log; then
+            echo "FAIL: TestCheckIn tests did not run"
+            exit 1
+          fi
+          echo "Skip check (must be zero for DB-backed tests):"
+          if grep -E -- "--- SKIP: *(TestRBACResolver|TestFacilityScope|TestCheckIn)" test_output.log; then
+            echo "FAIL: DB-backed tests were skipped despite CI PostgreSQL service"
+            exit 1
+          fi
+          echo "OK: all DB-backed tests executed with zero skips"
 
       - name: Coverage gate (deny-by-default router must stay covered)
         run: |
