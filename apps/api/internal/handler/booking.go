@@ -537,8 +537,9 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 	// safe behavior.
 	if h.queueSvc == nil {
 		// Roll back to scheduled so the appointment is not stranded.
+		// Guarded: only this request (which set status='checked_in') can release.
 		_, _ = h.pool.Exec(ctx,
-			`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1`, id)
+			`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
 		writeError(w, http.StatusInternalServerError, "Layanan antrean tidak tersedia.")
 		return
 	}
@@ -556,11 +557,17 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 			"facility_id", facilityID,
 			"err", err.Error())
 		// Roll back to scheduled so the appointment can be retried.
-		_, rbErr := h.pool.Exec(ctx,
-			`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1`, id)
+		// Guarded: only this request (which set status='checked_in') can release.
+		ct, rbErr := h.pool.Exec(ctx,
+			`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
 		if rbErr != nil {
 			slog.Error("rollback to scheduled failed",
 				"appointment_id", id, "err", rbErr.Error())
+		} else if ct.RowsAffected() == 0 {
+			slog.Warn("rollback guard: appointment no longer in checked_in state",
+				"appointment_id", id)
+			writeError(w, http.StatusConflict, "Janji temu sudah diproses oleh permintaan lain.")
+			return
 		}
 		// Dev fallback: retry with FakeQueueService when SIGAP_ENGINE_FALLBACK=dev.
 		if os.Getenv("SIGAP_ENGINE_FALLBACK") == "dev" {
@@ -606,11 +613,18 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 			res.TicketID = ticketUUID
 
 			// Re-transition to checked_in after successful fallback
-			_, err = h.pool.Exec(ctx,
-				`UPDATE appointments SET status = 'checked_in', checkin_at = NOW(), updated_at = NOW() WHERE id = $1`,
+			// Guarded: only proceed if appointment is still in scheduled state
+			ct, err := h.pool.Exec(ctx,
+				`UPDATE appointments SET status = 'checked_in', checkin_at = NOW(), updated_at = NOW() WHERE id = $1 AND status = 'scheduled' AND queue_ticket_id IS NULL`,
 				id)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "Gagal memperbarui status check-in.")
+				return
+			}
+			if ct.RowsAffected() == 0 {
+				slog.Warn("fallback guard: appointment no longer in scheduled state",
+					"appointment_id", id)
+				writeError(w, http.StatusConflict, "Janji temu sudah diproses oleh permintaan lain.")
 				return
 			}
 		} else {
@@ -620,11 +634,18 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Transition to queued with queue_ticket_id
-	_, err = h.pool.Exec(ctx,
-		`UPDATE appointments SET status = 'queued', queue_ticket_id = $1, updated_at = NOW() WHERE id = $2`,
+	// Guarded: only the request that claimed this appointment can finalize it
+	ct, err := h.pool.Exec(ctx,
+		`UPDATE appointments SET status = 'queued', queue_ticket_id = $1, updated_at = NOW() WHERE id = $2 AND status = 'checked_in' AND queue_ticket_id IS NULL`,
 		res.TicketID, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Gagal menyelesaikan check-in.")
+		return
+	}
+	if ct.RowsAffected() == 0 {
+		slog.Warn("finalization guard: appointment no longer in checked_in state",
+			"appointment_id", id)
+		writeError(w, http.StatusConflict, "Janji temu sudah diproses oleh permintaan lain.")
 		return
 	}
 
