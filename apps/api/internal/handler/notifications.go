@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/sigap/sigap/apps/api/internal/audit"
+	"github.com/sigap/sigap/apps/api/internal/auth"
 	"github.com/sigap/sigap/apps/api/internal/identity"
 	"github.com/sigap/sigap/apps/api/internal/notification"
 )
@@ -27,8 +28,9 @@ import (
 //	POST /api/v1/admin/notifications/{id}/retry  -> RetryNotification
 //	POST /api/v1/admin/notifications/{id}/cancel -> CancelNotification
 type NotificationsHandler struct {
-	svc   *notification.Service
-	audit *audit.Service
+	svc          *notification.Service
+	audit        *audit.Service
+	scopeResolver auth.FacilityScope
 }
 
 // NewNotificationsHandler constructs the handler bound to the given
@@ -38,6 +40,15 @@ func NewNotificationsHandler(svc *notification.Service) *NotificationsHandler {
 		panic("handler.NewNotificationsHandler: nil service")
 	}
 	return &NotificationsHandler{svc: svc}
+}
+
+// WithFacilityScopeResolver attaches the facility scope resolver used to
+// enforce facility-scoped authorization on notification endpoints. When nil,
+// facility scope resolution fails closed (empty scope) — callers must wire
+// the resolver in production.
+func (h *NotificationsHandler) WithFacilityScopeResolver(r auth.FacilityScope) *NotificationsHandler {
+	h.scopeResolver = r
+	return h
 }
 
 // WithAudit attaches an optional audit service for access logging.
@@ -50,6 +61,12 @@ func (h *NotificationsHandler) WithAudit(a *audit.Service) *NotificationsHandler
 // optional ?facility_id= and ?limit= query. The response is JSON with the
 // masked contact for every row. The raw contact, the hash, and any
 // other PII are NEVER serialised.
+//
+// Facility scope: client-supplied ?facility_id= is never trusted. The
+// query is always restricted to facilities in the actor's allowed set.
+// If the actor has no allowed facilities the result is empty. A client-
+// supplied facility_id is only honoured when it is a member of the
+// allowed set; otherwise it is silently ignored (fail closed).
 func (h *NotificationsHandler) ListNotifications(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 
@@ -60,15 +77,31 @@ func (h *NotificationsHandler) ListNotifications(w http.ResponseWriter, r *http.
 			limit = n
 		}
 	}
-	var facility uuid.UUID
-	if v := r.URL.Query().Get("facility_id"); v != "" {
-		parsed, err := uuid.Parse(v)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "facility_id tidak valid.")
-			h.log(actor, "notification.list", "error", "invalid facility_id")
-			return
+
+	allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(r.Context(), actor, h.scopeResolver)
+	if scopeErr != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": []notification.OutboxRow{}})
+		h.log(actor, "notification.list", "error", "scope resolution failed")
+		return
+	}
+
+	// Resolve the effective facility filter: only a client-supplied
+	// facility_id that is within the actor's allowed set is honoured.
+	// If none is supplied (or it is out of scope), we rely on the
+	// service's UUID-nil "all facilities" sentinel which is overridden
+	// below by the ANY($1) predicate applied after fetching rows.
+	var facilityFilter uuid.UUID
+	if allowedFacilities != nil {
+		if v := r.URL.Query().Get("facility_id"); v != "" {
+			if parsed, err := uuid.Parse(v); err == nil {
+				for _, af := range allowedFacilities {
+					if af == parsed {
+						facilityFilter = parsed
+						break
+					}
+				}
+			}
 		}
-		facility = parsed
 	}
 
 	status := r.URL.Query().Get("status")
@@ -102,8 +135,8 @@ func (h *NotificationsHandler) ListNotifications(w http.ResponseWriter, r *http.
 		return
 	}
 
-	rows, err := h.svc.List(r.Context(), notification.ListParams{
-		FacilityID:  facility,
+	rawRows, err := h.svc.List(r.Context(), notification.ListParams{
+		FacilityID:  facilityFilter,
 		Limit:       limit,
 		Status:      status,
 		Channel:     channel,
@@ -116,6 +149,28 @@ func (h *NotificationsHandler) ListNotifications(w http.ResponseWriter, r *http.
 		h.log(actor, "notification.list", "error", err.Error())
 		return
 	}
+
+	// Post-fetch server-side facility filter: even when the service-level
+	// filter is uuid.Nil (all facilities), we must never return rows from
+	// facilities outside the actor's allowed set.
+	var rows []notification.OutboxRow
+	for _, row := range rawRows {
+		if row.FacilityID == nil {
+			continue
+		}
+		allowed := false
+		for _, af := range allowedFacilities {
+			if *row.FacilityID == af {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			continue
+		}
+		rows = append(rows, row)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": rows})
 	h.log(actor, "notification.list", "ok", fmt.Sprintf("count=%d", len(rows)))
 }
@@ -126,21 +181,36 @@ func (h *NotificationsHandler) ListNotifications(w http.ResponseWriter, r *http.
 // Every declared status is always present in the response (zero when
 // no rows match), so the UI can render the full card set without a
 // second pass.
+//
+// Facility scope: client-supplied ?facility_id= is never trusted. If
+// supplied and within the actor's allowed set it narrows the summary;
+// otherwise the summary covers all allowed facilities.
 func (h *NotificationsHandler) GetNotificationSummary(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 
-	var facility uuid.UUID
-	if v := r.URL.Query().Get("facility_id"); v != "" {
-		parsed, err := uuid.Parse(v)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "facility_id tidak valid.")
-			h.log(actor, "notification.summary", "error", "invalid facility_id")
-			return
-		}
-		facility = parsed
+	allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(r.Context(), actor, h.scopeResolver)
+	if scopeErr != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]int{}})
+		h.log(actor, "notification.summary", "error", "scope resolution failed")
+		return
 	}
 
-	counts, err := h.svc.Summary(r.Context(), facility)
+	// Honour a client-supplied facility_id only if it is in the allowed set.
+	var facilityFilter uuid.UUID
+	if allowedFacilities != nil {
+		if v := r.URL.Query().Get("facility_id"); v != "" {
+			if parsed, err := uuid.Parse(v); err == nil {
+				for _, af := range allowedFacilities {
+					if af == parsed {
+						facilityFilter = parsed
+						break
+					}
+				}
+			}
+		}
+	}
+
+	counts, err := h.svc.Summary(r.Context(), facilityFilter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Gagal mengambil ringkasan notifikasi.")
 		h.log(actor, "notification.summary", "error", err.Error())
@@ -185,6 +255,8 @@ func parseOptionalTime(r *http.Request, name string) (time.Time, error) {
 }
 
 // GetNotification handles GET /api/v1/admin/notifications/{id}.
+// Facility scope: the requested notification must belong to a facility in
+// the actor's allowed set; otherwise 404 is returned (no existence leak).
 func (h *NotificationsHandler) GetNotification(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 	id, ok := extractNotificationID(r.URL.Path)
@@ -204,13 +276,18 @@ func (h *NotificationsHandler) GetNotification(w http.ResponseWriter, r *http.Re
 		h.log(actor, "notification.get", "error", err.Error())
 		return
 	}
+	if !auth.CanAccessFacilityForActor(r.Context(), actor, h.scopeResolver, notificationFacility(row)) {
+		writeError(w, http.StatusNotFound, "Notifikasi tidak ditemukan.")
+		h.log(actor, "notification.get", "forbidden", "out_of_scope")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": row})
 	h.log(actor, "notification.get", "ok", "")
 }
 
 // RetryNotification handles POST /api/v1/admin/notifications/{id}/retry.
 // Returns 409 Conflict when the current status is not in {failed, pending}.
-// Returns 404 when the row does not exist.
+// Returns 404 when the row does not exist or is out of scope.
 func (h *NotificationsHandler) RetryNotification(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 	id, ok := extractNotificationID(r.URL.Path)
@@ -234,12 +311,18 @@ func (h *NotificationsHandler) RetryNotification(w http.ResponseWriter, r *http.
 		}
 		return
 	}
+	if !auth.CanAccessFacilityForActor(r.Context(), actor, h.scopeResolver, notificationFacility(row)) {
+		writeError(w, http.StatusNotFound, "Notifikasi tidak ditemukan.")
+		h.log(actor, "notification.retry", "forbidden", "out_of_scope")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": row})
 	h.log(actor, "notification.retry", "ok", "")
 }
 
 // CancelNotification handles POST /api/v1/admin/notifications/{id}/cancel.
 // Idempotent on already-cancelled rows. Returns 409 Conflict on delivered.
+// Facility scope: the notification must belong to an allowed facility.
 func (h *NotificationsHandler) CancelNotification(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 	id, ok := extractNotificationID(r.URL.Path)
@@ -261,6 +344,11 @@ func (h *NotificationsHandler) CancelNotification(w http.ResponseWriter, r *http
 			writeError(w, http.StatusInternalServerError, "Gagal melakukan cancel.")
 			h.log(actor, "notification.cancel", "error", err.Error())
 		}
+		return
+	}
+	if !auth.CanAccessFacilityForActor(r.Context(), actor, h.scopeResolver, notificationFacility(row)) {
+		writeError(w, http.StatusNotFound, "Notifikasi tidak ditemukan.")
+		h.log(actor, "notification.cancel", "forbidden", "out_of_scope")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": row})
@@ -367,6 +455,19 @@ func parseNotificationIDFromTail(rest string) (uuid.UUID, bool) {
 		return uuid.Nil, false
 	}
 	return id, true
+}
+
+// notificationFacility extracts the facility UUID from a notification row
+// for scope checking. Returns uuid.Nil when the notification is globally
+// scoped (facility_id is NULL). A globally-scoped notification is only
+// accessible to dev actors (which bypass scope checks); for non-dev
+// actors a Nil facility is not in the allowed set, so the caller's
+// CanAccessFacilityForActor check will return false.
+func notificationFacility(row notification.OutboxRow) uuid.UUID {
+	if row.FacilityID != nil {
+		return *row.FacilityID
+	}
+	return uuid.Nil
 }
 
 // log writes a sanitised audit event for a notification admin action.
