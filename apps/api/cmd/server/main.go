@@ -182,7 +182,7 @@ func main() {
 	// Admin handler: queries facilities. Available only when DB is reachable.
 	var adminH *handler.AdminHandler
 	if dbPool != nil {
-		adminH = handler.NewAdminHandler(dbPool).WithAudit(auditSvc)
+		adminH = handler.NewAdminHandler(dbPool).WithAudit(auditSvc).WithFacilityScopeResolver(auth.NewDBFacilityScope(dbPool))
 		slog.Info("admin handler enabled")
 	}
 
@@ -325,7 +325,7 @@ func main() {
 		// constructed here so it shares the same DB pool and audit
 		// service as the rest of the admin surface.
 		notifySvc := notification.NewService(dbPool)
-		notifyH := handler.NewNotificationsHandler(notifySvc).WithAudit(auditSvc)
+		notifyH := handler.NewNotificationsHandler(notifySvc).WithAudit(auditSvc).WithFacilityScopeResolver(auth.NewDBFacilityScope(dbPool))
 		bookingH.WithNotificationService(notifySvc)
 		mux.HandleFunc("/api/v1/admin/notifications", enableCORS(notifyH.NotificationsRouter))
 		mux.HandleFunc("/api/v1/admin/notifications/", enableCORS(notifyH.NotificationsRouter))
