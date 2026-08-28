@@ -144,3 +144,108 @@
 ---
 
 *Reconciliation performed at `d84fed9`. Original audit findings at `b47e07d` — see `docs/PRODUCTION_READINESS_AUDIT.md`.*
+
+---
+
+## Status After PR #53–#55
+
+- Date: 2026-08-28
+- Baseline: `main @ 06fec1f` (after PR #55 merge)
+- Reconciled by: post-merge runtime validation + source-code evidence review
+
+### Post-Merge Runtime Validation
+
+| Check | Result |
+|---|---|
+| `GET /health` | 200 `{"status":"ok","service":"sigap-api"}` |
+| `GET /readyz` | 200 `{"status":"ready","service":"sigap-api","audit":"enabled"}` |
+| `sigap-demo-smoke.ps1` | 8/8 PASS |
+| `sigap-full-local-demo.ps1` | FULL LOCAL DEMO: PASS (demo 8/8 + notification 9/9 + patient portal 5/5) |
+| DB-backed facility-scope tests | 24/24 RUN, 0 SKIP, 0 FAIL |
+| Handler RBAC tests | 40/40 RUN, 0 SKIP, 0 FAIL |
+| Browser sanity (6 endpoints) | All functional under `SIGAP_ENV=local` |
+
+Classification: all checks passed. No regressions introduced by facility scoping.
+
+### Findings Closed by PR #53 (Atomic Check-in + Rate Limiting)
+
+| Audit ID | Finding | How Closed |
+|---|---|---|
+| AUDIT-302 | Check-in unlimited brute-force | Rate limiters added in `booking.go` L447-461: per-IP + per-appointment on check-in, daily per-phone on booking, per-IP on patient status |
+| AUDIT-1004 (check-in half) | Check-in TOCTOU: non-atomic status transition | Atomic `UPDATE appointments SET status='checked_in' WHERE id=$1 AND status='scheduled' RETURNING` in `booking.go` L471-489 |
+
+### Findings Closed by PR #54 (Server-side JWT RBAC)
+
+| Audit ID | Finding | How Closed |
+|---|---|---|
+| AUDIT-101 | JWT claims trusted directly; DB RBAC unused | Server-side `sub → user → roles → permissions` resolution in `jwt_provider.go` L292-314; claim permissions ignored in JWT mode; fail-closed patterns |
+
+### Findings Closed by PR #55 (Facility-Scoped Authorization)
+
+| Audit ID | Finding | How Closed |
+|---|---|---|
+| AUDIT-202 | No facility scoping — cross-facility IDOR | `AllowedFacilityIDsForActor` / `CanAccessFacilityForActor` in `facility_scope.go`; all admin handlers wired; 1205-line test suite |
+
+### Indirectly Closed Findings
+
+| Audit ID | Finding | How Indirectly Closed |
+|---|---|---|
+| AUDIT-301 | Patient status enumeration oracle | `patient.go` L86-125 returns uniform 404 for not-found lookups (identical response for missing and forbidden); no distinct status codes leak existence |
+
+### Remaining P0/P1 — Re-Ranked
+
+| Rank | Audit ID | Severity | Status | Risk | Why Next |
+|---|---|---|---|---|---|
+| 1 | AUDIT-701 | P0 | OPEN | No backup/restore capability; RPO ∞ / RTO ∞ | Highest data-loss severity; requires deployment architecture decision (hosting model, backup target, restore SLA) |
+| 2 | AUDIT-1701 | P1 | OPEN | Integration/smoke tests never run in CI; no Postgres service container | Staging-blocking; prevents regression detection for all future PRs; actionable |
+| 3 | AUDIT-1004 (booking half) | P1 | PARTIALLY CLOSED | Booking capacity count-then-insert TOCTOU race (`booking.go` L137-174) | Data correctness bug; overbooking possible under concurrent load; ~50 lines |
+| 4 | AUDIT-801 | P1 | OPEN | Baked DSN fallback `postgresql://sigap:sigap@localhost:5432/sigap` in queue-engine `main.rs` L38 + Dockerfile L38 | Security exposure if deployed with defaults; small fix |
+| 5 | AUDIT-1102 | P1 | PARTIALLY CLOSED | Request ID helpers exist (`request_id.go`) but not wired as middleware in `main.go` L356 | Audit log `request_id` always empty; ~20 lines to wire |
+| 6 | AUDIT-607 | P1 | PARTIALLY CLOSED | `demo.sql` contains `ALTER TABLE` (L39) + `UPDATE` statements; idempotency guards present | Config/separation concern; low exploitability |
+
+### AUDIT-701 Deployment Decision
+
+AUDIT-701 is the only remaining P0 finding. However, it requires a deployment architecture decision (which hosting provider, backup target — S3/GCS/local, pg_dump vs WAL-based, restore SLA) before implementation can begin. AUDIT-1701 (CI Postgres) is a more immediately actionable P1 that:
+
+1. **Unblocks regression detection** — without CI integration tests, future PRs can silently break DB-backed functionality.
+2. **Protects the RBAC and facility-scope fixes** — 64 integration tests currently only run manually.
+3. **Has clear remediation** — add a PostgreSQL service container to `ci.yml`, wire `DATABASE_URL` for the test job.
+4. **No deployment decision needed** — pure CI configuration change.
+
+**Recommendation**: AUDIT-1701 should precede AUDIT-701 unless the deployment architecture decision for backups is made immediately.
+
+### Updated Maturity
+
+| Level | Before PR #53–#55 | After PR #53–#55 |
+|---|---|---|
+| Demo | ~95% | ~98% (full local demo passes end-to-end) |
+| Staging | ~65% | ~75% (+10pp — JWT RBAC, facility scoping, rate limiting, atomic check-in all land) |
+| Production | ~40% | ~55% (+15pp — same gains; backup/restore and CI integration tests remain absolute blockers) |
+
+### Recommended Next PR
+
+**Title:** ci: add PostgreSQL service container for integration tests
+
+**Audit ID:** AUDIT-1701
+
+**Why first:**
+1. **Regression shield** — 64 DB-backed tests (facility-scope, RBAC resolver, handler integration) currently only run locally. Without CI coverage, any future PR can silently break authorization or data integrity.
+2. **Staging gate** — integration test failures in CI prevent merge of broken changes; currently the CI has no DB, so all integration tests SKIP.
+3. **Actionable now** — pure CI configuration; no deployment architecture decision needed.
+4. **Amplifies all future work** — every subsequent PR benefits from automated DB-backed validation.
+
+**Acceptance criteria:**
+- `ci.yml` includes a `postgres` service container (PostgreSQL 16+) with `POSTGRES_DB=sigap_test`
+- Test job sets `DATABASE_URL` from the service container
+- `go test ./...` runs with DB available; integration tests execute (not SKIP)
+- Migration runner applies test-schema migrations before test execution
+- CI badge reflects actual test pass/fail status
+
+**Likely files:**
+- `.github/workflows/ci.yml` — add postgres service, set DATABASE_URL env
+- `apps/api/internal/handler/*_test.go` — no changes needed (tests already written)
+
+**Validation:**
+- CI run shows integration tests RUN (not SKIP)
+- All 64+ tests PASS in CI
+- No regression in existing CI jobs (go vet, cargo test, svelte-check)
