@@ -34,8 +34,7 @@ impl QueueEngine for SigapQueueEngine {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://sigap:sigap@localhost:5432/sigap".to_string());
+    let database_url = std::env::var("DATABASE_URL").unwrap();
 
     let pool = PgPool::connect(&database_url).await?;
 

@@ -35,6 +35,5 @@ COPY --from=builder /app/target/release/sigap-queue-engine /usr/local/bin/sigap-
 EXPOSE 50051
 
 ENV RUST_LOG=info
-ENV DATABASE_URL=postgresql://sigap:sigap@postgres:5432/sigap
 
 ENTRYPOINT ["sigap-queue-engine"]
