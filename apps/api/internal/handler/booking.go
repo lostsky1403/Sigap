@@ -573,6 +573,28 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 		if os.Getenv("SIGAP_ENGINE_FALLBACK") == "dev" {
 			slog.Warn("SIGAP_ENGINE_FALLBACK=dev: retrying queue generation with FakeQueueService",
 				"appointment_id", id)
+
+			// AUDIT-1004: re-acquire ownership BEFORE creating a ticket.  The
+			// rollback above released the appointment back to 'scheduled', so a
+			// concurrent request may have claimed it in the meantime.  Only the
+			// request that successfully flips scheduled→checked_in may insert a
+			// queue ticket; otherwise two requests that both entered this fallback
+			// path would each insert a ticket (duplicate tickets) even though only
+			// one returns 200.
+			ct, err := h.pool.Exec(ctx,
+				`UPDATE appointments SET status = 'checked_in', checkin_at = NOW(), updated_at = NOW() WHERE id = $1 AND status = 'scheduled' AND queue_ticket_id IS NULL`,
+				id)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "Gagal memperbarui status check-in.")
+				return
+			}
+			if ct.RowsAffected() == 0 {
+				slog.Warn("fallback guard: appointment no longer in scheduled state",
+					"appointment_id", id)
+				writeError(w, http.StatusConflict, "Janji temu sudah diproses oleh permintaan lain.")
+				return
+			}
+
 			fake := service.NewFakeQueueService()
 			res, err = fake.Generate(ctx, service.GenerateInput{
 				FacilityID: facilityID,
@@ -582,6 +604,9 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 				},
 			})
 			if err != nil {
+				// We hold checked_in but produced no ticket — release so a retry works.
+				_, _ = h.pool.Exec(ctx,
+					`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
 				writeError(w, http.StatusInternalServerError, "Gagal mengambil nomor antrean.")
 				return
 			}
@@ -607,26 +632,12 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 				uuid.New().String(), patientName, patientPhone, ticketUUID, facilityID, res.FormattedNumber,
 			).Scan(&ticketUUID)
 			if err != nil {
+				_, _ = h.pool.Exec(ctx,
+					`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
 				writeError(w, http.StatusInternalServerError, "Gagal membuat tiket antrean.")
 				return
 			}
 			res.TicketID = ticketUUID
-
-			// Re-transition to checked_in after successful fallback
-			// Guarded: only proceed if appointment is still in scheduled state
-			ct, err := h.pool.Exec(ctx,
-				`UPDATE appointments SET status = 'checked_in', checkin_at = NOW(), updated_at = NOW() WHERE id = $1 AND status = 'scheduled' AND queue_ticket_id IS NULL`,
-				id)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "Gagal memperbarui status check-in.")
-				return
-			}
-			if ct.RowsAffected() == 0 {
-				slog.Warn("fallback guard: appointment no longer in scheduled state",
-					"appointment_id", id)
-				writeError(w, http.StatusConflict, "Janji temu sudah diproses oleh permintaan lain.")
-				return
-			}
 		} else {
 			writeError(w, http.StatusInternalServerError, "Gagal mengambil nomor antrean.")
 			return
