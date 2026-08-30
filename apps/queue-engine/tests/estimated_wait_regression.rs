@@ -11,8 +11,15 @@ use sigap_queue_engine::queue_engine::{GenerateQueueRequest, PatientInfo};
 
 #[tokio::test]
 async fn estimated_wait_minutes_is_25() {
-    let database_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://sigap:sigap@localhost:5432/sigap".to_string());
+    let database_url = match env::var("DATABASE_URL") {
+        Ok(url) => url,
+        Err(_) => {
+            eprintln!(
+                "SKIP: DATABASE_URL not set; estimated_wait regression requires a database connection"
+            );
+            return;
+        }
+    };
 
     let pool = match sqlx::PgPool::connect(&database_url).await {
         Ok(p) => p,

@@ -20,8 +20,15 @@ const TEST_FACILITY_ID: &str = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
 
 #[tokio::test]
 async fn concurrent_queue_requests_produce_unique_numbers() {
-    let database_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://sigap:sigap@localhost:5432/sigap".to_string());
+    let database_url = match env::var("DATABASE_URL") {
+        Ok(url) => url,
+        Err(_) => {
+            eprintln!(
+                "SKIP: DATABASE_URL not set; concurrency guardrail requires a database connection"
+            );
+            return;
+        }
+    };
 
     let pool = match sqlx::PgPool::connect(&database_url).await {
         Ok(p) => p,
