@@ -34,7 +34,8 @@ impl QueueEngine for SigapQueueEngine {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let database_url = std::env::var("DATABASE_URL").unwrap();
+    let database_url =
+        std::env::var("DATABASE_URL").expect("DATABASE_URL environment variable is required");
 
     let pool = PgPool::connect(&database_url).await?;
 
