@@ -249,3 +249,213 @@ AUDIT-701 is the only remaining P0 finding. However, it requires a deployment ar
 - CI run shows integration tests RUN (not SKIP)
 - All 64+ tests PASS in CI
 - No regression in existing CI jobs (go vet, cargo test, svelte-check)
+
+---
+
+## Status After PR #57–#58
+
+- Date: 2026-08-30
+- Baseline: `main @ 9621559` (after PR #57 and #58 merged)
+- Reconciled by: post-merge git history, PostgreSQL 16 execution evidence, and source-code inspection
+
+### Post-Merge Git State
+
+| Check | Result |
+|---|---|
+| HEAD == origin/main | ✅ `9621559f12f43f58cc193c83e6e6a022ae111d2b` |
+| Working tree | ✅ Clean |
+| `git log --oneline -5` | 9621559 → 9e8794b → 449f509 → 06fec1f → f622bbc |
+
+### PR File Ownership
+
+**PR #58** (`9e8794b` — `fix(api): prevent concurrent check-in race condition (AUDIT-1004)`):
+- `apps/api/internal/handler/booking.go` — guarded SQL predicates (+60/-15)
+- `packages/db/migrations/0007_checkin_constraints.sql` — `appointment_day()` IMMUTABLE function (+9/-1)
+
+**PR #57** (`9621559` — `ci: run PostgreSQL-backed integration tests (AUDIT-1701)`):
+- `.github/workflows/ci.yml` — PostgreSQL 16 service + DATABASE_URL + migration step (+53/-1)
+- `apps/api/cmd/ci-migrate/main.go` — new CI migration entrypoint (+54 lines)
+
+### Migration 0007 — Current State
+
+| Property | Value |
+|---|---|
+| Original (ce2df06) | `CREATE UNIQUE INDEX … ON appointments (…, (appointment_time::date))` — FAILS on any PostgreSQL |
+| Current (main) | `CREATE OR REPLACE FUNCTION appointment_day(timestamptz) RETURNS date AS $$ SELECT $1::date $$ LANGUAGE sql IMMUTABLE` + uses `appointment_day(appointment_time)` in index |
+| Checksum stored | ✅ SHA-256 recorded in `schema_migrations.checksum` on apply |
+| Checksum enforced | ❌ **NOT enforced** — `appliedVersions()` reads only `version`, never compares stored vs. file checksum (`migrate.go` lines 81–97) |
+| Original fails on fresh PG16 | ✅ `ERROR: functions in index expression must be marked IMMUTABLE` |
+| Original fails on existing PG16 schema | ✅ Same error (proven on `sigap_truth` DB with 0001–0006 applied) |
+| Fresh install (0001–0009, current main) | ✅ All 9 applied cleanly |
+| Rerun (runner already applied) | ⚠️ Fails at 0001 — `type "facility_type" already exists` — runner lacks idempotency on early migrations |
+| Upgrade path (existing schema, old 0007) | ❌ Original 0007 cannot apply to any PostgreSQL 16 schema regardless of existing state |
+| Conclusion | Original 0007 could never have been applied anywhere. The `appointment_day()` fix is safe for all environments. |
+
+### AUDIT-1004 — CLOSED ✅
+
+| Check | Result |
+|---|---|
+| PostgreSQL concurrency test (count=20) | ✅ **20/20 PASS** |
+| Full CheckIn suite | ✅ **14/14 PASS, 0 SKIP** |
+| Fix location | `booking.go` — guarded `scheduled→checked_in` re-acquire moved BEFORE `fake.Generate()` and ticket INSERT |
+| Why no duplicate tickets | PostgreSQL row-level locking ensures only one request wins the guarded UPDATE; loser returns 409 before INSERT |
+| Test presence | `TestCheckIn_ConcurrentAttempts_ExactlyOneWins` confirmed in `booking_checkin_test.go` |
+
+### AUDIT-1701 — CLOSED ✅
+
+| Check | Result |
+|---|---|
+| PostgreSQL 16 service in CI | ✅ `image: postgres:16`, healthcheck `pg_isready` |
+| DATABASE_URL | ✅ `postgresql://sigap_ci:sigap_ci_pass@localhost:5432/sigap_ci?sslmode=disable` |
+| Migration step | ✅ `go run ./cmd/ci-migrate` before test execution |
+| pipefail | ✅ `set -o pipefail` preserves exit code |
+| TestRBACResolver* | ✅ RUN, PASS, SKIP 0 |
+| TestFacilityScope* | ✅ RUN, PASS, SKIP 0 |
+| TestCheckIn* | ✅ RUN, PASS, SKIP 0 (including concurrency test) |
+| DB-backed security test proof step | ✅ `Verify DB-backed security tests executed` grep step in CI |
+| Router coverage | ✅ 90.6% (≥90% required) |
+| CI gate preservation | ✅ All 6 gates GREEN and blocking |
+| Latest CI run (main push) | ✅ success — Actions run after `9621559` |
+
+### Corrected Audit-ID Definitions
+
+Per `docs/PRODUCTION_READINESS_AUDIT.md` (repository authority):
+
+| ID | Domain | Finding |
+|---|---|---|
+| AUDIT-701 | Backup/Restore | No backup mechanism, no restore procedure, RPO ∞ / RTO ∞. P0* (activates at first real-data deployment). Requires deployment architecture decision. |
+| AUDIT-801 | Config/Secrets | Default DB credentials baked into queue-engine Dockerfile (`ENV DATABASE_URL=postgresql://sigap:sigap@...`) and `main.rs` `unwrap_or_else` fallback. P1. |
+| AUDIT-1102 | Logging/Audit | Request IDs implemented (`request_id.go`) but never injected into middleware chain — audit `request_id` always empty. P1. |
+| AUDIT-607 | Config/Seeds | Seeds contain `ALTER TABLE` (demo.sql L39) + `UPDATE` statements; demo IDs runtime-reachable by convention only. P1. |
+
+### Remaining P0/P1 Risks — Re-Ranked
+
+| Rank | ID | Severity | Status | Risk |
+|---|---|---|---|---|
+| 1 | AUDIT-701 | **P0*** | OPEN | No backup/restore. RPO ∞ / RTO ∞. Requires hosting architecture decision (managed Postgres, object storage, RPO/RTO targets) — not a code-only fix. |
+| 2 | AUDIT-801 | P1 | OPEN | Baked DB credentials in queue-engine Dockerfile + `main.rs`. Small blast radius; requires Dockerfile edit + `main.rs` change. |
+| 3 | AUDIT-1102 | P1 | OPEN | Request IDs exist but not wired. ~20 lines to add middleware. |
+| 4 | AUDIT-607 | P1 | PARTIALLY CLOSED | ALTER TABLE moved to 0007; env-guard convention established; runtime-reachable IDs remain by convention. |
+
+### Recommended Next PR
+
+**Title:** `fix(queue-engine): remove baked-in default credentials and require runtime injection
+
+**Audit ID:** AUDIT-801
+
+**Why AUDIT-801 over AUDIT-1102:**
+1. AUDIT-801 has a clear security impact (credentials in Docker image history).
+2. Scope is small: two files (`Dockerfile`, `main.rs`), no cross-cutting changes.
+3. Automated validation available: `docker history` should not show `DATABASE_URL` credentials; grep for `unwrap_or_else.*postgresql` should return empty.
+4. AUDIT-1102 is also immediately actionable and could follow in the same PR if desired, but AUDIT-801 has higher per-issue severity.
+
+**Acceptance criteria:**
+- `docker history` on the queue-engine image reveals no `DATABASE_URL` credential string.
+- `main.rs` does not contain `unwrap_or_else` with embedded DSN.
+- `cargo test` and `cargo clippy` pass.
+
+**Likely files:**
+- `apps/queue-engine/Dockerfile` — remove `ENV DATABASE_URL=...`
+- `apps/queue-engine/src/main.rs` — remove fallback DSN
+
+**Validation:**
+- `docker history sigap/queue-engine:latest | grep -i password` → no matches
+- `grep -r "unwrap_or_else.*postgresql" apps/queue-engine/` → no matches
+- `cargo test` in queue-engine → PASS
+
+---
+
+## Status After PR #57–#58
+
+- Date: 2026-08-30
+- Baseline: `main @ 9621559` (after PR #57 + #58 merged)
+- Reconciled by: post-merge git history inspection, PostgreSQL 16 truth proofs, and local integration test validation
+
+### PR File Ownership
+
+**PR #58** (`9e8794b` — `fix(api): prevent concurrent check-in race condition (AUDIT-1004)`)
+- Files: `apps/api/internal/handler/booking.go` (+54/-15), `packages/db/migrations/0007_checkin_constraints.sql` (+9/-1)
+- Note: Despite being titled "check-in concurrency fix", PR #58 also carried the migration 0007 IMMUTABLE fix into its squash commit because it was rebased onto main which contained the PR #57 branch's 0007 change.
+
+**PR #57** (`9621559` — `ci: run PostgreSQL-backed integration tests`)
+- Files: `.github/workflows/ci.yml` (+53/-1), `apps/api/cmd/ci-migrate/main.go` (+54, new file), `packages/db/migrations/0007_checkin_constraints.sql` (+8/-1 — same IMMUTABLE fix as PR #58)
+- Note: Both PRs converge on the same 0007 content. The final main state of 0007 is introduced by PR #58's squash (9e8794b) on top of PR #57 (9621559).
+
+### Migration 0007 — Final State
+
+| Field | Value |
+|---|---|
+| Original (ce2df06) | `(appointment_time::date)` in index expression — FAILS on any PostgreSQL 16 (IMMUTABLE required) |
+| Current (main) | `appointment_day(timestamptz)` IMMUTABLE wrapper + `appointment_day(appointment_time)` in index |
+| Checksum stored | ✅ SHA-256 in `schema_migrations.checksum` column |
+| Checksum enforced | ❌ NO — stored but never compared on subsequent runs |
+| Fresh install (PG16) | ✅ 0001–0009 all apply cleanly |
+| Rerun (runner) | ⚠️ Fails at 0001 — types already exist (non-idempotent; schema_migrations not recorded when applied manually via `psql`) |
+| Upgrade path (existing schema, no schema_migrations) | ⚠️ Same — runner fails at 0001 without idempotent migrations |
+| Old 0007 on existing PG16 schema | ❌ FAILS: `ERROR: functions in index expression must be marked IMMUTABLE` |
+| New 0007 on existing PG16 schema | ✅ PASS (appointment_day is IMMUTABLE; unique constraint already exists so no-op) |
+| Historical edit risk | **LOW** — original 0007 cannot execute on PostgreSQL 16 regardless of timezone/config; it could never have been applied to any persistent environment |
+| Conclusion | Current 0007 is correct and safe. Runner idempotency gap (0001 lacks `IF NOT EXISTS` for types) is a separate pre-existing issue not introduced by these PRs. |
+
+### AUDIT-1004 — CLOSED ✅
+
+**Postgres test:** PostgreSQL 16 container `sigap-pg58`, DB `sigap_demo`, all 9 migrations applied, `appointment_day` function IMMUTABLE.
+
+| Check | Result |
+|---|---|
+| `TestCheckIn_ConcurrentAttempts_ExactlyOneWins` count=20 | **20/20 PASS** |
+| Full `TestCheckIn` suite | **14/14 PASS, 0 FAIL, 0 SKIP** |
+| Queue ticket count per iteration | **Exactly 1** |
+| Final appointment state | **`queued`** |
+
+**Fix mechanism:** The guarded `scheduled→checked_in` re-acquire is now the first operation inside the `SIGAP_ENGINE_FALLBACK=dev` path — before `fake.Generate()` and before the ticket INSERT. Only the request that wins the atomic UPDATE proceeds to create a ticket. The loser returns `409 Conflict` before any INSERT. All failure paths properly rollback the guarded re-acquire.
+
+### AUDIT-1701 — CLOSED ✅
+
+**CI design:** PostgreSQL 16 service container (`postgres:16`), synthetic credentials (`sigap_ci`/`sigap_ci_pass`), `DATABASE_URL` exported, `pg_isready` healthcheck (5 retries, 10s interval), `set -o pipefail`, migration via `go run ./cmd/ci-migrate`, explicit skip-detection gate (fails CI if RBAC/FacilityScope/CheckIn tests are skipped despite DB being available).
+
+**Latest CI run (GitHub Actions #33320708440, push to main):** SUCCESS — all 6 gates green.
+
+| Gate | Status |
+|---|---|
+| Go API Tests (PostgreSQL job) | ✅ GREEN |
+| Go Vulnerability Scan | ✅ GREEN |
+| Rust Engine Check | ✅ GREEN |
+| Rust Vulnerability Scan | ✅ GREEN |
+| Secret Leak Scan | ✅ GREEN |
+| SvelteKit Check | ✅ GREEN |
+
+### Corrected Audit-ID Mapping
+
+The reconciliation prior to this session used some non-canonical definitions. Verified from `docs/PRODUCTION_READINESS_AUDIT.md`:
+
+| ID | Verified Definition (from audit doc) |
+|---|---|
+| AUDIT-701 | **P0** — No backup mechanism, no restore procedure, RPO ∞ / RTO ∞. Domain: Backup/Restore. |
+| AUDIT-801 | **P1** — Default DB credentials baked into queue-engine Dockerfile (`ENV DATABASE_URL=postgresql://sigap:sigap@...`) and `main.rs` fallback DSN (`unwrap_or_else`). Domain: Config/Secrets. |
+| AUDIT-1102 | **P1** — Request IDs implemented (`request_id.go`) but never wired into middleware chain; `RequestIDFromContext` always `""`; audit rows store empty `request_id`. Domain: Logging/Audit. |
+| AUDIT-607 | **P1** — Seeds contain DDL (`demo.sql` L39: `ALTER TABLE`) + UPDATEs; demo IDs runtime-reachable; no env guard on seed execution. Domain: Database/Migrations. |
+
+### Remaining Open/P1 Findings — Re-Ranked
+
+| Rank | ID | Severity | Domain | Finding | Status | Notes |
+|---|---|---|---|---|---|---|
+| 1 | AUDIT-701 | **P0** | Backup | No backup/restore; RPO ∞ / RTO ∞ | **OPEN** | Requires deployment architecture decision (hosting model, backup target, RPO/RTO criteria). A pg_dump script alone does not satisfy production backup requirements. |
+| 2 | AUDIT-801 | P1 | Config | Baked DSN in queue-engine Dockerfile + `main.rs` | **OPEN** | Straightforward: remove `ENV DATABASE_URL` from Dockerfile, delete `unwrap_or_else` fallback in `main.rs`, require runtime injection. |
+| 3 | AUDIT-1102 | P1 | Logging/Audit | Request IDs implemented but never wired to middleware | **OPEN** | Straightforward: inject `X-Request-ID`/generate UUID in middleware chain, echo response header, feed to audit service. |
+| 4 | AUDIT-607 | P1 | DB/Migrations | Seeds contain DDL; demo IDs runtime-reachable | **OPEN** | Move `ALTER TABLE` from `demo.sql` to a numbered migration; add env guard (`SIGAP_ENV != local` refuses execution). |
+
+### Recommended Next PR
+
+**Title:** `fix(queue-engine): require runtime database credential injection`
+
+**Audit ID:** AUDIT-801
+
+**Why this one:**
+1. **P1 severity** — baked credentials visible in `docker history`; if image is leaked or runs without env injection, connects with default `sigap:sigap`.
+2. **Small, self-contained blast radius** — two files: `apps/queue-engine/Dockerfile` (remove 1 `ENV` line) and `apps/queue-engine/src/main.rs` (delete fallback DSN).
+3. **Automated validation available** — `docker history sigap/queue-engine | grep DATABASE_URL` returns empty after fix; smoke tests validate connection with injected credentials.
+4. **No architecture dependencies** — unlike AUDIT-701 (needs hosting decision) or AUDIT-1102 (needs middleware audit chain), AUDIT-801 is a pure configuration fix.
+5. **Amplifies AUDIT-701 work** — removing hardcoded credentials is a prerequisite for any production deployment that uses managed secrets (K8s secrets, Vault, Cloud SQL Auth Proxy).
+
+**Acceptance criteria
