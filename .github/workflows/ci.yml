@@ -10,6 +10,25 @@ jobs:
   api:
     name: Go API Tests
     runs-on: ubuntu-latest
+
+    env:
+      DATABASE_URL: postgresql://sigap_ci:sigap_ci_pass@localhost:5432/sigap_ci?sslmode=disable
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sigap_ci
+          POSTGRES_PASSWORD: sigap_ci_pass
+          POSTGRES_DB: sigap_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sigap_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -21,13 +40,45 @@ jobs:
           go-version-file: apps/api/go.mod
           cache-dependency-path: apps/api/go.sum
 
-      - name: Test API (with coverage)
+      - name: Apply database migrations
         run: |
           cd apps/api
+          go run ./cmd/ci-migrate
+
+      - name: Test API (with coverage)
+        run: |
+          set -o pipefail
+          cd apps/api
           go mod download
-          go test ./... -v -coverprofile=coverage.out
+          go test ./... -v -coverprofile=coverage.out 2>&1 | tee test_output.log
           echo "Total coverage:"
           go tool cover -func=coverage.out | tail -1
+
+      - name: Verify DB-backed security tests executed
+        run: |
+          cd apps/api
+          echo "=== DB-backed test execution proof ==="
+          echo "Checking TestRBACResolver..."
+          if ! grep -q "=== RUN.*TestRBACResolver" test_output.log; then
+            echo "FAIL: TestRBACResolver tests did not run"
+            exit 1
+          fi
+          echo "Checking TestFacilityScope..."
+          if ! grep -q "=== RUN.*TestFacilityScope" test_output.log; then
+            echo "FAIL: TestFacilityScope tests did not run"
+            exit 1
+          fi
+          echo "Checking TestCheckIn..."
+          if ! grep -q "=== RUN.*TestCheckIn" test_output.log; then
+            echo "FAIL: TestCheckIn tests did not run"
+            exit 1
+          fi
+          echo "Skip check (must be zero for DB-backed tests):"
+          if grep -E -- "--- SKIP: *(TestRBACResolver|TestFacilityScope|TestCheckIn)" test_output.log; then
+            echo "FAIL: DB-backed tests were skipped despite CI PostgreSQL service"
+            exit 1
+          fi
+          echo "OK: all DB-backed tests executed with zero skips"
 
       - name: Coverage gate (deny-by-default router must stay covered)
         run: |
