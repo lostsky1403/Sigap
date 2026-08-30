@@ -365,6 +365,37 @@ Per `docs/PRODUCTION_READINESS_AUDIT.md` (repository authority):
 
 ---
 
+## Status After PR #60–#61
+
+- Date: 2026-08-31
+- Baseline: `main @ b8b5b93` (after PR #60 and #61 merged)
+
+### AUDIT-801 — CLOSED ✅
+
+| PR | What |
+|---|---|
+| #60 (`70f8d03`) | Removed `ENV DATABASE_URL` from `apps/queue-engine/Dockerfile`; removed `unwrap_or_else` fallback DSN from `main.rs`; both integration tests now skip cleanly when `DATABASE_URL` is absent |
+| #61 (`b8b5b93`) | Post-merge verification found `main.rs` used a bare `.unwrap()` (generic panic message); replaced with `.expect("DATABASE_URL environment variable is required")` so the failure names the missing variable |
+
+Post-merge verification evidence:
+
+- Runtime proof (no `DATABASE_URL`): exit code 101, `panicked at src/main.rs:38:39: DATABASE_URL environment variable is required: NotPresent`; no credential value printed
+- Runtime proof (unreachable synthetic `DATABASE_URL`): config parsing succeeds, fails at DB connection stage with `Error: PoolTimedOut`; DSN never printed
+- `git grep "postgresql://sigap:sigap"` → 0 runtime matches (docs-only: synthetic local examples in `DEV_SETUP.md`, historical references in audit docs)
+- `git grep "unwrap_or_else.*postgresql" apps/queue-engine` → 0 matches
+- `cargo audit` → exit 0 with 3 allow-listed advisories (anyhow unsound, event-listener unsound, spin yanked)
+- Known separate finding (NOT AUDIT-801): `docker build` of the queue-engine fails on both `ad656ef` (pre-#60) and `70f8d03` with `protoc failed: Could not make proto path relative: ../../protos/sigap/queue_engine.proto` — PRE-EXISTING build.rs/proto-context defect; Dockerfile statically verified to contain no credential-bearing ENV (only `ENV RUST_LOG=info`)
+
+### Remaining P0/P1 Risks — Re-Ranked
+
+| Rank | ID | Severity | Status | Risk |
+|---|---|---|---|---|
+| 1 | AUDIT-701 | **P0*** | OPEN | No backup/restore. RPO ∞ / RTO ∞. Requires hosting architecture decision. |
+| 2 | AUDIT-1102 | P1 | OPEN | Request IDs implemented but not wired into middleware chain. |
+| 3 | AUDIT-607 | P1 | PARTIALLY CLOSED | `ALTER TABLE` moved to migration; env-guard convention established; demo IDs runtime-reachable by convention only. |
+
+---
+
 ## Status After PR #57–#58
 
 - Date: 2026-08-30
