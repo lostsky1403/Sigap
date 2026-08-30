@@ -4,7 +4,7 @@
 //! Run with: `cargo test --test concurrency_guardrail -- --test-threads=16`
 //!
 //! This test requires a running PostgreSQL with the sigap schema.
-//! Set DATABASE_URL or it defaults to the local docker-compose URL.
+//! DATABASE_URL must be set; the test skips cleanly when it is not.
 //!
 //! Skipped gracefully if the database is unreachable so CI without DB still passes.
 
