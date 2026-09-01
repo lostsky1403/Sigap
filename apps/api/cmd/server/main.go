@@ -347,7 +347,7 @@ func main() {
 	// per-route RBAC and audit logging attach to in later phases.
 	// RequirePermission enforces per-route RequiredPolicy using the actor
 	// injected by the selected auth provider. The order is:
-	//   LimitBody → SecurityHeaders → TrustedProxy → DenyByDefault → Auth → Audit → RBAC → mux.
+	//   RequestID → LimitBody → SecurityHeaders → TrustedProxy → DenyByDefault → Auth → Audit → RBAC → mux.
 	injectAudit := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			next.ServeHTTP(w, r.WithContext(identity.ContextWithAudit(r.Context(), auditSvc)))
@@ -355,6 +355,7 @@ func main() {
 	}
 	handler := router.SecurityHeaders(router.TrustedProxy(router.DenyByDefault(auth.Middleware(provider)(injectAudit(identity.RequirePermission(mux))))))
 	handler = router.LimitRequestBody(256<<10)(handler) // AUDIT-1001: 256KB max request body
+	handler = identity.RequestIDMiddleware(handler)
 
 	// AUDIT-1001: configured http.Server with timeouts to prevent
 	// slowloris and resource exhaustion.
