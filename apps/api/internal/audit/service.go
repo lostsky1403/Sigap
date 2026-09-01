@@ -59,7 +59,7 @@ func (s *Service) LogEvent(ctx context.Context, e Event) {
 	e = sanitizeEvent(e)
 	prevHash, err := s.previousHash(ctx)
 	if err != nil {
-		slog.Warn("audit: failed to read previous hash", "err", err)
+		slog.Warn("audit: failed to read previous hash", "err", err, "request_id", e.RequestID)
 	}
 
 	hash := computeHash(e, prevHash)
@@ -149,6 +149,7 @@ func (s *Service) LogEvent(ctx context.Context, e Event) {
 		slog.Warn("audit: failed to insert event",
 			"action", e.Action,
 			"resource_type", e.ResourceType,
+			"request_id", e.RequestID,
 			"err", err)
 	}
 }
