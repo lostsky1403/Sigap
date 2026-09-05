@@ -489,4 +489,227 @@ The reconciliation prior to this session used some non-canonical definitions. Ve
 4. **No architecture dependencies** — unlike AUDIT-701 (needs hosting decision) or AUDIT-1102 (needs middleware audit chain), AUDIT-801 is a pure configuration fix.
 5. **Amplifies AUDIT-701 work** — removing hardcoded credentials is a prerequisite for any production deployment that uses managed secrets (K8s secrets, Vault, Cloud SQL Auth Proxy).
 
-**Acceptance criteria
+**Acceptance criteria:**
+- `docker history` on the queue-engine image reveals no `DATABASE_URL` credential string.
+- `main.rs` does not contain `unwrap_or_else` with embedded DSN.
+- `cargo test` and `cargo clippy` pass.
+
+**Likely files:**
+- `apps/queue-engine/Dockerfile` — remove `ENV DATABASE_URL=...`
+- `apps/queue-engine/src/main.rs` — remove fallback DSN
+
+**Validation:**
+- `docker history sigap/queue-engine:latest | grep -i password` → no matches
+- `grep -r "unwrap_or_else.*postgresql" apps/queue-engine/` → no matches
+- `cargo test` in queue-engine → PASS
+
+---
+
+## Status After PR #63
+
+- Date: 2026-09-05
+- Baseline: `main @ de15089` (after PR #63 `fix(api): propagate request IDs through audit and logs` merged)
+- Reconciled by: post-merge runtime validation on `127.0.0.1:18080` + PostgreSQL 5434 + source inspection
+- Previous expected main before PR #63: `4af9688` (after AUDIT-801 closure via PR #60–#62) — confirmed
+
+### Final Git State (post-merge verification)
+
+| Check | Result |
+|---|---|
+| `git checkout main && git pull --ff-only origin/main` | Already up to date |
+| `git status --short` | Clean (empty) |
+| `HEAD` | `de15089b399deeb3121c8e60056c192e83ce4c01` |
+| `origin/main` | `de15089b399deeb3121c8e60056c192e83ce4c01` |
+| `HEAD == origin/main` | ✅ |
+| `git log --oneline -12` | `de15089` → `4af9688` → `b8b5b93` → `70f8d03` → `ad656ef` → `9621559` → `9e8794b` → `449f509` → `06fec1f` → `f622bbc` → `ce2df06` → `5f4e101` |
+| History confirms | #60 `70f8d03` AUDIT-801 · #61 `b8b5b93` corrective · #62 `4af9688` docs · #63 `de15089` AUDIT-1102 |
+
+### AUDIT-801 — REMAINS CLOSED ✅ (no regression)
+
+| Check | Result |
+|---|---|
+| `git grep -n "postgresql://sigap:sigap" apps/queue-engine` | 0 matches (exit 1) |
+| `git grep -n "unwrap_or_else.*postgresql" apps/queue-engine` | 0 runtime matches; only `build.rs:14` `unwrap_or_else(|e| panic!("Failed to compile protos: {}", e))` and `queue.rs:53` non-credential fallback |
+| `apps/queue-engine/Dockerfile` | No `DATABASE_URL` ENV — only `ENV RUST_LOG=info` (line 37) |
+| `apps/queue-engine/src/main.rs:37-38` | `std::env::var("DATABASE_URL").expect("DATABASE_URL environment variable is required")` — clear requirement, no fallback DSN |
+| Status | **CLOSED** — do not list as remaining |
+
+### PR #63 — Exact Diff Verified
+
+| Field | Value |
+|---|---|
+| PR | #63 `fix(api): propagate request IDs through audit and logs` — MERGED |
+| Merge commit | `de15089b399deeb3121c8e60056c192e83ce4c01` (parents `4af9688`) |
+| Branch commit | `795aec95e03978bb25225ffa7fc9d193814d92e5` |
+| `gh pr view 63 --json files` | 5 files |
+| `git diff --stat 4af9688..795aec9` | `apps/api/cmd/server/main.go` (3+-), `apps/api/internal/audit/service.go` (3+-), `apps/api/internal/identity/request_id.go` (+34), `request_id_test.go` (+243), `request_id_audit_integration_test.go` (+119) — 400 insertions, 2 deletions |
+| No unrelated changes | ✅ — only request-ID wiring, tests, and audit log enrichment |
+
+**Key runtime change (`main.go:350-358`):** middleware order is `RequestID → LimitBody(256KB) → SecurityHeaders → TrustedProxy → DenyByDefault → Auth → Audit → RBAC → mux`; `handler = identity.RequestIDMiddleware(handler)` is outermost so `X-Request-ID` is set before any early failure.
+
+### Post-Merge Runtime — Local Bootstrap
+
+| Component | Status |
+|---|---|
+| PostgreSQL 18 on 5434 (`postgresql-x64-18` Running, port 5434 LISTENING) | ✅ `pg_isready 5434 - accepting connections`; `schema_migrations` count 9; `facilities` count 7 |
+| Queue engine (Rust) | Not running — `readyz` reports `engine unreachable` (expected; see classification below) |
+| Go API (`server` pid 24764 on `127.0.0.1:18080`) | ✅ `SIGAP_API_PORT=18080`, `SIGAP_ENGINE_FALLBACK=dev`, `SIGAP_ENV=local`, `SIGAP_AUTH_MODE=dev`, `SIGAP_DEV_IDENTITY=true` |
+| Web (5173) | Not required for API smoke; not started |
+
+| Probe | Result | X-Request-Id |
+|---|---|---|
+| `GET /health` | 200 `{"status":"ok","service":"sigap-api"}` | `ae752e21ff26d94f46c29edf5462c303` (32 hex, also `afd525b6...`, `bbed7091...`) |
+| `GET /readyz` | 503 `{"status":"unavailable","service":"sigap-api","detail":"engine unreachable"}` | `9c493d8a084c37cb7e04d307931ba822` / `33413715...` — header present even on 503 |
+
+**Classification of `readyz` 503:** `environment/startup` — queue engine not running. API is correctly configured with `SIGAP_ENGINE_FALLBACK=dev` so booking/check-in still succeeds via `FakeQueueService`; `readyz` correctly probes the engine and surfaces `engine unreachable`. Not a PR #63 regression. No code change to weaken request-ID middleware was made.
+
+### Smoke Suites — 8/8 + FULL LOCAL DEMO: PASS
+
+**Pre-run seed:** `schema_migrations` 9, `facilities` 7 (incl. `d000 DEMO`), `psql dev.sql/rbac.sql/demo.sql` re-applied idempotently; demo `appointments/queue_tickets/notification_outbox` for `d000` cleared to reset `capacity_per_slot=3` slot.
+
+| Suite | Result | Details |
+|---|---|---|
+| `sigap-demo-smoke.ps1` | **8/8 PASS** | health, admin.facilities.list (7), admin.service-units.discover (d001 Poli Umum Demo), admin.schedules.discover, public.booking `b9ce8e54 code P9C2JS`, public.checkin `RSK-0001`, admin.queues.list (3 tickets), admin.appointments.status → completed. Prior 409 `Slot jadwal sudah penuh` was stale-state (4 leftover demo bookings) — cleared and re-ran 8/8. |
+| `sigap-notification-smoke.ps1` | **9/9 PASS** | health, dev.identity, summary.before pending=5, list.before, worker.dry_run 0 delivered, dry_run_verify unchanged, worker.once claimed=5 delivered=2 retried=1, summary.after pending=1 delivered=8, list.after |
+| `sigap-patient-portal-smoke.ps1` | **5/5 PASS** | health, valid_lookup `SMOKE01` 200, invalid_code 400, unknown_code 404, pii_absence |
+| `sigap-full-local-demo.ps1` (with `DATABASE_URL` + `SIGAP_API_BASE=127.0.0.1:18080`) | **FULL LOCAL DEMO: PASS** | demo 8/8 + notification 9/9 + patient portal 5/5 — exit 0 |
+
+### Request-ID HTTP Proof — Real Runtime (`curl.exe -i`)
+
+All responses carry a non-empty 32-char lowercase hex `X-Request-Id` (case-insensitive `X-Request-ID` in tests, `X-Request-Id` on wire — both normalized by Go `Header.Get`).
+
+| Path | Method | Status | X-Request-Id | Verdict |
+|---|---|---|---|---|
+| `/health` | GET | 200 | `ae752e21ff26d94f46c29edf5462c303` | 32 hex ✅ |
+| `/api/v1/queues/generate` (bad JSON) | POST `{"bad":}` | 400 `Format permintaan tidak valid.` | `4a62f79ce78e01fff5b33d9498c6fd0b` | 32 hex ✅ early failure |
+| `/does-not-exist-xyz` | GET | 401 `rute tidak dikenali` (deny-by-default) | `b669388056d946858b6e1926369ca80a` | 32 hex ✅ |
+| `/api/v1/admin/facilities` (no auth) | GET | 403 `autentikasi diperlukan.` | `961b592c35d151ea93ebebfbca0e678b` | 32 hex ✅ |
+| `/api/v1/admin/facilities/000...000` (no such) | GET + dev header | 404 `Fasilitas tidak ditemukan.` | `4a7aa5b14dc2c77a7112743049167218` | 32 hex ✅ |
+| `/readyz` | GET | 503 `engine unreachable` | `9c493d8a084c37cb7e04d307931ba822` | 32 hex ✅ even on 503 |
+| `429` | — | — | — | Covered by unit test (see §11) — not triggerable live without hammering limiter |
+| `500` | — | — | — | Covered by unit test; no debug production route added |
+
+**Uniqueness:** 4 sequential `GET /health` → `20bffff3ae14f4fbe20e938bb07b843b`, `1911ebe5d78e784bdaa6e1c23fe0f0de`, `69f75114686c26ad04834e570a6f773d`, `f3359e30ce9bbb3dd0daceec18620f91` — `unique 4/4 all32 true`.
+
+### Inbound Header Trust Proof — Server-Generated-Only
+
+| Field | Value |
+|---|---|
+| Client supplied | `X-Request-ID: attacker-controlled-value` |
+| Server returned | `9533626ce8caa3378550f11ca10273f6` (also `aa2331d0...`, `36ef5d79...`) |
+| Ignored successfully | ✅ `true` — server always calls `NewRequestID()` and never reads inbound `X-Request-ID`/`X-Correlation-ID` (`request_id.go:21-23` trust model comment) |
+| Audit/context uses | Server-generated value only — proven by DB match below |
+
+### Audit DB Match Proof — `response == context == audit_events.request_id`
+
+Integration test: `apps/api/internal/identity/request_id_audit_integration_test.go` (`TestRequestIDMiddleware_AuditDBProof`) — uses `DATABASE_URL` primary with `SIGAP_DATABASE_URL` fallback, skips only if no DB/table. On this machine `DATABASE_URL` was set to the local `postgresql://sigap:***@127.0.0.1:5434/sigap?sslmode=disable` (password redacted) → runs (no skip).
+
+| Check | Value |
+|---|---|
+| `go test ./internal/identity/... -count=1 -v -run TestRequestIDMiddleware_AuditDBProof` | **PASS** (0.09s) |
+| Response `X-Request-ID` | `36ef5d797a0b68b0d28f21ec51c557e3` |
+| `audit_events.request_id` (queried via `pgxpool`) | `36ef5d797a0b68b0d28f21ec51c557e3` |
+| `MATCH` | `true` |
+| Non-empty | ✅ 32 hex |
+| Prior run (earlier verification) | `ffd282d8b232c6dc18065b460366d8a1` MATCH true |
+
+### Targeted Test Proof
+
+| Suite | Result |
+|---|---|
+| `go test ./internal/identity/... -count=1 -v` | **PASS** — 16 tests incl. `TestActor_*`, 12 `TestRequestIDMiddleware_*` including `TestRequestIDMiddleware_AuditDBProof`, `TestRequestIDMiddleware_RateLimit429StillHasID`, etc. `ok 0.156s` |
+| `go test ./... -count=1` | **PASS** — 12 packages: `cmd/bootstrap`, `cmd/server`, `internal/audit`, `internal/auth` (1.96s), `internal/config`, `internal/handler` (6.5s), `internal/identity` (0.29s), `internal/migrate`, `internal/notification`, `internal/router` — all `ok`, `?` only for `[no test files]` |
+| `go vet ./...` | **PASS** — exit 0, no output |
+| `govulncheck ./...` (`go run golang.org/x/vuln/cmd/govulncheck@latest`) | **PASS** — `No vulnerabilities found. Your code is affected by 0 vulnerabilities.` (1 unreachable in deps, correctly ignored) |
+| `pnpm --filter sigap-web run check` | **PASS** — `svelte-check found 0 errors and 0 warnings` |
+| Relevant skips | **0** — audit DB proof did not skip; all 429/500 paths exercised |
+
+### Header on Early Failures — 401/403/404/429/500
+
+| Status | Test | X-Request-ID present |
+|---|---|---|
+| 401 | `TestRequestIDMiddleware_AuthFailureStillHasID` (401) + live `GET /does-not-exist-xyz` 401 | ✅ |
+| 403 | `TestRequestIDMiddleware_ForbiddenStillHasID` (403) + live `GET /admin/facilities` 403 | ✅ |
+| 404 | `TestRequestIDMiddleware_NotFoundStillHasID` + live `GET /admin/facilities/000...000` 404 | ✅ |
+| 429 | `TestRequestIDMiddleware_RateLimit429StillHasID` — `StatusTooManyRequests` handler wrapped in `RequestIDMiddleware`, asserts `rec.Header().Get(XRequestIDHeader) != ""` | ✅ — **429 proof now concrete** (prior final report lacked this; now in `request_id_test.go:238-258`) |
+| 500 | `TestRequestIDMiddleware_500StillHasID` — 500 handler wrapped, asserts header present | ✅ |
+| | `TestRequestIDMiddleware_SetsHeaderBeforeHandlerRuns` | ✅ header set before `next.ServeHTTP` (panic-safe) |
+
+No new runtime behavior was added; 429/500 proofs are test-only wrappers confirming the outermost `RequestIDMiddleware` (applied last in `main.go:358`, executed first) survives every early return.
+
+### Log Correlation Claims — Precise Scope
+
+| Scope | Status | Evidence |
+|---|---|---|
+| **Audit-event correlation** | ✅ **FIXED** | `audit.Service.LogEvent` now receives non-empty `Event.RequestID` from `identity.RequestIDFromContext` (via `injectAudit` middleware). Inserted into `audit_events.request_id` (`service.go:99 col request_id`, `requestID *string` lines 79-82, 112, 132). Proven by DB match above. |
+| **Audit service warning logs** | ✅ **Enriched** | `service.go:62` `slog.Warn("audit: failed to read previous hash", ..., "request_id", e.RequestID)`; `service.go:150-153` `slog.Warn("audit: failed to insert event", ..., "request_id", e.RequestID, "err", err)`. Note: `service.go:142-147` `slog.Warn("audit: dev fallback also failed", "action", ..., "original_err", err, "retry_err", retryErr)` — on `main @ de15089` this log lacks `request_id`; a stashed follow-up (`git stash list` `audit dev fallback request_id`) adds `"request_id", e.RequestID` there to make all three audit warning paths consistent. Not included in this docs-only PR per scope rule. |
+| **Global request logging** | ❌ **Not claimed** | No global `log/slog` request logger or OTel tracing yet. Only audit-service warnings are enriched. `AUDIT-1101` (JSON log handler) and `AUDIT-1204` (distributed tracing) remain open as P2s — not overstated. |
+
+### Remaining Audit State — Corrected After PR #60–#63
+
+| ID | Domain | Original Severity | Status after PR #63 | Evidence |
+|---|---|---|---|---|
+| **AUDIT-801** | Config/Secrets — baked `DATABASE_URL` in queue-engine | P1 | **CLOSED** | See regression table above; `Dockerfile` + `main.rs` verified |
+| **AUDIT-1102** | Logging/Audit — request IDs never injected | P1 | **CLOSED** | Runtime + DB match + 16 tests + 429 proof above; middleware wired at `main.go:358` |
+| **AUDIT-701** | Backup/Restore — no backup, no restore, RPO ∞ / RTO ∞ | **P0*** | **OPEN** | Repo grep: only `ROADMAP.md:191` Phase 10 backlog; single `pgdata` volume, no WAL archiving, no `Makefile` target, no CI drill. Still latent until first real-data deployment. |
+| **AUDIT-607** | Config/Seeds — `demo.sql:39` `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS notes` + `UPDATE`s, demo IDs runtime-reachable | P1 | **PARTIALLY CLOSED** | `ALTER TABLE` is `IF NOT EXISTS` (idempotent) but still DDL in a seed; `packages/db/seed/demo.sql` header claims `No destructive SQL — no TRUNCATE, no DELETE, no UPDATE of existing rows` yet contains `UPDATE`s (lines ~119-360 contradictory); no env guard on seed execution; demo IDs `d000`, `SMOKE01` remain by convention only. |
+
+**Do not resurrect:** `AUDIT-801`, rate limiting (`AUDIT-401/402/403`), token lifecycle (`AUDIT-103/104`), session management — no separate open finding on current main beyond what is ranked above.
+
+### Pre-Existing Docker Proto Defect
+
+| Field | Value |
+|---|---|
+| **Finding** | Queue-engine `docker build` fails with `protoc failed: Could not make proto path relative: ../../protos/sigap/queue_engine.proto` |
+| **Build file** | `apps/queue-engine/build.rs:8-14` `tonic_build::compile_protos(&["../../protos/sigap/queue_engine.proto"], &["../../protos"])` |
+| **Dockerfile copy** | `apps/queue-engine/Dockerfile:13` `COPY protos/sigap/queue_engine.proto ./protos/sigap/queue_engine.proto` — destination `./protos/...` does not match `../../protos` expected by `build.rs` in the builder stage |
+| **Reproduced** | Identical failure on both `ad656ef` (pre-#60) and `70f8d03` (post-#60) — **pre-existing**, not introduced by AUDIT-801 |
+| **Documented** | ✅ Already documented in `PRODUCTION_READINESS_AUDIT_RECONCILIATION.md` § *Status After PR #60–#61* — `Known separate finding (NOT AUDIT-801)` line + in `FERMENT_REPORT.md:139` as backlog. |
+| **Audit ID** | **NEW FINDING — not yet assigned an AUDIT ID** — labeled only as pre-existing build-context defect; do not silently assign to AUDIT-801 or any existing ID. Not fixed in this task. |
+
+### Remaining Risks — Re-Ranked (Evidence-Backed Only)
+
+| Rank | ID | Severity | Status | Reason |
+|---|---|---|---|---|
+| 1 | **AUDIT-701** | **P0*** | **OPEN** | No backup/restore; RPO ∞ / RTO ∞; single `pgdata` volume. Absolute production blocker at first real-data deployment; latent until then. Requires deployment architecture decision (see below) — not a code-only fix. |
+| 2 | **AUDIT-607** | P1 | **PARTIALLY CLOSED** | Seeds still contain DDL (`demo.sql:39 ALTER TABLE`) + `UPDATE`s contradicting header; demo IDs (`d000`, `SMOKE01`, `+62-555-01xx`) runtime-reachable by convention only. Actionable in code. |
+
+**Why AUDIT-701 remains highest severity:** Data-loss severity dominates all other findings. `docker compose down -v` or disk loss permanently destroys `patients/appointments/medical_records/audit_events`. Retention-law exposure. No other open finding has unbounded RPO/RTO.
+
+**Whether deployment decisions block implementation:** Yes. AUDIT-701 cannot be closed by a single code PR — it requires: hosting provider (on-prem vs cloud), managed vs self-managed PostgreSQL, backup storage (S3/GCS/local volume + encryption), RPO (≤5 min) and RTO (≤1 h) targets, WAL archiving vs nightly `pg_dump`, and a monthly scratch-DB restore drill. A `pg_dump` script alone does not satisfy production backup requirements. Documented in audit as `UNKNOWN / REQUIRES DEPLOYMENT DECISION`. Note: backup/restore runbook docs (`AUDIT-701 doc-half`) could be shipped before infra is chosen, but true closure requires infra.
+
+**Whether AUDIT-607 should be next actionable PR:** Yes — it is the only remaining **P1 that is actionable in code without a deployment decision**. Small, self-contained blast radius.
+
+### Recommended Next PR (Not Implemented)
+
+**Title:** `fix(db): isolate demo seeds from DDL and gate by environment` (alternatively: `fix(db): move demo DDL to migration and env-guard seeds`)
+
+**Audit ID:** **AUDIT-607**
+
+**Why:**
+1. Only remaining actionable P1 after 1102/801 closure; 701 is P0* but blocked on deployment architecture.
+2. Small blast radius — seed/migration files only; no API behavior change for normal demo flow.
+3. Aligns with existing migration runner (`PR #51`) — seeds should be pure data, migrations pure DDL.
+4. Prevents accidental DDL execution on a staging/production DB if seeds are ever run outside `SIGAP_ENV=local`.
+
+**Acceptance criteria:**
+- `packages/db/seed/demo.sql:39` `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS notes` moved to a numbered migration (e.g., `0010_demo_notes.sql`) or removed if column already covered by prior migration.
+- `demo.sql` contains **zero** `ALTER TABLE` / `UPDATE` of existing rows on re-run; header claim `No destructive SQL` becomes true.
+- Seed scripts (`dev.sql`, `rbac.sql`, `demo.sql`) refuse to run when `SIGAP_ENV != local` (or `SIGAP_ENV=local` required) — e.g., `Makefile` `db-seed` target or a `psql` guard that fails fast outside local.
+- `make db-seed` (or `scripts/dev/*.ps1` seeding path) guarded similarly.
+- Existing `sigap-full-local-demo.ps1` still passes (demo facility `d000`, `SMOKE01` etc. still seeded under `local`).
+
+**Likely files:**
+- `packages/db/migrations/0010_*.sql` (new — the moved DDL)
+- `packages/db/seed/demo.sql` (remove DDL + UPDATE contradictions)
+- `Makefile` or `scripts/dev/Start-LocalDev.ps1` / `scripts/smoke/*.ps1` (env guard)
+- `docs/DEV_SETUP.md` / `docs/LOCAL_DEMO_RUNBOOK.md` (note guard)
+
+**Validation:**
+- `psql $DATABASE_URL -f packages/db/seed/demo.sql` with `SIGAP_ENV=production` (or without `local`) → fails fast, no rows mutated (if guard is in Makefile/wrapper; raw `psql` guard via `\if` if used).
+- `go test ./...` green (no API change).
+- `sigap-full-local-demo.ps1` with `SIGAP_ENV=local` → **FULL LOCAL DEMO: PASS** (demo 8/8 + notification 9/9 + patient portal 5/5) — proven same as this verification.
+- `gitleaks detect --source . --redact` clean.
+- `grep -n "ALTER TABLE" packages/db/seed/*.sql` → 0 matches after fix.
+
+*Note: AUDIT-701 remains the highest-severity unresolved blocker and should be tracked as P0* in parallel. AUDIT-607 as next **actionable** PR does not downgrade 701's severity.*
