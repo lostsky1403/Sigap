@@ -41,6 +41,11 @@ if (-not $env:DATABASE_URL) {
     exit 1
 }
 
+if ([string]::IsNullOrWhiteSpace($env:SIGAP_ENV) -or $env:SIGAP_ENV -ne 'local') {
+    Write-Host "[FAIL] Refusing to run demo seeds unless SIGAP_ENV=local (current: $(if([string]::IsNullOrWhiteSpace($env:SIGAP_ENV)){'unset'}else{$env:SIGAP_ENV})). Set `$env:SIGAP_ENV='local' to run locally." -ForegroundColor Red
+    exit 1
+}
+
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..' '..')).Path
 
 # --- Helper ---

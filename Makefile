@@ -38,7 +38,10 @@ db-migrate-all:
 	cd apps/api && SIGAP_AUTO_MIGRATE=true go run ./cmd/server
 
 db-seed:
-	psql "$$DATABASE_URL" -f packages/db/seed/dev.sql
+	@if [ "$$SIGAP_ENV" != "local" ]; then echo "ERROR: Refusing to run demo seeds unless SIGAP_ENV=local (current: $${SIGAP_ENV:-unset}). Demo seeds contain synthetic IDs (d000, SMOKE01) and must not run on staging/production."; exit 1; fi
+	psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/db/seed/dev.sql
+	psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/db/seed/rbac.sql
+	psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/db/seed/demo.sql
 
 bootstrap:
 	@echo "==> Creating bootstrap admin (requires migrations, seed, and .env)"
