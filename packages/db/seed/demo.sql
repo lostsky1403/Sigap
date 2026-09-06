@@ -34,9 +34,9 @@
 --   * Schedule date is rolled forward to "tomorrow" (CURRENT_DATE + 1) in
 --     the PostgreSQL server's timezone so the demo slot is always bookable.
 
--- Idempotent schema guard: add notes column if missing (added after initial
--- migration; existing local DBs may lack it).
-ALTER TABLE appointments ADD COLUMN IF NOT EXISTS notes TEXT;
+-- Schema: appointments.notes is defined in the numbered migration
+-- packages/db/migrations/0010_demo_notes_column.sql so this seed stays
+-- data-only. No DDL belongs in seeds (AUDIT-607).
 
 BEGIN;
 
