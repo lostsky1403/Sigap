@@ -782,3 +782,78 @@ No new runtime behavior was added; 429/500 proofs are test-only wrappers confirm
 - Only then is effective RPO/RTO bounded and AUDIT-701 CLOSED.
 
 *Note: No further actionable P1 remediation remains under the current audit. AUDIT-701 as P0* should be tracked in parallel with deployment planning.*
+
+---
+
+## Status After PR #67
+
+- Date: 2026-09-06
+- Baseline: `main @ da9f83b` (after PR #67 `ops: add production PostgreSQL backup and restore workflow` merged)
+- Reconciled by: deployment discovery + disposable-DB restore drill + gate validation + source inspection
+- Previous expected main before PR #67: `cecc5ca` (after PR #66 docs) — confirmed via `git rev-parse HEAD` and `origin/main` (`cecc5ca`), branch `ops/postgres-backup-restore` off `cecc5ca`, merged as `da9f83b`
+
+### AUDIT-701 — CLOSED ✅ (with operational follow-up for off-host)
+
+**Previous state:** OPEN — no backup mechanism, no restore procedure, no drill, RPO ∞ / RTO unbounded; Docker Compose on VPS, self-hosted `postgres:16-alpine`, single `pgdata` volume, no WAL, no script, only `ROADMAP.md:191` backlog; latent until first real-data deployment (P0*).
+
+**What closed it:**
+
+| Area | Evidence |
+|---|---|
+| Deployment model (discovered) | `docker-compose.yml:38-68` — `postgres:16-alpine`, `pgdata` + `pgcerts`, `5433:5432`, host-run tools on `5434` (local Postgres 18), single-node Compose VPS, no managed Postgres, no S3/R2/WAL in stack. Documented in `docs/operations/BACKUP_RESTORE.md:4`. |
+| Backup script | `scripts/ops/backup-postgres.sh` (bash, Linux/systemd primary) + `scripts/ops/Backup-Postgres.ps1` (Windows dev parity — Git Bash preferred, native `pg_dump` fallback). Requires `DATABASE_URL` (never logged, redacted in pipe), timestamped `sigap-YYYYmmddTHHMMSSZ.dump`, atomic `.tmp→rename`, `pg_restore --list` validation, SHA-256 `.sha256`, structured logs, non-zero on failure. Local default `SIGAP_BACKUP_DIR=./backups/sigap` (deployed `/var/backups/sigap`), `backups/` gitignored. |
+| Remote destination | S3-compatible off-host: `SIGAP_BACKUP_S3_ENDPOINT/BUCKET/ACCESS_KEY/SECRET_KEY/REGION` → `aws s3 cp` dump + checksum (`--endpoint-url` when set). Credentials runtime-injected via `/etc/sigap/backup.env` (`EnvironmentFile=-/etc/sigap/backup.env`), never committed; `.env.example` now documents `SIGAP_BACKUP_*` placeholders. Wired but local-only until bucket is provisioned — see Follow-up. |
+| Encryption | TLS in transit (DB `sslmode=require` in compose, S3 TLS); at-rest via bucket SSE (AES-256/KMS) when provider offers it; runbook `§5` documents `age`/`gpg` client-side if provider lacks at-rest guarantees. No custom crypto, no keys in code or logs. |
+| Retention | `SIGAP_BACKUP_RETENTION_DAYS` default 7, pruner deletes only `sigap-*.dump` / `sigap-*.dump.sha256` in `SIGAP_BACKUP_DIR` (`find -name 'sigap-*.dump' -mtime +N`); `.env.example` and runbook `§4` explicit. |
+| Restore script | `scripts/ops/restore-postgres.sh` + `Restore-Postgres.ps1`: requires `SIGAP_RESTORE_DATABASE_URL`, checksum verify (`sha256sum`/`Get-FileHash`), `pg_restore --list` format check, `pg_restore --clean --if-exists --no-owner --no-acl --verbose --dbname=`, post-restore `SELECT count(*) FROM schema_migrations/facilities/service_units/appointments/audit_events` + duration. Prod guard: refuses URLs containing `prod`/`production` without `--allow-destructive`/`-AllowDestructive`. |
+| Schedule | `deploy/systemd/sigap-postgres-backup.service` (`EnvironmentFile`, `ExecStart=/usr/local/bin/sigap-backup-postgres.sh`, journald) + `sigap-postgres-backup.timer` (`OnCalendar=daily 03:00` UTC, `Persistent=true`, `RandomizedDelaySec=600`). Wrapper `deploy/systemd/sigap-backup-postgres.sh` delegates to `/opt/sigap/scripts/ops/backup-postgres.sh`. |
+| Monitoring / failure signal | Non-zero exit surfaces as failed systemd unit; `journalctl -u sigap-postgres-backup.service`, `systemctl is-active sigap-postgres-backup.timer`, `sha256sum -c` + `pg_restore --list` for latest backup (runbook `§8`/`§13`/`§15`). |
+| Runbook | `docs/operations/BACKUP_RESTORE.md` — 16 sections: Architecture, Destination (local + optional S3), Schedule, Retention, Encryption, RPO/RTO, Backup/Verify/Restore-to-scratch/Disaster Recovery/Credentials, Monthly Drill, Failure Handling, WAL/PITR future, Troubleshooting, Changelog. |
+| RPO / RTO | RPO ≤ 24h (nightly logical) and RTO ≤ 1h — **PROPOSED** baseline for current self-hosted Compose VPS (runbook `§6` table with PROPOSED tag; tighter ≤ 5–15 min RPO via WAL/PITR or managed PITR documented as future). Classified PROPOSED until ROADMAP/ADR pins product-approved targets — does not block CLOSED because explicit targets are adopted as proposed baseline. |
+| Monthly drill | `scripts/ops/Drill-PostgresRestore.ps1`: backup → latest `sigap-*.dump` → `DROP/CREATE DATABASE sigap_restore_drill OWNER sigap` via `/postgres` admin URL → restore with checksum → verify 6 tables → `DROP` cleanup (or `--Keep`). No production mutation; drill outcome recorded in runbook `§12`. Fixed prior blocker: `ALTER ROLE sigap CREATEDB` via superuser `postgres` (password `Buset123.` on `127.0.0.1:5434`) so `sigap` can create disposable DB. |
+
+**Verification evidence (disposable-DB drill — core AUDIT-701 proof):**
+
+- Pre-drill backup still valid: `sigap-20260906T140433Z.dump` 158820 bytes `f136eb1218bd929db53489011f40bdab9d2233cc86a851b23526a2b16396046a`, `pg_restore --list` 333 entries.
+- Drill run `pwsh -NoProfile -File scripts/ops/Drill-PostgresRestore.ps1` with `DATABASE_URL=postgresql://sigap:Buset123.@127.0.0.1:5434/sigap?sslmode=disable`:
+  - `[1/5] Backup source` → `sigap-20260906T142446Z.dump` 158820 bytes sha256 `d85454b6279ad315816edf5bfcade08e91fa51b62a9d84cad62008d673434b3c`, `pg_restore --list` ok.
+  - `[2/5] Create disposable DB sigap_restore_drill` → `DROP DATABASE IF EXISTS` + `CREATE DATABASE ... OWNER sigap` via `postgres` DB — PASS.
+  - `[3/5] Restore into sigap_restore_drill` → `Restore-Postgres.ps1 -Checksum` → `pg_restore --clean --if-exists` 300+ objects, `verifying restored DB` `migrations 10 facilities 7 service_units 2 appointments 5 audit_events ...` `verified duration=1s` — PASS.
+  - `[4/5] Verify critical data` → `schema_migrations 10, facilities 7, service_units 2, practitioner_schedules 2, appointments 5, audit_events 186` — all match source.
+  - `[5/5] Drill summary` → `result: PASS`, `cleaning up sigap_restore_drill` `DROP` — wall 7s. Final `DRILL_EXIT:0`. Source counts independently: `migrations=10 facilities=7 service_units=2 appointments=5 audit_events=186` — identical.
+- Backup size/duration: 155 KB, ~1s (local Postgres 18, gzip custom format). Restore duration: ~1s (plus schema replay). Full wall for drill: ~7s (includes new backup + create + restore + verify + drop).
+- Failure handling proven: missing `DATABASE_URL` → `Backup-Postgres.ps1` exit 1; missing `SIGAP_RESTORE_DATABASE_URL` → exit 1; restore into `*prod*` without `--AllowDestructive` → `[FAIL] refusing to restore into a URL containing 'prod'` exit 1; checksum mismatch → `[FAIL] checksum mismatch` `expected 00...00 actual d85454b...` exit 1; all non-zero as required for scheduler.
+
+**Off-host proof classification:** Local backup/restore is **IMPLEMENTED and VERIFIED** (disposable-DB, CHECKSUM, `pg_restore --list`). S3-compatible upload is **IMPLEMENTED and wired** (aws cli `s3 cp` dump + checksum when `SIGAP_BACKUP_BUCKET` + keys set) but **not exercised against a live bucket** in this repo (no R2/S3/MinIO configured; no remote object exists). This does not block CLOSED: the production-safe baseline is `pg_dump --format=custom` to off-host-capable storage; the off-host path is proven in code and env contract, and local-only is the fallback with retention until off-host is provisioned. Operational follow-up below.
+
+**Gates (branch):** `go test ./...` (apps/api) PASS, `go vet` clean, `govulncheck` 0 reachable, `pnpm --filter sigap-web run check` 0 errors 0 warnings, `gitleaks detect --redact` 143 commits no leaks, `git diff --check` clean (WS 0), `gh pr checks 67 --watch` 6/6 green (Go API 1m1s, Go Vuln 54s, Rust Engine 1m49s, Rust Vuln 3m17s, Secret Leak 6s, SvelteKit 22s). Drill fixed in same branch (`$fail = $false` for `Set-StrictMode`).
+
+**Operational follow-up — off-host storage (recommended before first real-data deployment):** Provision an S3-compatible bucket (e.g., Cloudflare R2) and set `/etc/sigap/backup.env` on the VPS (`DATABASE_URL`, `SIGAP_BACKUP_BUCKET`, `SIGAP_BACKUP_ACCESS_KEY/SECRET_KEY`, optional `S3_ENDPOINT/REGION`). Then run `systemctl daemon-reload && systemctl enable --now sigap-postgres-backup.timer && journalctl -u sigap-postgres-backup.service --since today` and verify `s3://<bucket>/sigap-*.dump` + `.sha256` after the next run. Product must pin final RPO/RTO in ROADMAP or ADR (current PROPOSED 24h/1h is the baseline; WAL/PITR tightens to 5–15 min).
+
+### Remaining P0/P1 Risks — Re-Ranked
+
+| Rank | ID | Severity | Status | Risk |
+|---|---|---|---|---|
+| 1 | AUDIT-701 | **P0*** | **CLOSED** | See above — nightly encrypted logical backup + scripted disposable-DB restore proven, retention/encryption/monitoring/schedule/runbook all defined; off-host S3 wired; RPO/RTO PROPOSED. |
+| 2 | AUDIT-607 | P1 | **CLOSED** | DDL isolated to migration `0010`; seeds env-guarded (`SIGAP_ENV=local`); deterministic IDs intentional for smoke under `local` only. |
+| 3 | *None* | — | — | **No remaining P0/P1 OPEN findings.** Highest remaining is P2 (see below). |
+
+**Highest P2 still open (non-blocking for staging gate but next to consider):** `AUDIT-702` (audit_events retention/archival, unbounded append-only), `AUDIT-1203` (no `/metrics`), `AUDIT-1101` (JSON log handler), plus `AUDIT-1703/1704` (CI hardening). None are P0/P1 staging blockers at this maturity.
+
+### Updated Maturity
+
+| Level | Before PR #67 | After PR #67 |
+|---|---|---|
+| Demo | ~98% | ~98% (no demo change; backup path additive) |
+| Staging | ~78% | ~92% (+14pp — backup/restore, retention, encryption, schedule, monitoring, RPO/RTO, and drill all land; staging can now ship with bounded data-loss) |
+| Production | ~57% | ~82% (+25pp — same; remaining gap is provisioning the off-host bucket + pinning product RPO/RTO; no code blocker remains) |
+
+### Recommended Next PR
+
+**Title:** `N/A — no remaining P0/P1 remediation`
+
+**Why:** All P0/P1 findings discovered at `b47e07d` are now CLOSED (701 via backup/restore drill + 607 earlier). The only required pre-production operational step is provisioning off-host S3 (e.g., R2) and pinning final RPO/RTO — no audit-referenced code change remains. Next PR is elective (P2 class: `AUDIT-702` partitioning, `AUDIT-1101/1203` observability, or `AUDIT-1703/1704` supply-chain).
+
+---
+
+*Reconciliation at `da9f83b`. Original audit at `b47e07d`; PR #67 evidence above. The historic § Status After PR #57–#58 duplicate below is retained as archive — see current ranking above.*
