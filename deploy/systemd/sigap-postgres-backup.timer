@@ -1,0 +1,12 @@
+[Unit]
+Description=Sigap PostgreSQL backup timer (AUDIT-701) — daily 03:00 UTC
+
+[Timer]
+OnCalendar=daily
+OnCalendar=03:00
+Persistent=true
+RandomizedDelaySec=600
+Unit=sigap-postgres-backup.service
+
+[Install]
+WantedBy=timers.target

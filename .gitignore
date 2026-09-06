@@ -47,6 +47,7 @@ npm-debug.log*
 
 # Temporary directories
 tmp/
+backups/
 
 # Generated Go binaries
 apps/api/server
