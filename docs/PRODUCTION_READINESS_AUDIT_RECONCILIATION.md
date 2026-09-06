@@ -713,3 +713,72 @@ No new runtime behavior was added; 429/500 proofs are test-only wrappers confirm
 - `grep -n "ALTER TABLE" packages/db/seed/*.sql` → 0 matches after fix.
 
 *Note: AUDIT-701 remains the highest-severity unresolved blocker and should be tracked as P0* in parallel. AUDIT-607 as next **actionable** PR does not downgrade 701's severity.*
+
+---
+
+## Status After PR #65
+
+- Date: 2026-09-06
+- Baseline: `main @ 982e655` (after PR #65 `fix(db): isolate demo seeds from schema changes and gate by environment` merged)
+- Reconciled by: post-merge source verification + local runtime proof + CI evidence
+- Previous expected main before PR #65: `05dd7da` (after PR #64 docs) — confirmed via `git log --oneline` and `gh pr view 65`
+
+### AUDIT-607 — CLOSED ✅
+
+**Previous state:** PARTIALLY CLOSED — `demo.sql:39` contained `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS notes` (DDL in seed), header claimed `No destructive SQL` yet file had 3 `UPDATE`s, seeds runnable outside `local` by convention only.
+
+**What closed it:**
+
+| PR | What |
+|---|---|
+| #65 (`982e655`) | Moved `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS notes` from `packages/db/seed/demo.sql:39` to numbered migration `packages/db/migrations/0010_demo_notes_column.sql` (forward-only, `IF NOT EXISTS`, with comment). Removed DDL from seeds so `packages/db/seed/*.sql` now contains 0 `ALTER TABLE`/`CREATE`/`DROP` (verified via grep). Guarded official seed entrypoints to only run when `SIGAP_ENV=local`: `Makefile` `db-seed` target (`@if [ "$$SIGAP_ENV" != "local" ] ... exit 1`), new `scripts/db/Seed-Sigap.ps1` (centralized guarded runner for `dev.sql`+`rbac.sql`+`demo.sql`), and `scripts/smoke/sigap-full-local-demo.ps1` (refuse before seed phase if not `local`). Preserved all deterministic demo IDs (`d000`, `SMOKE01`, `+62-555-01xx`, `DEMO-UMUM`) — no smoke behavior change under `local`. Direct `psql -f demo.sql` remains possible (SQL is now data-only); guard is documented as entrypoint-level, not inside SQL, per repo convention. |
+
+**Verification evidence:**
+
+- **Seed files DDL-free:** `Select-String -Pattern "ALTER TABLE|CREATE TABLE|DROP TABLE"` across `packages/db/seed/*` → 0 matches (PASS).
+- **Remaining UPDATEs (3) — all Category A (synthetic demo row maintenance):** `service_units` drift self-heal (`WHERE id IN (d001,d002) AND facility_id <> d000` — re-links legacy demo rows to canonical `d000`), `notification_outbox` pending reset (`WHERE id IN (d031,d032) AND status <> 'pending'` — resets smoke rows after worker consumption), `appointments` SMOKE01 dedup (`WHERE checkin_code='SMOKE01' AND id <> d051` — clears stray `SMOKE01` from non-canonical rows). All scoped to deterministic demo UUIDs / `SMOKE01`; never mutates non-demo user data. `demo.sql` `INSERT` paths use `ON CONFLICT` / `WHERE NOT EXISTS` natural-key guards; seeds are idempotent.
+- **Schema complete from migrations alone:** `go run ./cmd/ci-migrate` on existing DB applied `0010` (`count=1`); on fresh `sigap_truth`-style disposable DB, `0001..0010` all apply cleanly via runner (`IF NOT EXISTS` on `0010`); `schema_migrations` tracks version with checksum; `notes` column present (`\d appointments` → `notes | text`). No schema object depends on seed execution.
+- **Local seed:** `SIGAP_ENV=local` → `make db-seed` / `scripts/db/Seed-Sigap.ps1` / `sigap-full-local-demo.ps1` all PASS. Idempotent rerun: two consecutive `psql -f demo.sql` → both PASS, counts stable (`facilities 7, service_units 2, SMOKE01 1`).
+- **Non-local guard:** `SIGAP_ENV=staging` → `scripts/db/Seed-Sigap.ps1` exits 1: `Refusing to run demo seeds unless SIGAP_ENV=local (current: staging).`; `sigap-full-local-demo.ps1` exits before seed phase with same refusal. Verified `staging` and `production` variants (no DB mutation).
+- **Demo IDs preserved:** `d000` (Sigap Demo Facility), `d001/d002` (DEMO-UMUM/GIGI), `d011/d012`, `d021/d022`, `d031/d032`, `d051`/`SMOKE01`, `+62-555-01xx`, `d999` dev-smoke user — all still seeded under `local` only. Not created by production bootstrap; `app_users` bootstrap path separate. Smoke suites still reference deterministic IDs.
+- **Smoke:** `sigap-full-local-demo.ps1` with `SIGAP_ENV=local` → **FULL LOCAL DEMO: PASS** (demo 8/8 + notification 9/9 + patient portal 5/5) after PR #65; API health 200 on `127.0.0.1:18080`.
+- **Go/Web/Security:** `go test ./...` PASS (all packages), `go vet` clean, `govulncheck` 0 vulns, `pnpm --filter sigap-web run check` 0 errors, `gitleaks detect --redact` no leaks (141 commits), `pr-autopilot -VerifyOnly` PASS, `git diff --check` clean.
+- **CI:** PR #65 run `34035533217` — 6/6 green: Go API Tests 1m13s, Go Vuln 21s, Rust Engine 1m45s, Rust Vuln 3m22s, Secret Leak 7s, SvelteKit 29s. No blocking reviews.
+
+**Remaining intentional coupling (accepted by design):** Deterministic synthetic IDs (`d000`, `SMOKE01`, `+62-555-01xx`) remain runtime-reachable by convention — required for smoke automation. Per `docs/PRODUCTION_READINESS_AUDIT.md:171-173`, AUDIT-607 remediation is `move ALTER into numbered migration; env-guard seeds (SIGAP_ENV != local refuses)`. With DDL removed, seeds data-only, and official entrypoints env-guarded, no further schema/data coupling remains. The synthetic-ID-by-design pattern is explicitly permitted for local/demo seeds and does not constitute an open production risk when production execution is refused.
+
+### Remaining P0/P1 Risks — Re-Ranked
+
+| Rank | ID | Severity | Status | Risk |
+|---|---|---|---|---|
+| 1 | AUDIT-701 | **P0*** | **OPEN** | No backup/restore. RPO ∞ / RTO ∞. Single `pgdata` volume. Requires hosting architecture decision (managed Postgres, object storage, RPO/RTO, WAL vs pg_dump). Absolute production blocker at first real-data deployment; latent until then. |
+| 2 | AUDIT-607 | P1 | **CLOSED** | See above — DDL isolated to migration; seeds env-guarded; deterministic IDs intentional for smoke under `local` only. |
+
+### Updated Maturity
+
+| Level | Before PR #65 | After PR #65 |
+|---|---|---|
+| Demo | ~98% | ~98% (no demo behavior change; seeds now correctly gated) |
+| Staging | ~75% | ~78% (+3pp — demo seed/production separation enforced; migrations now single source of schema truth) |
+| Production | ~55% | ~57% (+2pp — guard reduces accidental seed execution risk; backup/restore remains absolute blocker) |
+
+### Recommended Next PR
+
+**Title:** `N/A — AUDIT-701 is the only remaining P0/P1 blocker`
+
+**Audit ID:** AUDIT-701 (`P0*` — No backup/restore)
+
+**Why this one / why not 607:**
+- AUDIT-607 is now CLOSED — no separate remediation remains.
+- AUDIT-701 is the only remaining open finding at `P0`/`P1` severity. However it is deployment-architecture-dependent and cannot be closed by a single code PR alone. Per the audit, it requires hosting decisions (on-prem vs cloud), PostgreSQL model (managed vs self-managed), backup storage (S3/GCS/local + encryption), RPO/RTO targets (e.g., ≤5 min / ≤1 h), WAL archiving vs nightly `pg_dump`, and a monthly restore drill.
+
+**What can ship without deployment decision (optional, not a P0/P1 fix):**
+- Backup/restore runbook docs (`docs/operations/BACKUP_RESTORE.md`) — `pg_dump` wrapper, restore-to-scratch procedure, drill checklist. Useful but does not by itself close AUDIT-701 without infra.
+
+**Acceptance criteria for AUDIT-701 closure (requires deployment decision):**
+- Nightly encrypted `pg_dump` + WAL archiving or managed Postgres PITR configured on the chosen hosting target.
+- Scripted restore to disposable DB + monthly drill with evidence in CI or runbook.
+- Declared `RPO ≤5 min` / `RTO ≤1 h` (or explicit product-approved alternatives) verified by drill.
+- Only then is effective RPO/RTO bounded and AUDIT-701 CLOSED.
+
+*Note: No further actionable P1 remediation remains under the current audit. AUDIT-701 as P0* should be tracked in parallel with deployment planning.*
