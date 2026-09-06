@@ -1,0 +1,16 @@
+[Unit]
+Description=Sigap PostgreSQL backup (AUDIT-701)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runtime env (DATABASE_URL, optional SIGAP_BACKUP_S3_*). No secrets in the unit file itself.
+EnvironmentFile=-/etc/sigap/backup.env
+ExecStart=/usr/local/bin/sigap-backup-postgres.sh
+# Structured logging via journald; non-zero exit surfaces as failed unit.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
