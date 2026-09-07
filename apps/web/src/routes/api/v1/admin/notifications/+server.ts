@@ -1,12 +1,13 @@
-import type { RequestHandler } from '@sveltejs/kit';
-import { proxyHeaders, apiBase } from '$lib/server/auth';
+import type { RequestEvent, RequestHandler } from '@sveltejs/kit';
+import { proxyHeaders, apiBase, authHeaders } from '$lib/server/auth';
 
-async function proxy(request: Request, path: string, method?: string): Promise<Response> {
+async function proxy(request: Request, path: string, event: RequestEvent, method?: string): Promise<Response> {
 	const upstream = await fetch(`${apiBase()}${path}`, {
 		method: method ?? request.method,
 		headers: {
 			'Content-Type': request.headers.get('content-type') || 'application/json',
-			...proxyHeaders()
+			...proxyHeaders(),
+			...authHeaders(event)
 		},
 		body: request.method !== 'GET' && request.method !== 'HEAD' ? await request.text() : undefined
 	});
@@ -19,10 +20,10 @@ async function proxy(request: Request, path: string, method?: string): Promise<R
 	});
 }
 
-export const GET: RequestHandler = async ({ request }) => {
-	return proxy(request, '/api/v1/admin/notifications');
+export const GET: RequestHandler = async (event) => {
+	return proxy(event.request, '/api/v1/admin/notifications', event);
 };
 
-export const POST: RequestHandler = async ({ request }) => {
-	return proxy(request, '/api/v1/admin/notifications');
+export const POST: RequestHandler = async (event) => {
+	return proxy(event.request, '/api/v1/admin/notifications', event);
 };
