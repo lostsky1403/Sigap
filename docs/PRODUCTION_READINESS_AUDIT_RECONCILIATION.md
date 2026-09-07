@@ -143,6 +143,57 @@
 
 ---
 
+---
+
+## Status After AUDIT-701 Production Closure (2026-09-07)
+
+- Baseline: `main @ b6c4d43` (after PR #73 `fix(backup): fail fast when pg_dump is older than server` merged)
+- Host: VPS `fikriserver`, `/opt/sigap` at `b6c4d43`
+- Verdict: **AUDIT-701 — CLOSED ✅ (16/16 PASS)**
+
+### Closure Checklist (16/16 PASS)
+
+- [x] Off-host provider chosen — Cloudflare R2 (S3-compatible) — PASS
+- [x] Backup bucket created — `aws s3 ls` returns objects — PASS
+- [x] Encryption-at-rest confirmed — R2 bucket default SSE; TLS in transit — PASS
+- [x] Runtime backup credentials installed on VPS — `/etc/sigap/backup.env` mode 640 group `sigap` — PASS
+- [x] systemd backup service installed — `sigap-postgres-backup.service` loaded — PASS
+- [x] systemd timer enabled — `enabled`, `active`, next `Tue 2026-09-08` — PASS
+- [x] First systemd backup succeeded — `Result=success ExecMainStatus=0` (`14:36:00Z→14:36:04Z`) — PASS
+- [x] Remote .dump object exists — `sigap-20260907T143601Z.dump 59868 bytes` — PASS
+- [x] Remote .sha256 object exists — `sigap-20260907T143601Z.dump.sha256 94 bytes` — PASS
+- [x] Remote checksum verification succeeds — `sigap-20260907T143601Z.dump: OK` — PASS
+- [x] Remote object can be downloaded — R2 download verified in drill — PASS
+- [x] Restore from downloaded remote object succeeds — disposable `sigap_restore_drill_remote` — PASS
+- [x] Critical table counts match — 6/6 match, drill DB dropped — PASS
+- [x] RPO adopted — RPO ≤ 24h ADOPTED (owner-approved) — PASS
+- [x] RTO adopted — RTO ≤ 2h ADOPTED (owner-approved) — PASS
+- [x] Restore drill evidence recorded — `docs/operations/BACKUP_RESTORE.md` §6a–§6b — PASS
+
+### Tooling Proof
+
+- `pg_dump 16.15 (Ubuntu 16.15-1.pgdg22.04+2)` at `/usr/lib/postgresql/16/bin/pg_dump`
+- `pg_restore 16.15` alongside it
+- PR #72 `e9335ec` — explicit pg16 resolution + systemd PATH + uploader isolation
+- PR #73 `b6c4d43` — server-major gate (`dump_major < server_major` fatal, `PG_DUMP_BIN` guidance)
+- Negative gate proven: `/usr/lib/postgresql/14/bin/pg_dump` → `FAIL pg_dump major 14 is older than server major 16`, exit 1
+- `pg_restore --list` PASS, `sha256sum -c` PASS
+
+### Out of Scope (separate application deployment/auth blockers, NOT AUDIT-701)
+
+- API host port `8080` conflict with unrelated `frappe_docker-proxy-1`; alternate host port decision pending implementation.
+- `SIGAP_AUTH_MODE=jwt` but issuer/audience absent; API/web remain deployment-blocked independently of AUDIT-701.
+- API/web health was not required for AUDIT-701 closure (backup/restore scope only).
+
+### Remaining P0/P1 Risks — Re-Ranked
+
+| Rank | ID | Severity | Status | Risk |
+|---|---|---|---|---|
+| 1 | AUDIT-701 | **P0*** | **CLOSED** | 16/16 production proof above. |
+| 2 | AUDIT-607 | P1 | **CLOSED** | DDL isolated to migration `0010`; seeds env-guarded. |
+
+*Reconciliation at `b6c4d43`. Original audit at `b47e07d`; production proof 2026-09-07.*
+
 *Reconciliation performed at `d84fed9`. Original audit findings at `b47e07d` — see `docs/PRODUCTION_READINESS_AUDIT.md`.*
 
 ---
