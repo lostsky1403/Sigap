@@ -6,9 +6,43 @@
  * centralizes that pattern and adds a production guard.
  *
  * Usage in +server.ts:
- *   import { proxyHeaders } from '$lib/server/auth';
+ *   import { proxyHeaders, apiBase } from '$lib/server/auth';
  *   const headers = { 'Content-Type': 'application/json', ...proxyHeaders() };
  */
+
+import type { RequestEvent } from '@sveltejs/kit';
+
+/**
+ * Minimal view of a Supabase session used by server-side proxies.
+ * Mirrors the subset of `@supabase/supabase-js` `Session` we forward.
+ */
+export interface AuthSessionLike {
+	access_token?: string;
+	user_id?: string;
+	user?: { id?: string; email?: string };
+}
+
+/** True when the public Supabase configuration is present at runtime. */
+export function supabaseConfigured(): boolean {
+	return Boolean(process.env.PUBLIC_SUPABASE_URL && process.env.PUBLIC_SUPABASE_ANON_KEY);
+}
+
+/**
+ * Returns headers to attach to upstream API requests from a browser session.
+ *
+ * When the request carries a valid Supabase session (cookie-based, refreshed
+ * in hooks.server.ts), forwards `Authorization: Bearer <access_token>` so the
+ * Go API validates the JWT and resolves permissions server-side (DB RBAC).
+ * Never trusts token permission claims; the API resolves roles from the DB.
+ * Returns empty headers when there is no session or Supabase is unconfigured.
+ */
+export function authHeaders(event: RequestEvent): Record<string, string> {
+	const token = event.locals.session?.access_token;
+	if (!token) {
+		return {};
+	}
+	return { Authorization: `Bearer ${token}` };
+}
 
 const isDevIdentityEnabled = (): boolean => {
 	return process.env.SIGAP_DEV_IDENTITY === 'true';
