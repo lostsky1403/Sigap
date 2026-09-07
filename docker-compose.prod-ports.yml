@@ -1,0 +1,10 @@
+# docker-compose.prod-ports.yml
+# Production port override for shared VPS hosts.
+# Host port 8080 is commonly taken by unrelated apps (do NOT stop them).
+# This override keeps container port 8080 and publishes Sigap API on host 18080.
+# Web stays on host 3005. Internal service URLs are unchanged (http://api:8080).
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d --build
+services:
+  api:
+    ports:
+      - "18080:8080"
