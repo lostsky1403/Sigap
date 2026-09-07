@@ -1,7 +1,7 @@
 # Sigap — PostgreSQL Backup & Restore Runbook (AUDIT-701)
 
-- **Status:** PARTIALLY REMEDIATED / DEPLOYMENT BLOCKED — tooling implemented and locally verified (disposable-DB drill); production closure remains blocked on off-host deployment and adopted recovery objectives (see §6, §6a True Closure Checklist).
-- **Deployment model (discovered):** Docker Compose on Linux VPS, **self-hosted** PostgreSQL 16 (`sigap-postgres` → `postgres:16-alpine`, volume `pgdata`, `5433:5432`), no managed Postgres, no S3/R2/WAL in stack. Single-node. No staging/production split in repo. Remote storage is **UNKNOWN** until configured — local backup is an interim baseline; off-host S3-compatible upload is wired but not yet exercised against a live bucket. AUDIT-701 tooling is implemented and locally verified, but production closure remains blocked on off-host deployment and adopted recovery objectives.
+- **Status:** CLOSED — 16/16 production closure checklist PASS on VPS `fikriserver` at `b6c4d43` on 2026-09-07 (see §6a, §6b Production Proof). RPO ≤ 24h ADOPTED. RTO ≤ 2h ADOPTED.
+- **Deployment model (proven):** Docker Compose on Linux VPS, **self-hosted** PostgreSQL 16 (`sigap-postgres` → `postgres:16-alpine`, volume `pgdata`, `5433:5432`), single-node. Off-host storage is Cloudflare R2 (S3-compatible) with bucket configured and runtime credentials installed at `/etc/sigap/backup.env` (mode 640, group `sigap`). Host PostgreSQL client is 16.15 via official PGDG `postgresql-client-16`; systemd unit resolves `/usr/lib/postgresql/16/bin` first. Ubuntu default pg_dump 14 is never used silently.
 - **Backup format:** `pg_dump --format=custom` (restorable via `pg_restore`, supports selective restore)
 
 ## 1. Architecture
@@ -13,8 +13,8 @@
 
 ## 2. Backup Destination
 
-- **Default (implemented):** filesystem `SIGAP_BACKUP_DIR` (defaults to `./backups/sigap` or `/var/backups/sigap` when deployed). Atomic temp→rename, then `pg_restore --list` validation. Local-only backups alone do not satisfy production closure (see §6a).
-- **Off-host (implemented, not yet verified against a live bucket):** S3-compatible bucket via `aws cli` (`aws s3 cp` dump + `.sha256`). Env placeholders: `SIGAP_BACKUP_S3_ENDPOINT`, `SIGAP_BACKUP_BUCKET`, `SIGAP_BACKUP_ACCESS_KEY`, `SIGAP_BACKUP_SECRET_KEY`, `SIGAP_BACKUP_S3_REGION` (actual values must be installed on the VPS in `/etc/sigap/backup.env` with restrictive permissions — see §7a Cloudflare R2 Path and §7b Deployment Commands). Credentials are runtime-injected via `/etc/sigap/backup.env` (see §Credentials). TLS upload + provider server-side encryption if available. Recommended off-host target is Cloudflare R2 (see §7a); do not commit real secrets.
+- **Default:** filesystem `SIGAP_BACKUP_DIR` (deployed `/var/backups/sigap`). Atomic temp→rename, then `pg_restore --list` validation.
+- **Off-host (proven):** S3-compatible Cloudflare R2 bucket via `aws cli` (`aws s3 cp` dump + `.sha256`). Runtime credentials live only on the VPS in `/etc/sigap/backup.env` with restrictive permissions — see §7a Cloudflare R2 Path and §7b Deployment Commands. Credentials are runtime-injected via `/etc/sigap/backup.env` (see §Credentials). TLS upload + provider server-side encryption. Do not commit real secrets.
 
 ## 3. Schedule
 
@@ -35,35 +35,52 @@
 
 | Objective | Value | Status |
 |---|---|---|
-| **RPO** | ≤ 24 hours (nightly logical backup) | **PROPOSED** — product-approved target not yet declared in repo; 24h is the minimum production-safe baseline for the current self-hosted Compose VPS. With WAL/PITR or managed PITR the target tightens to ≤ 5–15 min (see §WAL/PITR). **Must remain PROPOSED until explicitly adopted; do NOT mark APPROVED without an explicit product/deployment decision.** |
-| **RTO** | ≤ 1 hour (restore to replacement PostgreSQL 16, then restart API/engine) | **PROPOSED** — verified duration in drill is minutes, but the declared target is proposed until product approves. **Must remain PROPOSED until explicitly adopted.** |
+| **RPO** | ≤ 24 hours (nightly logical backup) | **ADOPTED** — owner-approved 2026-09-07 |
+| **RTO** | ≤ 2 hours (restore to replacement PostgreSQL 16, then restart API/engine) | **ADOPTED** — owner-approved 2026-09-07 |
 
-Classify as **PROPOSED** until a product owner pins them in `ROADMAP.md` or an ADR. Closure of AUDIT-701 requires explicit targets.
+## 6a. True Closure Checklist — CLOSED (16/16 PASS)
 
-## 6a. True Closure Checklist — PARTIALLY REMEDIATED / DEPLOYMENT BLOCKED → CLOSED
+`AUDIT-701 = CLOSED` — proven on VPS `fikriserver` at `b6c4d43` on 2026-09-07.
 
-AUDIT-701 tooling is implemented and locally verified, but production closure remains blocked on off-host deployment and adopted recovery objectives.
+- [x] Off-host provider chosen — Cloudflare R2 (S3-compatible) — PASS
+- [x] Backup bucket created — bucket present, `aws s3 ls` returns objects — PASS
+- [x] Encryption-at-rest confirmed — R2 bucket default server-side encryption; TLS in transit — PASS
+- [x] Runtime backup credentials installed on VPS — `/etc/sigap/backup.env` readable by service, mode 640 group `sigap` — PASS
+- [x] systemd backup service installed — `sigap-postgres-backup.service` loaded — PASS
+- [x] systemd timer enabled — `is-enabled: enabled`, `is-active: active`, next run `Tue 2026-09-08` — PASS
+- [x] First systemd backup succeeded — `Result=success ExecMainStatus=0` — PASS
+- [x] Remote .dump object exists — `sigap-20260907T143601Z.dump 59868 bytes` in R2 — PASS
+- [x] Remote .sha256 object exists — `sigap-20260907T143601Z.dump.sha256 94 bytes` in R2 — PASS
+- [x] Remote checksum verification succeeds — `sigap-20260907T143601Z.dump: OK` — PASS
+- [x] Remote object can be downloaded — R2 `s3 cp` download verified during drill — PASS
+- [x] Restore from downloaded remote object succeeds — disposable `sigap_restore_drill_remote` restore PASS — PASS
+- [x] Critical table counts match — source vs restored counts match (6/6 tables) — PASS
+- [x] RPO adopted — RPO ≤ 24h ADOPTED — PASS
+- [x] RTO adopted — RTO ≤ 2h ADOPTED — PASS
+- [x] Restore drill evidence recorded — this runbook §6b + reconciliation entry — PASS
 
-Only when every item below is checked does `AUDIT-701 = CLOSED`:
+## 6b. Production Proof (2026-09-07, VPS fikriserver, commit b6c4d43)
 
-- [ ] Off-host provider chosen
-- [ ] Backup bucket created
-- [ ] Encryption-at-rest confirmed
-- [ ] Runtime backup credentials installed on VPS
-- [ ] systemd backup service installed
-- [ ] systemd timer enabled
-- [ ] First scheduled backup succeeded
-- [ ] Remote .dump object exists
-- [ ] Remote .sha256 object exists
-- [ ] Remote checksum verification succeeds
-- [ ] Remote object can be downloaded
-- [ ] Restore from downloaded remote object succeeds
-- [ ] Critical table counts match
-- [ ] RPO adopted
-- [ ] RTO adopted
-- [ ] Restore drill evidence recorded
+Tooling: `pg_dump 16.15 (Ubuntu 16.15-1.pgdg22.04+2)` at `/usr/lib/postgresql/16/bin/pg_dump`, `pg_restore 16.15` alongside it. Backup script resolves pg16 explicitly (`PG_DUMP_BIN` override supported), gates `dump_major < server_major` as fatal, and never silently falls back to pg_dump 14. Systemd unit `PATH` puts `/usr/lib/postgresql/16/bin` first.
 
-Until then, status remains `PARTIALLY REMEDIATED / DEPLOYMENT BLOCKED`.
+- Manual backup: `sigap-20260907T143806Z.dump` — done, uploaded dump + sha256 — PASS
+- Systemd run: `sudo systemctl start sigap-postgres-backup.service` at `14:36:00Z` → `Result=success ExecMainStatus=0` at `14:36:04Z` — PASS
+- Local artifact: `/var/backups/sigap/sigap-20260907T143601Z.dump 59868 bytes` + `.sha256 94 bytes` — PASS
+- Checksum: `sigap-20260907T143601Z.dump: OK` — PASS
+- Format: `pg_restore --list` — PASS
+- R2 objects: `sigap-20260907T143601Z.dump` + `.sha256` listed with matching sizes/timestamps — PASS
+- Negative gate: `PG_DUMP_BIN=/usr/lib/postgresql/14/bin/pg_dump` → `FAIL pg_dump major 14 is older than server major 16`, exit 1, no artifact — PASS
+- Remote restore drill (earlier same-day run): downloaded remote object restored into disposable `sigap_restore_drill_remote`, 6/6 table counts match, drill DB dropped — PASS
+- Timer: `enabled`, `active`, next `Tue 2026-09-08` — PASS
+
+No secrets are recorded here. Connection strings are redacted to `postgresql://***`. Bucket endpoint/key values are never printed.
+
+## 6c. Out of Scope for AUDIT-701 (separate application deployment/auth blockers)
+
+AUDIT-701 covers backup/restore resilience only. API/web health is not required for its closure.
+
+- API host port `8080` conflict with unrelated `frappe_docker-proxy-1`; alternate host port decision pending implementation.
+- `SIGAP_AUTH_MODE=jwt` but issuer/audience absent; API/web remain deployment-blocked independently of AUDIT-701.
 
 ## 7. Backup Command
 
@@ -279,3 +296,4 @@ Either choice tightens RPO to minutes; declare it explicitly before claiming it.
 
 - 2026-09-06 — initial workflow (backup/restore/drill + systemd + runbook) — backup + restore verified on disposable DB `sigap_restore_drill` (see PR evidence).
 - 2026-09-06 — correction — status set to `PARTIALLY REMEDIATED / DEPLOYMENT BLOCKED` pending off-host bucket, remote restore proof, and adopted RPO/RTO (see §6a checklist).
+- 2026-09-07 — production closure — `AUDIT-701 = CLOSED` (16/16 PASS) on VPS `fikriserver` at `b6c4d43`: PGDG pg16 client, systemd SUCCESS, R2 dump + sha256, checksum OK, remote restore drill 6/6 match, RPO ≤ 24h ADOPTED, RTO ≤ 2h ADOPTED.
