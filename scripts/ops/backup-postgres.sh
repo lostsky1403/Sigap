@@ -151,16 +151,17 @@ if [ -n "${SIGAP_BACKUP_BUCKET:-}" ] && [ -n "${SIGAP_BACKUP_ACCESS_KEY:-}" ] &&
   # shellcheck disable=SC2034
   export AWS_DEFAULT_REGION="${region}"
   # Prefer aws cli v2 if available.
+  # PYTHONNOUSERSITE avoids a broken user-site urllib3 shadowing the distro one.
   if command -v aws >/dev/null 2>&1; then
     aws_args=()
     if [ -n "${endpoint}" ]; then aws_args+=(--endpoint-url "${endpoint}"); fi
     aws_args+=(--region "${region}")
-    if ! aws s3 cp "${DUMP_FINAL}" "s3://${SIGAP_BACKUP_BUCKET}/${DUMP_NAME}" "${aws_args[@]}"; then
+    if ! PYTHONNOUSERSITE=1 aws s3 cp "${DUMP_FINAL}" "s3://${SIGAP_BACKUP_BUCKET}/${DUMP_NAME}" "${aws_args[@]}"; then
       log "backup: FAIL aws s3 cp dump"
       exit 1
     fi
     if [ -f "${CHECKSUM_FINAL}" ]; then
-      if ! aws s3 cp "${CHECKSUM_FINAL}" "s3://${SIGAP_BACKUP_BUCKET}/${DUMP_NAME}.sha256" "${aws_args[@]}"; then
+      if ! PYTHONNOUSERSITE=1 aws s3 cp "${CHECKSUM_FINAL}" "s3://${SIGAP_BACKUP_BUCKET}/${DUMP_NAME}.sha256" "${aws_args[@]}"; then
         log "backup: FAIL aws s3 cp checksum"
         exit 1
       fi
