@@ -6,5 +6,5 @@
 # Usage: docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d --build
 services:
   api:
-    ports:
+    ports: !override
       - "18080:8080"
