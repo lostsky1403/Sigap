@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Cache deps (context is monorepo root)
-COPY protos/sigap/queue_engine.proto ./protos/sigap/queue_engine.proto
+COPY protos/ ./protos/
 COPY apps/queue-engine/Cargo.toml apps/queue-engine/Cargo.lock ./
 RUN mkdir src && echo "fn main(){}" > src/main.rs && cargo build --release && rm -rf src
 
