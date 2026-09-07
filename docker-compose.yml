@@ -102,6 +102,14 @@ services:
       # Required: auth mode must be explicitly set (dev, jwt, or disabled).
       # Compose fails fast if this is missing — prevents silent locked-but-running API.
       SIGAP_AUTH_MODE: ${SIGAP_AUTH_MODE:?set SIGAP_AUTH_MODE in .env (dev, jwt, or disabled)}
+      # JWT/OIDC validation (required in jwt mode; fail-closed boot when absent).
+      SIGAP_AUTH_ISSUER: ${SIGAP_AUTH_ISSUER:-}
+      SIGAP_AUTH_AUDIENCE: ${SIGAP_AUTH_AUDIENCE:-}
+      SIGAP_AUTH_JWKS_URL: ${SIGAP_AUTH_JWKS_URL:-}
+      # Server-side RBAC + audit: jwt mode resolves permissions from the DB
+      # via app_users.subject; without a pool it fails closed (zero permissions).
+      SIGAP_DATABASE_URL: postgresql://${POSTGRES_USER:-sigap}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-sigap}?sslmode=require
+      SIGAP_AUTO_MIGRATE: ${SIGAP_AUTO_MIGRATE:-}
     depends_on:
       postgres:
         condition: service_healthy
