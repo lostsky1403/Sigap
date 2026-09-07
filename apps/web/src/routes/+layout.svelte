@@ -1,5 +1,8 @@
 <script lang="ts">
 	import '../app.css';
+	import type { LayoutData } from './$types';
+
+	export let data: LayoutData;
 </script>
 
 <div class="min-h-screen bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100">
@@ -16,7 +19,31 @@
 				<a href="/patient/status" class="px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-900">Status Kunjungan</a>
 				<a href="/admin/queues" class="px-3 py-2 rounded-lg text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950">Admin</a>
 			</nav>
-			<div class="text-sm text-slate-500 hidden sm:block shrink-0">Layanan Kesehatan Daerah</div>
+			<div class="flex items-center gap-3 text-sm shrink-0">
+				{#if data.userEmail}
+					<span class="hidden sm:block text-slate-500 truncate max-w-[16rem]" title={data.userEmail}>
+						{data.userEmail}
+					</span>
+					<form method="POST" action="/auth/logout">
+						<button
+							type="submit"
+							class="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900"
+						>
+							Keluar
+						</button>
+					</form>
+				{:else}
+					<a href="/auth/login" class="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900">
+						Masuk
+					</a>
+					<a
+						href="/auth/register"
+						class="px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+					>
+						Daftar
+					</a>
+				{/if}
+			</div>
 		</div>
 	</header>
 

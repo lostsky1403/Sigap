@@ -23,6 +23,8 @@
     "vite": "^5.2.0"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.6",
+    "@supabase/supabase-js": "^2.116.0",
     "maplibre-gl": "^5.24.0"
   }
 }

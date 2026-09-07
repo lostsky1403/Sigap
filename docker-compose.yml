@@ -138,6 +138,9 @@ services:
       SIGAP_API_INTERNAL: http://api:8080
       # PUBLIC_SIGAP_API_BASE kept for reference (client uses relative paths via proxy now)
       PUBLIC_SIGAP_API_BASE: http://localhost:8080
+      # Supabase Auth (server-side session; publishable values only, never the service-role key)
+      PUBLIC_SUPABASE_URL: ${PUBLIC_SUPABASE_URL:-}
+      PUBLIC_SUPABASE_ANON_KEY: ${PUBLIC_SUPABASE_ANON_KEY:-}
     depends_on:
       - api
     ports:
