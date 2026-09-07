@@ -7,6 +7,8 @@
 # Exit non-zero on any failure so the systemd unit/scheduler detects it.
 #
 # Required: DATABASE_URL
+# Optional: PG_DUMP_BIN (explicit pg_dump binary; e.g. /usr/lib/postgresql/16/bin/pg_dump)
+# Optional: PG_RESTORE_BIN (explicit pg_restore binary; defaults to pg_restore next to PG_DUMP_BIN)
 # Optional: SIGAP_BACKUP_DIR (default ./backups relative to script, or /var/backups/sigap)
 # Optional: SIGAP_BACKUP_S3_* (off-host upload; see BACKUP_RESTORE.md)
 #   SIGAP_BACKUP_S3_ENDPOINT, SIGAP_BACKUP_BUCKET, SIGAP_BACKUP_ACCESS_KEY,
@@ -35,13 +37,73 @@ mkdir -p "${BACKUP_DIR}"
 
 log() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
+pg_major() { "$1" --version 2>/dev/null | grep -oE '[0-9]+' | head -n 1; }
+
+resolve_pg_tools() {
+  if [ -n "${PG_DUMP_BIN:-}" ]; then
+    if [ ! -x "${PG_DUMP_BIN}" ]; then
+      log "backup: FAIL PG_DUMP_BIN is not executable: ${PG_DUMP_BIN}"
+      exit 1
+    fi
+    PG_DUMP="${PG_DUMP_BIN}"
+  else
+    PG_DUMP=""
+    for candidate in /usr/lib/postgresql/16/bin/pg_dump /usr/lib/postgresql/15/bin/pg_dump /usr/bin/pg_dump; do
+      if [ -x "${candidate}" ]; then
+        PG_DUMP="${candidate}"
+        break
+      fi
+    done
+    if [ -z "${PG_DUMP}" ]; then
+      PG_DUMP="$(command -v pg_dump || true)"
+    fi
+    if [ -z "${PG_DUMP}" ]; then
+      log "backup: FAIL pg_dump not found (set PG_DUMP_BIN)"
+      exit 1
+    fi
+  fi
+
+  if [ -n "${PG_RESTORE_BIN:-}" ]; then
+    if [ ! -x "${PG_RESTORE_BIN}" ]; then
+      log "backup: FAIL PG_RESTORE_BIN is not executable: ${PG_RESTORE_BIN}"
+      exit 1
+    fi
+    PG_RESTORE="${PG_RESTORE_BIN}"
+  else
+    dump_dir="$(dirname "${PG_DUMP}")"
+    if [ -x "${dump_dir}/pg_restore" ]; then
+      PG_RESTORE="${dump_dir}/pg_restore"
+    else
+      PG_RESTORE="$(command -v pg_restore || true)"
+    fi
+    if [ -z "${PG_RESTORE}" ]; then
+      log "backup: FAIL pg_restore not found (set PG_RESTORE_BIN)"
+      exit 1
+    fi
+  fi
+
+  dump_major="$(pg_major "${PG_DUMP}")"
+  restore_major="$(pg_major "${PG_RESTORE}")"
+  if [ -z "${dump_major}" ] || [ -z "${restore_major}" ]; then
+    log "backup: FAIL unable to determine pg_dump/pg_restore version"
+    exit 1
+  fi
+  if [ "${restore_major}" -lt "${dump_major}" ]; then
+    log "backup: FAIL pg_restore major ${restore_major} is older than pg_dump major ${dump_major}"
+    exit 1
+  fi
+  log "backup: tools pg_dump=${PG_DUMP} (major ${dump_major}) pg_restore=${PG_RESTORE} (major ${restore_major})"
+}
+
+resolve_pg_tools
+
 log "backup: starting (dir=${BACKUP_DIR}, retention=${RETENTION_DAYS}d, stamp=${STAMP})"
 
 start_ts="$(date +%s)"
 
 # Atomic write: pg_dump to temp file, then rename. --format=custom enables pg_restore flex restore.
-# Never log DATABASE_URL.
-if ! pg_dump --format=custom --no-owner --no-acl --verbose --file="${DUMP_TMP}" "${DATABASE_URL}" 2>&1 | sed 's/postgresql:\/\/[^ ]*/postgresql:\/\/***REDACTED***/g'; then
+# Never log DATABASE_URL. PG_DUMP is resolved above; never silently use an incompatible client.
+if ! "${PG_DUMP}" --format=custom --no-owner --no-acl --verbose --file="${DUMP_TMP}" "${DATABASE_URL}" 2>&1 | sed 's/postgresql:\/\/[^ ]*/postgresql:\/\/***REDACTED***/g'; then
   rm -f "${DUMP_TMP}"
   log "backup: FAIL pg_dump"
   exit 1
@@ -54,9 +116,9 @@ if [ ! -s "${DUMP_TMP}" ]; then
   exit 1
 fi
 
-if ! pg_restore --list "${DUMP_TMP}" >/dev/null 2>&1; then
+if ! "${PG_RESTORE}" --list "${DUMP_TMP}" >/dev/null 2>&1; then
   rm -f "${DUMP_TMP}"
-  log "backup: FAIL pg_restore --list validation failed"
+  log "backup: FAIL pg_restore --list validation failed (tool=${PG_RESTORE})"
   exit 1
 fi
 
@@ -89,16 +151,17 @@ if [ -n "${SIGAP_BACKUP_BUCKET:-}" ] && [ -n "${SIGAP_BACKUP_ACCESS_KEY:-}" ] &&
   # shellcheck disable=SC2034
   export AWS_DEFAULT_REGION="${region}"
   # Prefer aws cli v2 if available.
+  # PYTHONNOUSERSITE avoids a broken user-site urllib3 shadowing the distro one.
   if command -v aws >/dev/null 2>&1; then
     aws_args=()
     if [ -n "${endpoint}" ]; then aws_args+=(--endpoint-url "${endpoint}"); fi
     aws_args+=(--region "${region}")
-    if ! aws s3 cp "${DUMP_FINAL}" "s3://${SIGAP_BACKUP_BUCKET}/${DUMP_NAME}" "${aws_args[@]}"; then
+    if ! PYTHONNOUSERSITE=1 aws s3 cp "${DUMP_FINAL}" "s3://${SIGAP_BACKUP_BUCKET}/${DUMP_NAME}" "${aws_args[@]}"; then
       log "backup: FAIL aws s3 cp dump"
       exit 1
     fi
     if [ -f "${CHECKSUM_FINAL}" ]; then
-      if ! aws s3 cp "${CHECKSUM_FINAL}" "s3://${SIGAP_BACKUP_BUCKET}/${DUMP_NAME}.sha256" "${aws_args[@]}"; then
+      if ! PYTHONNOUSERSITE=1 aws s3 cp "${CHECKSUM_FINAL}" "s3://${SIGAP_BACKUP_BUCKET}/${DUMP_NAME}.sha256" "${aws_args[@]}"; then
         log "backup: FAIL aws s3 cp checksum"
         exit 1
       fi
