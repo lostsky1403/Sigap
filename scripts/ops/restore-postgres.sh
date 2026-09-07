@@ -13,6 +13,8 @@
 #     --allow-destructive               # allow restore into the same DB name as source (dangerous)
 #
 # Required: SIGAP_RESTORE_DATABASE_URL
+# Optional: PG_RESTORE_BIN (explicit pg_restore binary; e.g. /usr/lib/postgresql/16/bin/pg_restore)
+# Optional: PG_DUMP_BIN (explicit pg_dump binary; used only for version reporting)
 # Optional: --dump PATH (if omitted, uses most recent sigap-*.dump in SIGAP_BACKUP_DIR)
 # Behavior:
 #   - refuses if destination looks like production unless --allow-destructive
@@ -94,11 +96,43 @@ fi
 
 log() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
+pg_major() { "$1" --version 2>/dev/null | grep -oE '[0-9]+' | head -n 1; }
+
+if [ -n "${PG_RESTORE_BIN:-}" ]; then
+  if [ ! -x "${PG_RESTORE_BIN}" ]; then
+    echo "FAIL: PG_RESTORE_BIN is not executable: ${PG_RESTORE_BIN}" >&2
+    exit 1
+  fi
+  PG_RESTORE="${PG_RESTORE_BIN}"
+else
+  PG_RESTORE=""
+  for candidate in /usr/lib/postgresql/16/bin/pg_restore /usr/lib/postgresql/15/bin/pg_restore /usr/bin/pg_restore; do
+    if [ -x "${candidate}" ]; then
+      PG_RESTORE="${candidate}"
+      break
+    fi
+  done
+  if [ -z "${PG_RESTORE}" ]; then
+    PG_RESTORE="$(command -v pg_restore || true)"
+  fi
+  if [ -z "${PG_RESTORE}" ]; then
+    echo "FAIL: pg_restore not found (set PG_RESTORE_BIN)" >&2
+    exit 1
+  fi
+fi
+
+restore_major="$(pg_major "${PG_RESTORE}")"
+if [ -z "${restore_major}" ]; then
+  echo "FAIL: unable to determine pg_restore version" >&2
+  exit 1
+fi
+log "restore: tool pg_restore=${PG_RESTORE} (major ${restore_major})"
+
 log "restore: starting dump=${DUMP} allow-destructive=${ALLOW_DESTRUCTIVE} (destination hidden)"
 
 # Validate dump format before attempting restore.
-if ! pg_restore --list "${DUMP}" >/dev/null 2>&1; then
-  echo "FAIL: dump is not a valid pg_dump custom-format file: ${DUMP}" >&2
+if ! "${PG_RESTORE}" --list "${DUMP}" >/dev/null 2>&1; then
+  echo "FAIL: dump is not a valid pg_dump custom-format file: ${DUMP} (tool=${PG_RESTORE})" >&2
   exit 1
 fi
 
@@ -106,7 +140,7 @@ start_ts="$(date +%s)"
 
 # pg_restore into destination. --clean --if-exists makes it idempotent on rerun.
 # --no-owner --no-acl match backup flags. Verbose but REDACTED.
-if ! pg_restore --clean --if-exists --no-owner --no-acl --verbose --dbname="${SIGAP_RESTORE_DATABASE_URL}" "${DUMP}" 2>&1 | sed 's/postgresql:\/\/[^ ]*/postgresql:\/\/***REDACTED***/g'; then
+if ! "${PG_RESTORE}" --clean --if-exists --no-owner --no-acl --verbose --dbname="${SIGAP_RESTORE_DATABASE_URL}" "${DUMP}" 2>&1 | sed 's/postgresql:\/\/[^ ]*/postgresql:\/\/***REDACTED***/g'; then
   # pg_restore returns non-zero for genuine errors; warnings (e.g., already exists with IF NOT EXISTS)
   # are non-fatal only if the data still verified below. We treat non-zero as failure for scheduler.
   log "restore: pg_restore returned non-zero (see output above)"
