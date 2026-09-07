@@ -92,7 +92,31 @@ resolve_pg_tools() {
     log "backup: FAIL pg_restore major ${restore_major} is older than pg_dump major ${dump_major}"
     exit 1
   fi
-  log "backup: tools pg_dump=${PG_DUMP} (major ${dump_major}) pg_restore=${PG_RESTORE} (major ${restore_major})"
+  server_major=""
+  psql_bin=""
+  if [ -x "$(dirname "${PG_DUMP}")/psql" ]; then
+    psql_bin="$(dirname "${PG_DUMP}")/psql"
+  elif [ -n "${PG_DUMP_BIN:-}" ] && [ -x "$(dirname "${PG_DUMP_BIN}")/psql" ]; then
+    psql_bin="$(dirname "${PG_DUMP_BIN}")/psql"
+  elif command -v psql >/dev/null 2>&1; then
+    psql_bin="$(command -v psql)"
+  fi
+  if [ -n "${psql_bin}" ]; then
+    server_num="$("${psql_bin}" "${DATABASE_URL}" -tAX -c "SELECT current_setting('server_version_num');" 2>/dev/null || true)"
+    server_num="$(printf '%s' "${server_num}" | tr -cd '0-9')"
+    if [ -n "${server_num}" ]; then
+      server_major="$(( server_num / 10000 ))"
+    fi
+  fi
+  if [ -n "${server_major}" ] && [ "${dump_major}" -lt "${server_major}" ]; then
+    log "backup: FAIL pg_dump major ${dump_major} is older than server major ${server_major} (tool=${PG_DUMP}; install a matching client or set PG_DUMP_BIN)"
+    exit 1
+  fi
+  if [ -n "${server_major}" ]; then
+    log "backup: tools pg_dump=${PG_DUMP} (major ${dump_major}) pg_restore=${PG_RESTORE} (major ${restore_major}) server_major=${server_major}"
+  else
+    log "backup: tools pg_dump=${PG_DUMP} (major ${dump_major}) pg_restore=${PG_RESTORE} (major ${restore_major})"
+  fi
 }
 
 resolve_pg_tools
