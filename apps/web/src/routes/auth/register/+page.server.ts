@@ -2,7 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions } from './$types';
 
 export const actions: Actions = {
-	async register({ request, locals }) {
+	async default({ request, locals }) {
 		if (!locals.supabase) {
 			return fail(503, { message: 'Autentikasi belum dikonfigurasi.' });
 		}
