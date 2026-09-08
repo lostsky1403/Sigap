@@ -94,19 +94,26 @@ func (g *grpcQueueService) Probe(ctx context.Context) error {
 	if g.conn == nil {
 		return fmt.Errorf("grpc connection not initialized")
 	}
-	// Short timeout probe; if connection state is Ready, treat as healthy.
-	state := g.conn.GetState()
-	if state == connectivity.Ready {
+	if g.conn.GetState() == connectivity.Ready {
 		return nil
 	}
-	// Try to wait for a transient state to resolve within a short window.
+	// IDLE is the normal lazy-dial / post-idle state and must not be treated
+	// as unavailable without first attempting (re)connection. Without an
+	// explicit Connect, WaitForStateChange below would time out on a healthy
+	// but idle backend and flap readyz to 503.
+	g.conn.Connect()
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if !g.conn.WaitForStateChange(ctx, state) {
-		return fmt.Errorf("grpc connection state %s (timeout)", state)
+	for {
+		state := g.conn.GetState()
+		if state == connectivity.Ready {
+			return nil
+		}
+		if state == connectivity.Shutdown {
+			return fmt.Errorf("grpc connection shutdown")
+		}
+		if !g.conn.WaitForStateChange(ctx, state) {
+			return fmt.Errorf("grpc connection state %s (timeout)", g.conn.GetState())
+		}
 	}
-	if g.conn.GetState() != connectivity.Ready {
-		return fmt.Errorf("grpc connection state %s", g.conn.GetState())
-	}
-	return nil
 }
