@@ -2,9 +2,17 @@
 # Production port override for shared VPS hosts.
 # Host port 8080 is commonly taken by unrelated apps (do NOT stop them).
 # This override keeps container port 8080 and publishes Sigap API on host 18080.
-# Web stays on host 3005. Internal service URLs are unchanged (http://api:8080).
+# Backend ports bind loopback only so Postgres/engine/API are not publicly
+# reachable; web stays public until HTTPS reverse-proxy termination is proven,
+# then it will also move behind the proxy. Internal service URLs unchanged.
 # Usage: docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d --build
 services:
+  postgres:
+    ports: !override
+      - "127.0.0.1:5433:5432"
+  rust-engine:
+    ports: !override
+      - "127.0.0.1:50051:50051"
   api:
     ports: !override
-      - "18080:8080"
+      - "127.0.0.1:18080:8080"
