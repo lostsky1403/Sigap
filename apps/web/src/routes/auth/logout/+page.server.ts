@@ -4,7 +4,7 @@ import type { Actions, PageServerLoad } from './$types';
 export const load: PageServerLoad = () => {};
 
 export const actions: Actions = {
-	async logout({ locals }) {
+	async default({ locals }) {
 		if (locals.supabase) {
 			await locals.supabase.auth.signOut();
 		}
