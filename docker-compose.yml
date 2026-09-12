@@ -110,6 +110,19 @@ services:
       # via app_users.subject; without a pool it fails closed (zero permissions).
       SIGAP_DATABASE_URL: postgresql://${POSTGRES_USER:-sigap}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-sigap}?sslmode=require
       SIGAP_AUTO_MIGRATE: ${SIGAP_AUTO_MIGRATE:-}
+      # Environment marker. Drives the API's fail-fast guards: dev-only flags
+      # are rejected outside "local", and non-local requires TLS confirmation.
+      SIGAP_ENV: ${SIGAP_ENV:-local}
+      # Confirms TLS is terminated by the edge proxy in front of the API.
+      # Required to be "true" when SIGAP_ENV is staging/production.
+      SIGAP_TLS_TERMINATED: ${SIGAP_TLS_TERMINATED:-false}
+      # CORS allow-list for browser calls from the web origin. Only the exact
+      # configured origin is allowed outside loopback mode.
+      SIGAP_WEB_ORIGIN: ${SIGAP_WEB_ORIGIN:-http://localhost:3005}
+      # Number of trusted reverse-proxy hops in front of the API. The edge
+      # (Traefik) is one hop; requests reach the API through the SvelteKit
+      # proxy on top of that, so the count is explicit rather than assumed.
+      SIGAP_TRUSTED_PROXIES: ${SIGAP_TRUSTED_PROXIES:-2}
     depends_on:
       postgres:
         condition: service_healthy
@@ -133,11 +146,21 @@ services:
     environment:
       PORT: 3000
       HOST: 0.0.0.0
-      ORIGIN: http://localhost:3005
+      # Public origin the browser sees. Drives SvelteKit request-origin/CSRF
+      # checks and absolute-URL generation. Never hardcoded: production gets
+      # the real https origin from the environment. The localhost default
+      # keeps `docker compose up` working out of the box for development.
+      ORIGIN: ${SIGAP_WEB_ORIGIN:-http://localhost:3005}
+      # Environment marker consumed by the web app's production guards
+      # (e.g. SIGAP_DEV_IDENTITY is rejected when not "local").
+      SIGAP_ENV: ${SIGAP_ENV:-local}
+      # Confirms a TLS-terminating reverse proxy sits in front. The web app
+      # listens on plain HTTP and relies on this to emit secure cookies/HSTS.
+      SIGAP_TLS_TERMINATED: ${SIGAP_TLS_TERMINATED:-false}
       # Internal Docker service URL for SvelteKit +server.ts proxies (resolves to Go API inside network)
       SIGAP_API_INTERNAL: http://api:8080
       # PUBLIC_SIGAP_API_BASE kept for reference (client uses relative paths via proxy now)
-      PUBLIC_SIGAP_API_BASE: http://localhost:8080
+      PUBLIC_SIGAP_API_BASE: ${PUBLIC_SIGAP_API_BASE:-http://localhost:8080}
       # Supabase Auth (server-side session; publishable values only, never the service-role key)
       PUBLIC_SUPABASE_URL: ${PUBLIC_SUPABASE_URL:-}
       PUBLIC_SUPABASE_ANON_KEY: ${PUBLIC_SUPABASE_ANON_KEY:-}
@@ -145,6 +168,34 @@ services:
       - api
     ports:
       - "3005:3000"
+    # Edge routing labels. The shared host edge is Traefik (v2.11) which reads
+    # Docker labels via its docker provider (exposedbydefault=false), so an
+    # explicit enable + router + TLS resolver is required for this service to
+    # be published on 80/443. The router only matches this exact hostname;
+    # unrelated applications on the same edge are untouched.
+    # Disabled by default (ENABLE_EDGE_ROUTING) because Traefik can only reach
+    # this container once it shares the edge's Docker network — see the
+    # docker-compose.prod-edge.yml overlay, which attaches that network.
+    labels:
+      traefik.enable: ${ENABLE_EDGE_ROUTING:-false}
+      traefik.docker.network: ${EDGE_NETWORK:-traefik}
+      # HTTP entrypoint: redirect to HTTPS (global entrypoint redirect already
+      # exists, this makes it explicit + lets ACME HTTP-01 complete).
+      traefik.http.routers.sigap-web.entrypoints: ${EDGE_ENTRYPOINT_WEB:-web}
+      traefik.http.routers.sigap-web.rule: Host(`${SIGAP_PUBLIC_HOST:-sigap.chaerulchalik.web.id}`)
+      traefik.http.routers.sigap-web.middlewares: sigap-web-redirect-https
+      traefik.http.routers.sigap-web.service: sigap-web
+      # HTTPS entrypoint: TLS terminated by the edge, certificate obtained
+      # automatically through the existing ACME resolver.
+      traefik.http.routers.sigap-web-secure.entrypoints: ${EDGE_ENTRYPOINT_SECURE:-websecure}
+      traefik.http.routers.sigap-web-secure.rule: Host(`${SIGAP_PUBLIC_HOST:-sigap.chaerulchalik.web.id}`)
+      traefik.http.routers.sigap-web-secure.service: sigap-web
+      traefik.http.routers.sigap-web-secure.tls: "true"
+      traefik.http.routers.sigap-web-secure.tls.certresolver: ${EDGE_CERT_RESOLVER:-main-resolver}
+      traefik.http.middlewares.sigap-web-redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.sigap-web-redirect-https.redirectscheme.permanent: "true"
+      # Container port for the edge to proxy to.
+      traefik.http.services.sigap-web.loadbalancer.server.port: "3000"
     restart: unless-stopped
 
 volumes:
