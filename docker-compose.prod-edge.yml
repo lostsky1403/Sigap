@@ -1,0 +1,43 @@
+# docker-compose.prod-edge.yml
+# Production edge overlay for hosts where a shared reverse proxy (Traefik)
+# already owns ports 80/443 and terminates TLS for many unrelated apps.
+#
+# Two concerns are handled here:
+#
+#   1. Hardening — Sigap web must not be reachable directly from the internet.
+#      Host port 3005 is bound to loopback only; the edge reaches the container
+#      through the shared Docker network instead. This mirrors the existing
+#      loopback restrictions for API (18080), Postgres (5433) and the queue
+#      engine (50051) in docker-compose.prod-ports.yml.
+#
+#   2. Edge attachment — Traefik discovers containers through its Docker
+#      provider, but only via networks it is itself attached to. Joining the
+#      shared edge network is what makes the labels on `web` resolvable.
+#
+# The edge network is declared `external` so this compose project never
+# creates, reconfigures or removes infrastructure owned by other stacks.
+#
+# Required .env values:
+#   SIGAP_PUBLIC_HOST=sigap.chaerulchalik.web.id
+#   ENABLE_EDGE_ROUTING=true
+#   EDGE_NETWORK=traefik            # network the host edge is attached to
+#
+# Usage (together with the port override, in this order):
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.prod-ports.yml \
+#     -f docker-compose.prod-edge.yml \
+#     up -d
+
+services:
+  web:
+    ports: !override
+      - "127.0.0.1:3005:3000"
+    networks:
+      - default
+      - edge
+
+networks:
+  edge:
+    external: true
+    name: ${EDGE_NETWORK:-traefik}
