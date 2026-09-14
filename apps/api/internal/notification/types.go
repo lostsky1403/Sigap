@@ -128,6 +128,7 @@ type EnqueueInput struct {
 	TemplateKey         string
 	Subject             string
 	BodyTemplate       string
+	TemplateVars        map[string]string // allow-listed vars for RenderTemplate; e.g. {"queue_number": "RSK-0001"}
 	RecipientType       RecipientType
 	RecipientContact    string // raw; transient; never persisted or returned
 	RelatedResourceType string // e.g. "appointment" (audit-only metadata)
