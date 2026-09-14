@@ -89,9 +89,9 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
     CONSTRAINT notification_outbox_masked_chk
         CHECK (octet_length(recipient_contact_masked) BETWEEN 3 AND 200),
     CONSTRAINT notification_outbox_no_raw_phone_in_subject_chk
-        CHECK (subject !~ '[0-9]{8,}'),
+        CHECK (subject !~ '[0-9]{8,}' AND subject !~ '[0-9][0-9\-._() ]{10,}[0-9]'),
     CONSTRAINT notification_outbox_no_raw_phone_in_body_chk
-        CHECK (body_template !~ '[0-9]{8,}')
+        CHECK (body_template !~ '[0-9]{8,}' AND body_template !~ '[0-9][0-9\-._() ]{10,}[0-9]')
 );
 
 CREATE INDEX IF NOT EXISTS idx_notification_outbox_facility_status_created
