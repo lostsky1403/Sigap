@@ -81,6 +81,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Fail-fast: when dev-only capabilities are active, the server must
+	// bind to a loopback address only. This is defence-in-depth against
+	// the dev identity header bypass being reachable from the network.
+	if err := config.GuardDevNetworkBinding(); err != nil {
+		slog.Error("dev network binding guard failed", "err", err)
+		fmt.Fprintln(os.Stderr, "FATAL:", err)
+		os.Exit(1)
+	}
+
 	// Fail-fast: require TLS termination confirmation outside local.
 	if err := config.GuardTLS(); err != nil {
 		slog.Error("TLS guard failed", "err", err)

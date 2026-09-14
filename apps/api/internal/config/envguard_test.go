@@ -242,6 +242,120 @@ func TestGuardDevCapabilities_MultipleViolations(t *testing.T) {
 	}
 }
 
+// TestGuardDevNetworkBinding verifies that dev capabilities are blocked
+// from non-loopback addresses.
+func TestGuardDevNetworkBinding(t *testing.T) {
+	envVars := []string{
+		"SIGAP_ENV", "SIGAP_API_HOST", "SIGAP_DEV_IDENTITY",
+		"SIGAP_AUTH_MODE", "SIGAP_ENGINE_FALLBACK",
+	}
+	clearEnv := func() {
+		for _, k := range envVars {
+			t.Setenv(k, "")
+		}
+	}
+
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr bool
+	}{
+		{
+			name: "local + dev identity + loopback host",
+			env: map[string]string{
+				"SIGAP_ENV":          "local",
+				"SIGAP_DEV_IDENTITY": "true",
+				"SIGAP_API_HOST":     "127.0.0.1",
+			},
+			wantErr: false,
+		},
+		{
+			name: "local + dev identity + localhost",
+			env: map[string]string{
+				"SIGAP_ENV":          "local",
+				"SIGAP_DEV_IDENTITY": "true",
+				"SIGAP_API_HOST":     "localhost",
+			},
+			wantErr: false,
+		},
+		{
+			name: "local + dev identity + empty host (defaults to loopback)",
+			env: map[string]string{
+				"SIGAP_ENV":          "local",
+				"SIGAP_DEV_IDENTITY": "true",
+			},
+			wantErr: false,
+		},
+		{
+			name: "local + dev identity + non-loopback host (REJECTED)",
+			env: map[string]string{
+				"SIGAP_ENV":          "local",
+				"SIGAP_DEV_IDENTITY": "true",
+				"SIGAP_API_HOST":     "0.0.0.0",
+			},
+			wantErr: true,
+		},
+		{
+			name: "local + dev identity + external IP (REJECTED)",
+			env: map[string]string{
+				"SIGAP_ENV":          "local",
+				"SIGAP_DEV_IDENTITY": "true",
+				"SIGAP_API_HOST":     "192.168.1.100",
+			},
+			wantErr: true,
+		},
+		{
+			name: "local + auth mode dev + non-loopback (REJECTED)",
+			env: map[string]string{
+				"SIGAP_ENV":       "local",
+				"SIGAP_AUTH_MODE": "dev",
+				"SIGAP_API_HOST":  "0.0.0.0",
+			},
+			wantErr: true,
+		},
+		{
+			name: "local + no dev flags + any host (allowed)",
+			env: map[string]string{
+				"SIGAP_ENV":       "local",
+				"SIGAP_API_HOST":  "0.0.0.0",
+			},
+			wantErr: false,
+		},
+		{
+			name: "production + dev identity (GuardDevCapabilities handles; NetworkBinding returns nil)",
+			env: map[string]string{
+				"SIGAP_ENV":          "production",
+				"SIGAP_DEV_IDENTITY": "true",
+				"SIGAP_API_HOST":     "0.0.0.0",
+			},
+			wantErr: false,
+		},
+		{
+			name: "localhost with ::1 (IPv6 loopback)",
+			env: map[string]string{
+				"SIGAP_ENV":          "local",
+				"SIGAP_DEV_IDENTITY": "true",
+				"SIGAP_API_HOST":     "::1",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnv()
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			err := GuardDevNetworkBinding()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("GuardDevNetworkBinding() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 // TestGuardTLS verifies the TLS termination guard for non-local environments.
 func TestGuardTLS(t *testing.T) {
 	tests := []struct {

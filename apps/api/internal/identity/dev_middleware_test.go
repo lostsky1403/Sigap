@@ -37,8 +37,19 @@ func TestDevIdentity_EnabledWithHeader(t *testing.T) {
 	if captured.UserID != "dev-user-42" {
 		t.Errorf("expected UserID=dev-user-42, got %q", captured.UserID)
 	}
-	if !captured.HasPermission("queue.generate") {
-		t.Error("expected HasPermission(queue.generate)")
+	// SECURITY: Dev identity is restricted to read-only, non-PHI permissions.
+	// Write-level permissions must NOT be present.
+	if captured.HasPermission("queue.generate") {
+		t.Error("dev identity must NOT have queue.generate permission")
+	}
+	if captured.HasPermission("facility.manage") {
+		t.Error("dev identity must NOT have facility.manage permission")
+	}
+	if captured.HasPermission("appointment.manage") {
+		t.Error("dev identity must NOT have appointment.manage permission")
+	}
+	if !captured.HasPermission("facility.read") {
+		t.Error("expected dev identity to have facility.read permission")
 	}
 }
 
