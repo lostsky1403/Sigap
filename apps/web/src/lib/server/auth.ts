@@ -45,32 +45,24 @@ export function authHeaders(event: RequestEvent): Record<string, string> {
 }
 
 const isDevIdentityEnabled = (): boolean => {
-	return process.env.SIGAP_DEV_IDENTITY === 'true';
+	return process.env.SIGAP_DEV_IDENTITY === 'true' &&
+		(process.env.SIGAP_ENV || '').toLowerCase() === 'local';
 };
 
 /**
  * Returns headers to attach to upstream API requests.
  *
- * - When `SIGAP_DEV_IDENTITY=true`: injects `X-Sigap-Dev-User-ID: admin-ui`.
- * - When `SIGAP_ENV` is not `local` and dev identity is enabled:
- *   throws at startup to prevent accidental production use.
- * - Otherwise: returns empty headers.
+ * SECURITY: This function NO LONGER injects the X-Sigap-Dev-User-ID header.
+ * The client is always untrusted — any header it sets is fully
+ * client-controlled and must never carry authentication meaning.
+ *
+ * Dev identity is now restricted to read-only, non-PHI permissions on the
+ * server side (see dev_provider.go). Server-side tooling should set the
+ * header directly (e.g. curl -H 'X-Sigap-Dev-User-ID: dev' ...) if local
+ * read-only testing is needed. The browser frontend must never emit it.
  */
 export function proxyHeaders(): Record<string, string> {
-	if (!isDevIdentityEnabled()) {
-		return {};
-	}
-
-	// Production guard: fail fast if dev identity is enabled outside local.
-	const env = (process.env.SIGAP_ENV || '').toLowerCase();
-	if (env && env !== 'local') {
-		throw new Error(
-			`SIGAP_DEV_IDENTITY=true is not allowed when SIGAP_ENV=${process.env.SIGAP_ENV}. ` +
-			`Set SIGAP_ENV=local for development or disable dev identity.`
-		);
-	}
-
-	return { 'X-Sigap-Dev-User-ID': 'admin-ui' };
+	return {};
 }
 
 /**

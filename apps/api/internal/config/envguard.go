@@ -82,6 +82,49 @@ func GuardDevCapabilities() error {
 	return fmt.Errorf("%s", msg)
 }
 
+// GuardDevNetworkBinding verifies that when dev-only capabilities are
+// enabled (SIGAP_DEV_IDENTITY=true or SIGAP_AUTH_MODE=dev), the server
+// is configured to listen on a loopback address (127.0.0.1 or localhost).
+//
+// This prevents an attacker from reaching the dev identity bypass from
+// the network. Even though the dev identity is now restricted to
+// read-only permissions, it must never be reachable from non-loopback
+// addresses.
+//
+// The function reads the SIGAP_API_HOST environment variable (used by
+// main.go to set the listen address). When dev capabilities are active
+// and the host is neither empty (defaults to loopback in main.go),
+// "127.0.0.1", nor "localhost", this guard returns an error.
+func GuardDevNetworkBinding() error {
+	env := strings.TrimSpace(os.Getenv("SIGAP_ENV"))
+	if !strings.EqualFold(env, "local") {
+		// Dev capabilities are already blocked by GuardDevCapabilities
+		// outside of local mode. This guard is a defence-in-depth check
+		// for the local case where loopback binding is still required.
+		return nil
+	}
+
+	devActive := strings.EqualFold(os.Getenv("SIGAP_DEV_IDENTITY"), "true") ||
+		strings.EqualFold(os.Getenv("SIGAP_AUTH_MODE"), "dev") ||
+		strings.EqualFold(os.Getenv("SIGAP_ENGINE_FALLBACK"), "dev")
+
+	if !devActive {
+		return nil
+	}
+
+	host := strings.TrimSpace(os.Getenv("SIGAP_API_HOST"))
+	if host == "" || host == "127.0.0.1" || host == "localhost" || host == "::1" {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"dev-only capabilities enabled (SIGAP_DEV_IDENTITY/SIGAP_AUTH_MODE/SIGAP_ENGINE_FALLBACK) " +
+			"but SIGAP_API_HOST=%q is not a loopback address. "+
+			"Set SIGAP_API_HOST=127.0.0.1 to start, or disable dev capabilities.",
+		host,
+	)
+}
+
 // GuardTLS verifies that non-local environments have TLS termination
 // confirmed by setting SIGAP_TLS_TERMINATED=true.  This prevents the
 // API from accepting plain HTTP traffic in staging or production.

@@ -10,7 +10,8 @@ import (
 
 // TestDevIdentityProvider_EnabledWithHeader verifies that when
 // SIGAP_DEV_IDENTITY=true and the request carries X-Sigap-Dev-User-ID,
-// the provider returns an actor with the full synthetic permission set.
+// the provider returns an actor with the restricted (read-only, non-PHI)
+// permission set.
 func TestDevIdentityProvider_EnabledWithHeader(t *testing.T) {
 	t.Setenv(devIdentityEnv, "true")
 	p := NewDevIdentityProvider()
@@ -31,17 +32,34 @@ func TestDevIdentityProvider_EnabledWithHeader(t *testing.T) {
 	if !actor.IsDev {
 		t.Error("IsDev = false, want true")
 	}
+
+	// Dev identity MUST have read-only, non-PHI permissions only.
 	wantPerms := []string{
-		"queue.generate", "queue.read", "queue.manage",
-		"facility.read", "facility.manage",
-		"audit.read",
-		"notification.read", "notification.manage",
+		"facility.read",
+		"notification.read",
+		"appointment.read",
+		"queue.read",
 		"schedule.read",
-		"appointment.read", "appointment.manage",
+		"audit.read",
 	}
 	for _, perm := range wantPerms {
 		if !actor.HasPermission(perm) {
-			t.Errorf("missing permission %q", perm)
+			t.Errorf("missing expected read-only permission %q", perm)
+		}
+	}
+
+	// Dev identity MUST NOT have any write-level permissions.
+	denyPerms := []string{
+		"queue.generate",
+		"queue.manage",
+		"facility.manage",
+		"notification.manage",
+		"schedule.manage",
+		"appointment.manage",
+	}
+	for _, perm := range denyPerms {
+		if actor.HasPermission(perm) {
+			t.Errorf("dev identity must NOT have write-level permission %q", perm)
 		}
 	}
 }

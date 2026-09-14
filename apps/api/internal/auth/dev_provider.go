@@ -53,19 +53,21 @@ func (p *DevIdentityProvider) Authenticate(r *http.Request) (identity.Actor, err
 		UserID: devUserID,
 		Type:   identity.ActorDev,
 		IsDev:  true,
-		// Dev identity gets full synthetic permission set for local testing.
+		// SECURITY: Dev identity is restricted to read-only, non-PHI
+		// permissions only. Write-level permissions (facility.manage,
+		// appointment.manage, notification.manage, queue.manage,
+		// schedule.manage) are intentionally excluded to prevent an
+		// unauthenticated client with the X-Sigap-Dev-User-ID header
+		// from modifying PHI-bearing records or performing state changes.
+		// The X-Sigap-Dev-User-ID header is a convenience for local
+		// read-only testing only.
 		Permissions: []string{
-			"queue.generate",
-			"queue.read",
-			"queue.manage",
 			"facility.read",
-			"facility.manage",
-			"audit.read",
 			"notification.read",
-			"notification.manage",
-			"schedule.read",
 			"appointment.read",
-			"appointment.manage",
+			"queue.read",
+			"schedule.read",
+			"audit.read",
 		},
 	}, nil
 }

@@ -33,18 +33,22 @@ func DevIdentity(next http.Handler) http.Handler {
 				)
 				// actor type=dev
 				ctx := ContextWithActor(r.Context(), Actor{
-					UserID: devUserID,
-					Type:   ActorDev,
-					IsDev:  true,
-					// Dev identity gets full synthetic permission set for local testing.
-					Permissions: []string{
-						"queue.generate",
-						"queue.read",
-						"facility.read",
-						"facility.manage",
-						"audit.read",
-					},
-				})
+				UserID: devUserID,
+				Type:   ActorDev,
+				IsDev:  true,
+				// SECURITY: Dev identity is restricted to read-only, non-PHI
+				// permissions only. Write-level permissions are intentionally
+				// excluded to prevent an unauthenticated client with the
+				// X-Sigap-Dev-User-ID header from modifying records.
+				Permissions: []string{
+					"facility.read",
+					"notification.read",
+					"appointment.read",
+					"queue.read",
+					"schedule.read",
+					"audit.read",
+				},
+			})
 				r = r.WithContext(ctx)
 			}
 		}
