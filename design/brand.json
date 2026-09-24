@@ -1,0 +1,170 @@
+{
+  "name": "Sigap Civic Health",
+  "tagline": "Layanan kesehatan warga yang cepat, tenang, dan tepercaya",
+  "description": "Sigap is an Indonesian civic-health digital service for citizens, patients, and healthcare facility operators.\n\nThe product helps citizens find healthcare facilities, make appointments, check in, and track visit/queue status. Facility staff use it to manage queues, appointments, schedules, facilities, and operational notifications.\n\nThe redesign must feel trustworthy, calm, precise, accessible, modern, and suitable for a real public-health digital service.\n\nAvoid generic SaaS aesthetics, AI-generated visual patterns, gradients, glassmorphism, excessive cards, excessive rounded corners, huge hero sections, fake metrics, decorative illustrations, and startup-style marketing UI.\n\nCitizen-facing interfaces should be friendly and task-oriented. Admin interfaces should be operational, information-dense, fast to scan, and desktop-first.\n\nAll UI copy should use natural Indonesian.",
+  "sourceUrl": "designmd://sigap-civic-health",
+  "seed": {
+    "colorSuccess": "#2f7d32",
+    "colorWarning": "#b45309",
+    "colorError": "#c4322a",
+    "colorInfo": "#1d6bb5",
+    "colorLink": "#0f766e"
+  },
+  "logo": {
+    "primary": null,
+    "alternates": [],
+    "notes": "No logo supplied in pasted DESIGN.md."
+  },
+  "colors": [
+    {
+      "role": "background",
+      "hex": "#f7f6f3",
+      "oklch": "",
+      "name": "Background",
+      "usage": "page canvas"
+    },
+    {
+      "role": "foreground",
+      "hex": "#1c1b1a",
+      "oklch": "",
+      "name": "Foreground",
+      "usage": "body text and headings"
+    },
+    {
+      "role": "accent",
+      "hex": "#0f766e",
+      "oklch": "",
+      "name": "Accent",
+      "usage": "brand accent, mirrors primary teal"
+    },
+    {
+      "role": "surface",
+      "hex": "#ffffff",
+      "oklch": "",
+      "name": "Surface",
+      "usage": "cards and panels"
+    },
+    {
+      "role": "muted",
+      "hex": "#57534e",
+      "oklch": "",
+      "name": "Muted",
+      "usage": "secondary text and metadata"
+    },
+    {
+      "role": "border",
+      "hex": "#e0ddd8",
+      "oklch": "",
+      "name": "Border",
+      "usage": "rules and dividers"
+    }
+  ],
+  "typography": {
+    "display": {
+      "family": "Inter",
+      "fallbacks": [
+        "system-ui",
+        "-apple-system",
+        "Segoe UI",
+        "Helvetica Neue",
+        "Arial",
+        "sans-serif"
+      ],
+      "weights": [
+        400,
+        700
+      ]
+    },
+    "body": {
+      "family": "Inter",
+      "fallbacks": [
+        "system-ui",
+        "-apple-system",
+        "Segoe UI",
+        "Helvetica Neue",
+        "Arial",
+        "sans-serif"
+      ],
+      "weights": [
+        400,
+        700
+      ]
+    }
+  },
+  "voice": {
+    "adjectives": [
+      "trustworthy",
+      "calm",
+      "precise",
+      "accessible",
+      "modern",
+      "human"
+    ],
+    "tone": "Concise, respectful and useful Indonesian public-service tone. Calm and precise for health tasks, never marketing hype or startup enthusiasm.",
+    "messagingPillars": [
+      "Indonesian civic-health service for citizens, patients, and facility operators.",
+      "Citizens find facilities, book appointments, check in, and track visit and queue status.",
+      "Facility staff manage queues, appointments, schedules, facilities, and operational notifications.",
+      "Trustworthy, calm, precise, accessible, and modern public-health service."
+    ],
+    "vocabulary": {
+      "use": [
+        "Beranda",
+        "Cari Faskes",
+        "Janji Temu",
+        "Check-In",
+        "Status Kunjungan",
+        "Antrean",
+        "Jadwal",
+        "Fasilitas",
+        "Notifikasi",
+        "Ringkasan"
+      ],
+      "avoid": [
+        "generic SaaS terms",
+        "marketing hype",
+        "startup slogans",
+        "exaggerated enthusiasm",
+        "technical jargon",
+        "lorem ipsum",
+        "fake metrics"
+      ]
+    }
+  },
+  "imagery": {
+    "style": "Clean operational civic-health imagery, no decorative illustrations.",
+    "subjects": [
+      "healthcare facility search and visit tasks",
+      "queue and appointment status",
+      "facility operations"
+    ],
+    "treatment": "Flat, legible, high-contrast informational visuals with 1px borders and restrained radius, no gradients or glassmorphism.",
+    "avoid": [
+      "decorative illustrations",
+      "stock photography",
+      "giant hero sections",
+      "floating UI",
+      "decorative blobs",
+      "gradient text",
+      "emoji icons",
+      "fake charts and KPI cards"
+    ]
+  },
+  "layout": {
+    "radius": "8px",
+    "borderWeight": "1px",
+    "spacing": "8px baseline grid",
+    "postureRules": [
+      "Citizen UI is friendly, task-oriented, and spacious with restrained line lengths.",
+      "Admin UI is denser, operational, scan-first, and desktop-first with left sidebar and facility context.",
+      "CITIZEN/DEFAULT density is canonical: controlHeight 44, controlHeightLG 44; ADMIN/COMPACT only: controlHeight 36, controlHeightLG 40; never use compact as citizen default.",
+      "Canvas is #F7F6F3; containers and elevated surfaces stay #FFFFFF; never derive every container from warm canvas.",
+      "Primary #0F766E, hover #0B6B63, active #084F49; link mirrors primary; border #E0DDD8.",
+      "Use 6px radius for inputs and buttons, 8px for panels, 12px for dialogs, never pills or oversized rounded containers.",
+      "Structure with spacing, typography, borders, and surfaces; shadows only for semantic elevation.",
+      "Tables over cards for operational data; cards only for distinct conceptual units.",
+      "Status is never color-only: label plus color plus optional icon.",
+      "No gradients, no glassmorphism, no giant heroes, no excessive cards, no floating UI."
+    ]
+  }
+}

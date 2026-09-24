@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sigap Civic Health - component kit</title>
+
+<style>
+:root{
+  --brand-color-primary: #0f766e;
+  --brand-color-primary-bg: #a8b5b2;
+  --brand-color-primary-bg-hover: #82a8a0;
+  --brand-color-primary-border: #5f9c91;
+  --brand-color-primary-border-hover: #408f83;
+  --brand-color-primary-hover: #268278;
+  --brand-color-primary-active: #064f4c;
+  --brand-color-primary-text: #000203;
+  --brand-color-success: #2f7d32;
+  --brand-color-success-bg: #b3bdb1;
+  --brand-color-success-border: #8ea38c;
+  --brand-color-success-hover: #4a8a4b;
+  --brand-color-success-active: #1d5721;
+  --brand-color-warning: #b45309;
+  --brand-color-warning-bg: #f5ebdc;
+  --brand-color-warning-border: #dbab74;
+  --brand-color-warning-hover: #c27029;
+  --brand-color-warning-active: #8f3900;
+  --brand-color-error: #c4322a;
+  --brand-color-error-bg: #fff3f0;
+  --brand-color-error-border: #ebada2;
+  --brand-color-error-hover: #d1594d;
+  --brand-color-error-active: #9e1c19;
+  --brand-color-info: #1d6bb5;
+  --brand-color-info-bg: #e6f0f5;
+  --brand-color-info-border: #8cbddb;
+  --brand-color-link: #0f766e;
+  --brand-color-link-hover: #268278;
+  --brand-color-link-active: #064f4c;
+  --brand-color-text: #363534;
+  --brand-color-text-secondary: #696866;
+  --brand-color-text-tertiary: #949391;
+  --brand-color-text-quaternary: #c0bfbd;
+  --brand-color-fill: #d6d5d2;
+  --brand-color-fill-secondary: #eae9e6;
+  --brand-color-fill-tertiary: #eeedea;
+  --brand-color-fill-quaternary: #f3f2ef;
+  --brand-color-bg-layout: #eeedea;
+  --brand-color-bg-container: #f7f6f3;
+  --brand-color-bg-elevated: #f7f6f3;
+  --brand-color-border: #d6d5d2;
+  --brand-color-border-secondary: #eae9e6;
+  --brand-font-family: Inter, system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --brand-font-family-code: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+  --brand-font-size: 14px;
+  --brand-font-size-sm: 12px;
+  --brand-font-size-lg: 18px;
+  --brand-font-size-xl: 22px;
+  --brand-font-size-heading-1: 38px;
+  --brand-font-size-heading-2: 32px;
+  --brand-font-size-heading-3: 26px;
+  --brand-font-size-heading-4: 22px;
+  --brand-font-size-heading-5: 18px;
+  --brand-line-height: 1.5714285714285714;
+  --brand-line-height-heading: 1.25;
+  --brand-font-weight-strong: 600;
+  --brand-size-xxs: 4px;
+  --brand-size-xs: 8px;
+  --brand-size-sm: 12px;
+  --brand-size: 16px;
+  --brand-size-md: 20px;
+  --brand-size-lg: 24px;
+  --brand-size-xl: 32px;
+  --brand-size-xxl: 48px;
+  --brand-border-radius-xs: 3px;
+  --brand-border-radius-sm: 5px;
+  --brand-border-radius: 8px;
+  --brand-border-radius-lg: 10px;
+  --brand-line-width: 1px;
+  --brand-control-height-xs: 16px;
+  --brand-control-height-sm: 24px;
+  --brand-control-height: 32px;
+  --brand-control-height-lg: 40px;
+  --brand-motion-duration-fast: 0.1s;
+  --brand-motion-duration-mid: 0.2s;
+  --brand-motion-duration-slow: 0.3s;
+  --brand-motion-ease-in-out: cubic-bezier(0.645, 0.045, 0.355, 1);
+  --brand-motion-ease-out: cubic-bezier(0.215, 0.61, 0.355, 1);
+  --brand-primary-palette-1: #a8b5b2;
+  --brand-primary-palette-2: #82a8a0;
+  --brand-primary-palette-3: #5f9c91;
+  --brand-primary-palette-4: #408f83;
+  --brand-primary-palette-5: #268278;
+  --brand-primary-palette-6: #0f766e;
+  --brand-primary-palette-7: #064f4c;
+  --brand-primary-palette-8: #012928;
+  --brand-primary-palette-9: #000203;
+  --brand-primary-palette-10: #000000;
+  --brand-presets-red-1: #fff1f0;
+  --brand-presets-red-2: #ffcbc7;
+  --brand-presets-red-3: #ffa39e;
+  --brand-presets-red-4: #ff7775;
+  --brand-presets-red-5: #ff4d50;
+  --brand-presets-red-6: #f5222d;
+  --brand-presets-red-7: #cf1323;
+  --brand-presets-red-8: #a8071a;
+  --brand-presets-red-9: #820014;
+  --brand-presets-red-10: #5c0011;
+  --brand-presets-volcano-1: #fff2e8;
+  --brand-presets-volcano-2: #ffd8bf;
+  --brand-presets-volcano-3: #ffbb96;
+  --brand-presets-volcano-4: #ff9c6e;
+  --brand-presets-volcano-5: #ff7a45;
+  --brand-presets-volcano-6: #fa541c;
+  --brand-presets-volcano-7: #d4380d;
+  --brand-presets-volcano-8: #ad2202;
+  --brand-presets-volcano-9: #871500;
+  --brand-presets-volcano-10: #610c00;
+  --brand-presets-orange-1: #fff7e6;
+  --brand-presets-orange-2: #ffe7ba;
+  --brand-presets-orange-3: #ffd591;
+  --brand-presets-orange-4: #ffc069;
+  --brand-presets-orange-5: #ffa940;
+  --brand-presets-orange-6: #fa8c16;
+  --brand-presets-orange-7: #d46b08;
+  --brand-presets-orange-8: #ad4e00;
+  --brand-presets-orange-9: #873800;
+  --brand-presets-orange-10: #612500;
+  --brand-presets-gold-1: #fffbe6;
+  --brand-presets-gold-2: #fff1b8;
+  --brand-presets-gold-3: #ffe58f;
+  --brand-presets-gold-4: #ffd666;
+  --brand-presets-gold-5: #ffc53d;
+  --brand-presets-gold-6: #faad14;
+  --brand-presets-gold-7: #d48806;
+  --brand-presets-gold-8: #ad6800;
+  --brand-presets-gold-9: #874c00;
+  --brand-presets-gold-10: #613400;
+  --brand-presets-yellow-1: #feffe6;
+  --brand-presets-yellow-2: #ffffb8;
+  --brand-presets-yellow-3: #fffb8f;
+  --brand-presets-yellow-4: #fff566;
+  --brand-presets-yellow-5: #ffeb3d;
+  --brand-presets-yellow-6: #fadb14;
+  --brand-presets-yellow-7: #d4b106;
+  --brand-presets-yellow-8: #ad8a00;
+  --brand-presets-yellow-9: #876700;
+  --brand-presets-yellow-10: #614700;
+  --brand-presets-lime-1: #fcffe6;
+  --brand-presets-lime-2: #f4ffb8;
+  --brand-presets-lime-3: #eaff8f;
+  --brand-presets-lime-4: #d3f261;
+  --brand-presets-lime-5: #bae637;
+  --brand-presets-lime-6: #a0d911;
+  --brand-presets-lime-7: #7bb305;
+  --brand-presets-lime-8: #5b8c00;
+  --brand-presets-lime-9: #3f6600;
+  --brand-presets-lime-10: #254000;
+  --brand-presets-green-1: #f6ffed;
+  --brand-presets-green-2: #d9f7be;
+  --brand-presets-green-3: #b6eb8f;
+  --brand-presets-green-4: #94de64;
+  --brand-presets-green-5: #72d13d;
+  --brand-presets-green-6: #52c41a;
+  --brand-presets-green-7: #389e0d;
+  --brand-presets-green-8: #227804;
+  --brand-presets-green-9: #135200;
+  --brand-presets-green-10: #092b00;
+  --brand-presets-cyan-1: #e6fffb;
+  --brand-presets-cyan-2: #b5f5ec;
+  --brand-presets-cyan-3: #87e8de;
+  --brand-presets-cyan-4: #5cdbd3;
+  --brand-presets-cyan-5: #36cfc9;
+  --brand-presets-cyan-6: #13c2c2;
+  --brand-presets-cyan-7: #08979c;
+  --brand-presets-cyan-8: #006d75;
+  --brand-presets-cyan-9: #00474f;
+  --brand-presets-cyan-10: #002329;
+  --brand-presets-blue-1: #e6f4ff;
+  --brand-presets-blue-2: #bae0ff;
+  --brand-presets-blue-3: #91caff;
+  --brand-presets-blue-4: #69b1ff;
+  --brand-presets-blue-5: #4096ff;
+  --brand-presets-blue-6: #1677ff;
+  --brand-presets-blue-7: #0958d9;
+  --brand-presets-blue-8: #003eb3;
+  --brand-presets-blue-9: #002c8c;
+  --brand-presets-blue-10: #001d66;
+  --brand-presets-geekblue-1: #f0f5ff;
+  --brand-presets-geekblue-2: #d6e4ff;
+  --brand-presets-geekblue-3: #adc6ff;
+  --brand-presets-geekblue-4: #85a5ff;
+  --brand-presets-geekblue-5: #597df7;
+  --brand-presets-geekblue-6: #2f54eb;
+  --brand-presets-geekblue-7: #1d39c4;
+  --brand-presets-geekblue-8: #10229e;
+  --brand-presets-geekblue-9: #061178;
+  --brand-presets-geekblue-10: #030852;
+  --brand-presets-purple-1: #f9f0ff;
+  --brand-presets-purple-2: #efdbff;
+  --brand-presets-purple-3: #d4adf7;
+  --brand-presets-purple-4: #b37feb;
+  --brand-presets-purple-5: #9254de;
+  --brand-presets-purple-6: #722ed1;
+  --brand-presets-purple-7: #531dab;
+  --brand-presets-purple-8: #391085;
+  --brand-presets-purple-9: #22075e;
+  --brand-presets-purple-10: #120338;
+  --brand-presets-magenta-1: #fff0f6;
+  --brand-presets-magenta-2: #ffd6e7;
+  --brand-presets-magenta-3: #ffadd2;
+  --brand-presets-magenta-4: #ff85bf;
+  --brand-presets-magenta-5: #f759aa;
+  --brand-presets-magenta-6: #eb2f96;
+  --brand-presets-magenta-7: #c41d7e;
+  --brand-presets-magenta-8: #9e1067;
+  --brand-presets-magenta-9: #780650;
+  --brand-presets-magenta-10: #520339;
+  --brand-presets-grey-1: #a6a6a6;
+  --brand-presets-grey-2: #999999;
+  --brand-presets-grey-3: #8c8c8c;
+  --brand-presets-grey-4: #808080;
+  --brand-presets-grey-5: #737373;
+  --brand-presets-grey-6: #666666;
+  --brand-presets-grey-7: #404040;
+  --brand-presets-grey-8: #1a1a1a;
+  --brand-presets-grey-9: #000000;
+  --brand-presets-grey-10: #000000;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:var(--brand-font-family);
+  font-size:var(--brand-font-size);
+  line-height:var(--brand-line-height);
+  color:var(--brand-color-text);
+  background:var(--brand-color-bg-layout);
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3{font-family:Inter, system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif, var(--brand-font-family)}
+a{color:inherit}
+a[role="button"]{transition:filter .15s ease,transform .15s ease}
+a[role="button"]:hover{filter:brightness(1.07)}
+a[role="button"]:active{filter:brightness(.95);transform:translateY(0.5px)}
+input:focus,textarea:focus,select:focus{border-color:var(--brand-color-primary)!important;box-shadow:0 0 0 3px var(--brand-color-primary-bg);outline:none}
+details.kit-acc>summary{list-style:none;cursor:pointer}
+details.kit-acc>summary::-webkit-details-marker{display:none}
+details.kit-acc .kit-acc-icon{transition:transform .18s ease}
+details.kit-acc[open] .kit-acc-icon{transform:rotate(45deg)}
+.wrap{max-width:960px;margin:0 auto;padding:var(--brand-size-xxl) var(--brand-size-lg)}
+.panel{
+  background:var(--brand-color-bg-container);
+  border:var(--brand-line-width) solid var(--brand-color-border-secondary);
+  border-radius:var(--brand-border-radius-lg);
+  padding:var(--brand-size-xl);
+  margin-bottom:var(--brand-size-xl);
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header style="margin-bottom:var(--brand-size-xxl)">
+    <div style="display:inline-flex;align-items:center;gap:var(--brand-size-xs);padding:var(--brand-size-xxs) var(--brand-size-sm);border-radius:var(--brand-border-radius);background:var(--brand-color-primary-bg);color:var(--brand-color-primary);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong)">Sigap Civic Health · default theme</div>
+    <h1 style="margin:var(--brand-size) 0 var(--brand-size-xxs);font-size:var(--brand-font-size-heading-1);font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">Sigap Civic Health - component kit</h1>
+    <p style="margin:0;max-width:60ch;font-size:var(--brand-font-size-lg);color:var(--brand-color-text-secondary)">Every component below is colored only by <code style="font-family:var(--brand-font-family-code)">var(--brand-*)</code> custom properties derived from one seed.</p>
+  </header>
+
+  <div class="panel"><section style="margin-bottom:var(--brand-size-xxl)">
+    <h2 style="margin:0;font-size:var(--brand-font-size-heading-4);font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">Buttons</h2>
+    <p style="margin:var(--brand-size-xxs) 0 var(--brand-size-lg);font-size:var(--brand-font-size);color:var(--brand-color-text-tertiary)">Five types across three sizes.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:var(--brand-size);align-items:center">
+    <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height);padding:0 var(--brand-size);font-size:var(--brand-font-size);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-primary);color:#fff;border-color:var(--brand-color-primary);box-shadow:0 2px 0 var(--brand-color-primary-bg)">Primary</a>
+    <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height);padding:0 var(--brand-size);font-size:var(--brand-font-size);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-bg-container);color:var(--brand-color-text);border-color:var(--brand-color-border)">Default</a>
+    <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height);padding:0 var(--brand-size);font-size:var(--brand-font-size);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-bg-container);color:var(--brand-color-text);border-color:var(--brand-color-border);border-style:dashed">Dashed</a>
+    <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height);padding:0 var(--brand-size);font-size:var(--brand-font-size);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:transparent;color:var(--brand-color-text);border-color:transparent">Text</a>
+    <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height);padding:0 var(--brand-size);font-size:var(--brand-font-size);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:transparent;color:var(--brand-color-link);border-color:transparent">Link</a>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:var(--brand-size);align-items:center;margin-top:var(--brand-size)">
+    <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-size:var(--brand-font-size-sm);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-primary);color:#fff;border-color:var(--brand-color-primary);box-shadow:0 2px 0 var(--brand-color-primary-bg)">Small</a>
+    <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height);padding:0 var(--brand-size);font-size:var(--brand-font-size);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-primary);color:#fff;border-color:var(--brand-color-primary);box-shadow:0 2px 0 var(--brand-color-primary-bg)">Medium</a>
+    <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height-lg);padding:0 var(--brand-size-lg);font-size:var(--brand-font-size-lg);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-primary);color:#fff;border-color:var(--brand-color-primary);box-shadow:0 2px 0 var(--brand-color-primary-bg)">Large</a>
+  </div>
+  </section></div>
+  <div class="panel"><section style="margin-bottom:var(--brand-size-xxl)">
+    <h2 style="margin:0;font-size:var(--brand-font-size-heading-4);font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">Form controls</h2>
+    <p style="margin:var(--brand-size-xxs) 0 var(--brand-size-lg);font-size:var(--brand-font-size);color:var(--brand-color-text-tertiary)">Inputs, selects, textareas, checkboxes and switches share control height, radius and focus ring.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--brand-size-lg);max-width:720px">
+    <div><label style="display:block;margin-bottom:var(--brand-size-xxs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-secondary)">Email</label><input type="text" placeholder="you@example.com" style="box-sizing:border-box;width:100%;height:var(--brand-control-height);padding:0 var(--brand-size-sm);font-family:var(--brand-font-family);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text);background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border);border-radius:var(--brand-border-radius);outline:none;transition:border-color var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out)"></div>
+    <div><label style="display:block;margin-bottom:var(--brand-size-xxs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-secondary)">Project name</label><input type="text" value="Sigap Civic Health" style="box-sizing:border-box;width:100%;height:var(--brand-control-height);padding:0 var(--brand-size-sm);font-family:var(--brand-font-family);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text);background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border);border-radius:var(--brand-border-radius);outline:none;transition:border-color var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out)"></div>
+    <div><label style="display:block;margin-bottom:var(--brand-size-xxs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-secondary)">Team size</label><select style="box-sizing:border-box;width:100%;height:var(--brand-control-height);padding:0 var(--brand-size-sm);font-family:var(--brand-font-family);font-size:var(--brand-font-size);color:var(--brand-color-text);background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border);border-radius:var(--brand-border-radius);outline:none"><option>Just me</option><option selected>2–10</option><option>11–50</option><option>50+</option></select></div>
+    <div><label style="display:block;margin-bottom:var(--brand-size-xxs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-secondary)">Message</label><textarea rows="3" placeholder="Tell us what you're building…" style="box-sizing:border-box;display:block;width:100%;padding:var(--brand-size-xs) var(--brand-size-sm);font-family:var(--brand-font-family);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text);background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border);border-radius:var(--brand-border-radius);resize:vertical;outline:none"></textarea></div>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:var(--brand-size);align-items:center;margin-top:var(--brand-size-lg);gap:var(--brand-size-lg)">
+    <label style="display:inline-flex;align-items:flex-start;gap:var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);cursor:pointer"><input type="checkbox" checked style="accent-color:var(--brand-color-primary);width:16px;height:16px;margin:3px 0 0;flex:0 0 auto"><span>Email me product updates</span></label>
+    <label style="display:inline-flex;align-items:flex-start;gap:var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);cursor:pointer"><input type="checkbox" style="accent-color:var(--brand-color-primary);width:16px;height:16px;margin:3px 0 0;flex:0 0 auto"><span>I agree to the terms</span></label>
+    <span style="display:inline-flex;align-items:center;gap:var(--brand-size-xs);"><span style="display:inline-flex;align-items:center;flex:0 0 auto;width:44px;height:24px;padding:2px;border-radius:12px;box-sizing:border-box;transition:background var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);background:var(--brand-color-primary);justify-content:flex-end"><span style="width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.2);"></span></span><span style="font-family:var(--brand-font-family);font-size:var(--brand-font-size);color:var(--brand-color-text-secondary);">Notifications</span></span>
+    <span style="display:inline-flex;align-items:center;gap:var(--brand-size-xs);"><span style="display:inline-flex;align-items:center;flex:0 0 auto;width:44px;height:24px;padding:2px;border-radius:12px;box-sizing:border-box;transition:background var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);background:var(--brand-color-fill);justify-content:flex-start"><span style="width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.2);"></span></span><span style="font-family:var(--brand-font-family);font-size:var(--brand-font-size);color:var(--brand-color-text-secondary);">Public profile</span></span>
+  </div>
+  </section></div>
+  <div class="panel"><section style="margin-bottom:var(--brand-size-xxl)">
+    <h2 style="margin:0;font-size:var(--brand-font-size-heading-4);font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">Navigation</h2>
+    <p style="margin:var(--brand-size-xxs) 0 var(--brand-size-lg);font-size:var(--brand-font-size);color:var(--brand-color-text-tertiary)">Tabs, breadcrumbs, pagination and steps for app shells and flows.</p>
+    <div style="display:flex;gap:var(--brand-size-lg);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)"><span style="padding:var(--brand-size-xs) 2px;margin-bottom:calc(-1 * var(--brand-line-width));font-family:var(--brand-font-family);font-size:var(--brand-font-size);cursor:pointer;white-space:nowrap;color:var(--brand-color-primary);font-weight:var(--brand-font-weight-strong);border-bottom:2px solid var(--brand-color-primary)">Overview</span><span style="padding:var(--brand-size-xs) 2px;margin-bottom:calc(-1 * var(--brand-line-width));font-family:var(--brand-font-family);font-size:var(--brand-font-size);cursor:pointer;white-space:nowrap;color:var(--brand-color-text-secondary);border-bottom:2px solid transparent">Analytics</span><span style="padding:var(--brand-size-xs) 2px;margin-bottom:calc(-1 * var(--brand-line-width));font-family:var(--brand-font-family);font-size:var(--brand-font-size);cursor:pointer;white-space:nowrap;color:var(--brand-color-text-secondary);border-bottom:2px solid transparent">Reports</span><span style="padding:var(--brand-size-xs) 2px;margin-bottom:calc(-1 * var(--brand-line-width));font-family:var(--brand-font-family);font-size:var(--brand-font-size);cursor:pointer;white-space:nowrap;color:var(--brand-color-text-secondary);border-bottom:2px solid transparent">Settings</span></div>
+  <div style="display:flex;flex-wrap:wrap;gap:var(--brand-size);align-items:center;margin-top:var(--brand-size-lg);justify-content:space-between;gap:var(--brand-size-lg)">
+    <nav style="display:inline-flex;align-items:center;gap:var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size);"><span style="color:var(--brand-color-text-tertiary);">Sigap Civic Health</span><span style="color:var(--brand-color-text-quaternary);">/</span><span style="color:var(--brand-color-text-tertiary);">Projects</span><span style="color:var(--brand-color-text-quaternary);">/</span><span style="color:var(--brand-color-text);">Brand system</span></nav>
+    <div style="display:inline-flex;gap:var(--brand-size-xxs);align-items:center;"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:var(--brand-control-height-sm);height:var(--brand-control-height-sm);padding:0 var(--brand-size-xxs);border-radius:var(--brand-border-radius-sm);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);cursor:pointer;user-select:none;box-sizing:border-box;border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:var(--brand-color-bg-container);color:var(--brand-color-text-secondary)">&lsaquo;</span><span style="display:inline-flex;align-items:center;justify-content:center;min-width:var(--brand-control-height-sm);height:var(--brand-control-height-sm);padding:0 var(--brand-size-xxs);border-radius:var(--brand-border-radius-sm);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);cursor:pointer;user-select:none;box-sizing:border-box;border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:var(--brand-color-bg-container);color:var(--brand-color-text-secondary)">1</span><span style="display:inline-flex;align-items:center;justify-content:center;min-width:var(--brand-control-height-sm);height:var(--brand-control-height-sm);padding:0 var(--brand-size-xxs);border-radius:var(--brand-border-radius-sm);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);cursor:pointer;user-select:none;box-sizing:border-box;border:var(--brand-line-width) solid var(--brand-color-primary);background:var(--brand-color-primary);color:#fff">2</span><span style="display:inline-flex;align-items:center;justify-content:center;min-width:var(--brand-control-height-sm);height:var(--brand-control-height-sm);padding:0 var(--brand-size-xxs);border-radius:var(--brand-border-radius-sm);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);cursor:pointer;user-select:none;box-sizing:border-box;border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:var(--brand-color-bg-container);color:var(--brand-color-text-secondary)">3</span><span style="display:inline-flex;align-items:center;justify-content:center;min-width:var(--brand-control-height-sm);height:var(--brand-control-height-sm);padding:0 var(--brand-size-xxs);border-radius:var(--brand-border-radius-sm);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);cursor:pointer;user-select:none;box-sizing:border-box;border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:var(--brand-color-bg-container);color:var(--brand-color-text-secondary)">4</span><span style="display:inline-flex;align-items:center;justify-content:center;min-width:var(--brand-control-height-sm);height:var(--brand-control-height-sm);padding:0 var(--brand-size-xxs);border-radius:var(--brand-border-radius-sm);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);cursor:pointer;user-select:none;box-sizing:border-box;border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:var(--brand-color-bg-container);color:var(--brand-color-text-secondary)">5</span><span style="display:inline-flex;align-items:center;justify-content:center;min-width:var(--brand-control-height-sm);height:var(--brand-control-height-sm);padding:0 var(--brand-size-xxs);border-radius:var(--brand-border-radius-sm);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);cursor:pointer;user-select:none;box-sizing:border-box;border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:var(--brand-color-bg-container);color:var(--brand-color-text-secondary)">&rsaquo;</span></div>
+  </div>
+  <div style="margin-top:var(--brand-size-xl);">
+    <div style="display:flex;gap:var(--brand-size-sm);align-items:flex-start;flex-wrap:wrap;font-family:var(--brand-font-family);"><div style="flex:0 1 auto;min-width:140px;display:flex;gap:var(--brand-size-sm);align-items:flex-start"><span style="display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:28px;height:28px;border-radius:50%;font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);box-sizing:border-box;border:var(--brand-line-width) solid var(--brand-color-primary);background:var(--brand-color-primary);color:#fff">&#10003;</span><div style="min-width:0;padding-top:4px;"><div style="font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size);color:var(--brand-color-text);line-height:1.3">Connect</div><div style="margin-top:2px;font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);line-height:var(--brand-line-height)">Point at a source</div></div></div><div style="flex:1 1 var(--brand-size-xl);min-width:var(--brand-size-md);height:var(--brand-line-width);background:var(--brand-color-border-secondary);margin-top:14px"></div><div style="flex:0 1 auto;min-width:140px;display:flex;gap:var(--brand-size-sm);align-items:flex-start"><span style="display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:28px;height:28px;border-radius:50%;font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);box-sizing:border-box;border:var(--brand-line-width) solid var(--brand-color-primary);background:var(--brand-color-primary);color:#fff">2</span><div style="min-width:0;padding-top:4px;"><div style="font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size);color:var(--brand-color-text);line-height:1.3">Derive</div><div style="margin-top:2px;font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);line-height:var(--brand-line-height)">Seed to tokens</div></div></div><div style="flex:1 1 var(--brand-size-xl);min-width:var(--brand-size-md);height:var(--brand-line-width);background:var(--brand-color-border-secondary);margin-top:14px"></div><div style="flex:0 1 auto;min-width:140px;display:flex;gap:var(--brand-size-sm);align-items:flex-start"><span style="display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:28px;height:28px;border-radius:50%;font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);box-sizing:border-box;border:var(--brand-line-width) solid var(--brand-color-border);background:var(--brand-color-bg-container);color:var(--brand-color-text-tertiary)">3</span><div style="min-width:0;padding-top:4px;"><div style="font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size);color:var(--brand-color-text);line-height:1.3">Ship</div><div style="margin-top:2px;font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);line-height:var(--brand-line-height)">Export everywhere</div></div></div></div>
+  </div>
+  </section></div>
+  <div class="panel"><section style="margin-bottom:var(--brand-size-xxl)">
+    <h2 style="margin:0;font-size:var(--brand-font-size-heading-4);font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">Cards</h2>
+    <p style="margin:var(--brand-size-xxs) 0 var(--brand-size-lg);font-size:var(--brand-font-size);color:var(--brand-color-text-tertiary)">Elevated content surfaces with optional header &amp; footer.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--brand-size-lg)">
+    <div style="display:flex;flex-direction:column;background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);overflow:hidden;font-family:var(--brand-font-family);color:var(--brand-color-text);box-shadow:0 1px 2px var(--brand-color-fill-quaternary)"><div style="padding:var(--brand-size-md) var(--brand-size-lg);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary);font-size:var(--brand-font-size-lg);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text)">Overview</div><div style="padding:var(--brand-size-lg);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);flex:1">Cards group related content on an elevated surface. Radius, border and shadow all read from the derived tokens.</div><div style="padding:var(--brand-size-md) var(--brand-size-lg);border-top:var(--brand-line-width) solid var(--brand-color-border-secondary);background:var(--brand-color-fill-quaternary)"><a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-size:var(--brand-font-size-sm);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:transparent;color:var(--brand-color-link);border-color:transparent">Learn more</a></div></div>
+    <div style="display:flex;flex-direction:column;background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);overflow:hidden;font-family:var(--brand-font-family);color:var(--brand-color-text);box-shadow:0 1px 2px var(--brand-color-fill-quaternary)"><div style="padding:var(--brand-size-md) var(--brand-size-lg);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary);font-size:var(--brand-font-size-lg);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text)">Usage</div><div style="padding:var(--brand-size-lg);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);flex:1">Drop the same component into a dark or compact theme and it re-skins automatically — no per-variant markup.</div></div>
+    <div style="display:flex;flex-direction:column;background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);overflow:hidden;font-family:var(--brand-font-family);color:var(--brand-color-text);box-shadow:0 1px 2px var(--brand-color-fill-quaternary)"><div style="padding:var(--brand-size-lg);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);flex:1">A bodyonly card. <span style="display:inline-flex;align-items:center;height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);line-height:1;color:var(--brand-color-primary);background:var(--brand-color-primary-bg);border:var(--brand-line-width) solid var(--brand-color-primary-border);border-radius:var(--brand-border-radius-sm)">live</span> <span style="display:inline-flex;align-items:center;height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);line-height:1;color:var(--brand-color-primary);background:var(--brand-color-primary-bg);border:var(--brand-line-width) solid var(--brand-color-primary-border);border-radius:var(--brand-border-radius-sm)">beta</span></div></div>
+  </div>
+  </section></div>
+  <div class="panel"><section style="margin-bottom:var(--brand-size-xxl)">
+    <h2 style="margin:0;font-size:var(--brand-font-size-heading-4);font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">Data display</h2>
+    <p style="margin:var(--brand-size-xxs) 0 var(--brand-size-lg);font-size:var(--brand-font-size);color:var(--brand-color-text-tertiary)">Tables, stats, avatars and a no-JS accordion for structured content.</p>
+    <div style="border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);overflow:hidden;background:var(--brand-color-bg-container)"><table style="width:100%;border-collapse:collapse;font-family:var(--brand-font-family);"><thead><tr><th style="text-align:left;padding:var(--brand-size-sm) var(--brand-size-md);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text-secondary);background:var(--brand-color-fill-quaternary);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary);white-space:nowrap">Token</th><th style="text-align:left;padding:var(--brand-size-sm) var(--brand-size-md);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text-secondary);background:var(--brand-color-fill-quaternary);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary);white-space:nowrap">Role</th><th style="text-align:left;padding:var(--brand-size-sm) var(--brand-size-md);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text-secondary);background:var(--brand-color-fill-quaternary);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary);white-space:nowrap">Value</th></tr></thead><tbody><tr><td style="padding:var(--brand-size-sm) var(--brand-size-md);font-size:var(--brand-font-size);color:var(--brand-color-text);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">colorPrimary</td><td style="padding:var(--brand-size-sm) var(--brand-size-md);font-size:var(--brand-font-size);color:var(--brand-color-text);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">Brand accent</td><td style="padding:var(--brand-size-sm) var(--brand-size-md);font-size:var(--brand-font-size);color:var(--brand-color-text);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">seed</td></tr><tr><td style="padding:var(--brand-size-sm) var(--brand-size-md);font-size:var(--brand-font-size);color:var(--brand-color-text);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">fontSize</td><td style="padding:var(--brand-size-sm) var(--brand-size-md);font-size:var(--brand-font-size);color:var(--brand-color-text);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">Body type base</td><td style="padding:var(--brand-size-sm) var(--brand-size-md);font-size:var(--brand-font-size);color:var(--brand-color-text);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">derived</td></tr><tr><td style="padding:var(--brand-size-sm) var(--brand-size-md);font-size:var(--brand-font-size);color:var(--brand-color-text)">borderRadius</td><td style="padding:var(--brand-size-sm) var(--brand-size-md);font-size:var(--brand-font-size);color:var(--brand-color-text)">Corner rounding</td><td style="padding:var(--brand-size-sm) var(--brand-size-md);font-size:var(--brand-font-size);color:var(--brand-color-text)">derived</td></tr></tbody></table></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:var(--brand-size-lg);margin-top:var(--brand-size-xl)">
+    <div style="font-family:var(--brand-font-family);min-width:0">
+    <div style="font-size:var(--brand-font-size-heading-2);font-weight:var(--brand-font-weight-strong);line-height:1.1;color:var(--brand-color-text);letter-spacing:-0.01em">10k+</div>
+    <div style="margin-top:var(--brand-size-xxs);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary)">Teams onboard</div>
+  </div>
+    <div style="font-family:var(--brand-font-family);min-width:0">
+    <div style="font-size:var(--brand-font-size-heading-2);font-weight:var(--brand-font-weight-strong);line-height:1.1;color:var(--brand-color-text);letter-spacing:-0.01em">99.9%</div>
+    <div style="margin-top:var(--brand-size-xxs);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary)">Uptime SLA</div>
+  </div>
+    <div style="font-family:var(--brand-font-family);min-width:0">
+    <div style="font-size:var(--brand-font-size-heading-2);font-weight:var(--brand-font-weight-strong);line-height:1.1;color:var(--brand-color-text);letter-spacing:-0.01em">4.9/5</div>
+    <div style="margin-top:var(--brand-size-xxs);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary)">Average rating</div>
+  </div>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:var(--brand-size);align-items:center;margin-top:var(--brand-size-xl)">
+    <span style="display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:var(--brand-control-height-lg);height:var(--brand-control-height-lg);border-radius:50%;background:var(--brand-color-primary-bg);color:var(--brand-color-primary-text);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);letter-spacing:0.02em;user-select:none">SC</span>
+    <span style="display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:var(--brand-control-height);height:var(--brand-control-height);border-radius:50%;background:var(--brand-color-primary-bg);color:var(--brand-color-primary-text);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);letter-spacing:0.02em;user-select:none">AL</span>
+    <span style="display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:var(--brand-control-height-sm);height:var(--brand-control-height-sm);border-radius:50%;background:var(--brand-color-primary-bg);color:var(--brand-color-primary-text);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);letter-spacing:0.02em;user-select:none">TB</span>
+    <span style="display:inline-flex;align-items:center;height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);line-height:1;color:var(--brand-color-primary);background:var(--brand-color-primary-bg);border:var(--brand-line-width) solid var(--brand-color-primary-border);border-radius:var(--brand-border-radius-sm)">design</span> <span style="display:inline-flex;align-items:center;height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);line-height:1;color:var(--brand-color-success);background:var(--brand-color-primary-bg);border:var(--brand-line-width) solid var(--brand-color-primary-border);border-radius:var(--brand-border-radius-sm)">ops</span>
+  </div>
+  <div style="margin-top:var(--brand-size-xl);">
+    <div><details class="kit-acc" open style="border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+    <summary style="display:flex;align-items:center;justify-content:space-between;gap:var(--brand-size-md);padding:var(--brand-size-md) 0;font-family:var(--brand-font-family);font-size:var(--brand-font-size-lg);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text)"><span style="min-width:0;">What is a seed token?</span><span class="kit-acc-icon" style="flex:0 0 auto;color:var(--brand-color-primary);font-size:var(--brand-font-size-xl);line-height:1;font-weight:400">+</span></summary>
+    <div style="padding:0 0 var(--brand-size-md);font-family:var(--brand-font-family);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);max-width:70ch">The ~20-field input every other token is derived from. Change one field and the whole system follows.</div>
+  </details>
+<details class="kit-acc" style="border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+    <summary style="display:flex;align-items:center;justify-content:space-between;gap:var(--brand-size-md);padding:var(--brand-size-md) 0;font-family:var(--brand-font-family);font-size:var(--brand-font-size-lg);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text)"><span style="min-width:0;">Can I theme dark mode separately?</span><span class="kit-acc-icon" style="flex:0 0 auto;color:var(--brand-color-primary);font-size:var(--brand-font-size-xl);line-height:1;font-weight:400">+</span></summary>
+    <div style="padding:0 0 var(--brand-size-md);font-family:var(--brand-font-family);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);max-width:70ch">No need — dark is the same seed run through a different algorithm, so it can never drift from the light theme.</div>
+  </details></div>
+  </div>
+  </section></div>
+  <div class="panel"><section style="margin-bottom:var(--brand-size-xxl)">
+    <h2 style="margin:0;font-size:var(--brand-font-size-heading-4);font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">Marketing blocks</h2>
+    <p style="margin:var(--brand-size-xxs) 0 var(--brand-size-lg);font-size:var(--brand-font-size);color:var(--brand-color-text-tertiary)">Testimonials and pricing compose the primitives — landing pages are these in the right order.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--brand-size-lg)">
+    <div style="display:flex;flex-direction:column;background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);overflow:hidden;font-family:var(--brand-font-family);color:var(--brand-color-text);box-shadow:0 1px 2px var(--brand-color-fill-quaternary)"><div style="padding:var(--brand-size-lg);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);flex:1"><p style="margin:0 0 var(--brand-size-lg);font-size:var(--brand-font-size-lg);line-height:1.6;color:var(--brand-color-text)">&ldquo;We replaced three hand-maintained style guides with one generated system.&rdquo;</p>
+  <div style="display:flex;align-items:center;gap:var(--brand-size-sm);">
+    <span style="display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:var(--brand-control-height);height:var(--brand-control-height);border-radius:50%;background:var(--brand-color-primary-bg);color:var(--brand-color-primary-text);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);letter-spacing:0.02em;user-select:none">AL</span>
+    <div style="min-width:0;">
+      <div style="font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);font-size:var(--brand-font-size);">Ada Lovelace</div>
+      <div style="font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);">Design lead</div>
+    </div>
+  </div></div></div>
+    <div style="display:flex;flex-direction:column;position:relative;background:var(--brand-color-bg-container);border:2px solid var(--brand-color-primary);border-radius:var(--brand-border-radius-lg);padding:var(--brand-size-xl);font-family:var(--brand-font-family);box-shadow:0 12px 32px var(--brand-color-primary-bg)">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--brand-size-sm);margin-bottom:var(--brand-size-xs);">
+      <span style="font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-lg);color:var(--brand-color-text);">Pro</span>
+      <span style="display:inline-flex;align-items:center;height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);line-height:1;color:var(--brand-color-primary);background:var(--brand-color-primary-bg);border:var(--brand-line-width) solid var(--brand-color-primary-border);border-radius:var(--brand-border-radius-sm)">Most popular</span>
+    </div>
+    <p style="margin:0 0 var(--brand-size-md);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);">For growing teams.</p>
+    <div style="display:flex;align-items:baseline;gap:var(--brand-size-xxs);margin-bottom:var(--brand-size-lg);">
+      <span style="font-size:var(--brand-font-size-heading-2);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);line-height:1;letter-spacing:-0.01em;">$29</span>
+      <span style="color:var(--brand-color-text-tertiary);font-size:var(--brand-font-size-sm);">/ mo</span>
+    </div>
+    <ul style="list-style:none;margin:0 0 var(--brand-size-xl);padding:0;flex:1;"><li style="display:flex;gap:var(--brand-size-xs);align-items:flex-start;padding:var(--brand-size-xxs) 0;font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary)"><span style="color:var(--brand-color-success);font-weight:var(--brand-font-weight-strong);flex:0 0 auto;">&#10003;</span><span>Unlimited brands</span></li><li style="display:flex;gap:var(--brand-size-xs);align-items:flex-start;padding:var(--brand-size-xxs) 0;font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary)"><span style="color:var(--brand-color-success);font-weight:var(--brand-font-weight-strong);flex:0 0 auto;">&#10003;</span><span>Dark &amp; compact themes</span></li><li style="display:flex;gap:var(--brand-size-xs);align-items:flex-start;padding:var(--brand-size-xxs) 0;font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary)"><span style="color:var(--brand-color-success);font-weight:var(--brand-font-weight-strong);flex:0 0 auto;">&#10003;</span><span>Priority support</span></li></ul>
+    <div style="display:flex;flex-direction:column;"><a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height);padding:0 var(--brand-size);font-size:var(--brand-font-size);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-primary);color:#fff;border-color:var(--brand-color-primary);box-shadow:0 2px 0 var(--brand-color-primary-bg)">Start free trial</a></div>
+  </div>
+    <div style="display:flex;flex-direction:column;background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);overflow:hidden;font-family:var(--brand-font-family);color:var(--brand-color-text);box-shadow:0 1px 2px var(--brand-color-fill-quaternary)"><div style="padding:var(--brand-size-md) var(--brand-size-lg);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary);font-size:var(--brand-font-size-lg);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text)">Composable</div><div style="padding:var(--brand-size-lg);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);flex:1">Marketing blocks (testimonials, pricing, stats) compose the same primitives — so a landing page is just kit pieces in the right order.</div><div style="padding:var(--brand-size-md) var(--brand-size-lg);border-top:var(--brand-line-width) solid var(--brand-color-border-secondary);background:var(--brand-color-fill-quaternary)"><a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-size:var(--brand-font-size-sm);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:transparent;color:var(--brand-color-link);border-color:transparent">View artifacts</a></div></div>
+  </div>
+  </section></div>
+  <div class="panel"><section style="margin-bottom:var(--brand-size-xxl)">
+    <h2 style="margin:0;font-size:var(--brand-font-size-heading-4);font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">Tags</h2>
+    <p style="margin:var(--brand-size-xxs) 0 var(--brand-size-lg);font-size:var(--brand-font-size);color:var(--brand-color-text-tertiary)">Compact labels keyed to functional colors.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:var(--brand-size);align-items:center">
+    <span style="display:inline-flex;align-items:center;height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);line-height:1;color:var(--brand-color-primary);background:var(--brand-color-primary-bg);border:var(--brand-line-width) solid var(--brand-color-primary-border);border-radius:var(--brand-border-radius-sm)">Primary</span>
+    <span style="display:inline-flex;align-items:center;height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);line-height:1;color:var(--brand-color-success);background:var(--brand-color-primary-bg);border:var(--brand-line-width) solid var(--brand-color-primary-border);border-radius:var(--brand-border-radius-sm)">Success</span>
+    <span style="display:inline-flex;align-items:center;height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);line-height:1;color:var(--brand-color-warning);background:var(--brand-color-primary-bg);border:var(--brand-line-width) solid var(--brand-color-primary-border);border-radius:var(--brand-border-radius-sm)">Warning</span>
+    <span style="display:inline-flex;align-items:center;height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);line-height:1;color:var(--brand-color-error);background:var(--brand-color-primary-bg);border:var(--brand-line-width) solid var(--brand-color-primary-border);border-radius:var(--brand-border-radius-sm)">Error</span>
+    <span style="display:inline-flex;align-items:center;height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);line-height:1;color:var(--brand-color-info);background:var(--brand-color-primary-bg);border:var(--brand-line-width) solid var(--brand-color-primary-border);border-radius:var(--brand-border-radius-sm)">Info</span>
+  </div>
+  </section></div>
+  <div class="panel"><section style="margin-bottom:var(--brand-size-xxl)">
+    <h2 style="margin:0;font-size:var(--brand-font-size-heading-4);font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">Alerts &amp; progress</h2>
+    <p style="margin:var(--brand-size-xxs) 0 var(--brand-size-lg);font-size:var(--brand-font-size);color:var(--brand-color-text-tertiary)">Semantic feedback states.</p>
+    <div style="display:flex;flex-direction:column;gap:var(--brand-size)">
+    <div style="display:flex;gap:var(--brand-size-sm);align-items:flex-start;padding:var(--brand-size-sm) var(--brand-size);font-family:var(--brand-font-family);background:var(--brand-color-success-bg);border:var(--brand-line-width) solid var(--brand-color-success-border);border-radius:var(--brand-border-radius-lg)"><span style="flex:0 0 auto;margin-top:2px;color:var(--brand-color-success);font-size:var(--brand-font-size-lg);line-height:1">&#10003;</span><div style="flex:1"><div style="font-size:var(--brand-font-size);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);line-height:var(--brand-line-height)">Brand system generated</div><div style="margin-top:var(--brand-size-xxs);font-size:var(--brand-font-size);color:var(--brand-color-text-secondary);line-height:var(--brand-line-height)">All design tokens were derived from a single seed color.</div></div></div>
+    <div style="display:flex;gap:var(--brand-size-sm);align-items:flex-start;padding:var(--brand-size-sm) var(--brand-size);font-family:var(--brand-font-family);background:var(--brand-color-info-bg);border:var(--brand-line-width) solid var(--brand-color-info-border);border-radius:var(--brand-border-radius-lg)"><span style="flex:0 0 auto;margin-top:2px;color:var(--brand-color-info);font-size:var(--brand-font-size-lg);line-height:1">&#8505;</span><div style="flex:1"><div style="font-size:var(--brand-font-size);font-weight:inherit;color:var(--brand-color-text);line-height:var(--brand-line-height)">Tokens map 1:1 onto CSS custom properties.</div></div></div>
+    <div style="display:flex;gap:var(--brand-size-sm);align-items:flex-start;padding:var(--brand-size-sm) var(--brand-size);font-family:var(--brand-font-family);background:var(--brand-color-warning-bg);border:var(--brand-line-width) solid var(--brand-color-warning-border);border-radius:var(--brand-border-radius-lg)"><span style="flex:0 0 auto;margin-top:2px;color:var(--brand-color-warning);font-size:var(--brand-font-size-lg);line-height:1">&#9888;</span><div style="flex:1"><div style="font-size:var(--brand-font-size);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);line-height:var(--brand-line-height)">Wireframe mode is off</div><div style="margin-top:var(--brand-size-xxs);font-size:var(--brand-font-size);color:var(--brand-color-text-secondary);line-height:var(--brand-line-height)">Filled surfaces are in use for this theme.</div></div></div>
+    <div style="display:flex;gap:var(--brand-size-sm);align-items:flex-start;padding:var(--brand-size-sm) var(--brand-size);font-family:var(--brand-font-family);background:var(--brand-color-error-bg);border:var(--brand-line-width) solid var(--brand-color-error-border);border-radius:var(--brand-border-radius-lg)"><span style="flex:0 0 auto;margin-top:2px;color:var(--brand-color-error);font-size:var(--brand-font-size-lg);line-height:1">&#10005;</span><div style="flex:1"><div style="font-size:var(--brand-font-size);font-weight:inherit;color:var(--brand-color-text);line-height:var(--brand-line-height)">Could not reach the source URL.</div></div></div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:var(--brand-size-sm);margin-top:var(--brand-size-xl);max-width:480px">
+    <div style="display:flex;align-items:center;gap:var(--brand-size-sm);font-family:var(--brand-font-family);">
+    <div style="flex:1;height:8px;border-radius:4px;background:var(--brand-color-fill-secondary);overflow:hidden"><div style="width:72%;height:100%;border-radius:4px;background:var(--brand-color-primary);transition:width var(--brand-motion-duration-slow) var(--brand-motion-ease-out)"></div></div>
+    <span style="flex:0 0 auto;font-size:var(--brand-font-size-sm);color:var(--brand-color-text-secondary)">72%</span>
+  </div>
+    <div style="display:flex;align-items:center;gap:var(--brand-size-sm);font-family:var(--brand-font-family);">
+    <div style="flex:1;height:8px;border-radius:4px;background:var(--brand-color-fill-secondary);overflow:hidden"><div style="width:100%;height:100%;border-radius:4px;background:var(--brand-color-success);transition:width var(--brand-motion-duration-slow) var(--brand-motion-ease-out)"></div></div>
+    <span style="flex:0 0 auto;font-size:var(--brand-font-size-sm);color:var(--brand-color-success)">&#10003;</span>
+  </div>
+  </div>
+  </section></div>
+  <div class="panel"><section style="margin-bottom:var(--brand-size-xxl)">
+    <h2 style="margin:0;font-size:var(--brand-font-size-heading-4);font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">Color</h2>
+    <p style="margin:var(--brand-size-xxs) 0 var(--brand-size-lg);font-size:var(--brand-font-size);color:var(--brand-color-text-tertiary)">The full derived palette and neutrals.</p>
+    <div style="margin-bottom:var(--brand-size-lg)">
+    <div style="margin-bottom:var(--brand-size-sm);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);letter-spacing:0.04em;text-transform:uppercase;color:var(--brand-color-text-tertiary)">Primary palette</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:var(--brand-size-sm)"><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#a8b5b2"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">50</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#82a8a0"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">200</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#5f9c91"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">300</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#408f83"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">400</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#268278"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">500</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#0f766e"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">600</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#064f4c"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">700</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#012928"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">800</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#000203"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">900</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#000000"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">1050</span>
+  </div></div>
+  </div><div style="margin-bottom:var(--brand-size-lg)">
+    <div style="margin-bottom:var(--brand-size-sm);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);letter-spacing:0.04em;text-transform:uppercase;color:var(--brand-color-text-tertiary)">Functional</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:var(--brand-size-sm)"><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#0f766e"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">primary</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#2f7d32"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">success</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#b45309"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">warning</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#c4322a"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">error</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#1d6bb5"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">info</span>
+  </div></div>
+  </div><div style="margin-bottom:var(--brand-size-lg)">
+    <div style="margin-bottom:var(--brand-size-sm);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);letter-spacing:0.04em;text-transform:uppercase;color:var(--brand-color-text-tertiary)">Neutral text</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:var(--brand-size-sm)"><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#363534"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">text</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#696866"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">text/2</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#949391"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">text/3</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#c0bfbd"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">text/4</span>
+  </div></div>
+  </div><div style="margin-bottom:var(--brand-size-lg)">
+    <div style="margin-bottom:var(--brand-size-sm);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);letter-spacing:0.04em;text-transform:uppercase;color:var(--brand-color-text-tertiary)">Surfaces &amp; borders</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:var(--brand-size-sm)"><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#eeedea"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">layout</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#f7f6f3"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">container</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#f7f6f3"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">elevated</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#d6d5d2"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">border</span>
+  </div><div style="display:flex;flex-direction:column;gap:var(--brand-size-xxs)">
+    <div style="height:48px;border-radius:var(--brand-border-radius-sm);border:var(--brand-line-width) solid var(--brand-color-border-secondary);background:#eae9e6"></div>
+    <span style="font-size:11px;font-family:var(--brand-font-family-code);color:var(--brand-color-text-tertiary)">border/2</span>
+  </div></div>
+  </div>
+  </section></div>
+  <div class="panel"><section style="margin-bottom:var(--brand-size-xxl)">
+    <h2 style="margin:0;font-size:var(--brand-font-size-heading-4);font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">Type scale</h2>
+    <p style="margin:var(--brand-size-xxs) 0 var(--brand-size-lg);font-size:var(--brand-font-size);color:var(--brand-color-text-tertiary)">A modular ramp derived from the base font size.</p>
+    <div style="display:flex;align-items:baseline;gap:var(--brand-size-lg);padding:var(--brand-size-sm) 0;border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+      <span style="flex:0 0 96px;font-family:var(--brand-font-family-code);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary)">Heading 1 · 38px</span>
+      <span style="font-family:var(--brand-font-family);font-size:38px;font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">The quick brown fox</span>
+    </div><div style="display:flex;align-items:baseline;gap:var(--brand-size-lg);padding:var(--brand-size-sm) 0;border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+      <span style="flex:0 0 96px;font-family:var(--brand-font-family-code);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary)">Heading 2 · 32px</span>
+      <span style="font-family:var(--brand-font-family);font-size:32px;font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">The quick brown fox</span>
+    </div><div style="display:flex;align-items:baseline;gap:var(--brand-size-lg);padding:var(--brand-size-sm) 0;border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+      <span style="flex:0 0 96px;font-family:var(--brand-font-family-code);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary)">Heading 3 · 26px</span>
+      <span style="font-family:var(--brand-font-family);font-size:26px;font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">The quick brown fox</span>
+    </div><div style="display:flex;align-items:baseline;gap:var(--brand-size-lg);padding:var(--brand-size-sm) 0;border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+      <span style="flex:0 0 96px;font-family:var(--brand-font-family-code);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary)">Heading 4 · 22px</span>
+      <span style="font-family:var(--brand-font-family);font-size:22px;font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">The quick brown fox</span>
+    </div><div style="display:flex;align-items:baseline;gap:var(--brand-size-lg);padding:var(--brand-size-sm) 0;border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+      <span style="flex:0 0 96px;font-family:var(--brand-font-family-code);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary)">Heading 5 · 18px</span>
+      <span style="font-family:var(--brand-font-family);font-size:18px;font-weight:var(--brand-font-weight-strong);line-height:var(--brand-line-height-heading);color:var(--brand-color-text)">The quick brown fox</span>
+    </div><div style="display:flex;align-items:baseline;gap:var(--brand-size-lg);padding:var(--brand-size-sm) 0;border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+      <span style="flex:0 0 96px;font-family:var(--brand-font-family-code);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary)">Large · 18px</span>
+      <span style="font-family:var(--brand-font-family);font-size:18px;font-weight:inherit;line-height:var(--brand-line-height);color:var(--brand-color-text)">The quick brown fox</span>
+    </div><div style="display:flex;align-items:baseline;gap:var(--brand-size-lg);padding:var(--brand-size-sm) 0;border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+      <span style="flex:0 0 96px;font-family:var(--brand-font-family-code);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary)">Body · 14px</span>
+      <span style="font-family:var(--brand-font-family);font-size:14px;font-weight:inherit;line-height:var(--brand-line-height);color:var(--brand-color-text)">The quick brown fox</span>
+    </div><div style="display:flex;align-items:baseline;gap:var(--brand-size-lg);padding:var(--brand-size-sm) 0;border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+      <span style="flex:0 0 96px;font-family:var(--brand-font-family-code);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary)">Small · 12px</span>
+      <span style="font-family:var(--brand-font-family);font-size:12px;font-weight:inherit;line-height:var(--brand-line-height);color:var(--brand-color-text)">The quick brown fox</span>
+    </div>
+  </section></div>
+</div>
+</body>
+</html>

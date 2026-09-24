@@ -41,9 +41,13 @@ npm-debug.log*
 .agents/
 .claude/
 .kimchi/
-.kiro/
+.byNara/
 .omc/
 .trae/
+
+# Design working area: specs are version-controlled; only generated/tmp artifacts are ignored
+design/generated/
+design/tmp/
 
 # Temporary directories
 tmp/
