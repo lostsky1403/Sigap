@@ -20,6 +20,6 @@ async function proxy(request: Request, path: string, event: RequestEvent, method
 	});
 }
 
-export const POST: RequestHandler = async (event) => {
-	return proxy(event.request, '/api/v1/admin/facilities/ID/deactivate', event);
+export const PATCH: RequestHandler = async (event) => {
+	return proxy(event.request, `/api/v1/admin/facilities/${encodeURIComponent(event.params.id ?? '')}/deactivate`, event);
 };

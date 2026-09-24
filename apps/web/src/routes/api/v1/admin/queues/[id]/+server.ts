@@ -21,5 +21,5 @@ async function proxy(request: Request, path: string, event: RequestEvent, method
 }
 
 export const GET: RequestHandler = async (event) => {
-	return proxy(event.request, '/api/v1/admin/queues/ID', event);
+	return proxy(event.request, `/api/v1/admin/queues/${encodeURIComponent(event.params.id ?? '')}`, event);
 };

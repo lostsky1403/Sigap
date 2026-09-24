@@ -21,5 +21,5 @@ async function proxy(request: Request, path: string, event: RequestEvent, method
 }
 
 export const POST: RequestHandler = async (event) => {
-	return proxy(event.request, '/api/v1/admin/notifications/ID/retry', event);
+	return proxy(event.request, `/api/v1/admin/notifications/${encodeURIComponent(event.params.id ?? '')}/retry`, event);
 };
