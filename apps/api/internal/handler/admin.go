@@ -37,8 +37,7 @@ func (h *AdminHandler) WithAudit(a *audit.Service) *AdminHandler {
 }
 
 // WithFacilityScopeResolver attaches the facility scope resolver. When nil,
-// facility scope resolution is skipped (backward compatible — callers must wire
-// the resolver for production safety).
+// non-dev requests fail closed; callers must wire the resolver in production.
 func (h *AdminHandler) WithFacilityScopeResolver(r auth.FacilityScope) *AdminHandler {
 	h.scopeResolver = r
 	return h
@@ -47,20 +46,20 @@ func (h *AdminHandler) WithFacilityScopeResolver(r auth.FacilityScope) *AdminHan
 // --- Facility response types ---
 
 type facilityResponse struct {
-	ID             string     `json:"id"`
-	Name           string     `json:"name"`
-	Type           string     `json:"type"`
-	Address        string     `json:"address"`
-	Kecamatan      string     `json:"kecamatan"`
-	KabupatenKota  string     `json:"kabupaten_kota"`
-	Provinsi       string     `json:"provinsi"`
-	Phone          string     `json:"phone"`
-	TotalBeds      int        `json:"total_beds"`
-	AvailableBeds  int        `json:"available_beds"`
-	IsActive       bool       `json:"is_active"`
-	ShortCode      string     `json:"short_code"`
-	CreatedAt      *time.Time `json:"created_at,omitempty"`
-	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
+	ID            string     `json:"id"`
+	Name          string     `json:"name"`
+	Type          string     `json:"type"`
+	Address       string     `json:"address"`
+	Kecamatan     string     `json:"kecamatan"`
+	KabupatenKota string     `json:"kabupaten_kota"`
+	Provinsi      string     `json:"provinsi"`
+	Phone         string     `json:"phone"`
+	TotalBeds     int        `json:"total_beds"`
+	AvailableBeds int        `json:"available_beds"`
+	IsActive      bool       `json:"is_active"`
+	ShortCode     string     `json:"short_code"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
 }
 
 // CreateFacilityRequest is the JSON body for facility creation.
@@ -101,37 +100,34 @@ func (h *AdminHandler) ListFacilities(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, unrestricted, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"data":    []facilityResponse{},
 		})
-		h.logAccess(r, actor, "facility.list", "error", "scope resolution failed")
+		h.logAccess(r, actor, "facility.list", "error", detail)
 		return
 	}
 
 	var rows pgx.Rows
 	var err error
-	if actor.IsDev || unrestricted {
+	if scope.Unrestricted {
 		rows, err = h.pool.Query(ctx,
 			`SELECT id, name, type, kecamatan, kabupaten_kota, provinsi,
 				phone, total_beds, available_beds, is_active, short_code
 			 FROM facilities ORDER BY name`)
-	} else if len(allowedFacilities) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"success": true,
-			"data":    []facilityResponse{},
-		})
-		h.logAccess(r, actor, "facility.list", "ok", "no facilities in scope")
-		return
 	} else {
 		rows, err = h.pool.Query(ctx,
 			`SELECT id, name, type, kecamatan, kabupaten_kota, provinsi,
 				phone, total_beds, available_beds, is_active, short_code
 			 FROM facilities
 			 WHERE id = ANY($1)
-			 ORDER BY name`, allowedFacilities)
+			 ORDER BY name`, scope.IDs)
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Gagal mengambil data fasilitas.")
@@ -180,20 +176,23 @@ func (h *AdminHandler) GetFacility(w http.ResponseWriter, r *http.Request) {
 		 FROM facilities WHERE id = $1`
 	args := []any{id}
 
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(r.Context(), actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
-			h.logAccess(r, actor, "facility.get", "error", "scope resolution failed")
-			return
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
 		}
-		if len(allowedFacilities) > 0 {
-			query = `SELECT id, name, type, address, kecamatan, kabupaten_kota, provinsi,
+		writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
+		h.logAccess(r, actor, "facility.get", "error", detail)
+		return
+	}
+
+	if !scope.Unrestricted {
+		query = `SELECT id, name, type, address, kecamatan, kabupaten_kota, provinsi,
 			phone, total_beds, available_beds, is_active, short_code,
 			created_at, updated_at
 		 FROM facilities WHERE id = $1 AND id = ANY($2)`
-			args = []any{id, allowedFacilities}
-		}
+		args = []any{id, scope.IDs}
 	}
 
 	err := h.pool.QueryRow(ctx, query, args...).Scan(&f.ID, &f.Name, &f.Type, &f.Address, &f.Kecamatan,
@@ -350,18 +349,22 @@ func (h *AdminHandler) UpdateFacility(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
 		writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
-		h.logAccess(r, actor, "facility.updated", "error", "scope resolution failed")
+		h.logAccess(r, actor, "facility.updated", "error", detail)
 		return
 	}
 
 	query := fmt.Sprintf("UPDATE facilities SET %s WHERE id = $%d", strings.Join(setClauses, ", "), argIdx)
 	args = append(args, id)
-	if !actor.IsDev && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		query += fmt.Sprintf(" AND id = ANY($%d)", argIdx+1)
-		args = append(args, allowedFacilities)
+		args = append(args, scope.IDs)
 	}
 
 	res, err := h.pool.Exec(ctx, query, args...)
@@ -397,18 +400,22 @@ func (h *AdminHandler) DeactivateFacility(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
 		writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
-		h.logAccess(r, actor, "facility.deactivated", "error", "scope resolution failed")
+		h.logAccess(r, actor, "facility.deactivated", "error", detail)
 		return
 	}
 
 	query := `UPDATE facilities SET is_active = false, updated_at = NOW() WHERE id = $1`
 	args := []any{id}
-	if !actor.IsDev && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		query += " AND id = ANY($2)"
-		args = append(args, allowedFacilities)
+		args = append(args, scope.IDs)
 	}
 
 	res, err := h.pool.Exec(ctx, query, args...)
@@ -513,8 +520,9 @@ func validateUpdateFacility(req UpdateFacilityRequest) error {
 }
 
 // extractFacilityID parses the facility UUID from paths like:
-//   /api/v1/admin/facilities/{id}
-//   /api/v1/admin/facilities/{id}/deactivate
+//
+//	/api/v1/admin/facilities/{id}
+//	/api/v1/admin/facilities/{id}/deactivate
 func extractFacilityID(path string) string {
 	prefix := "/api/v1/admin/facilities/"
 	if !strings.HasPrefix(path, prefix) {
@@ -572,30 +580,29 @@ func (h *AdminHandler) ListQueueTickets(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, unrestricted, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		status := "error"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		} else {
+			status = "ok"
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"data":    []queueTicketResponse{},
 		})
-		h.logQueueAccess(r, actor, "queue.list", "error", "scope resolution failed")
-		return
-	}
-	if !unrestricted && !actor.IsDev && len(allowedFacilities) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"success": true,
-			"data":    []queueTicketResponse{},
-		})
-		h.logQueueAccess(r, actor, "queue.list", "ok", "no facilities in scope")
+		h.logQueueAccess(r, actor, "queue.list", status, detail)
 		return
 	}
 
 	query := `SELECT id, facility_id, queue_number, formatted_number, status,
 			registered_at, called_at, completed_at FROM queue_tickets`
 	args := []any{}
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		query += " WHERE facility_id = ANY($1)"
-		args = append(args, allowedFacilities)
+		args = append(args, scope.IDs)
 	}
 	query += " ORDER BY registered_at DESC"
 
@@ -648,19 +655,22 @@ func (h *AdminHandler) GetQueueTicket(w http.ResponseWriter, r *http.Request) {
 		 FROM queue_tickets WHERE id = $1`
 	args := []any{id}
 
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
-			h.logQueueAccess(r, actor, "queue.read", "error", "scope resolution failed")
-			return
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
 		}
-		if len(allowedFacilities) > 0 {
-			query = `SELECT id, facility_id, queue_number, formatted_number, status,
+		writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
+		h.logQueueAccess(r, actor, "queue.read", "error", detail)
+		return
+	}
+
+	if !scope.Unrestricted {
+		query = `SELECT id, facility_id, queue_number, formatted_number, status,
 			registered_at, called_at, completed_at
-		 FROM queue_tickets WHERE id = $1 AND facility_id = ANY($2)`
-			args = []any{id, allowedFacilities}
-		}
+		FROM queue_tickets WHERE id = $1 AND facility_id = ANY($2)`
+		args = []any{id, scope.IDs}
 	}
 	err := h.pool.QueryRow(ctx, query, args...).Scan(&t.ID, &t.FacilityID, &t.QueueNumber, &t.FormattedNumber,
 		&t.Status, &t.RegisteredAt, &t.CalledAt, &t.CompletedAt)
@@ -706,24 +716,23 @@ func (h *AdminHandler) UpdateQueueStatus(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, unrestricted, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
 		writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
-		h.logQueueAccess(r, actor, "queue.status_updated", "error", "scope resolution failed")
-		return
-	}
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) == 0 {
-		writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
-		h.logQueueAccess(r, actor, "queue.status_updated", "not_found", id)
+		h.logQueueAccess(r, actor, "queue.status_updated", "error", detail)
 		return
 	}
 
 	var currentStatus string
 	selectQuery := `SELECT status FROM queue_tickets WHERE id = $1`
 	selectArgs := []any{id}
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		selectQuery = `SELECT status FROM queue_tickets WHERE id = $1 AND facility_id = ANY($2)`
-		selectArgs = []any{id, allowedFacilities}
+		selectArgs = []any{id, scope.IDs}
 	}
 	err := h.pool.QueryRow(ctx, selectQuery, selectArgs...).Scan(&currentStatus)
 	if err != nil {
@@ -766,9 +775,9 @@ func (h *AdminHandler) UpdateQueueStatus(w http.ResponseWriter, r *http.Request)
 
 	query := fmt.Sprintf(`UPDATE queue_tickets SET %s WHERE id = $%d`, strings.Join(setClauses, ", "), argIdx)
 	args = append(args, id)
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		query = fmt.Sprintf(`UPDATE queue_tickets SET %s WHERE id = $%d AND facility_id = ANY($%d)`, strings.Join(setClauses, ", "), argIdx, argIdx+1)
-		args = append(args, allowedFacilities)
+		args = append(args, scope.IDs)
 	}
 
 	_, err = h.pool.Exec(ctx, query, args...)
@@ -830,8 +839,9 @@ func isValidQueueTransition(from, to string) bool {
 }
 
 // extractQueueTicketID parses the queue ticket UUID from paths like:
-//   /api/v1/admin/queues/{id}
-//   /api/v1/admin/queues/{id}/status
+//
+//	/api/v1/admin/queues/{id}
+//	/api/v1/admin/queues/{id}/status
 func extractQueueTicketID(path string) string {
 	prefix := "/api/v1/admin/queues/"
 	if !strings.HasPrefix(path, prefix) {
@@ -909,33 +919,26 @@ func (h *AdminHandler) ListServiceUnits(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, unrestricted, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"data":    []serviceUnitResponse{},
 		})
-		h.logServiceUnitAccess(r, actor, "service_unit.list", "error", "scope resolution failed")
-		return
-	}
-	if !unrestricted && !actor.IsDev && len(allowedFacilities) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"success": true,
-			"data":    []serviceUnitResponse{},
-		})
-		h.logServiceUnitAccess(r, actor, "service_unit.list", "ok", "no facilities in scope")
+		h.logServiceUnitAccess(r, actor, "service_unit.list", "error", detail)
 		return
 	}
 
 	query := `SELECT id, facility_id, name, code, description, is_active
 		 FROM service_units`
 	args := []any{}
-	if !actor.IsDev && unrestricted {
-		// unrestricted non-dev actor with no facilities — already handled above
-	}
-	if !actor.IsDev && !unrestricted {
+	if !scope.Unrestricted {
 		query += " WHERE facility_id = ANY($1)"
-		args = append(args, allowedFacilities)
+		args = append(args, scope.IDs)
 	}
 	query += " ORDER BY name"
 
@@ -989,18 +992,21 @@ func (h *AdminHandler) GetServiceUnit(w http.ResponseWriter, r *http.Request) {
 		 FROM service_units WHERE id = $1`
 	args := []any{id}
 
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
-			h.logServiceUnitAccess(r, actor, "service_unit.get", "error", "scope resolution failed")
-			return
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
 		}
-		if len(allowedFacilities) > 0 {
-			query = `SELECT id, facility_id, name, code, description, is_active, created_at, updated_at
-			 FROM service_units WHERE id = $1 AND facility_id = ANY($2)`
-			args = []any{id, allowedFacilities}
-		}
+		writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+		h.logServiceUnitAccess(r, actor, "service_unit.get", "error", detail)
+		return
+	}
+
+	if !scope.Unrestricted {
+		query = `SELECT id, facility_id, name, code, description, is_active, created_at, updated_at
+			FROM service_units WHERE id = $1 AND facility_id = ANY($2)`
+		args = []any{id, scope.IDs}
 	}
 	err := h.pool.QueryRow(ctx, query, args...).Scan(&u.ID, &u.FacilityID, &u.Name, &u.Code, &u.Description, &u.IsActive, &u.CreatedAt, &u.UpdatedAt)
 
@@ -1047,31 +1053,26 @@ func (h *AdminHandler) CreateServiceUnit(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusForbidden, "Akses ditolak: anda tidak memiliki lingkup fasilitas yang valid.")
-			h.logServiceUnitAccess(r, actor, "service_unit.created", "forbidden", "scope resolution failed")
-			return
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
 		}
-		facilityID, ferr := uuid.Parse(req.FacilityID)
-		if ferr != nil {
-			writeError(w, http.StatusBadRequest, "Facility ID tidak valid.")
-			h.logServiceUnitAccess(r, actor, "service_unit.created", "error", "invalid facility_id")
-			return
-		}
-		allowed := false
-		for _, f := range allowedFacilities {
-			if f == facilityID {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			writeError(w, http.StatusForbidden, "Akses ditolak: facility_id di luar lingkup yang diizinkan.")
-			h.logServiceUnitAccess(r, actor, "service_unit.created", "forbidden", "facility_id outside scope")
-			return
-		}
+		writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+		h.logServiceUnitAccess(r, actor, "service_unit.created", "error", detail)
+		return
+	}
+	facilityID, ferr := uuid.Parse(req.FacilityID)
+	if ferr != nil {
+		writeError(w, http.StatusBadRequest, "Facility ID tidak valid.")
+		h.logServiceUnitAccess(r, actor, "service_unit.created", "error", "invalid facility_id")
+		return
+	}
+	if !auth.FacilityScopeResultAllows(scope, facilityID) {
+		writeError(w, http.StatusForbidden, "Akses ditolak: facility_id di luar lingkup yang diizinkan.")
+		h.logServiceUnitAccess(r, actor, "service_unit.created", "forbidden", "facility_id outside scope")
+		return
 	}
 
 	var id string
@@ -1165,44 +1166,34 @@ func (h *AdminHandler) UpdateServiceUnit(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	if !actor.IsDev && req.FacilityID != nil {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusForbidden, "Akses ditolak: anda tidak memiliki lingkup fasilitas yang valid.")
-			h.logServiceUnitAccess(r, actor, "service_unit.updated", "forbidden", "scope resolution failed")
-			return
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
 		}
+		writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+		h.logServiceUnitAccess(r, actor, "service_unit.updated", "error", detail)
+		return
+	}
+
+	if req.FacilityID != nil {
 		facilityID, ferr := uuid.Parse(*req.FacilityID)
 		if ferr != nil {
 			writeError(w, http.StatusBadRequest, "Facility ID tidak valid.")
 			h.logServiceUnitAccess(r, actor, "service_unit.updated", "error", "invalid facility_id")
 			return
 		}
-		allowed := false
-		for _, f := range allowedFacilities {
-			if f == facilityID {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			writeError(w, http.StatusForbidden, "Akses ditolak: facility_id di luar lingkup yang diizinkan.")
-			h.logServiceUnitAccess(r, actor, "service_unit.updated", "forbidden", "facility_id outside scope")
+		if !auth.FacilityScopeResultAllows(scope, facilityID) {
+			writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+			h.logServiceUnitAccess(r, actor, "service_unit.updated", "not_found", id)
 			return
 		}
 	}
 
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
-			h.logServiceUnitAccess(r, actor, "service_unit.updated", "error", "scope resolution failed")
-			return
-		}
-		if len(allowedFacilities) > 0 {
-			query += fmt.Sprintf(" AND facility_id = ANY($%d)", argIdx+1)
-			args = append(args, allowedFacilities)
-		}
+	if !scope.Unrestricted {
+		query += fmt.Sprintf(" AND facility_id = ANY($%d)", argIdx+1)
+		args = append(args, scope.IDs)
 	}
 
 	res, err := h.pool.Exec(ctx, query, args...)
@@ -1243,7 +1234,8 @@ func (h *AdminHandler) ServiceUnitsRouter(w http.ResponseWriter, r *http.Request
 }
 
 // extractServiceUnitID parses the service unit UUID from paths like:
-//   /api/v1/admin/service-units/{id}
+//
+//	/api/v1/admin/service-units/{id}
 func extractServiceUnitID(path string) string {
 	prefix := "/api/v1/admin/service-units/"
 	if !strings.HasPrefix(path, prefix) {
@@ -1364,21 +1356,17 @@ func (h *AdminHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, unrestricted, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"data":    []scheduleResponse{},
 		})
-		h.logScheduleAccess(r, actor, "schedule.list", "error", "scope resolution failed")
-		return
-	}
-	if !unrestricted && !actor.IsDev && len(allowedFacilities) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"success": true,
-			"data":    []scheduleResponse{},
-		})
-		h.logScheduleAccess(r, actor, "schedule.list", "ok", "no facilities in scope")
+		h.logScheduleAccess(r, actor, "schedule.list", "error", detail)
 		return
 	}
 
@@ -1388,9 +1376,9 @@ func (h *AdminHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
 		    created_at, updated_at
 		 FROM practitioner_schedules`
 	args := []any{}
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		query += " WHERE facility_id = ANY($1)"
-		args = append(args, allowedFacilities)
+		args = append(args, scope.IDs)
 	}
 	query += " ORDER BY schedule_date DESC, start_time ASC"
 
@@ -1449,21 +1437,24 @@ func (h *AdminHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 		 FROM practitioner_schedules WHERE id = $1`
 	args := []any{id}
 
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
-			h.logScheduleAccess(r, actor, "schedule.get", "error", "scope resolution failed")
-			return
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
 		}
-		if len(allowedFacilities) > 0 {
-			query = `SELECT id, facility_id, practitioner_id, service_unit_id,
-			    schedule_date::text, start_time::text, end_time::text,
-			    slot_minutes, capacity_per_slot, is_active,
-			    created_at, updated_at
-			 FROM practitioner_schedules WHERE id = $1 AND facility_id = ANY($2)`
-			args = []any{id, allowedFacilities}
-		}
+		writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+		h.logScheduleAccess(r, actor, "schedule.get", "error", detail)
+		return
+	}
+
+	if !scope.Unrestricted {
+		query = `SELECT id, facility_id, practitioner_id, service_unit_id,
+		    schedule_date::text, start_time::text, end_time::text,
+		    slot_minutes, capacity_per_slot, is_active,
+		    created_at, updated_at
+		FROM practitioner_schedules WHERE id = $1 AND facility_id = ANY($2)`
+		args = []any{id, scope.IDs}
 	}
 	err := h.pool.QueryRow(ctx, query, args...).Scan(&s.ID, &s.FacilityID, &s.PractitionerID, &s.ServiceUnitID,
 		&s.ScheduleDate, &s.StartTime, &s.EndTime, &s.SlotMinutes,
@@ -1512,38 +1503,33 @@ func (h *AdminHandler) CreateSchedule(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusForbidden, "Akses ditolak: anda tidak memiliki lingkup fasilitas yang valid.")
-			h.logScheduleAccess(r, actor, "schedule.created", "forbidden", "scope resolution failed")
-			return
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
 		}
-		facilityID, ferr := uuid.Parse(req.FacilityID)
-		if ferr != nil {
-			writeError(w, http.StatusBadRequest, "Facility ID tidak valid.")
-			h.logScheduleAccess(r, actor, "schedule.created", "error", "invalid facility_id")
-			return
-		}
-		allowed := false
-		for _, f := range allowedFacilities {
-			if f == facilityID {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			writeError(w, http.StatusForbidden, "Akses ditolak: facility_id di luar lingkup yang diizinkan.")
-			h.logScheduleAccess(r, actor, "schedule.created", "forbidden", "facility_id outside scope")
-			return
-		}
+		writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+		h.logScheduleAccess(r, actor, "schedule.created", "error", detail)
+		return
+	}
+	facilityID, ferr := uuid.Parse(req.FacilityID)
+	if ferr != nil {
+		writeError(w, http.StatusBadRequest, "Facility ID tidak valid.")
+		h.logScheduleAccess(r, actor, "schedule.created", "error", "invalid facility_id")
+		return
+	}
+	if !auth.FacilityScopeResultAllows(scope, facilityID) {
+		writeError(w, http.StatusForbidden, "Akses ditolak: facility_id di luar lingkup yang diizinkan.")
+		h.logScheduleAccess(r, actor, "schedule.created", "forbidden", "facility_id outside scope")
+		return
 	}
 
 	var id string
 	err := h.pool.QueryRow(ctx,
 		`INSERT INTO practitioner_schedules (facility_id, practitioner_id, service_unit_id,
 		    schedule_date, start_time, end_time, slot_minutes, capacity_per_slot)
-		 VALUES ($1, NULLIF($2, ''), $3, $4::date, $5::time, $6::time, $7, $8)
+		 VALUES ($1, NULLIF($2, '')::uuid, $3, $4::date, $5::time, $6::time, $7, $8)
 		 RETURNING id`,
 		req.FacilityID, req.PractitionerID, req.ServiceUnitID,
 		req.ScheduleDate, req.StartTime, req.EndTime, req.SlotMinutes, req.CapacityPerSlot,
@@ -1656,44 +1642,34 @@ func (h *AdminHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	if !actor.IsDev && req.FacilityID != nil {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusForbidden, "Akses ditolak: anda tidak memiliki lingkup fasilitas yang valid.")
-			h.logScheduleAccess(r, actor, "schedule.updated", "forbidden", "scope resolution failed")
-			return
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
 		}
+		writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+		h.logScheduleAccess(r, actor, "schedule.updated", "error", detail)
+		return
+	}
+
+	if req.FacilityID != nil {
 		facilityID, ferr := uuid.Parse(*req.FacilityID)
 		if ferr != nil {
 			writeError(w, http.StatusBadRequest, "Facility ID tidak valid.")
 			h.logScheduleAccess(r, actor, "schedule.updated", "error", "invalid facility_id")
 			return
 		}
-		allowed := false
-		for _, f := range allowedFacilities {
-			if f == facilityID {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			writeError(w, http.StatusForbidden, "Akses ditolak: facility_id di luar lingkup yang diizinkan.")
-			h.logScheduleAccess(r, actor, "schedule.updated", "forbidden", "facility_id outside scope")
+		if !auth.FacilityScopeResultAllows(scope, facilityID) {
+			writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+			h.logScheduleAccess(r, actor, "schedule.updated", "not_found", id)
 			return
 		}
 	}
 
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
-			h.logScheduleAccess(r, actor, "schedule.updated", "error", "scope resolution failed")
-			return
-		}
-		if len(allowedFacilities) > 0 {
-			query += fmt.Sprintf(" AND facility_id = ANY($%d)", argIdx+1)
-			args = append(args, allowedFacilities)
-		}
+	if !scope.Unrestricted {
+		query += fmt.Sprintf(" AND facility_id = ANY($%d)", argIdx+1)
+		args = append(args, scope.IDs)
 	}
 
 	res, err := h.pool.Exec(ctx, query, args...)
@@ -1734,7 +1710,8 @@ func (h *AdminHandler) SchedulesRouter(w http.ResponseWriter, r *http.Request) {
 }
 
 // extractScheduleID parses the schedule UUID from paths like:
-//   /api/v1/admin/schedules/{id}
+//
+//	/api/v1/admin/schedules/{id}
 func extractScheduleID(path string) string {
 	prefix := "/api/v1/admin/schedules/"
 	if !strings.HasPrefix(path, prefix) {
@@ -1817,7 +1794,7 @@ func validateCreateSchedule(req CreateScheduleRequest) error {
 	if req.SlotMinutes < 5 || req.SlotMinutes > 180 {
 		return fmt.Errorf("Durasi slot harus antara 5–180 menit.")
 	}
-	totalMinutes := int(endDuration - startDuration) / int(time.Minute)
+	totalMinutes := int(endDuration-startDuration) / int(time.Minute)
 	if totalMinutes%req.SlotMinutes != 0 {
 		return fmt.Errorf("Durasi slot harus membagi habis rentang waktu (%d menit).", totalMinutes)
 	}
@@ -1949,12 +1926,12 @@ type UpdateAppointmentStatusRequest struct {
 
 // validAppointmentTransitions defines the allowed status changes.
 var validAppointmentTransitions = map[string][]string{
-	"scheduled":   {"checked_in", "cancelled", "no_show"},
-	"checked_in":  {"queued", "cancelled", "no_show"},
-	"queued":      {"completed", "cancelled", "no_show"},
-	"completed":   {},
-	"cancelled":   {},
-	"no_show":     {},
+	"scheduled":  {"checked_in", "cancelled", "no_show"},
+	"checked_in": {"queued", "cancelled", "no_show"},
+	"queued":     {"completed", "cancelled", "no_show"},
+	"completed":  {},
+	"cancelled":  {},
+	"no_show":    {},
 }
 
 func isValidAppointmentTransition(from, to string) bool {
@@ -1985,21 +1962,17 @@ func (h *AdminHandler) ListAppointments(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, unrestricted, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"data":    []appointmentResponse{},
 		})
-		h.logAppointmentAccess(r, actor, "appointment.list", "error", "scope resolution failed")
-		return
-	}
-	if !unrestricted && !actor.IsDev && len(allowedFacilities) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"success": true,
-			"data":    []appointmentResponse{},
-		})
-		h.logAppointmentAccess(r, actor, "appointment.list", "ok", "no facilities in scope")
+		h.logAppointmentAccess(r, actor, "appointment.list", "error", detail)
 		return
 	}
 
@@ -2008,9 +1981,9 @@ func (h *AdminHandler) ListAppointments(w http.ResponseWriter, r *http.Request) 
 		    created_at, updated_at
 		 FROM appointments`
 	args := []any{}
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		query += " WHERE facility_id = ANY($1)"
-		args = append(args, allowedFacilities)
+		args = append(args, scope.IDs)
 	}
 	query += " ORDER BY appointment_time DESC"
 
@@ -2083,26 +2056,23 @@ func (h *AdminHandler) UpdateAppointmentStatus(w http.ResponseWriter, r *http.Re
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, unrestricted, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
-		writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
-		h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", "scope resolution failed")
-		return
-	}
-	if !actor.IsDev && !unrestricted {
-		if len(allowedFacilities) == 0 {
-			writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
-			h.logAppointmentAccess(r, actor, "appointment.status_updated", "not_found", id)
-			return
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
 		}
+		writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
+		h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", detail)
+		return
 	}
 
 	var current string
 	selectQuery := `SELECT status FROM appointments WHERE id = $1`
 	selectArgs := []any{id}
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		selectQuery = `SELECT status FROM appointments WHERE id = $1 AND facility_id = ANY($2)`
-		selectArgs = []any{id, allowedFacilities}
+		selectArgs = []any{id, scope.IDs}
 	}
 	if err := h.pool.QueryRow(ctx, selectQuery, selectArgs...).Scan(&current); err != nil {
 		if err == pgx.ErrNoRows {
@@ -2133,9 +2103,9 @@ func (h *AdminHandler) UpdateAppointmentStatus(w http.ResponseWriter, r *http.Re
 
 	updateQuery := fmt.Sprintf("UPDATE appointments SET %s, updated_at = NOW() WHERE id = $2", setClause)
 	updateArgs := []any{status, id}
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		updateQuery = fmt.Sprintf("UPDATE appointments SET %s, updated_at = NOW() WHERE id = $3 AND facility_id = ANY($2)", setClause)
-		updateArgs = []any{status, allowedFacilities, id}
+		updateArgs = []any{status, scope.IDs, id}
 	}
 	res, err := h.pool.Exec(ctx, updateQuery, updateArgs...)
 	if err != nil {
@@ -2173,7 +2143,8 @@ func (h *AdminHandler) AppointmentsRouter(w http.ResponseWriter, r *http.Request
 }
 
 // extractAppointmentID parses the appointment UUID from paths like:
-//   /api/v1/admin/appointments/{id}/status
+//
+//	/api/v1/admin/appointments/{id}/status
 func extractAppointmentID(path string) string {
 	prefix := "/api/v1/admin/appointments/"
 	if !strings.HasPrefix(path, prefix) {
