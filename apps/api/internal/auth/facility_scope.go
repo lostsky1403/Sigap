@@ -44,6 +44,52 @@ WHERE u.id = $1
   AND ur.status = 'active'
   AND ur.deleted_at IS NULL`
 
+// FacilityMutationDecision is the outcome of authorizing a facility-scoped
+// mutation. It requires BOTH an in-scope facility AND permission-at-facility
+// provenance: holding a key that was granted at a different facility must not
+// authorize a mutation here, even when this facility is inside the actor's
+// scope.
+type FacilityMutationDecision struct {
+	// Allowed reports whether the mutation may proceed.
+	Allowed bool
+	// Reason is a short machine-friendly explanation, safe to log. It is
+	// empty when Allowed is true.
+	Reason string
+}
+
+// AuthorizeFacilityMutation applies the cross-facility privilege rule to a
+// single facility-scoped mutation.
+//
+// It enforces two independent conditions and requires both:
+//
+//  1. The target facility must be inside the actor's facility scope
+//     (auth.FacilityScopeResult), which is what stops out-of-scope resources.
+//  2. The actor must hold the required permission key AT that facility, using
+//     DB-resolved grant provenance. This is what stops the cross-facility
+//     privilege escalation: because user_roles is keyed (user_id, role_id), a
+//     viewer at facility A and an operator at facility B for the SAME user
+//     yields a flat key union in which queue.manage appears to apply at A.
+//
+// The dev actor is unrestricted on both axes and is therefore allowed, which
+// preserves the local demo flow. Every other fail-closed condition propagates:
+// a scope error or an empty scope denies, and an actor with no facility
+// provenance denies even when it holds the key flatly (e.g. claims-only).
+func AuthorizeFacilityMutation(actor identity.Actor, scope FacilityScopeResult, permission string, facilityID uuid.UUID) FacilityMutationDecision {
+	if actor.IsDev {
+		return FacilityMutationDecision{Allowed: true}
+	}
+	if scope.Err != nil {
+		return FacilityMutationDecision{Reason: "scope resolution failed"}
+	}
+	if !FacilityScopeResultAllows(scope, facilityID) {
+		return FacilityMutationDecision{Reason: "facility out of scope"}
+	}
+	if !actor.HasPermissionAtFacility(permission, facilityID) {
+		return FacilityMutationDecision{Reason: "permission not granted at facility"}
+	}
+	return FacilityMutationDecision{Allowed: true}
+}
+
 func (s *dbFacilityScope) ResolveFacilityScope(ctx context.Context, appUserID string) FacilityScopeResult {
 	if s == nil || s.pool == nil {
 		return FacilityScopeResult{Err: ErrClosed}
