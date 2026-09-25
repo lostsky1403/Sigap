@@ -299,6 +299,16 @@ func (h *NotificationsHandler) RetryNotification(w http.ResponseWriter, r *http.
 		h.log(actor, "notification.retry", "forbidden", "out_of_scope")
 		return
 	}
+	// Scope alone is not enough: notification.manage must be held at the
+	// facility the row belongs to, so a manage grant at another facility
+	// cannot drive a retry here.
+	if row.FacilityID != nil {
+		if decision := auth.AuthorizeFacilityMutation(actor, scope, "notification.manage", *row.FacilityID); !decision.Allowed {
+			writeError(w, http.StatusNotFound, "Notifikasi tidak ditemukan.")
+			h.log(actor, "notification.retry", "forbidden", decision.Reason)
+			return
+		}
+	}
 
 	row, err = h.svc.Retry(r.Context(), id)
 	if err != nil {
@@ -346,6 +356,16 @@ func (h *NotificationsHandler) CancelNotification(w http.ResponseWriter, r *http
 		writeError(w, http.StatusNotFound, "Notifikasi tidak ditemukan.")
 		h.log(actor, "notification.cancel", "forbidden", "out_of_scope")
 		return
+	}
+	// Scope alone is not enough: notification.manage must be held at the
+	// facility the row belongs to, so a manage grant at another facility
+	// cannot drive a cancel here.
+	if row.FacilityID != nil {
+		if decision := auth.AuthorizeFacilityMutation(actor, scope, "notification.manage", *row.FacilityID); !decision.Allowed {
+			writeError(w, http.StatusNotFound, "Notifikasi tidak ditemukan.")
+			h.log(actor, "notification.cancel", "forbidden", decision.Reason)
+			return
+		}
 	}
 
 	row, err = h.svc.Cancel(r.Context(), id)

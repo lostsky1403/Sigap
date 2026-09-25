@@ -371,6 +371,18 @@ func (h *AdminHandler) UpdateFacility(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	targetFacility, err := uuid.Parse(id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ID fasilitas tidak valid.")
+		h.logAccess(r, actor, "facility.updated", "error", "invalid facility id")
+		return
+	}
+	if decision := auth.AuthorizeFacilityMutation(actor, scope, "facility.manage", targetFacility); !decision.Allowed {
+		writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
+		h.logAccess(r, actor, "facility.updated", "not_found", decision.Reason)
+		return
+	}
+
 	query := fmt.Sprintf("UPDATE facilities SET %s WHERE id = $%d", strings.Join(setClauses, ", "), argIdx)
 	args = append(args, id)
 	if !scope.Unrestricted {
@@ -419,6 +431,18 @@ func (h *AdminHandler) DeactivateFacility(w http.ResponseWriter, r *http.Request
 		}
 		writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
 		h.logAccess(r, actor, "facility.deactivated", "error", detail)
+		return
+	}
+
+	targetFacility, err := uuid.Parse(id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ID fasilitas tidak valid.")
+		h.logAccess(r, actor, "facility.deactivated", "error", "invalid facility id")
+		return
+	}
+	if decision := auth.AuthorizeFacilityMutation(actor, scope, "facility.manage", targetFacility); !decision.Allowed {
+		writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
+		h.logAccess(r, actor, "facility.deactivated", "not_found", decision.Reason)
 		return
 	}
 
@@ -736,6 +760,37 @@ func (h *AdminHandler) UpdateQueueStatus(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
 		h.logQueueAccess(r, actor, "queue.status_updated", "error", detail)
 		return
+	}
+
+	// The target facility is resolved from the stored ticket, never from the
+	// request, so the permission check below is anchored to the row actually
+	// being mutated. Only a globally unrestricted actor may skip this lookup,
+	// preserving the single-statement path for the global super admin.
+	var ticketFacilityID *uuid.UUID
+	if !scope.Unrestricted {
+		var ticketFacility uuid.UUID
+		err := h.pool.QueryRow(ctx,
+			`SELECT facility_id FROM queue_tickets WHERE id = $1 AND facility_id = ANY($2)`,
+			id, scope.IDs).Scan(&ticketFacility)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
+				h.logQueueAccess(r, actor, "queue.status_updated", "not_found", id)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "Gagal mengambil data antrean.")
+			h.logQueueAccess(r, actor, "queue.status_updated", "error", err.Error())
+			return
+		}
+		ticketFacilityID = &ticketFacility
+	}
+
+	if ticketFacilityID != nil {
+		if decision := auth.AuthorizeFacilityMutation(actor, scope, "queue.manage", *ticketFacilityID); !decision.Allowed {
+			writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
+			h.logQueueAccess(r, actor, "queue.status_updated", "not_found", decision.Reason)
+			return
+		}
 	}
 
 	var currentStatus string
@@ -1085,6 +1140,13 @@ func (h *AdminHandler) CreateServiceUnit(w http.ResponseWriter, r *http.Request)
 		h.logServiceUnitAccess(r, actor, "service_unit.created", "forbidden", "facility_id outside scope")
 		return
 	}
+	// Scope alone is not enough: the mutation permission must be held at the
+	// supplied target facility, not merely at some other facility in scope.
+	if decision := auth.AuthorizeFacilityMutation(actor, scope, "schedule.manage", facilityID); !decision.Allowed {
+		writeError(w, http.StatusForbidden, "Akses ditolak: izin tidak berlaku untuk fasilitas tujuan.")
+		h.logServiceUnitAccess(r, actor, "service_unit.created", "forbidden", decision.Reason)
+		return
+	}
 
 	var id string
 	err := h.pool.QueryRow(ctx,
@@ -1188,6 +1250,35 @@ func (h *AdminHandler) UpdateServiceUnit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Resolve the stored facility so the permission check is anchored to the
+	// row being mutated rather than to any client-supplied facility_id.
+	var storedFacilityID *uuid.UUID
+	if !scope.Unrestricted {
+		var stored uuid.UUID
+		err := h.pool.QueryRow(ctx,
+			`SELECT facility_id FROM service_units WHERE id = $1 AND facility_id = ANY($2)`,
+			id, scope.IDs).Scan(&stored)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+				h.logServiceUnitAccess(r, actor, "service_unit.updated", "not_found", id)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "Gagal mengambil unit layanan.")
+			h.logServiceUnitAccess(r, actor, "service_unit.updated", "error", err.Error())
+			return
+		}
+		storedFacilityID = &stored
+	}
+
+	if storedFacilityID != nil {
+		if decision := auth.AuthorizeFacilityMutation(actor, scope, "schedule.manage", *storedFacilityID); !decision.Allowed {
+			writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+			h.logServiceUnitAccess(r, actor, "service_unit.updated", "not_found", decision.Reason)
+			return
+		}
+	}
+
 	if req.FacilityID != nil {
 		facilityID, ferr := uuid.Parse(*req.FacilityID)
 		if ferr != nil {
@@ -1198,6 +1289,13 @@ func (h *AdminHandler) UpdateServiceUnit(w http.ResponseWriter, r *http.Request)
 		if !auth.FacilityScopeResultAllows(scope, facilityID) {
 			writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
 			h.logServiceUnitAccess(r, actor, "service_unit.updated", "not_found", id)
+			return
+		}
+		// A supplied facility_id is a re-parenting target, so it needs the
+		// mutation permission in its own right, not merely facility scope.
+		if decision := auth.AuthorizeFacilityMutation(actor, scope, "schedule.manage", facilityID); !decision.Allowed {
+			writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+			h.logServiceUnitAccess(r, actor, "service_unit.updated", "not_found", decision.Reason)
 			return
 		}
 	}
@@ -1535,6 +1633,13 @@ func (h *AdminHandler) CreateSchedule(w http.ResponseWriter, r *http.Request) {
 		h.logScheduleAccess(r, actor, "schedule.created", "forbidden", "facility_id outside scope")
 		return
 	}
+	// Scope alone is not enough: the mutation permission must be held at the
+	// supplied target facility, not merely at some other facility in scope.
+	if decision := auth.AuthorizeFacilityMutation(actor, scope, "schedule.manage", facilityID); !decision.Allowed {
+		writeError(w, http.StatusForbidden, "Akses ditolak: izin tidak berlaku untuk fasilitas tujuan.")
+		h.logScheduleAccess(r, actor, "schedule.created", "forbidden", decision.Reason)
+		return
+	}
 
 	var id string
 	err := h.pool.QueryRow(ctx,
@@ -1664,6 +1769,35 @@ func (h *AdminHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve the stored facility so the permission check is anchored to the
+	// row being mutated rather than to any client-supplied facility_id.
+	var storedFacilityID *uuid.UUID
+	if !scope.Unrestricted {
+		var stored uuid.UUID
+		err := h.pool.QueryRow(ctx,
+			`SELECT facility_id FROM practitioner_schedules WHERE id = $1 AND facility_id = ANY($2)`,
+			id, scope.IDs).Scan(&stored)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+				h.logScheduleAccess(r, actor, "schedule.updated", "not_found", id)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "Gagal mengambil jadwal.")
+			h.logScheduleAccess(r, actor, "schedule.updated", "error", err.Error())
+			return
+		}
+		storedFacilityID = &stored
+	}
+
+	if storedFacilityID != nil {
+		if decision := auth.AuthorizeFacilityMutation(actor, scope, "schedule.manage", *storedFacilityID); !decision.Allowed {
+			writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+			h.logScheduleAccess(r, actor, "schedule.updated", "not_found", decision.Reason)
+			return
+		}
+	}
+
 	if req.FacilityID != nil {
 		facilityID, ferr := uuid.Parse(*req.FacilityID)
 		if ferr != nil {
@@ -1674,6 +1808,13 @@ func (h *AdminHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 		if !auth.FacilityScopeResultAllows(scope, facilityID) {
 			writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
 			h.logScheduleAccess(r, actor, "schedule.updated", "not_found", id)
+			return
+		}
+		// A supplied facility_id is a re-parenting target, so it needs the
+		// mutation permission in its own right, not merely facility scope.
+		if decision := auth.AuthorizeFacilityMutation(actor, scope, "schedule.manage", facilityID); !decision.Allowed {
+			writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+			h.logScheduleAccess(r, actor, "schedule.updated", "not_found", decision.Reason)
 			return
 		}
 	}
@@ -2076,6 +2217,31 @@ func (h *AdminHandler) UpdateAppointmentStatus(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
 		h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", detail)
 		return
+	}
+
+	// The appointment facility is resolved from the stored row and the
+	// permission check is anchored to it, so appointment.manage granted at
+	// another facility cannot drive a transition here.
+	if !scope.Unrestricted {
+		var appointmentFacility uuid.UUID
+		err := h.pool.QueryRow(ctx,
+			`SELECT facility_id FROM appointments WHERE id = $1 AND facility_id = ANY($2)`,
+			id, scope.IDs).Scan(&appointmentFacility)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
+				h.logAppointmentAccess(r, actor, "appointment.status_updated", "not_found", id)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "Gagal mengambil janji temu.")
+			h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", err.Error())
+			return
+		}
+		if decision := auth.AuthorizeFacilityMutation(actor, scope, "appointment.manage", appointmentFacility); !decision.Allowed {
+			writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
+			h.logAppointmentAccess(r, actor, "appointment.status_updated", "not_found", decision.Reason)
+			return
+		}
 	}
 
 	var current string
