@@ -193,11 +193,18 @@ VALUES ($1, $2, $3, NULL, $4, NOW() + INTERVAL '1 day', 'scheduled', 'Scope Pati
 	if err := seedAppUser(ctx, pool, claimsOnlyID, "scope-matrix-claims-only"); err != nil {
 		t.Fatalf("seed claims-only user: %v", err)
 	}
-	fixture.actorA = makeScopedActor(scopedID, "facility.read", "facility.manage", "queue.read", "queue.manage", "schedule.read", "schedule.manage", "appointment.read", "appointment.manage")
-	fixture.zeroActor = makeScopedActor(zeroID, "facility.read", "facility.manage", "queue.read", "queue.manage", "schedule.read", "schedule.manage", "appointment.read", "appointment.manage")
-	fixture.inactiveActor = makeScopedActor(inactiveID, "facility.read", "facility.manage", "queue.read", "queue.manage", "schedule.read", "schedule.manage", "appointment.read", "appointment.manage")
-	fixture.deletedActor = makeScopedActor(deletedID, "facility.read", "facility.manage", "queue.read", "queue.manage", "schedule.read", "schedule.manage", "appointment.read", "appointment.manage")
-	fixture.claimsOnlyActor = makeScopedActor(claimsOnlyID, "facility.read", "facility.manage", "queue.read", "queue.manage", "schedule.read", "schedule.manage", "appointment.read", "appointment.manage")
+	// actorA is the faithful production shape: flat keys AND facility
+	// provenance, both resolved from user_roles.
+	fixture.actorA = dbScopedActor(t, pool, scopedID)
+	// The fail-closed actors below deliberately keep every mutation permission
+	// in their FLAT key set while carrying no facility provenance at all.
+	// That is the strongest adversarial shape: the permission is present and
+	// actor.HasPermission reports true, yet authorization must still be denied
+	// because the key was never granted at any facility.
+	fixture.zeroActor = makeScopedActor(zeroID, allTestPermissions()...)
+	fixture.inactiveActor = makeScopedActor(inactiveID, allTestPermissions()...)
+	fixture.deletedActor = makeScopedActor(deletedID, allTestPermissions()...)
+	fixture.claimsOnlyActor = makeScopedActor(claimsOnlyID, allTestPermissions()...)
 	return fixture
 }
 
@@ -481,7 +488,7 @@ func TestFacilityScope_CreateFacility(t *testing.T) {
 		{
 			name:      "global super admin",
 			handler:   scopedHandler(pool),
-			actor:     makeScopedActor(globalUserID, "facility.manage"),
+			actor:     dbScopedActor(t, pool, globalUserID),
 			wantCode:  http.StatusCreated,
 			wantCount: 1,
 		},
@@ -502,14 +509,14 @@ func TestFacilityScope_CreateFacility(t *testing.T) {
 		{
 			name:      "facility scoped actor",
 			handler:   scopedHandler(pool),
-			actor:     makeScopedActor(scopedUserID, "facility.manage"),
+			actor:     dbScopedActor(t, pool, scopedUserID),
 			wantCode:  http.StatusNotFound,
 			wantCount: 0,
 		},
 		{
 			name:      "resolver error",
 			handler:   resolverErrorHandler,
-			actor:     makeScopedActor(scopedUserID, "facility.manage"),
+			actor:     dbScopedActor(t, pool, scopedUserID),
 			wantCode:  http.StatusNotFound,
 			wantCount: 0,
 		},
@@ -543,4 +550,233 @@ func adminMutationTarget(name string, fixture adminScopeMutationFixture) (string
 	default:
 		return "", ""
 	}
+}
+
+// crossFacilityFixture holds the two facilities and the tickets/rows used by
+// the cross-facility privilege tests.
+type crossFacilityFixture struct {
+	facilityA string
+	facilityB string
+	queueA    string
+	queueB    string
+	unitA     string
+	unitB     string
+}
+
+func seedCrossFacilityFixture(t *testing.T, pool *pgxpool.Pool) crossFacilityFixture {
+	t.Helper()
+	ctx := context.Background()
+	f := crossFacilityFixture{
+		facilityA: uuid.NewString(),
+		facilityB: uuid.NewString(),
+	}
+	for _, seed := range []struct{ id, name string }{{f.facilityA, "Cross Facility A"}, {f.facilityB, "Cross Facility B"}} {
+		if err := seedFacilityByName(ctx, pool, seed.id, seed.name); err != nil {
+			t.Fatalf("seed facility: %v", err)
+		}
+	}
+	f.queueA = seedQueueTicketForFacility(t, pool, f.facilityA)
+	f.queueB = seedQueueTicketForFacility(t, pool, f.facilityB)
+	for _, unit := range []struct{ id, facility, name, code string }{
+		{uuid.NewString(), f.facilityA, "Unit A", "UHA"},
+		{uuid.NewString(), f.facilityB, "Unit B", "UHB"},
+	} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO service_units (id, facility_id, name, code, description, is_active)
+			 VALUES ($1, $2, $3, $4, '', true)`, unit.id, unit.facility, unit.name, unit.code); err != nil {
+			t.Fatalf("seed service unit: %v", err)
+		}
+		if unit.facility == f.facilityA {
+			f.unitA = unit.id
+		} else {
+			f.unitB = unit.id
+		}
+	}
+	return f
+}
+
+// TestFacilityScope_CrossFacilityPrivilege is the end-to-end regression for the
+// confirmed defect: a single user holding DIFFERENT roles at DIFFERENT
+// facilities is schema-valid (user_roles PK is (user_id, role_id)), and the
+// former flat-union permission set let queue.manage granted only at facility B
+// authorize PATCH /api/v1/admin/queues/<ticketInA>/status when A was also in
+// scope. The same mutation must succeed at B and be denied at A.
+func TestFacilityScope_CrossFacilityPrivilege(t *testing.T) {
+	pool, cleanup := newScopeTestPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	fixture := seedCrossFacilityFixture(t, pool)
+	h := scopedHandler(pool)
+
+	patchQueueStatus := func(t *testing.T, actor identity.Actor, ticketID string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPatch,
+			"/api/v1/admin/queues/"+ticketID+"/status", strings.NewReader(`{"status":"called"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(identity.ContextWithActor(req.Context(), actor))
+		rec := httptest.NewRecorder()
+		h.QueuesRouter(rec, req)
+		return rec
+	}
+	queueStatus := func(t *testing.T, ticketID string) string {
+		t.Helper()
+		var status string
+		if err := pool.QueryRow(ctx, `SELECT status FROM queue_tickets WHERE id = $1`, ticketID).Scan(&status); err != nil {
+			t.Fatalf("read queue status: %v", err)
+		}
+		return status
+	}
+
+	// CASE1: viewer@A + operator@B.
+	t.Run("operator at B cannot mutate a ticket at A", func(t *testing.T) {
+		userID := uuid.NewString()
+		if err := seedAppUser(ctx, pool, userID, "cross-case1"); err != nil {
+			t.Fatalf("seed app user: %v", err)
+		}
+		seedNamedRoleAtFacility(t, pool, userID, "viewer", fixture.facilityA)
+		seedNamedRoleAtFacility(t, pool, userID, "operator", fixture.facilityB)
+
+		actor := dbScopedActor(t, pool, userID)
+		// The flat union contains queue.manage, and BOTH facilities are in
+		// scope: only the per-facility provenance distinguishes them.
+		if !actor.HasPermission("queue.manage") {
+			t.Fatalf("precondition: flat permission set should contain queue.manage, got %v", actor.Permissions)
+		}
+		scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+		if scope.Err != nil || len(scope.IDs) != 2 {
+			t.Fatalf("precondition: both facilities should be in scope, got %+v", scope)
+		}
+
+		before := adminScopeSnapshot(t, pool, "queue_tickets", fixture.queueA)
+		rec := patchQueueStatus(t, actor, fixture.queueA)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("mutation at facility A: got status %d want 404: %s", rec.Code, rec.Body.String())
+		}
+		assertAdminSnapshotUnchanged(t, pool, "queue_tickets", fixture.queueA, before)
+		if got := queueStatus(t, fixture.queueA); got != "waiting" {
+			t.Errorf("ticket A status=%q want waiting", got)
+		}
+
+		// The same mutation at the facility where the grant lives must work.
+		rec = patchQueueStatus(t, actor, fixture.queueB)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("mutation at facility B: got status %d want 200: %s", rec.Code, rec.Body.String())
+		}
+		if got := queueStatus(t, fixture.queueB); got != "called" {
+			t.Errorf("ticket B status=%q want called", got)
+		}
+	})
+
+	// CASE2: facility_admin@A + a narrower role@B must not spill.
+	t.Run("facility admin at A does not spill manage permission to B", func(t *testing.T) {
+		userID := uuid.NewString()
+		if err := seedAppUser(ctx, pool, userID, "cross-case2"); err != nil {
+			t.Fatalf("seed app user: %v", err)
+		}
+		seedNamedRoleAtFacility(t, pool, userID, "facility_admin", fixture.facilityA)
+		seedNamedRoleAtFacility(t, pool, userID, "viewer", fixture.facilityB)
+
+		actor := dbScopedActor(t, pool, userID)
+		if !actor.HasPermission("schedule.manage") {
+			t.Fatalf("precondition: flat permission set should contain schedule.manage, got %v", actor.Permissions)
+		}
+
+		// Renaming the service unit at A is allowed.
+		req := httptest.NewRequest(http.MethodPatch,
+			"/api/v1/admin/service-units/"+fixture.unitA, strings.NewReader(`{"name":"Renamed By Admin A"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(identity.ContextWithActor(req.Context(), actor))
+		rec := httptest.NewRecorder()
+		h.ServiceUnitsRouter(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("update service unit at A: got status %d want 200: %s", rec.Code, rec.Body.String())
+		}
+
+		// The same mutation at B must be denied: viewer@B cannot manage.
+		before := adminScopeSnapshot(t, pool, "service_units", fixture.unitB)
+		reqB := httptest.NewRequest(http.MethodPatch,
+			"/api/v1/admin/service-units/"+fixture.unitB, strings.NewReader(`{"name":"Renamed By Admin A"}`))
+		reqB.Header.Set("Content-Type", "application/json")
+		reqB = reqB.WithContext(identity.ContextWithActor(reqB.Context(), actor))
+		recB := httptest.NewRecorder()
+		h.ServiceUnitsRouter(recB, reqB)
+		if recB.Code != http.StatusNotFound {
+			t.Fatalf("update service unit at B: got status %d want 404: %s", recB.Code, recB.Body.String())
+		}
+		assertAdminSnapshotUnchanged(t, pool, "service_units", fixture.unitB, before)
+	})
+
+	// CASE8: a supplied facility_id is authorized against the SUPPLIED target
+	// facility, so a re-parenting move into a facility where the caller holds
+	// no manage permission is denied even though the source facility is in
+	// scope and the flat key set contains schedule.manage.
+	t.Run("supplied facility id is authorized at the supplied facility", func(t *testing.T) {
+		userID := uuid.NewString()
+		if err := seedAppUser(ctx, pool, userID, "cross-case8"); err != nil {
+			t.Fatalf("seed app user: %v", err)
+		}
+		// facility_admin only at A; B is in scope only through a viewer role.
+		seedNamedRoleAtFacility(t, pool, userID, "facility_admin", fixture.facilityA)
+		seedNamedRoleAtFacility(t, pool, userID, "viewer", fixture.facilityB)
+
+		actor := dbScopedActor(t, pool, userID)
+		if !actor.HasPermission("schedule.manage") {
+			t.Fatalf("precondition: flat permission set should contain schedule.manage, got %v", actor.Permissions)
+		}
+		scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+		// B is in scope, so scope-only enforcement would allow the move.
+		if !auth.FacilityScopeResultAllows(scope, uuid.MustParse(fixture.facilityB)) {
+			t.Fatalf("precondition: facility B should be in scope, got %+v", scope)
+		}
+
+		before := adminScopeSnapshot(t, pool, "service_units", fixture.unitA)
+		req := httptest.NewRequest(http.MethodPatch,
+			"/api/v1/admin/service-units/"+fixture.unitA,
+			strings.NewReader(`{"facility_id":"`+fixture.facilityB+`","name":"Moved Out Of Scope"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(identity.ContextWithActor(req.Context(), actor))
+		rec := httptest.NewRecorder()
+		h.ServiceUnitsRouter(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("re-parent into B: got status %d want 404: %s", rec.Code, rec.Body.String())
+		}
+		assertAdminSnapshotUnchanged(t, pool, "service_units", fixture.unitA, before)
+
+		// The same move into the facility where the grant lives is allowed.
+		okReq := httptest.NewRequest(http.MethodPatch,
+			"/api/v1/admin/service-units/"+fixture.unitA,
+			strings.NewReader(`{"facility_id":"`+fixture.facilityA+`","name":"Renamed At A"}`))
+		okReq.Header.Set("Content-Type", "application/json")
+		okReq = okReq.WithContext(identity.ContextWithActor(okReq.Context(), actor))
+		okRec := httptest.NewRecorder()
+		h.ServiceUnitsRouter(okRec, okReq)
+		if okRec.Code != http.StatusOK {
+			t.Fatalf("update at granted facility: got status %d want 200: %s", okRec.Code, okRec.Body.String())
+		}
+	})
+
+	// CASE7: an actor whose keys come only from client claims holds
+	// queue.manage flatly but has no provenance, so the mutation is denied even
+	// when its own user_roles assignment would place the facility in scope.
+	t.Run("claims only actor cannot mutate at any facility", func(t *testing.T) {
+		userID := uuid.NewString()
+		if err := seedAppUser(ctx, pool, userID, "cross-case7"); err != nil {
+			t.Fatalf("seed app user: %v", err)
+		}
+		seedNamedRoleAtFacility(t, pool, userID, "operator", fixture.facilityB)
+
+		// Every mutation permission is present in the flat set, none has
+		// provenance: exactly the shape a forged token would produce.
+		forged := makeScopedActor(userID, "queue.manage", "facility.manage", "schedule.manage", "appointment.manage")
+		if !forged.HasPermission("queue.manage") {
+			t.Fatalf("precondition: forged actor should hold the flat key, got %v", forged.Permissions)
+		}
+
+		before := adminScopeSnapshot(t, pool, "queue_tickets", fixture.queueB)
+		rec := patchQueueStatus(t, forged, fixture.queueB)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("claims-only mutation: got status %d want 404: %s", rec.Code, rec.Body.String())
+		}
+		assertAdminSnapshotUnchanged(t, pool, "queue_tickets", fixture.queueB, before)
+	})
 }

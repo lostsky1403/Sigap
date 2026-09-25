@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,7 +129,184 @@ func seedGlobalSuperAdminRole(ctx context.Context, pool *pgxpool.Pool, appUserID
 		 WHERE name = 'super_admin'`, appUserID); err != nil {
 		return fmt.Errorf("insert global super_admin assignment: %w", err)
 	}
+	// super_admin must also carry the full permission set, mirroring
+	// packages/db/seed/rbac.sql. Without role_permissions the resolver can
+	// grant no permission provenance, so a global admin would (correctly)
+	// fail the permission-at-facility axis.
+	return attachPermissionsToRole(ctx, pool, "super_admin", allTestPermissions())
+}
+
+// allTestPermissions returns every permission key the admin test surface uses.
+func allTestPermissions() []string {
+	return []string{
+		"queue.generate",
+		"queue.read",
+		"queue.manage",
+		"facility.read",
+		"facility.manage",
+		"audit.read",
+		"appointment.read",
+		"appointment.manage",
+		"schedule.read",
+		"schedule.manage",
+		"notification.read",
+		"notification.manage",
+	}
+}
+
+// attachPermissionsToRole grants the named permission keys to the role,
+// creating the permission row when missing. Idempotent.
+func attachPermissionsToRole(ctx context.Context, pool *pgxpool.Pool, roleName string, perms []string) error {
+	for _, perm := range perms {
+		var permID string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO permissions (key, description) VALUES ($1, 'test permission')
+			 ON CONFLICT (key) DO NOTHING
+			 RETURNING id::text`, perm).Scan(&permID); err != nil {
+			if qErr := pool.QueryRow(ctx,
+				`SELECT id::text FROM permissions WHERE key = $1`, perm).Scan(&permID); qErr != nil {
+				return fmt.Errorf("get permission %s: %w", perm, qErr)
+			}
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO role_permissions (role_id, permission_id)
+			 SELECT r.id, $2 FROM roles r WHERE r.name = $1
+			 ON CONFLICT (role_id, permission_id) DO NOTHING`,
+			roleName, permID); err != nil {
+			return fmt.Errorf("attach permission %s to role %s: %w", perm, roleName, err)
+		}
+	}
 	return nil
+}
+
+// resolveActorFor builds an actor through the real DB resolver so the test
+// exercises the production provenance path end to end: the flat key set AND
+// the per-key facility provenance both come from user_roles.
+//
+// This is what distinguishes a genuinely facility-scoped grant from a global
+// one, so handler tests can assert cross-facility behaviour truthfully.
+func resolveActorFor(t *testing.T, pool *pgxpool.Pool, subject string) identity.Actor {
+	t.Helper()
+	resolved, err := auth.NewRBACResolver(pool).Resolve(context.Background(), subject)
+	if err != nil {
+		t.Fatalf("resolve actor for %s: %v", subject, err)
+	}
+	return identity.Actor{
+		Type:           identity.ActorUser,
+		UserID:         subject,
+		Permissions:    resolved.Permissions,
+		FacilityGrants: resolved.Grants,
+		AppUserID:      resolved.AppUserID,
+		IsDev:          false,
+	}
+}
+
+// dbScopedActor builds the actor for an app user that HAS been seeded, taking
+// both its flat permissions and its facility provenance from the DB. It is the
+// faithful actor for assertions that require a working authorization.
+func dbScopedActor(t *testing.T, pool *pgxpool.Pool, appUserID string) identity.Actor {
+	t.Helper()
+	var subject string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT subject FROM app_users WHERE id = $1`, appUserID).Scan(&subject); err != nil {
+		t.Fatalf("load subject for %s: %v", appUserID, err)
+	}
+	actor := resolveActorFor(t, pool, subject)
+	if actor.AppUserID != appUserID {
+		t.Fatalf("resolved AppUserID=%q want %q", actor.AppUserID, appUserID)
+	}
+	return actor
+}
+
+// seedNamedRoleAtFacility grants an existing app user a SYSTEM role (one of
+// viewer / operator / facility_admin / super_admin) at one facility, using the
+// same permission sets as packages/db/seed/rbac.sql.
+//
+// This is the realistic shape the confirmed defect needs: a user_roles primary
+// key of (user_id, role_id) makes DIFFERENT roles at DIFFERENT facilities
+// schema-valid for a single user, so the seed must mirror production RBAC
+// rather than a synthetic single-permission role.
+func seedNamedRoleAtFacility(t *testing.T, pool *pgxpool.Pool, appUserID, roleName, facilityID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	perms := namedRolePermissions(roleName)
+	if len(perms) == 0 {
+		t.Fatalf("no permission set for role %q", roleName)
+	}
+
+	// The role row must exist before role_permissions can reference it.
+	var roleID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO roles (name, description, is_system) VALUES ($1, $2, true)
+		 ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description
+		 RETURNING id::text`, roleName, "test role "+roleName).Scan(&roleID); err != nil {
+		t.Fatalf("insert role %s: %v", roleName, err)
+	}
+	if err := attachPermissionsToRole(ctx, pool, roleName, perms); err != nil {
+		t.Fatalf("attach permissions to %s: %v", roleName, err)
+	}
+
+	var scopedFacility any
+	if facilityID != "" {
+		scopedFacility = facilityID
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO user_roles (user_id, role_id, facility_id, status, deleted_at)
+		 VALUES ($1, $2, $3, 'active', NULL)`, appUserID, roleID, scopedFacility); err != nil {
+		t.Fatalf("insert user_roles for %s at %s: %v", roleName, facilityID, err)
+	}
+}
+
+// namedRolePermissions mirrors packages/db/seed/rbac.sql.
+func namedRolePermissions(roleName string) []string {
+	switch roleName {
+	case "super_admin":
+		return allTestPermissions()
+	case "facility_admin":
+		return []string{
+			"queue.generate", "queue.read", "queue.manage",
+			"facility.read", "facility.manage",
+			"appointment.read", "appointment.manage",
+			"schedule.read", "schedule.manage",
+			"notification.read", "notification.manage",
+		}
+	case "operator":
+		return []string{
+			"queue.generate", "queue.read", "queue.manage", "facility.read",
+			"appointment.read", "appointment.manage", "schedule.read",
+			"notification.read",
+		}
+	case "viewer":
+		return []string{
+			"queue.read", "facility.read",
+			"appointment.read", "schedule.read",
+			"notification.read",
+		}
+	default:
+		return nil
+	}
+}
+
+// seedQueueTicketForFacility inserts a waiting queue ticket for a facility and
+// returns its id.
+func seedQueueTicketForFacility(t *testing.T, pool *pgxpool.Pool, facilityID string) string {
+	t.Helper()
+	ctx := context.Background()
+	patientID := uuid.NewString()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO patients (id, full_name, phone, gender, date_of_birth)
+		 VALUES ($1, 'Queue Patient', $2, 'L', '1990-01-01')`,
+		patientID, "08555"+strings.ReplaceAll(uuid.NewString(), "-", "")[:8]); err != nil {
+		t.Fatalf("seed patient: %v", err)
+	}
+	ticketID := uuid.NewString()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status)
+		 VALUES ($1, $2, $3, 1, 'QR-0001', 'waiting')`, ticketID, facilityID, patientID); err != nil {
+		t.Fatalf("seed queue ticket: %v", err)
+	}
+	return ticketID
 }
 
 // seedUserRoles creates a user_roles row linking appUserID to a facility via a role that has the given permission keys. status defaults to 'active'.
@@ -300,24 +478,59 @@ func (nopCloser) Close() error { return nil }
 
 // makeScopedActor creates an actor with the given AppUserID and permissions.
 // The actor is NOT dev (IsDev=false), so facility scope enforcement applies.
+//
+// The facility provenance is derived from the SAME grant rows the flat keys
+// describe, so a caller that seeds viewer@A + operator@B gets exactly the
+// cross-facility shape the production resolver would return: permissions
+// scoped per facility rather than one global union.
+//
+// A global (unscoped) grant is represented by passing "global" in place of a
+// facility id; anything else is scoped to that facility.
 func makeScopedActor(appUserID string, perms ...string) identity.Actor {
+	grants := make([]identity.FacilityGrant, 0, len(perms))
+	keys := make([]string, 0, len(perms))
+	for _, perm := range perms {
+		key, facility, found := strings.Cut(perm, "@")
+		if !found {
+			grants = append(grants, identity.FacilityGrant{Key: perm})
+			keys = append(keys, perm)
+			continue
+		}
+		keys = append(keys, key)
+		if facility == "global" {
+			grants = append(grants, identity.FacilityGrant{Key: key, Unrestricted: true})
+			continue
+		}
+		scoped, err := uuid.Parse(facility)
+		if err != nil {
+			grants = append(grants, identity.FacilityGrant{Key: key})
+			continue
+		}
+		grants = append(grants, identity.FacilityGrant{Key: key, FacilityID: &scoped})
+	}
 	return identity.Actor{
-		Type:        identity.ActorUser,
-		UserID:      "sub:" + appUserID,
-		Permissions: perms,
-		AppUserID:   appUserID,
-		IsDev:       false,
+		Type:           identity.ActorUser,
+		UserID:         "sub:" + appUserID,
+		Permissions:    keys,
+		FacilityGrants: grants,
+		AppUserID:      appUserID,
+		IsDev:          false,
 	}
 }
 
 // makeDevActor creates a dev actor that bypasses facility scope checks.
 func makeDevActor(appUserID string, perms ...string) identity.Actor {
+	grants := make([]identity.FacilityGrant, 0, len(perms))
+	for _, perm := range perms {
+		grants = append(grants, identity.FacilityGrant{Key: perm, Unrestricted: true})
+	}
 	return identity.Actor{
-		Type:        identity.ActorDev,
-		UserID:      "dev:" + appUserID,
-		Permissions: perms,
-		AppUserID:   appUserID,
-		IsDev:       true,
+		Type:           identity.ActorDev,
+		UserID:         "dev:" + appUserID,
+		Permissions:    perms,
+		FacilityGrants: grants,
+		AppUserID:      appUserID,
+		IsDev:          true,
 	}
 }
 
@@ -373,7 +586,7 @@ func TestFacilityScope_FacilityReadAllowed(t *testing.T) {
 	}
 
 	h := scopedHandler(pool)
-	actor := makeScopedActor(appUserID, "facility.read")
+	actor := dbScopedActor(t, pool, appUserID)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/facilities/"+facA, nil)
 	req = req.WithContext(identity.ContextWithActor(req.Context(), actor))
@@ -408,7 +621,7 @@ func TestFacilityScope_FacilityCrossScopeDenied(t *testing.T) {
 	}
 
 	h := scopedHandler(pool)
-	actor := makeScopedActor(appUserID, "facility.read")
+	actor := dbScopedActor(t, pool, appUserID)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/facilities/"+facB, nil)
 	req = req.WithContext(identity.ContextWithActor(req.Context(), actor))
@@ -439,7 +652,7 @@ func TestFacilityScope_FacilityUpdateAllowed(t *testing.T) {
 	}
 
 	h := scopedHandler(pool)
-	actor := makeScopedActor(appUserID, "facility.manage")
+	actor := dbScopedActor(t, pool, appUserID)
 
 	body := `{"name":"Fasilitas A Updated"}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/facilities/"+facA, stringReader(body))
@@ -476,7 +689,7 @@ func TestFacilityScope_FacilityCrossScopeUpdateRejected(t *testing.T) {
 	}
 
 	h := scopedHandler(pool)
-	actor := makeScopedActor(appUserID, "facility.manage")
+	actor := dbScopedActor(t, pool, appUserID)
 
 	body := `{"name":"Fasilitas B Hacked"}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/facilities/"+facB, stringReader(body))
@@ -513,7 +726,7 @@ func TestFacilityScope_ListFacilitiesOnlyOwn(t *testing.T) {
 	}
 
 	h := scopedHandler(pool)
-	actor := makeScopedActor(appUserID, "facility.read")
+	actor := dbScopedActor(t, pool, appUserID)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/facilities", nil)
 	req = req.WithContext(identity.ContextWithActor(req.Context(), actor))
@@ -564,7 +777,7 @@ func TestFacilityScope_ServiceUnitUnderAllowedFacility(t *testing.T) {
 	}
 
 	h := scopedHandler(pool)
-	actor := makeScopedActor(appUserID, "schedule.read")
+	actor := dbScopedActor(t, pool, appUserID)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/service-units/"+suA, nil)
 	req = req.WithContext(identity.ContextWithActor(req.Context(), actor))
@@ -607,7 +820,7 @@ func TestFacilityScope_ServiceUnitUnderDeniedFacility(t *testing.T) {
 	}
 
 	h := scopedHandler(pool)
-	actor := makeScopedActor(appUserID, "schedule.read")
+	actor := dbScopedActor(t, pool, appUserID)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/service-units/"+suB, nil)
 	req = req.WithContext(identity.ContextWithActor(req.Context(), actor))
@@ -666,7 +879,7 @@ func TestFacilityScope_AppointmentUnderDeniedFacility(t *testing.T) {
 	}
 
 	h := scopedHandler(pool)
-	actor := makeScopedActor(appUserID, "appointment.manage")
+	actor := dbScopedActor(t, pool, appUserID)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/appointments/"+apptB+"/status", stringReader(`{"status":"completed"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -718,7 +931,7 @@ func TestFacilityScope_QueueTicketUnderDeniedFacility(t *testing.T) {
 	}
 
 	h := scopedHandler(pool)
-	actor := makeScopedActor(appUserID, "queue.read")
+	actor := dbScopedActor(t, pool, appUserID)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/queues/"+qtB, nil)
 	req = req.WithContext(identity.ContextWithActor(req.Context(), actor))
@@ -757,7 +970,7 @@ func TestFacilityScope_ForgedFacilityIDInCreateBody(t *testing.T) {
 	}
 
 	h := scopedHandler(pool)
-	actor := makeScopedActor(appUserID, "schedule.manage")
+	actor := dbScopedActor(t, pool, appUserID)
 
 	// User is assigned only facility A, but forges facility_id=B in body.
 	body := fmt.Sprintf(`{"facility_id":"%s","service_unit_id":"%s","schedule_date":"2026-12-01","start_time":"08:00","end_time":"16:00","slot_minutes":30,"capacity_per_slot":5}`,
@@ -810,7 +1023,7 @@ func TestFacilityScope_DisabledUserRoleGrantsNoScope(t *testing.T) {
 	}
 
 	h := scopedHandler(pool)
-	actor := makeScopedActor(appUserID, "facility.read")
+	actor := dbScopedActor(t, pool, appUserID)
 
 	// List should return empty (no facilities in scope).
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/facilities", nil)
@@ -850,7 +1063,7 @@ func TestFacilityScope_SoftDeletedUserRoleGrantsNoScope(t *testing.T) {
 	}
 
 	h := scopedHandler(pool)
-	actor := makeScopedActor(appUserID, "facility.read")
+	actor := dbScopedActor(t, pool, appUserID)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/facilities", nil)
 	req = req.WithContext(identity.ContextWithActor(req.Context(), actor))
@@ -991,7 +1204,7 @@ func TestFacilityScope_MultiUserIsolation(t *testing.T) {
 	h := scopedHandler(pool)
 
 	// User A should only see facility A.
-	actorA := makeScopedActor(userA, "facility.read")
+	actorA := dbScopedActor(t, pool, userA)
 	reqA := httptest.NewRequest(http.MethodGet, "/api/v1/admin/facilities", nil)
 	reqA = reqA.WithContext(identity.ContextWithActor(reqA.Context(), actorA))
 	recA := httptest.NewRecorder()
@@ -1009,7 +1222,7 @@ func TestFacilityScope_MultiUserIsolation(t *testing.T) {
 	}
 
 	// User B should only see facility B.
-	actorB := makeScopedActor(userB, "facility.read")
+	actorB := dbScopedActor(t, pool, userB)
 	reqB := httptest.NewRequest(http.MethodGet, "/api/v1/admin/facilities", nil)
 	reqB = reqB.WithContext(identity.ContextWithActor(reqB.Context(), actorB))
 	recB := httptest.NewRecorder()
@@ -1062,7 +1275,7 @@ func TestFacilityScope_IDORNoExistenceOracle(t *testing.T) {
 	}
 
 	h := scopedHandler(pool)
-	actor := makeScopedActor(appUserID, "schedule.read")
+	actor := dbScopedActor(t, pool, appUserID)
 
 	// Try to access a service unit under facility B (exists in DB but out of scope).
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/service-units/"+suB, nil)
@@ -1119,7 +1332,7 @@ func TestFacilityScope_SecurityProof_DBAuthoritativeScope(t *testing.T) {
 
 	h := scopedHandler(pool)
 	// Same actor/JWT throughout — only the DB changes.
-	actor := makeScopedActor(appUserID, "facility.read")
+	actor := dbScopedActor(t, pool, appUserID)
 
 	// --- Step 1: GET facility A → allowed (200) ---
 	t.Run("GET facility A allowed with A assignment only", func(t *testing.T) {

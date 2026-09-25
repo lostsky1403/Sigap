@@ -166,7 +166,7 @@ func TestFacilityScope_AdminGlobalSuperAdminConsumers(t *testing.T) {
 	}
 
 	h := scopedHandler(pool)
-	actor := makeScopedActor(appUserID, "facility.read", "facility.manage", "queue.read", "queue.manage", "schedule.read", "schedule.manage", "appointment.read", "appointment.manage")
+	actor := dbScopedActor(t, pool, appUserID)
 	request := func(method, path, body string, call func(http.ResponseWriter, *http.Request)) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(method, path, strings.NewReader(body))

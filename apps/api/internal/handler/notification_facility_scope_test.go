@@ -116,8 +116,12 @@ func seedNotificationActors(t *testing.T, pool *pgxpool.Pool, facilityA string) 
 	if err := seedUserRoles(ctx, pool, zeroID, "", []string{"notification.read", "notification.manage"}); err != nil {
 		t.Fatalf("seed zero role: %v", err)
 	}
-	return makeScopedActor(scopedID, "notification.read", "notification.manage"),
-		makeScopedActor(globalID, "notification.read", "notification.manage"),
+	// scoped and global take their permissions AND provenance from the DB.
+	// zero keeps the flat keys with no provenance: a zero (unscoped,
+	// non-super_admin) assignment grants nothing anywhere, and this is the
+	// shape that must stay fail-closed.
+	return dbScopedActor(t, pool, scopedID),
+		dbScopedActor(t, pool, globalID),
 		makeScopedActor(zeroID, "notification.read", "notification.manage")
 }
 
@@ -329,8 +333,8 @@ func TestFacilityScope_NotificationSummaryActorMatrix(t *testing.T) {
 	if err := setUserRoleLifecycle(ctx, pool, deletedID, "", "active", &deletedAt); err != nil {
 		t.Fatalf("soft delete global role: %v", err)
 	}
-	inactiveActor := makeScopedActor(inactiveID, "notification.read")
-	deletedActor := makeScopedActor(deletedID, "notification.read")
+	inactiveActor := makeScopedActor(inactiveID, "notification.read", "notification.manage")
+	deletedActor := makeScopedActor(deletedID, "notification.read", "notification.manage")
 	claimsOnlyActor := makeScopedActor(claimsOnlyID, "notification.read", "notification.manage")
 	devActor := makeDevActor(uuid.NewString(), "notification.read")
 
