@@ -67,5 +67,32 @@ func (p *DevIdentityProvider) Authenticate(r *http.Request) (identity.Actor, err
 			"appointment.read",
 			"appointment.manage",
 		},
+		// Each synthetic key also carries an unrestricted grant so the dev
+		// actor satisfies facility-scoped mutation checks on both axes
+		// (permission-at-facility and facility scope).
+		FacilityGrants: unrestrictedDevGrants(),
 	}, nil
+}
+
+// unrestrictedDevGrants returns the dev synthetic permission set paired with
+// unrestricted facility provenance.
+func unrestrictedDevGrants() []identity.FacilityGrant {
+	keys := []string{
+		"queue.generate",
+		"queue.read",
+		"queue.manage",
+		"facility.read",
+		"facility.manage",
+		"audit.read",
+		"notification.read",
+		"notification.manage",
+		"schedule.read",
+		"appointment.read",
+		"appointment.manage",
+	}
+	grants := make([]identity.FacilityGrant, 0, len(keys))
+	for _, key := range keys {
+		grants = append(grants, identity.FacilityGrant{Key: key, Unrestricted: true})
+	}
+	return grants
 }

@@ -297,10 +297,11 @@ func (p *JWTProvider) Authenticate(r *http.Request) (identity.Actor, error) {
 			return identity.Actor{}, nil
 		}
 		return identity.Actor{
-			UserID:      sub,
-			Type:        userType,
-			Permissions: perms.Permissions,
-			AppUserID:   perms.AppUserID,
+			UserID:         sub,
+			Type:           userType,
+			Permissions:    perms.Permissions,
+			FacilityGrants: perms.Grants,
+			AppUserID:      perms.AppUserID,
 		}, nil
 	}
 
