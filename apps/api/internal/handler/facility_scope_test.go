@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -28,32 +27,10 @@ func scopeTestDBURL() string {
 	return os.Getenv("DATABASE_URL")
 }
 
-// migrationFileName resolves a migration version to its exact filename using
-// the same discovery the migration runner uses. (Mirrors the unexported helper
-// in the auth package's tests, replicated here for the handler test package.)
-func migrationFileName(dir string, version int) (string, error) {
-	migrations, err := migrate.DiscoverMigrations(dir)
-	if err != nil {
-		return "", err
-	}
-	for _, m := range migrations {
-		if m.Version == version {
-			return filepath.Base(m.Path), nil
-		}
-	}
-	return "", fmt.Errorf("migration %d not found", version)
-}
-
-// applyScopeMigrations builds the full schema the facility-scope tests depend
-// on from real migration files: 0001 (facilities/queue_tickets), 0003
-// (identity/RBAC), 0005 (service_units/appointments), 0006 (notifications),
-// 0008 (app_users.subject), and 0009 (user_roles lifecycle). It drops and
-// rebuilds a dedicated, throwaway schema (test_scope) so the shared "public"
-// schema — which other suites (e.g. booking check-in) rely on as a pre-built
-// full schema — is never dropped or raced against. The pool's search_path is
-// set to test_scope so every unqualified relation reference lands there.
-// Migration 0007 is skipped (pre-existing defect in checkin_constraints,
-// out of scope for AUDIT-202).
+// applyScopeMigrations rebuilds a dedicated, throwaway schema (test_scope)
+// from the complete tracked migration chain. The shared schema used by other
+// integration suites is never dropped. Existing migration 0010 is included so
+// the harness proves the same schema that CI applies.
 func applyScopeMigrations(t *testing.T, ctx context.Context, pool *pgxpool.Pool) error {
 	t.Helper()
 	dir, err := migrate.DefaultDir()
@@ -68,19 +45,8 @@ func applyScopeMigrations(t *testing.T, ctx context.Context, pool *pgxpool.Pool)
 		return fmt.Errorf("create test_scope schema: %w", err)
 	}
 
-	order := []int{1, 3, 5, 6, 8, 9}
-	for _, v := range order {
-		name, mErr := migrationFileName(dir, v)
-		if mErr != nil {
-			return mErr
-		}
-		content, rErr := os.ReadFile(filepath.Join(dir, name))
-		if rErr != nil {
-			return fmt.Errorf("read migration %d: %w", v, rErr)
-		}
-		if _, eErr := pool.Exec(ctx, string(content)); eErr != nil {
-			return fmt.Errorf("apply migration %d: %w", v, eErr)
-		}
+	if _, err := migrate.Run(ctx, pool, dir); err != nil {
+		return fmt.Errorf("apply complete migration chain: %w", err)
 	}
 	return nil
 }
@@ -116,6 +82,11 @@ func newScopeTestPool(t *testing.T) (*pgxpool.Pool, func()) {
 		pool.Close()
 		t.Fatalf("apply migrations: %v", err)
 	}
+	var applied int
+	if err := pool.QueryRow(context.Background(), "SELECT 1 FROM schema_migrations WHERE version = 10").Scan(&applied); err != nil || applied != 1 {
+		pool.Close()
+		t.Fatalf("migration harness did not apply existing 0010: value=%d err=%v", applied, err)
+	}
 
 	cleanup := func() { pool.Close() }
 	return pool, cleanup
@@ -143,10 +114,30 @@ func seedAppUser(ctx context.Context, pool *pgxpool.Pool, appUserID, subject str
 	return err
 }
 
-// seedUserRoles creates a user_roles row linking appUserID to a facility via
-// a role that has the given permission keys. status defaults to 'active'.
+func seedGlobalSuperAdminRole(ctx context.Context, pool *pgxpool.Pool, appUserID string) error {
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO roles (name, description, is_system)
+		 VALUES ('super_admin', 'test global super admin', true)
+		 ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name`); err != nil {
+		return fmt.Errorf("insert super_admin role: %w", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO user_roles (user_id, role_id, facility_id, status, deleted_at)
+		 SELECT $1, id, NULL, 'active', NULL
+		 FROM roles
+		 WHERE name = 'super_admin'`, appUserID); err != nil {
+		return fmt.Errorf("insert global super_admin assignment: %w", err)
+	}
+	return nil
+}
+
+// seedUserRoles creates a user_roles row linking appUserID to a facility via a role that has the given permission keys. status defaults to 'active'.
 func seedUserRoles(ctx context.Context, pool *pgxpool.Pool, appUserID, facilityID string, perms []string) error {
 	roleID := uuid.NewString()
+	var scopedFacility any
+	if facilityID != "" {
+		scopedFacility = facilityID
+	}
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO roles (id, name, description, is_system)
 		 VALUES ($1, $2, 'test role', false)`,
@@ -157,7 +148,7 @@ func seedUserRoles(ctx context.Context, pool *pgxpool.Pool, appUserID, facilityI
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO user_roles (user_id, role_id, facility_id, status, deleted_at)
 		 VALUES ($1, $2, $3, 'active', NULL)`,
-		appUserID, roleID, facilityID); err != nil {
+		appUserID, roleID, scopedFacility); err != nil {
 		return fmt.Errorf("insert user_roles: %w", err)
 	}
 
@@ -186,9 +177,16 @@ func seedUserRoles(ctx context.Context, pool *pgxpool.Pool, appUserID, facilityI
 // in a facility, for lifecycle tests.
 func setUserRoleLifecycle(ctx context.Context, pool *pgxpool.Pool, appUserID, facilityID, status string, deletedAt *time.Time) error {
 	q := `UPDATE user_roles SET status = $1, deleted_at = $2
-	      WHERE user_id = $3 AND facility_id = $4`
-	_, err := pool.Exec(ctx, q, status, deletedAt, appUserID, facilityID)
+	      WHERE user_id = $3 AND facility_id IS NOT DISTINCT FROM $4`
+	_, err := pool.Exec(ctx, q, status, deletedAt, appUserID, nullableScopeFacility(facilityID))
 	return err
+}
+
+func nullableScopeFacility(facilityID string) any {
+	if facilityID == "" {
+		return nil
+	}
+	return facilityID
 }
 
 // scopedHandler builds an AdminHandler wired with the DB-backed FacilityScope
@@ -885,20 +883,17 @@ func TestFacilityScope_ResolverErrorFailsClosed(t *testing.T) {
 		IsDev:       false,
 	}
 
-	// AllowedFacilityIDsForActor should fail closed when resolver pool is nil.
-	allowed, _, err := auth.AllowedFacilityIDsForActor(ctx, actor, resolver)
-	if err == nil {
-		t.Error("expected fail-closed (err != nil) with nil pool resolver, got accepted")
+	result := auth.FacilityScopeForActor(ctx, actor, resolver)
+	if result.Err == nil {
+		t.Error("expected fail-closed result error with nil pool resolver")
 	}
-	if allowed != nil {
-		t.Errorf("expected nil allowed facilities on resolver error, got %v", allowed)
+	if result.Unrestricted || len(result.IDs) != 0 {
+		t.Errorf("expected no unrestricted scope on resolver error, got %+v", result)
 	}
 
-	// CanAccessFacilityForActor should fail closed with nil pool.
 	facID := uuid.New()
-	result := auth.CanAccessFacilityForActor(ctx, actor, resolver, facID)
-	if result {
-		t.Error("expected false for CanAccessFacility with nil pool resolver, got true")
+	if auth.FacilityScopeResultAllows(result, facID) {
+		t.Error("expected false for facility access with nil pool resolver")
 	}
 }
 
@@ -907,20 +902,18 @@ func TestFacilityScope_ResolverDirectErrorFailsClosed(t *testing.T) {
 	ctx := context.Background()
 	resolver := auth.NewDBFacilityScope(nil)
 
-	ids, err := resolver.AllowedFacilityIDs(ctx, "some-app-user-id")
-	if err == nil {
-		t.Error("expected error from AllowedFacilityIDs with nil pool")
+	result := auth.FacilityScopeForActor(ctx, identity.Actor{
+		Type:      identity.ActorUser,
+		AppUserID: "some-app-user-id",
+	}, resolver)
+	if result.Err == nil {
+		t.Error("expected error with nil pool")
 	}
-	if ids != nil {
-		t.Errorf("expected nil ids on error, got %v", ids)
+	if result.Unrestricted || len(result.IDs) != 0 {
+		t.Errorf("expected no scope on resolver error, got %+v", result)
 	}
-
-	ok, err := resolver.CanAccessFacility(ctx, "some-app-user-id", uuid.New())
-	if err == nil {
-		t.Error("expected error from CanAccessFacility with nil pool")
-	}
-	if ok {
-		t.Error("expected false from CanAccessFacility on error")
+	if auth.FacilityScopeResultAllows(result, uuid.New()) {
+		t.Error("expected false for facility access on resolver error")
 	}
 }
 

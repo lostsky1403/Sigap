@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -47,42 +46,17 @@ func applyMigrations(t *testing.T, ctx context.Context, pool *pgxpool.Pool) erro
 		return fmt.Errorf("create test_rbac schema: %w", err)
 	}
 
-	// migrationFiles lists, in order, the real migration files the resolver
-	// query depends on (facilities FK base, identity/RBAC tables, subject).
-	order := []int{1, 3, 8}
-	for _, v := range order {
-		name, err := migrationFileName(dir, v)
-		if err != nil {
-			return err
-		}
-		content, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			return fmt.Errorf("read migration %d: %w", v, err)
-		}
-		if _, err := pool.Exec(ctx, string(content)); err != nil {
-			return fmt.Errorf("apply migration %d: %w", v, fmtEnc(err))
-		}
+	// Apply the complete tracked chain, including existing 0010, so the
+	// resolver integration test uses the same schema as CI.
+	if _, err := migrate.Run(ctx, pool, dir); err != nil {
+		return fmt.Errorf("apply complete migration chain: %w", err)
+	}
+	var applied int
+	if err := pool.QueryRow(ctx, `SELECT 1 FROM schema_migrations WHERE version = 10`).Scan(&applied); err != nil || applied != 1 {
+		return fmt.Errorf("verify existing migration 0010: value=%d err=%w", applied, err)
 	}
 	return nil
 }
-
-// migrationFileName resolves a migration version to its exact filename using
-// the same discovery the migration runner uses.
-func migrationFileName(dir string, version int) (string, error) {
-	migrations, err := migrate.DiscoverMigrations(dir)
-	if err != nil {
-		return "", err
-	}
-	for _, m := range migrations {
-		if m.Version == version {
-			return filepath.Base(m.Path), nil
-		}
-	}
-	return "", fmt.Errorf("migration %d not found", version)
-}
-
-// fmtEnc wraps an error's message so it can be added cleanly to a Fatalf string.
-func fmtEnc(err error) error { return err }
 
 // seedRBACUser creates an app user with the given external subject and grants
 // it the named permission keys through a dedicated role. It returns the user's
