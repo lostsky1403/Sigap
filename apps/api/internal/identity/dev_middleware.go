@@ -44,10 +44,29 @@ func DevIdentity(next http.Handler) http.Handler {
 						"facility.manage",
 						"audit.read",
 					},
+					FacilityGrants: unrestrictedDevGrants(),
 				})
 				r = r.WithContext(ctx)
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// unrestrictedDevGrants returns the dev synthetic permission set paired with
+// unrestricted facility provenance, so a dev actor satisfies facility-scoped
+// mutation checks on both axes (permission-at-facility and facility scope).
+func unrestrictedDevGrants() []FacilityGrant {
+	keys := []string{
+		"queue.generate",
+		"queue.read",
+		"facility.read",
+		"facility.manage",
+		"audit.read",
+	}
+	grants := make([]FacilityGrant, 0, len(keys))
+	for _, key := range keys {
+		grants = append(grants, FacilityGrant{Key: key, Unrestricted: true})
+	}
+	return grants
 }
