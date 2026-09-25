@@ -281,6 +281,66 @@ func TestRBACResolver_Integration(t *testing.T) {
 		}
 	})
 
+	for _, tc := range []struct {
+		name       string
+		subject    string
+		assignment string
+		keepPerm   string
+	}{
+		{name: "inactive role assignment grants no permissions", subject: "inactive-assignment", assignment: `status = 'inactive'`},
+		{name: "soft-deleted role assignment grants no permissions", subject: "deleted-assignment", assignment: `deleted_at = now()`},
+		{name: "inactive assignment grants nothing alongside an active one", subject: "mixed-inactive", assignment: `status = 'inactive'`, keepPerm: "facility.read"},
+		{name: "soft-deleted assignment grants nothing alongside an active one", subject: "mixed-deleted", assignment: `deleted_at = now()`, keepPerm: "facility.read"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			perms := []string{"queue.read"}
+			if tc.keepPerm != "" {
+				perms = append(perms, tc.keepPerm)
+			}
+			userID := seedRBACUser(t, pool, tc.subject, perms...)
+			if _, err := pool.Exec(ctx,
+				`UPDATE user_roles SET `+tc.assignment+`
+				 WHERE user_id IN (SELECT id FROM app_users WHERE subject = $1)
+				   AND role_id IN (
+				     SELECT rp.role_id
+				     FROM role_permissions rp
+				     JOIN permissions p ON p.id = rp.permission_id
+				     WHERE p.key = 'queue.read'
+				   )`, tc.subject); err != nil {
+				t.Fatalf("apply assignment lifecycle: %v", err)
+			}
+
+			got, err := resolver.Resolve(ctx, tc.subject)
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			if contains(got.Permissions, "queue.read") {
+				t.Errorf("lifecycle-dead assignment granted queue.read, permissions = %v", got.Permissions)
+			}
+			if len(got.Permissions) != boolToInt(tc.keepPerm != "") {
+				t.Errorf("permissions = %v, want %d effective permission(s)", got.Permissions, boolToInt(tc.keepPerm != ""))
+			}
+			if got.AppUserID != userID {
+				t.Errorf("AppUserID=%q want %q", got.AppUserID, userID)
+			}
+		})
+	}
+
+	t.Run("active user without a role resolves empty permissions and app user id", func(t *testing.T) {
+		subject := "no-role-user"
+		userID := seedRBACUser(t, pool, subject)
+		got, err := resolver.Resolve(ctx, subject)
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if len(got.Permissions) != 0 {
+			t.Errorf("expected zero permissions, got %v", got.Permissions)
+		}
+		if got.AppUserID != userID {
+			t.Errorf("AppUserID=%q want %q", got.AppUserID, userID)
+		}
+	})
+
 	t.Run("role change reflected without token change", func(t *testing.T) {
 		// Subject starts with only facility.read.
 		seedRBACUser(t, pool, "bob", "facility.read")
@@ -319,4 +379,11 @@ func contains(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

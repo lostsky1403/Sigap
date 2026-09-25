@@ -62,7 +62,10 @@ const permissionsQuery = `
 SELECT u.id,
        p.key
 FROM app_users u
-LEFT JOIN user_roles ur ON ur.user_id = u.id
+LEFT JOIN user_roles ur
+  ON ur.user_id = u.id
+ AND ur.status = 'active'
+ AND ur.deleted_at IS NULL
 LEFT JOIN role_permissions rp ON rp.role_id = ur.role_id
 LEFT JOIN permissions p ON p.id = rp.permission_id
 WHERE u.subject = $1
@@ -87,19 +90,19 @@ func (r *rbacResolver) Resolve(ctx context.Context, subject string) (ResolvedPer
 
 	var (
 		appUserID  string
-		permission string
+		permission *string
 		perms      []string
 	)
 	for rows.Next() {
 		if err := rows.Scan(&appUserID, &permission); err != nil {
 			return ResolvedPermissions{}, fmt.Errorf("scan resolved permission: %w", err)
 		}
-		// LEFT JOIN yields NULL permission keys for a subject with no role
-		// grant. A NULL appUserID means the subject is unknown (no active row).
-		if permission == "" {
+		// The LEFT JOINs yield a NULL permission key when the active user has
+		// no effective role assignment. Keep its app user id, grant nothing.
+		if permission == nil || *permission == "" {
 			continue
 		}
-		perms = append(perms, permission)
+		perms = append(perms, *permission)
 	}
 	if err := rows.Err(); err != nil {
 		return ResolvedPermissions{}, fmt.Errorf("iterate resolved permissions: %w", err)
