@@ -74,6 +74,102 @@ ON CONFLICT (id) DO UPDATE SET
     short_code = EXCLUDED.short_code,
     is_active = EXCLUDED.is_active;
 
+INSERT INTO user_roles (user_id, role_id, facility_id, status, deleted_at)
+SELECT
+    seeded.user_id,
+    r.id,
+    seeded.facility_id,
+    'active',
+    NULL
+FROM (
+    VALUES
+        ('00000000-0000-0000-0000-00000000d990'::uuid, 'super_admin', NULL::uuid),
+        ('00000000-0000-0000-0000-00000000d991'::uuid, 'facility_admin', '00000000-0000-0000-0000-00000000d000'::uuid),
+        ('00000000-0000-0000-0000-00000000d992'::uuid, 'facility_admin', NULL::uuid)
+) AS seeded(user_id, role_name, facility_id)
+JOIN roles r ON r.name = seeded.role_name
+ON CONFLICT (user_id, role_id) DO UPDATE SET
+    facility_id = EXCLUDED.facility_id,
+    status = EXCLUDED.status,
+    deleted_at = EXCLUDED.deleted_at;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM app_users u
+        JOIN user_roles ur ON ur.user_id = u.id
+        JOIN roles r ON r.id = ur.role_id
+        WHERE u.id = '00000000-0000-0000-0000-00000000d990'::uuid
+          AND u.status = 'active'
+          AND u.deleted_at IS NULL
+          AND r.name = 'super_admin'
+          AND ur.facility_id IS NULL
+          AND ur.status = 'active'
+          AND ur.deleted_at IS NULL
+    ) THEN
+        RAISE EXCEPTION 'Local global super_admin seed verification failed';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM app_users u
+        JOIN user_roles ur ON ur.user_id = u.id
+        JOIN roles r ON r.id = ur.role_id
+        WHERE u.id = '00000000-0000-0000-0000-00000000d991'::uuid
+          AND u.status = 'active'
+          AND u.deleted_at IS NULL
+          AND r.name = 'facility_admin'
+          AND ur.facility_id = '00000000-0000-0000-0000-00000000d000'::uuid
+          AND ur.status = 'active'
+          AND ur.deleted_at IS NULL
+    ) THEN
+        RAISE EXCEPTION 'Local facility admin seed verification failed';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM app_users u
+        JOIN user_roles ur ON ur.user_id = u.id
+        JOIN roles r ON r.id = ur.role_id
+        WHERE u.id = '00000000-0000-0000-0000-00000000d992'::uuid
+          AND u.status = 'active'
+          AND u.deleted_at IS NULL
+          AND r.name = 'facility_admin'
+          AND ur.facility_id IS NULL
+          AND ur.status = 'active'
+          AND ur.deleted_at IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM user_roles other_ur
+              JOIN roles other_r ON other_r.id = other_ur.role_id
+              WHERE other_ur.user_id = u.id
+                AND other_ur.status = 'active'
+                AND other_ur.deleted_at IS NULL
+                AND (other_ur.facility_id IS NOT NULL OR other_r.name = 'super_admin')
+          )
+          AND 11 = (
+              SELECT COUNT(DISTINCT p.key)
+              FROM user_roles scoped_ur
+              JOIN role_permissions rp ON rp.role_id = scoped_ur.role_id
+              JOIN permissions p ON p.id = rp.permission_id
+              WHERE scoped_ur.user_id = u.id
+                AND scoped_ur.status = 'active'
+                AND scoped_ur.deleted_at IS NULL
+                AND p.key IN (
+                    'queue.generate',
+                    'facility.read', 'facility.manage',
+                    'queue.read', 'queue.manage',
+                    'schedule.read', 'schedule.manage',
+                    'appointment.read', 'appointment.manage',
+                    'notification.read', 'notification.manage'
+                )
+          )
+    ) THEN
+        RAISE EXCEPTION 'Local zero-scope admin seed verification failed';
+    END IF;
+END $$;
+
 -- ============================================================
 -- 1. Service units (Poli Umum, Poli Gigi) tied to a single
 --    deterministic facility.
