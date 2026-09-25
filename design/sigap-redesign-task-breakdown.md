@@ -717,6 +717,43 @@ demonstrates the shared component foundation before the admin conversion. No sta
 
 ## Execution status
 
-**PHASE 3B0 NOT STARTED.** No task in this document has been executed. Phase 3A.4 documentation closure is
-complete; the documents above are planning only, and T-3B0-01 may begin only after this document and the
-plan are approved at GATE 0.
+**PHASE 3B0 IMPLEMENTED. GATE 1 VERIFICATION COMPLETED.**
+
+T-3B0-01 through T-3B0-09 are implemented on branch `design/ui-ux-overhaul` and verified with a fresh
+GATE 1 run from HEAD `34a3e56`. Phase 3A.4 documentation decisions above are unchanged.
+
+Implemented and verified:
+
+- T-3B0-01 approved design/plan artifacts under version control; `design/generated/**` and
+  `design/tmp/**` remain ignored; no generated HTML export staged.
+- T-3B0-02 all 23 API proxies audited; 9 previously broken dynamic-ID proxies repaired to
+  interpolate `encodeURIComponent(event.params.id)`; no literal `/ID` or `/STATUS` remains.
+- T-3B0-03 facility deactivation is PATCH end to end (UI, SvelteKit proxy, Go route, backend
+  target `PATCH /api/v1/admin/facilities/{id}/deactivate`); one-way soft deactivation preserved.
+- T-3B0-04/05/06 notification retry and cancel authorize facility scope BEFORE any write;
+  summary carries explicit facility provenance with all five keys always present.
+- T-3B0-07 centralized `FacilityScopeResult` (IDs / Unrestricted / Err) is the single scope
+  decision consumed by every admin and notification handler.
+- T-3B0-08 local-only seed identities for the active global super_admin, facility-scoped admin,
+  and zero-assignment non-super_admin cases; `SIGAP_ENV=local` guard preserved.
+- T-3B0-09 GATE 1: Go tests, `go vet`, router coverage, Rust test, web check, and web test all green.
+
+Phase 3B0.1 (facility-aware RBAC closure) additionally resolved a confirmed cross-facility
+privilege escalation: `user_roles` is keyed `(user_id, role_id)`, so one user may hold different
+roles at different facilities, and the former flat permission union made a permission granted at
+facility B authorize mutations at facility A. Authorization now resolves permission provenance per
+facility (`identity.FacilityGrant`, `auth.AuthorizeFacilityMutation`), with the stored row as the
+anchor and supplied `facility_id` authorized at its own target. No database migration was created.
+
+Open residuals carried into Phase 3B1 planning (recorded, not fixed here):
+
+1. Collection proxies that do not forward `event.url.search`, so UI filters are dropped:
+   `admin/appointments`, `admin/facilities`, `admin/notifications`, `admin/notifications/summary`,
+   `admin/queues`, `admin/schedules`, `admin/service-units` (plus the dynamic `[id]` variants and
+   the public/patient read proxies). Classified P1 FUNCTIONAL; no authorization consequence,
+   because facility filtering is enforced server-side rather than by query-string filters.
+2. CI does not block on `go vet ./...` and does not run `pnpm --filter sigap-web test` (which
+   contains the proxy-contract suite). The web `test` script exists but is not invoked by any CI
+   job. Classified P1 PROCESS; the later task should add both as blocking steps.
+3. Facility-scope read paths intentionally remain scope-based only; per-facility permission
+   provenance on LIST responses is not yet applied.
