@@ -74,6 +74,13 @@ ON CONFLICT (id) DO UPDATE SET
     short_code = EXCLUDED.short_code,
     is_active = EXCLUDED.is_active;
 
+DELETE FROM user_roles
+WHERE user_id IN (
+    '00000000-0000-0000-0000-00000000d990'::uuid,
+    '00000000-0000-0000-0000-00000000d991'::uuid,
+    '00000000-0000-0000-0000-00000000d992'::uuid
+);
+
 INSERT INTO user_roles (user_id, role_id, facility_id, status, deleted_at)
 SELECT
     seeded.user_id,

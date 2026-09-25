@@ -3,10 +3,15 @@ package auth
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sigap/sigap/apps/api/internal/identity"
+	"github.com/sigap/sigap/apps/api/internal/migrate"
 )
 
 type stubFacilityScope struct {
@@ -132,6 +137,142 @@ func TestFacilityScopeResultOptionalFacilityFailsClosed(t *testing.T) {
 	other := &FacilityScopeResult{Unrestricted: true}
 	if !FacilityScopeResultAllowsOptional(*other, nil) {
 		t.Error("an explicitly unrestricted result must allow a nil facility")
+	}
+}
+
+func TestFacilityScope_LocalSeedIdentities(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set; skipping local seed identity test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cfg, err := pgxpool.ParseConfig(dbURL)
+	if err != nil {
+		t.Fatalf("parse pool config: %v", err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = "test_local_seed, public"
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("connect pool: %v", err)
+	}
+	defer pool.Close()
+
+	if _, err := pool.Exec(ctx, `DROP SCHEMA IF EXISTS test_local_seed CASCADE`); err != nil {
+		t.Fatalf("drop test_local_seed schema: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE SCHEMA test_local_seed`); err != nil {
+		t.Fatalf("create test_local_seed schema: %v", err)
+	}
+
+	dir, err := migrate.DefaultDir()
+	if err != nil {
+		t.Fatalf("find migrations: %v", err)
+	}
+	if _, err := migrate.Run(ctx, pool, dir); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	seedDir := filepath.Join(dir, "..", "seed")
+	for run := 0; run < 2; run++ {
+		if run == 1 {
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO user_roles (user_id, role_id, facility_id, status, deleted_at)
+				SELECT seeded.user_id, r.id, seeded.facility_id, 'active', NULL
+				FROM (
+					VALUES
+						('00000000-0000-0000-0000-00000000d990'::uuid, 'facility_admin', '00000000-0000-0000-0000-00000000d000'::uuid),
+						('00000000-0000-0000-0000-00000000d991'::uuid, 'super_admin', NULL::uuid),
+						('00000000-0000-0000-0000-00000000d992'::uuid, 'super_admin', NULL::uuid)
+				) AS seeded(user_id, role_name, facility_id)
+				JOIN roles r ON r.name = seeded.role_name`); err != nil {
+				t.Fatalf("insert conflicting synthetic user roles: %v", err)
+			}
+		}
+		for _, name := range []string{"dev.sql", "rbac.sql", "demo.sql"} {
+			seed, err := os.ReadFile(filepath.Join(seedDir, name))
+			if err != nil {
+				t.Fatalf("read %s: %v", name, err)
+			}
+			if _, err := pool.Exec(ctx, string(seed)); err != nil {
+				t.Fatalf("apply %s on run %d: %v", name, run+1, err)
+			}
+		}
+	}
+
+	var globalRole, scopedRole, zeroRole string
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			(SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = '00000000-0000-0000-0000-00000000d990'::uuid),
+			(SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = '00000000-0000-0000-0000-00000000d991'::uuid),
+			(SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = '00000000-0000-0000-0000-00000000d992'::uuid)`).Scan(&globalRole, &scopedRole, &zeroRole); err != nil {
+		t.Fatalf("query seeded roles: %v", err)
+	}
+	if globalRole != "super_admin" || scopedRole != "facility_admin" || zeroRole != "facility_admin" {
+		t.Fatalf("seeded roles=%q/%q/%q want super_admin/facility_admin/facility_admin", globalRole, scopedRole, zeroRole)
+	}
+
+	var syntheticRoleCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM user_roles
+		WHERE user_id IN (
+			'00000000-0000-0000-0000-00000000d990'::uuid,
+			'00000000-0000-0000-0000-00000000d991'::uuid,
+			'00000000-0000-0000-0000-00000000d992'::uuid
+		)`).Scan(&syntheticRoleCount); err != nil {
+		t.Fatalf("count synthetic user roles: %v", err)
+	}
+	if syntheticRoleCount != 3 {
+		t.Fatalf("synthetic user role count=%d want 3", syntheticRoleCount)
+	}
+
+	resolver := NewDBFacilityScope(pool).(FacilityScopeResolver)
+	cases := []struct {
+		name             string
+		userID           string
+		wantIDs          []uuid.UUID
+		wantUnrestricted bool
+	}{
+		{
+			name:             "global super admin",
+			userID:           "00000000-0000-0000-0000-00000000d990",
+			wantUnrestricted: true,
+		},
+		{
+			name:   "facility-scoped admin",
+			userID: "00000000-0000-0000-0000-00000000d991",
+			wantIDs: []uuid.UUID{
+				uuid.MustParse("00000000-0000-0000-0000-00000000d000"),
+			},
+		},
+		{
+			name:   "zero-scope admin",
+			userID: "00000000-0000-0000-0000-00000000d992",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := resolver.ResolveFacilityScope(ctx, tc.userID)
+			if result.Err != nil {
+				t.Fatalf("resolve facility scope: %v", result.Err)
+			}
+			if result.Unrestricted != tc.wantUnrestricted {
+				t.Fatalf("Unrestricted=%v want %v", result.Unrestricted, tc.wantUnrestricted)
+			}
+			if len(result.IDs) != len(tc.wantIDs) {
+				t.Fatalf("IDs=%v want %v", result.IDs, tc.wantIDs)
+			}
+			for i := range tc.wantIDs {
+				if result.IDs[i] != tc.wantIDs[i] {
+					t.Fatalf("IDs[%d]=%v want %v", i, result.IDs[i], tc.wantIDs[i])
+				}
+			}
+		})
 	}
 }
 
