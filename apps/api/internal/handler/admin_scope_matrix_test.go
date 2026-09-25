@@ -415,6 +415,119 @@ func TestFacilityScope_AdminActorFailClosedMatrix(t *testing.T) {
 	}
 }
 
+func TestFacilityScope_CreateFacility(t *testing.T) {
+	pool, cleanup := newScopeTestPool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	scopedFacilityID := uuid.NewString()
+	if err := seedFacilityByName(ctx, pool, scopedFacilityID, "Create Facility Scope Seed"); err != nil {
+		t.Fatalf("seed scoped facility: %v", err)
+	}
+
+	globalUserID := uuid.NewString()
+	if err := seedAppUser(ctx, pool, globalUserID, "create-facility-global"); err != nil {
+		t.Fatalf("seed global user: %v", err)
+	}
+	if err := seedGlobalSuperAdminRole(ctx, pool, globalUserID); err != nil {
+		t.Fatalf("seed global super admin: %v", err)
+	}
+
+	scopedUserID := uuid.NewString()
+	if err := seedAppUser(ctx, pool, scopedUserID, "create-facility-scoped"); err != nil {
+		t.Fatalf("seed scoped user: %v", err)
+	}
+	if err := seedUserRoles(ctx, pool, scopedUserID, scopedFacilityID, []string{"facility.manage"}); err != nil {
+		t.Fatalf("seed scoped user roles: %v", err)
+	}
+
+	zeroUserID := uuid.NewString()
+	if err := seedAppUser(ctx, pool, zeroUserID, "create-facility-zero"); err != nil {
+		t.Fatalf("seed zero user: %v", err)
+	}
+	if err := seedUserRoles(ctx, pool, zeroUserID, "", []string{"facility.manage"}); err != nil {
+		t.Fatalf("seed zero user roles: %v", err)
+	}
+
+	resolverErrorHandler := NewAdminHandler(pool).WithFacilityScopeResolver(staticFacilityScope{
+		result: auth.FacilityScopeResult{Err: errors.New("scope unavailable")},
+	})
+	create := func(t *testing.T, h *AdminHandler, actor identity.Actor, marker string) *httptest.ResponseRecorder {
+		t.Helper()
+		body := `{"name":"` + marker + `","type":"puskesmas","address":"Jl. Regression","kecamatan":"Kecamatan","kabupaten_kota":"Kabupaten","provinsi":"Provinsi","phone":"08123456789","total_beds":1,"available_beds":1,"short_code":"` + marker + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/facilities", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(identity.ContextWithActor(req.Context(), actor))
+		rec := httptest.NewRecorder()
+		h.CreateFacility(rec, req)
+		return rec
+	}
+	count := func(t *testing.T, marker string) int {
+		t.Helper()
+		var got int
+		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM facilities WHERE name = $1`, marker).Scan(&got); err != nil {
+			t.Fatalf("count created facility: %v", err)
+		}
+		return got
+	}
+
+	cases := []struct {
+		name      string
+		handler   *AdminHandler
+		actor     identity.Actor
+		wantCode  int
+		wantCount int
+	}{
+		{
+			name:      "global super admin",
+			handler:   scopedHandler(pool),
+			actor:     makeScopedActor(globalUserID, "facility.manage"),
+			wantCode:  http.StatusCreated,
+			wantCount: 1,
+		},
+		{
+			name:      "dev",
+			handler:   scopedHandler(pool),
+			actor:     makeDevActor(uuid.NewString(), "facility.manage"),
+			wantCode:  http.StatusCreated,
+			wantCount: 1,
+		},
+		{
+			name:      "zero assignment non super admin",
+			handler:   scopedHandler(pool),
+			actor:     makeScopedActor(zeroUserID, "facility.manage"),
+			wantCode:  http.StatusNotFound,
+			wantCount: 0,
+		},
+		{
+			name:      "facility scoped actor",
+			handler:   scopedHandler(pool),
+			actor:     makeScopedActor(scopedUserID, "facility.manage"),
+			wantCode:  http.StatusNotFound,
+			wantCount: 0,
+		},
+		{
+			name:      "resolver error",
+			handler:   resolverErrorHandler,
+			actor:     makeScopedActor(scopedUserID, "facility.manage"),
+			wantCode:  http.StatusNotFound,
+			wantCount: 0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			marker := "Create-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+			rec := create(t, tc.handler, tc.actor, marker)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("got status %d want %d: %s", rec.Code, tc.wantCode, rec.Body.String())
+			}
+			if got := count(t, marker); got != tc.wantCount {
+				t.Fatalf("facility row count=%d want %d", got, tc.wantCount)
+			}
+		})
+	}
+}
+
 func adminMutationTarget(name string, fixture adminScopeMutationFixture) (string, string) {
 	switch name {
 	case "update facility", "deactivate facility":
