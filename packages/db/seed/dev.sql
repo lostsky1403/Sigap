@@ -35,3 +35,16 @@ VALUES (
     'active'
 )
 ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO app_users (id, email, display_name, status, subject, deleted_at)
+VALUES
+    ('00000000-0000-0000-0000-00000000d990'::uuid, 'global-admin@sigap.local', 'Local Global Super Admin (synthetic)', 'active', 'local-global-super-admin', NULL),
+    ('00000000-0000-0000-0000-00000000d991'::uuid, 'facility-admin@sigap.local', 'Local Facility Admin (synthetic)', 'active', 'local-facility-admin', NULL),
+    ('00000000-0000-0000-0000-00000000d992'::uuid, 'zero-scope-admin@sigap.local', 'Local Zero-Scope Admin (synthetic)', 'active', 'local-zero-scope-admin', NULL)
+ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email,
+    display_name = EXCLUDED.display_name,
+    status = EXCLUDED.status,
+    subject = EXCLUDED.subject,
+    deleted_at = NULL,
+    updated_at = NOW();
