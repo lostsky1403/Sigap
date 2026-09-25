@@ -237,6 +237,17 @@ func (h *AdminHandler) CreateFacility(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || !scope.Unrestricted {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
+		writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
+		h.logAccess(r, actor, "facility.created", "error", detail)
+		return
+	}
+
 	var id string
 	err := h.pool.QueryRow(ctx,
 		`INSERT INTO facilities (name, type, address, kecamatan, kabupaten_kota, provinsi,
