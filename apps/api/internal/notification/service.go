@@ -156,10 +156,9 @@ WHERE id = $1`
 }
 
 // List returns the most recent N outbox rows, newest first, optionally
-// scoped by the filters in p. A zero-valued field on ListParams is
-// treated as "no filter"; the SQL relies on the empty/zero value to
-// short-circuit each predicate, so callers do not have to distinguish
-// "not provided" from "explicitly empty".
+// scoped by the filters in p. Facility scope is explicit: a non-
+// unrestricted caller must provide at least one facility ID, while an
+// unrestricted caller intentionally omits the facility predicate.
 //
 // The default limit is 100; values <= 0 or > 500 are clamped to 100.
 func (s *Service) List(ctx context.Context, p ListParams) ([]OutboxRow, error) {
@@ -167,22 +166,26 @@ func (s *Service) List(ctx context.Context, p ListParams) ([]OutboxRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
+	if !p.Unrestricted && len(p.FacilityIDs) == 0 {
+		return []OutboxRow{}, nil
+	}
 	const sel = `
 SELECT id, facility_id, channel, template_key, subject, body_template,
        recipient_type, recipient_contact_masked, status, attempt_count,
        next_attempt_at, last_error_code, related_resource_type,
        related_resource_id, created_at, updated_at
 FROM notification_outbox
-WHERE ($1 = '00000000-0000-0000-0000-000000000000' OR facility_id = $1::uuid)
-  AND ($2 = '' OR status = $2)
-  AND ($3 = '' OR channel = $3)
-  AND ($4 = '' OR template_key = $4)
-  AND ($5::timestamptz IS NULL OR created_at >= $5)
-  AND ($6::timestamptz IS NULL OR created_at <= $6)
+WHERE ($1::boolean OR facility_id = ANY($2::uuid[]))
+  AND ($3 = '' OR status = $3)
+  AND ($4 = '' OR channel = $4)
+  AND ($5 = '' OR template_key = $5)
+  AND ($6::timestamptz IS NULL OR created_at >= $6)
+  AND ($7::timestamptz IS NULL OR created_at <= $7)
 ORDER BY created_at DESC
-LIMIT $7`
+LIMIT $8`
 	rows, err := s.pool.Query(ctx, sel,
-		p.FacilityID.String(),
+		p.Unrestricted,
+		p.FacilityIDs,
 		p.Status,
 		p.Channel,
 		p.TemplateKey,
@@ -215,22 +218,28 @@ LIMIT $7`
 	return out, rows.Err()
 }
 
-// Summary returns a per-status count of the outbox, optionally scoped
-// to a single facility. The result map is keyed by Status string
-// ("pending", "processing", "delivered", "failed", "cancelled") and
-// always contains an entry for every declared status — statuses with
-// zero rows are reported as 0 so the UI can render the full card set
-// without a second pass.
-//
-// Pass uuid.Nil as facilityID to count across all facilities (the
-// super_admin path).
-func (s *Service) Summary(ctx context.Context, facilityID uuid.UUID) (map[string]int, error) {
+func zeroSummary() map[string]int {
+	return ZeroSummary()
+}
+
+func ZeroSummary() map[string]int {
+	out := make(map[string]int, len(AllStatuses()))
+	for _, status := range AllStatuses() {
+		out[status] = 0
+	}
+	return out
+}
+
+func (s *Service) Summary(ctx context.Context, p SummaryParams) (map[string]int, error) {
+	if !p.Unrestricted && len(p.FacilityIDs) == 0 {
+		return zeroSummary(), nil
+	}
 	const sel = `
 SELECT status, COUNT(*) AS count
 FROM notification_outbox
-WHERE ($1 = '00000000-0000-0000-0000-000000000000' OR facility_id = $1::uuid)
+WHERE ($1::boolean OR facility_id = ANY($2::uuid[]))
 GROUP BY status`
-	rows, err := s.pool.Query(ctx, sel, facilityID.String())
+	rows, err := s.pool.Query(ctx, sel, p.Unrestricted, p.FacilityIDs)
 	if err != nil {
 		return nil, err
 	}

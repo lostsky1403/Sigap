@@ -51,10 +51,11 @@ func (c Channel) Valid() bool {
 }
 
 // Status is the lifecycle of an outbox row. Transitions:
-//   pending → processing → delivered
-//   pending → processing → failed → pending (retry)
-//   pending → cancelled
-//   failed  → cancelled
+//
+//	pending → processing → delivered
+//	pending → processing → failed → pending (retry)
+//	pending → cancelled
+//	failed  → cancelled
 type Status string
 
 const (
@@ -105,8 +106,8 @@ func AllChannels() []string {
 type RecipientType string
 
 const (
-	RecipientPatient      RecipientType = "patient"
-	RecipientStaff        RecipientType = "staff"
+	RecipientPatient       RecipientType = "patient"
+	RecipientStaff         RecipientType = "staff"
 	RecipientFacilityAdmin RecipientType = "facility_admin"
 )
 
@@ -127,7 +128,7 @@ type EnqueueInput struct {
 	Channel             Channel
 	TemplateKey         string
 	Subject             string
-	BodyTemplate       string
+	BodyTemplate        string
 	RecipientType       RecipientType
 	RecipientContact    string // raw; transient; never persisted or returned
 	RelatedResourceType string // e.g. "appointment" (audit-only metadata)
@@ -138,35 +139,35 @@ type EnqueueInput struct {
 // row. It deliberately omits RecipientContactHash: the hash is an
 // internal dedup key and is never returned to API callers.
 type OutboxRow struct {
-	ID                       uuid.UUID  `json:"id"`
-	FacilityID               *uuid.UUID `json:"facility_id,omitempty"`
-	Channel                  Channel    `json:"channel"`
-	TemplateKey              string     `json:"template_key"`
-	Subject                  string     `json:"subject"`
-	BodyTemplate             string     `json:"body_template"`
-	RecipientType            RecipientType `json:"recipient_type"`
-	RecipientContactMasked   string     `json:"recipient_contact_masked"`
-	Status                   Status     `json:"status"`
-	AttemptCount             int        `json:"attempt_count"`
-	NextAttemptAt            time.Time  `json:"next_attempt_at"`
-	LastErrorCode            *string    `json:"last_error_code,omitempty"`
-	RelatedResourceType      *string    `json:"related_resource_type,omitempty"`
-	RelatedResourceID        *string    `json:"related_resource_id,omitempty"`
-	CreatedAt                time.Time  `json:"created_at"`
-	UpdatedAt                time.Time  `json:"updated_at"`
+	ID                     uuid.UUID     `json:"id"`
+	FacilityID             *uuid.UUID    `json:"facility_id,omitempty"`
+	Channel                Channel       `json:"channel"`
+	TemplateKey            string        `json:"template_key"`
+	Subject                string        `json:"subject"`
+	BodyTemplate           string        `json:"body_template"`
+	RecipientType          RecipientType `json:"recipient_type"`
+	RecipientContactMasked string        `json:"recipient_contact_masked"`
+	Status                 Status        `json:"status"`
+	AttemptCount           int           `json:"attempt_count"`
+	NextAttemptAt          time.Time     `json:"next_attempt_at"`
+	LastErrorCode          *string       `json:"last_error_code,omitempty"`
+	RelatedResourceType    *string       `json:"related_resource_type,omitempty"`
+	RelatedResourceID      *string       `json:"related_resource_id,omitempty"`
+	CreatedAt              time.Time     `json:"created_at"`
+	UpdatedAt              time.Time     `json:"updated_at"`
 }
 
 // DeliveryAttemptRow is the append-only audit of one delivery attempt.
 type DeliveryAttemptRow struct {
-	ID                    uuid.UUID `json:"id"`
-	OutboxID              uuid.UUID `json:"outbox_id"`
-	AttemptNumber         int       `json:"attempt_number"`
-	Channel               Channel   `json:"channel"`
-	Status                Status    `json:"status"`
-	ProviderResponseExcerpt *string `json:"provider_response_excerpt,omitempty"`
-	ErrorCode             *string    `json:"error_code,omitempty"`
-	AttemptedAt           time.Time `json:"attempted_at"`
-	DurationMs            *int       `json:"duration_ms,omitempty"`
+	ID                      uuid.UUID `json:"id"`
+	OutboxID                uuid.UUID `json:"outbox_id"`
+	AttemptNumber           int       `json:"attempt_number"`
+	Channel                 Channel   `json:"channel"`
+	Status                  Status    `json:"status"`
+	ProviderResponseExcerpt *string   `json:"provider_response_excerpt,omitempty"`
+	ErrorCode               *string   `json:"error_code,omitempty"`
+	AttemptedAt             time.Time `json:"attempted_at"`
+	DurationMs              *int      `json:"duration_ms,omitempty"`
 }
 
 // ListParams is the input contract for Service.List. The zero value of
@@ -181,13 +182,19 @@ type DeliveryAttemptRow struct {
 // zero value to mean "no bound" — the SQL casts them to timestamptz and
 // the IS NULL guard is checked before comparison.
 type ListParams struct {
-	FacilityID   uuid.UUID
+	FacilityIDs  []uuid.UUID
+	Unrestricted bool
 	Limit        int
 	Status       string
 	Channel      string
 	TemplateKey  string
 	CreatedFrom  time.Time
 	CreatedTo    time.Time
+}
+
+type SummaryParams struct {
+	FacilityIDs  []uuid.UUID
+	Unrestricted bool
 }
 
 // SummaryItem is one row of the aggregated per-status count returned by
