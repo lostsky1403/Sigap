@@ -48,11 +48,14 @@ const manifest = [
 	},
 	{
 		route: 'admin/notifications/+server.ts',
-		methods: { GET: ["'/api/v1/admin/notifications'"], POST: ["'/api/v1/admin/notifications'"] }
+		methods: {
+			GET: ['`/api/v1/admin/notifications${query}`'],
+			POST: ["'/api/v1/admin/notifications'"]
+		}
 	},
 	{
 		route: 'admin/notifications/summary/+server.ts',
-		methods: { GET: ["'/api/v1/admin/notifications/summary'"] }
+		methods: { GET: ['`/api/v1/admin/notifications/summary${query}`'] }
 	},
 	{
 		route: 'admin/notifications/[id]/cancel/+server.ts',
@@ -104,7 +107,7 @@ const manifest = [
 	{ route: 'events/beds/+server.ts', methods: { GET: ['`${apiBase}/api/v1/events/beds`'] } },
 	{ route: 'patient/status/+server.ts', methods: { GET: ['`/api/v1/patient/status${query}`'] } },
 	{ route: 'public/facilities/+server.ts', methods: { GET: ['`${apiBase()}/api/v1/public/facilities`'] } },
-	{ route: 'public/service-units/+server.ts', methods: { GET: ['`${apiBase()}/api/v1/public/service-units`'] } },
+	{ route: 'public/service-units/+server.ts', methods: { GET: ['`${apiBase()}/api/v1/public/service-units${query}`'] } },
 	{ route: 'queues/generate/+server.ts', methods: { POST: ['`${apiBase}/api/v1/queues/generate`'] } }
 ];
 
@@ -190,4 +193,119 @@ for (const fragment of [
 	assert.ok(routeRegistry.includes(fragment), `Backend route registry must contain ${fragment}`);
 }
 
-console.log('✅ Proxy manifest, path, and method contracts passed.');
+// ---------------------------------------------------------------------------
+// GET query forwarding (Phase 3B1 P1 prerequisite)
+//
+// A proxy that drops `event.url.search` silently discards filters the Go
+// handler already implements and validates. These assertions are derived from
+// the backend source, not from assumption: a proxy MUST forward the query
+// string exactly when its handler reads a query parameter, and MUST NOT invent
+// filtering for a handler that reads none.
+// ---------------------------------------------------------------------------
+
+const queryRead = (file, start, end) => between(read(...file), start, end);
+// tailOf slices from a marker to end-of-file, for the final function in a file.
+const tailOf = (file, start) => {
+	const source = read(...file);
+	const index = source.indexOf(start);
+	assert.notEqual(index, -1, `Expected ${start}`);
+	return source.slice(index);
+};
+
+const backendQueryContracts = [
+	{
+		name: 'ListNotifications',
+		readsQuery: true,
+		// limit, facility_id, status, channel, and template_key are read
+		// inline; created_from and created_to go through parseOptionalTime.
+		params: ['limit', 'facility_id', 'status', 'channel', 'template_key'],
+		helperParams: ['created_from', 'created_to'],
+		source: queryRead(['apps', 'api', 'internal', 'handler', 'notifications.go'], 'func (h *NotificationsHandler) ListNotifications', 'func (h *NotificationsHandler) GetNotificationSummary')
+	},
+	{
+		name: 'GetNotificationSummary',
+		readsQuery: true,
+		params: ['facility_id'],
+		source: queryRead(['apps', 'api', 'internal', 'handler', 'notifications.go'], 'func (h *NotificationsHandler) GetNotificationSummary', 'func isAllowedStatus')
+	},
+	{
+		name: 'ListPublicServiceUnits',
+		readsQuery: true,
+		params: ['facility_id'],
+		// ListPublicServiceUnits is the final function in catalog.go, so the
+		// source slice runs to end-of-file.
+		source: tailOf(['apps', 'api', 'internal', 'handler', 'catalog.go'], 'func (h *CatalogHandler) ListPublicServiceUnits')
+	},
+	{
+		name: 'PatientStatusLookup',
+		readsQuery: true,
+		params: ['code'],
+		source: queryRead(
+			['apps', 'api', 'internal', 'handler', 'patient.go'],
+			'func (h *PatientHandler) PatientStatusLookup',
+			'func extractIP'
+		)
+	},
+	// Facility filtering for these collections is enforced server-side from the
+	// actor's authorized read set, so forwarding a query string would be
+	// inventing a filter the API does not implement.
+	{ name: 'ListFacilities', readsQuery: false, source: read('apps', 'api', 'internal', 'handler', 'admin.go') },
+	{ name: 'ListQueueTickets', readsQuery: false, source: read('apps', 'api', 'internal', 'handler', 'admin.go') },
+	{ name: 'ListAppointments', readsQuery: false, source: read('apps', 'api', 'internal', 'handler', 'admin.go') },
+	{ name: 'ListSchedules', readsQuery: false, source: read('apps', 'api', 'internal', 'handler', 'admin.go') },
+	{ name: 'ListServiceUnits', readsQuery: false, source: read('apps', 'api', 'internal', 'handler', 'admin.go') },
+	{ name: 'GetNotification', readsQuery: false, source: read('apps', 'api', 'internal', 'handler', 'notifications.go') }
+];
+
+for (const contract of backendQueryContracts) {
+	if (!contract.readsQuery) continue;
+	for (const param of contract.params) {
+		assert.ok(
+			contract.source.includes(`Query().Get("${param}")`),
+			`${contract.name} must read the ${param} query parameter in the Go source`
+		);
+	}
+	for (const param of contract.helperParams ?? []) {
+		assert.ok(
+			contract.source.includes(`parseOptionalTime(r, "${param}")`),
+			`${contract.name} must read the ${param} query parameter via parseOptionalTime in the Go source`
+		);
+	}
+}
+
+// A proxy forwards the query string when it reads `.search` off a URL built
+// from event.request.url. Two spellings are accepted: the inline
+// `new URL(event.request.url).search` form and the two-step
+// `const url = new URL(event.request.url); url.search` form.
+const forwardsQuery = (route) => {
+	const source = fs.readFileSync(path.join(apiRoot, route), 'utf8');
+	return (
+		source.includes('new URL(event.request.url).search') ||
+		(new RegExp('new URL\\(event\\.request\\.url\\)').test(source) && /\.search\b/.test(source))
+	);
+};
+
+for (const route of [
+	'admin/notifications/+server.ts',
+	'admin/notifications/summary/+server.ts',
+	'patient/status/+server.ts',
+	'public/service-units/+server.ts'
+]) {
+	assert.ok(forwardsQuery(route), `${route} must forward event.url.search to the API`);
+}
+
+for (const route of [
+	'admin/facilities/+server.ts',
+	'admin/queues/+server.ts',
+	'admin/appointments/+server.ts',
+	'admin/schedules/+server.ts',
+	'admin/service-units/+server.ts',
+	'public/facilities/+server.ts'
+]) {
+	assert.ok(
+		!forwardsQuery(route),
+		`${route} must not forward a query string; its handler reads no query parameters`
+	);
+}
+
+console.log('✅ Proxy manifest, path, method, and GET query-forwarding contracts passed.');
