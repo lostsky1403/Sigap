@@ -717,7 +717,7 @@ demonstrates the shared component foundation before the admin conversion. No sta
 
 ## Execution status
 
-**PHASE 3B0 IMPLEMENTED. GATE 1 VERIFICATION COMPLETED.**
+**PHASE 3B0.2 IMPLEMENTED. GATE 1 RE-VERIFIED WITH READ AND MUTATION PROVENANCE.**
 
 T-3B0-01 through T-3B0-09 are implemented on branch `design/ui-ux-overhaul` and verified with a fresh
 GATE 1 run from HEAD `34a3e56`. Phase 3A.4 documentation decisions above are unchanged.
@@ -745,6 +745,42 @@ facility B authorize mutations at facility A. Authorization now resolves permiss
 facility (`identity.FacilityGrant`, `auth.AuthorizeFacilityMutation`), with the stored row as the
 anchor and supplied `facility_id` authorized at its own target. No database migration was created.
 
+Phase 3B0.2 (facility-aware READ authorization closure) extends the same provenance rule to every
+facility-scoped read. The previous residual "read paths intentionally remain scope-based only" is
+no longer true and has been closed. Every facility-scoped list, detail, and summary now requires
+BOTH (a) the target facility inside `FacilityScopeResult` AND (b) the route's required permission
+granted AT that facility, through the same DB-resolved `identity.FacilityGrant` provenance the
+mutation path uses since 3B0.1.
+
+- Read authorization is centralized in `auth.AuthorizeFacilityRead` (single known facility) and
+  `auth.AuthorizedFacilityIDsForPermission` (list intersection), so handlers never re-derive the
+  scope/provenance rule. `AdminHandler.beginFacilityRead` and `AdminHandler.listFacilityReadSet`
+  are the only two entry points.
+- List endpoints filter on the INTERSECTION of scope and permission provenance, never on
+  `scope.IDs` alone. That union was the read-side twin of the 3B0.1 mutation defect: an actor
+  scoped to facilities A and B holding `notification.read` only at B previously received A's rows.
+  Zero authorized facilities render as HTTP 200 with an empty list so row existence never leaks.
+- Detail endpoints authorize the STORED resource facility and return 404 when unauthorized or
+  out of provenance. Phase one runs BEFORE any resource query, which preserves the fail-closed
+  contract that an actor with no authorized facility never reaches the row at all and keeps the
+  endpoint from becoming an existence oracle.
+- Permission provenance is resolved LIVE per request (`auth.ActorWithLiveGrants`,
+  `auth.FacilityGrantResolver`, `rbacResolver.ResolveByAppUserID`) so a grant or revocation takes
+  effect on the next request rather than at the next re-authentication. Facility scope was already
+  live; provenance is now equally live.
+- `notification.read` governs `ListNotifications`, `GetNotification`, and
+  `GetNotificationSummary`. The summary aggregates only authorized facilities, post-fetch row
+  filtering uses the authorized read set rather than raw scope, a global `super_admin` remains
+  global, and a zero-assignment non-super_admin gets the all-zero summary.
+- The route-level `RequirePermission` check is retained unchanged as the COARSE first gate ("does
+  this actor hold the key anywhere?"). It is a necessary but never sufficient condition for a
+  facility-scoped resource; existing 403 semantics are preserved while resource-level
+  authorization returns 404.
+- Regression matrix R1-R9 is DB-backed and uses only permission keys present in
+  `packages/db/seed/rbac.sql`. Repository-wide, flat `HasPermission(...)` now has exactly one
+  production call site: the coarse route gate in `internal/identity/authz.go`. Zero
+  facility-resource decisions rely on it. No database migration was created.
+
 Open residuals carried into Phase 3B1 planning (recorded, not fixed here):
 
 1. Collection proxies that do not forward `event.url.search`, so UI filters are dropped:
@@ -755,5 +791,3 @@ Open residuals carried into Phase 3B1 planning (recorded, not fixed here):
 2. CI does not block on `go vet ./...` and does not run `pnpm --filter sigap-web test` (which
    contains the proxy-contract suite). The web `test` script exists but is not invoked by any CI
    job. Classified P1 PROCESS; the later task should add both as blocking steps.
-3. Facility-scope read paths intentionally remain scope-based only; per-facility permission
-   provenance on LIST responses is not yet applied.
