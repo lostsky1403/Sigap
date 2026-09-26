@@ -75,3 +75,8 @@ skills-lock.json
 apps/web/test-results/
 apps/web/playwright-report/
 apps/web/.playwright/
+
+# Disposable local seeded-stack cluster (Phase 3B1 GATE 2).
+# Created by scripts/dev/Start-LocalE2E.ps1. Holds only synthetic demo data and
+# is intentionally separate from any Postgres instance on the host.
+.local-e2e/
