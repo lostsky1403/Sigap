@@ -19,6 +19,11 @@ import { expect, test } from '@playwright/test';
  * `preview:e2e` script pins `--host 127.0.0.1` so the address family matches
  * the Playwright baseURL.
  *
+ * Ordering matters too: `pnpm --filter sigap-web test` runs `vite build`, which
+ * rewrites the hashed assets under `.svelte-kit/output` that a running preview is
+ * streaming. The preview then dies with ENOENT on a stale asset hash. Build
+ * first, then start the preview, then run this suite.
+ *
  * These assertions intentionally do not require the Go API. They prove the
  * built app boots and serves its shell from the local origin; authenticated
  * data paths stay behind the same-origin SvelteKit proxies and are covered by
