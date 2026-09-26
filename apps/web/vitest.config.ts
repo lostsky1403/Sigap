@@ -17,9 +17,17 @@ import { defineConfig } from 'vitest/config';
  * Svelte 5 runes modules inside node_modules (for example
  * @testing-library/svelte-core/src/props.svelte.js), which fails with
  * "The $ name is reserved". Letting SvelteKit own compilation avoids that.
+ *
+ * `resolve.conditions` forces the `browser` export condition. Without it Vite
+ * resolves Svelte's server entry even under jsdom, so `mount()` is the
+ * no-op `lifecycle_function_unavailable` stub and every component render
+ * throws. Component tests cannot run without this line.
  */
 export default defineConfig({
 	plugins: [sveltekit()],
+	resolve: {
+		conditions: ['browser']
+	},
 	test: {
 		environment: 'jsdom',
 		globals: true,
