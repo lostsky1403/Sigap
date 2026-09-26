@@ -791,3 +791,119 @@ Open residuals carried into Phase 3B1 planning (recorded, not fixed here):
 2. CI does not block on `go vet ./...` and does not run `pnpm --filter sigap-web test` (which
    contains the proxy-contract suite). The web `test` script exists but is not invoked by any CI
    job. Classified P1 PROCESS; the later task should add both as blocking steps.
+
+---
+
+**PHASE 3B1 IMPLEMENTED. GATE 2 VERIFIED. READY FOR PHASE 3B2.**
+
+T-3B1-01 through T-3B1-08 are implemented on branch `design/ui-ux-overhaul`. GATE 1 was already
+approved, so no authorization architecture was reopened: `FacilityScopeResult`, facility-aware
+permission provenance, facility-aware reads and mutations, global DB-resolved `super_admin`,
+zero-assignment fail-closed, and non-authoritative JWT permission claims are all untouched. The only
+files changed in `apps/api` during 3B1 are none; the Go suite is green and unmodified.
+
+Carried P1 prerequisite (query forwarding), resolved by source inspection rather than by
+appending strings mechanically:
+
+- `patient/status` already forwarded `code`.
+- `admin/notifications` accepts `limit`, `status`, `channel`, `template_key`, `created_from`,
+  `created_to`. `admin/notifications/summary` accepts `facility_id`. `public/service-units` accepts
+  `facility_id`. These three proxies now forward the query string, and `proxy-contracts.test.js`
+  asserts forwarding against the parameters the Go handlers actually read.
+- The admin queue, appointment, schedule, service-unit, and facility COLLECTION handlers read no
+  query parameters, so their proxies were intentionally left unchanged and the contract test
+  asserts that non-forwarding. No backend filtering was invented.
+
+T-3B1-01 test tooling: Vitest 2, `@testing-library/svelte`, jsdom, and Playwright, with
+`vitest.config.ts`, a setup file, `playwright.config.ts`, and an `e2e/**` baseline. The three
+pre-existing suites (`build-verification`, `auth-actions`, `proxy-contracts`) still run under
+`WEBTEST`. `resolve.conditions: ['browser']` is required for Svelte 5 component tests, and
+`@types/node` plus `src/vitest.d.ts` are required for svelte-check.
+
+Production E2E guard: `playwright.config.ts` is the single decision point and fails closed. A run
+aimed at `https://sigap.chaerulchalik.web.id` aborts at CONFIG LOAD, before any browser launches:
+
+```
+ProductionTargetError: Refusing to run Playwright against a non-local target:
+https://sigap.chaerulchalik.web.id. E2E runs are restricted to the local seeded
+stack (localhost). Production is https://sigap.chaerulchalik.web.id and must never
+be browser-tested.
+```
+
+Local smoke E2E: the first attempt failed all four scenarios with `ERR_CONNECTION_REFUSED` at
+`http://127.0.0.1:4173/`. Root cause was an address-family mismatch, not an application failure: on
+Windows `localhost` resolves to the IPv6 loopback, so a bare `vite preview` bound `::1` only
+(`Get-NetTCPConnection` confirmed `LocalAddress ::1`). The `preview:e2e` script now pins
+`--host 127.0.0.1` to match the Playwright baseURL. The smoke assertions are intentionally
+backend-independent; the Go API is not running in this environment and is not required for them.
+
+T-3B1-02 tokens: `tokens.ts` and `tokens.css` implement exactly the frozen set, cross-checked
+against `design/DESIGN.md`, which is itself the canonical source. Legacy `--accent: #059669` is
+removed. Tailwind v3 is retained and mapped to the CSS variables. The token suite compares exact
+values and the exact token set, not approximate color matches; CSS comments are stripped before
+literal scans so documentation prose cannot satisfy or fail a structural assertion.
+
+T-3B1-03 primitives: all 17 required components plus a shared `density.ts`. Forbidden rules
+(gradients, glassmorphism, decorative shadows, unfrozen radii, palette drift, emoji) are enforced by
+`primitives.test.ts` rather than by convention. Accessibility was implemented up front: real
+`<button>`, focus-visible, label/helper/error association, `aria-invalid`/`aria-describedby`, text
+labels on every status badge, `aria-hidden` skeletons, `aria-busy` loading regions, and a native
+`<dialog>` with `showModal()`, focus containment, Escape close, and focus restoration.
+
+Component tests found four real defects, which were fixed in the implementation rather than by
+weakening assertions: `IconButton` emitted `label` as an invalid attribute instead of
+`aria-label`; the Dialog focus filter used `offsetParent`, which is always null under jsdom;
+Dialog teardown discarded the previously focused element; and the jsdom `<dialog>` shim lacked
+`close()` so teardown threw before focus could be restored.
+
+T-3B1-04 Lucide: one thin wrapper, one stroke width (1.75), pinned in tokens. `Icon.test.ts` scans
+all `.svelte` files to prove there is no second icon package and no hand-written `<svg>` collection,
+exempting only the third-party maplibre canvas.
+
+T-3B1-05 API layer: `apiFetch` centralizes same-origin requests, JSON parsing, content-type
+handling, `AbortSignal`, network errors, and normalized `ApiError` results. There is no bearer
+token API in browser code. The error union covers 400/401/403/404/409/429/5xx/network/abort.
+403-without-session and 403-with-session remain distinguishable, and the public check-in 401 stays
+expressible as "wrong check-in code" through `wrongCheckInCode`.
+
+A wire-contract irregularity found by the Go audit was fixed at the frontend boundary. Most list
+handlers declare `var results []T` and only `append` inside the scan loop, so an authorized request
+matching zero rows encodes a nil slice as `data: null`, while the fail-closed early return in the
+same handler emits `data: []`. Both shapes are reachable on one route, and the existing non-nil
+assertions only exercised the early-return path. Rather than change the backend contract,
+`NullableList` documents the wire reality and `apiFetchList` normalizes it once. Failures still
+propagate, so a 403 is never laundered into a plausible-looking empty table. Verified by a negative
+control: removing the `?? []` turns the null case red.
+
+T-3B1-06 domain helpers: exact queue and appointment transition tables with no
+`checked_in -> completed`; unresolved joins render `"-"` and never a raw UUID or fabricated name;
+id-ID formatting with relative time ordered minutes -> hours -> days and no stale timestamp labelled
+realtime; polling with an overlap guard, manual refresh, `AbortController`, visibility pause,
+immediate refresh on return, cleanup, and abort-as-no-op, tested with fake timers.
+
+T-3B1-07 session store: `+layout.server.ts` adds `hasSession: boolean` and nothing else. The source
+guard forbids token, role, permission, facility-scope, and `super_admin` spellings in the layout
+return. The guard was itself proven by a negative control: injecting `permissions: []` turns two
+tests red, after which the clean file was restored.
+
+GATE 2 result: PASS.
+
+| Check | Result |
+| --- | --- |
+| Canonical tokens exact | PASS (`tokens.test.ts`, 13 tests) |
+| Radii 6/8/12 | PASS |
+| Citizen controls >= 44 | PASS |
+| Admin 36/40 supported | PASS |
+| One Lucide family, one stroke width | PASS (`Icon.test.ts`, 7 tests) |
+| No gradients / glassmorphism / shadows / palette drift | PASS (`primitives.test.ts`, 13 tests) |
+| Vitest runs | PASS (12 files, 167 tests) |
+| Playwright runner + local smoke E2E | PASS (10 tests) |
+| Production-target guard | PASS (6 tests, plus a proven config-load rejection) |
+| WEBTEST | PASS |
+| WEBCHECK | PASS (0 errors, 0 warnings) |
+| Go security regressions | PASS (`go test ./...` all packages ok) |
+| No migration | PASS (`git diff --stat packages/db` empty) |
+
+No production access, no deployment, and no merge to main were performed. No test was skipped,
+deleted, or weakened; where an old assertion was stale it was inspected first, and every fix in 3B1
+was made in the implementation.
