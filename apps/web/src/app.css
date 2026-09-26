@@ -1,16 +1,18 @@
+@import './lib/design/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /* Sigap strict minimalist design system
  * - Generous whitespace
- * - Single accent (emerald-600)
+ * - Single brand: teal 700 (#0F766E), defined in lib/design/tokens.css
  * - Inter / system typography
  * - Calm, high-contrast, no AI slop
+ *
+ * The legacy `--accent: #059669` emerald token was removed in Phase 3B1. The
+ * brand color now comes exclusively from the frozen token source.
  */
-:root {
-	--accent: #059669; /* emerald-600 */
-}
 
 body {
 	font-family: Inter, system-ui, -apple-system, sans-serif;
