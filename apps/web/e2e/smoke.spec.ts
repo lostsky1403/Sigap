@@ -9,8 +9,20 @@ import { expect, test } from '@playwright/test';
  * does not redesign routes.
  *
  * Running this requires a local stack. Start it, then run:
+ *   pnpm --filter sigap-web preview:e2e
  *   pnpm --filter sigap-web e2e
  * with SIGAP_E2E_BASE_URL pointing at the local origin (default 127.0.0.1:4173).
+ *
+ * The preview host flag is not optional. On Windows `localhost` resolves to the
+ * IPv6 loopback `::1`, so a bare `vite preview` binds `::1` only and every
+ * request to `127.0.0.1:4173` fails with ERR_CONNECTION_REFUSED. The
+ * `preview:e2e` script pins `--host 127.0.0.1` so the address family matches
+ * the Playwright baseURL.
+ *
+ * These assertions intentionally do not require the Go API. They prove the
+ * built app boots and serves its shell from the local origin; authenticated
+ * data paths stay behind the same-origin SvelteKit proxies and are covered by
+ * the Go and proxy contract suites.
  */
 
 test.describe('local seeded stack smoke', () => {

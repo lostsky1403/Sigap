@@ -11,6 +11,7 @@
     "test": "echo '=== Build verification + type check ===' && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && node tests/proxy-contracts.test.js && node tests/build-verification.test.js && vite build && node tests/auth-actions.test.js",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
+    "preview:e2e": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
     "e2e": "playwright test",
     "e2e:install": "playwright install chromium"
   },
