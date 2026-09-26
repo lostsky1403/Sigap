@@ -772,7 +772,11 @@ func TestFacilityScope_ServiceUnitUnderAllowedFacility(t *testing.T) {
 	if err := seedAppUser(ctx, pool, appUserID, "alice-su-ok"); err != nil {
 		t.Fatalf("seed app user: %v", err)
 	}
-	if err := seedUserRoles(ctx, pool, appUserID, facA, []string{"facility.read"}); err != nil {
+	// The service-units read routes declare RequiredPolicy "schedule.read"
+	// (internal/router/router.go), so that is the permission GetServiceUnit
+	// authorizes at the unit's facility. Seeding only facility.read here would
+	// now be rejected with 404, which is the intended fail-closed behavior.
+	if err := seedUserRoles(ctx, pool, appUserID, facA, []string{"facility.read", "schedule.read"}); err != nil {
 		t.Fatalf("seed user_roles: %v", err)
 	}
 

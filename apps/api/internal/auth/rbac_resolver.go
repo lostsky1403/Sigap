@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sigap/sigap/apps/api/internal/identity"
 )
@@ -44,6 +45,19 @@ type Resolver interface {
 	// not consult its backend (e.g. database unavailable); the caller should
 	// fail closed and NOT fall back to JWT claims.
 	Resolve(ctx context.Context, subject string) (ResolvedPermissions, error)
+}
+
+// AppUserResolver is the OPTIONAL extension of Resolver that also resolves by
+// the trusted internal app_users.id. It is deliberately kept out of Resolver so
+// that adding live provenance does not break existing implementations (and test
+// doubles) of the authentication-time lookup.
+//
+// Facility-scoped read authorization requires this capability: it must observe
+// current RBAC state rather than the authentication-time snapshot. Callers type
+// assert for it and fail closed when it is absent.
+type AppUserResolver interface {
+	Resolver
+	ResolveByAppUserID(ctx context.Context, appUserID string) (ResolvedPermissions, error)
 }
 
 // ErrClosed indicates that no permissions could be resolved. It is used to
@@ -93,6 +107,51 @@ WHERE u.subject = $1
   AND u.deleted_at IS NULL
 ORDER BY p.key, ur.facility_id NULLS FIRST, r.name`
 
+// permissionsByAppUserQuery is permissionsQuery keyed by the trusted internal
+// app_users.id instead of the external subject. It is intentionally the same
+// projection and the same lifecycle filters so that scope, provenance, and the
+// route-level permission view can never disagree about a single actor.
+const permissionsByAppUserQuery = `
+SELECT u.id,
+       p.key,
+       ur.facility_id,
+       r.name
+FROM app_users u
+LEFT JOIN user_roles ur
+  ON ur.user_id = u.id
+ AND ur.status = 'active'
+ AND ur.deleted_at IS NULL
+LEFT JOIN roles r ON r.id = ur.role_id
+LEFT JOIN role_permissions rp ON rp.role_id = ur.role_id
+LEFT JOIN permissions p ON p.id = rp.permission_id
+WHERE u.id = $1
+  AND u.status = 'active'
+  AND u.deleted_at IS NULL
+ORDER BY p.key, ur.facility_id NULLS FIRST, r.name`
+
+// ResolveByAppUserID resolves the effective grant set directly from the
+// server-side app_users.id, bypassing the external subject lookup.
+//
+// It exists because request-scoped authorization carries AppUserID (the trusted
+// internal identity) rather than the external subject, and facility-scoped
+// authorization must observe live role changes rather than the
+// authentication-time snapshot. The query and super_admin semantics are
+// identical to Resolve, so the two views cannot disagree.
+func (r *rbacResolver) ResolveByAppUserID(ctx context.Context, appUserID string) (ResolvedPermissions, error) {
+	if r == nil || r.pool == nil {
+		return ResolvedPermissions{}, ErrClosed
+	}
+	if appUserID == "" {
+		return ResolvedPermissions{}, nil
+	}
+	rows, err := r.pool.Query(ctx, permissionsByAppUserQuery, appUserID)
+	if err != nil {
+		return ResolvedPermissions{}, fmt.Errorf("resolve permissions for app user: %w", err)
+	}
+	defer rows.Close()
+	return scanResolvedPermissions(rows)
+}
+
 // Resolve implements Resolver.
 func (r *rbacResolver) Resolve(ctx context.Context, subject string) (ResolvedPermissions, error) {
 	if r == nil || r.pool == nil {
@@ -107,7 +166,13 @@ func (r *rbacResolver) Resolve(ctx context.Context, subject string) (ResolvedPer
 		return ResolvedPermissions{}, fmt.Errorf("resolve permissions for subject: %w", err)
 	}
 	defer rows.Close()
+	return scanResolvedPermissions(rows)
+}
 
+// scanResolvedPermissions folds the shared (key, facility, role) result shape
+// into a ResolvedPermissions, preserving facility provenance and applying the
+// global-super_admin rule.
+func scanResolvedPermissions(rows pgx.Rows) (ResolvedPermissions, error) {
 	var (
 		appUserID  string
 		permission *string
