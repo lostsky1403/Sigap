@@ -24,10 +24,9 @@ import { expect, test } from '@playwright/test';
  * streaming. The preview then dies with ENOENT on a stale asset hash. Build
  * first, then start the preview, then run this suite.
  *
- * These assertions intentionally do not require the Go API. They prove the
- * built app boots and serves its shell from the local origin; authenticated
- * data paths stay behind the same-origin SvelteKit proxies and are covered by
- * the Go and proxy contract suites.
+ * These page-load assertions do not require the Go API. One scenario below does,
+ * because GATE 2 requires proof that the browser actually reaches the local API
+ * and database rather than only rendering a static shell.
  */
 
 test.describe('local seeded stack smoke', () => {
@@ -59,5 +58,73 @@ test.describe('local seeded stack smoke', () => {
 		expect(src).toBeTruthy();
 		// Assert the page was served locally, never from a production CDN origin.
 		expect(page.url()).toContain(new URL(baseURL as string).host);
+	});
+});
+
+/**
+ * The one backend-backed scenario.
+ *
+ * Every other smoke test is satisfied by an SSR shell, which would also pass
+ * with the Go API switched off. This one cannot: it drives a real browser fetch
+ * through the full local chain and therefore only succeeds when all four hops
+ * are live.
+ *
+ *   browser -> same-origin SvelteKit proxy -> local Go API -> local seeded DB
+ *
+ * The endpoint is the public facility catalog: read-only, unauthenticated, and
+ * non-destructive. It is deliberately NOT an admin route, because an admin read
+ * would need dev identity and a 403 would be ambiguous between "no session" and
+ * "no permission" (see lib/api/errors.ts). Public avoids that ambiguity entirely.
+ *
+ * Asserting on seeded CONTENT rather than just a 200 is the point. A 200 with an
+ * empty array would pass a status check while proving nothing about the database,
+ * so this asserts a non-empty list and a real facility shape.
+ */
+test.describe('local seeded stack: backend-backed read', () => {
+	test('browser reaches the local API and seeded database through the proxy', async ({
+		page,
+		baseURL
+	}) => {
+		// Same-origin and relative: the request must traverse the SvelteKit proxy,
+		// never a hardcoded upstream that could be pointed somewhere else.
+		const response = await page.request.get('/api/v1/public/facilities');
+		expect(response.status()).toBe(200);
+		expect(page.url() || baseURL).toBeTruthy();
+
+		const payload = (await response.json()) as {
+			success: boolean;
+			data: Array<{ id: string; name: string; short_code: string; is_active: boolean }> | null;
+		};
+
+		expect(payload.success).toBe(true);
+		// Real seeded rows, not an empty shell.
+		expect(Array.isArray(payload.data)).toBe(true);
+		expect((payload.data ?? []).length).toBeGreaterThan(0);
+
+		const [first] = payload.data ?? [];
+		expect(first.id).toMatch(/^[0-9a-f-]{36}$/i);
+		expect(first.name.trim().length).toBeGreaterThan(0);
+		expect(first.short_code.trim().length).toBeGreaterThan(0);
+	});
+
+	test('the proxy is the only hop: no production origin is contacted', async ({
+		page,
+		baseURL
+	}) => {
+		// Defence in depth. The dedicated guard suite rejects a non-loopback
+		// baseURL at config load; this additionally proves that a request made
+		// from a real page never leaves the local origin.
+		const requested: string[] = [];
+		page.on('request', (request) => requested.push(request.url()));
+
+		await page.goto('/');
+		await page.request.get('/api/v1/public/service-units');
+
+		for (const url of requested) {
+			expect(url, `${url} must stay on the local origin`).toContain(
+				new URL(baseURL as string).host
+			);
+			expect(url).not.toContain('chaerulchalik');
+		}
 	});
 });
