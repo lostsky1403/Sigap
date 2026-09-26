@@ -1,5 +1,5 @@
 import { kindForStatus, type ApiError } from './errors';
-import type { ApiEnvelope, ApiErrorEnvelope } from './types/api';
+import type { ApiEnvelope, ApiErrorEnvelope, NullableList } from './types/api';
 
 /**
  * The one place the browser talks to the SIGAP API.
@@ -198,4 +198,30 @@ export async function apiFetch<T>(
 	}
 
 	return { ok: true, data: parsed as T };
+}
+
+/**
+ * Fetches a list endpoint and normalizes the Go `data: null` empty result.
+ *
+ * The backend encodes a nil slice as `null` (see NullableList in types/api.ts),
+ * so a perfectly healthy "you have no rows" response arrives as `null`. Passing
+ * that straight to a route would put `rows.map(...)` one keystroke away from a
+ * null dereference, and the resulting crash would read as an application bug
+ * rather than a backend contract quirk.
+ *
+ * Normalizing here — at the boundary, once — means every list call site gets a
+ * real array. The alternative of teaching each route to null-check is exactly
+ * the kind of duplication that rots, so it is deliberately not done that way.
+ *
+ * This is a presentation concern only. It does not invent rows, and it does not
+ * mask a failure: a non-2xx or malformed response still comes back as
+ * `ok: false` with its error intact.
+ */
+export async function apiFetchList<T>(
+	path: string,
+	options: ApiFetchOptions = {}
+): Promise<ApiResult<T[]>> {
+	const result = await apiFetch<NullableList<T>>(path, options);
+	if (!result.ok) return result;
+	return { ok: true, data: result.data ?? [] };
 }

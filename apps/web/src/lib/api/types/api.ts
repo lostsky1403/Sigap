@@ -32,6 +32,25 @@ export interface ApiErrorEnvelope {
 	error: string;
 }
 
+/**
+ * The wire type of a list `data` field: it can genuinely be `null`.
+ *
+ * Most list handlers in the Go API declare `var results []T` and only `append`
+ * inside the scan loop, so an authorized request that matches zero rows encodes
+ * a nil slice as `null` — see writeJSON, which is
+ * `json.NewEncoder(...).Encode` with no nil-to-empty normalization. The
+ * fail-closed early return in the same handlers passes a composite literal and
+ * therefore does emit `[]`, so both shapes are reachable on the same route.
+ *
+ * `admin/notifications` is the one exception that always sends `[]`, because
+ * its service allocates with `[]T{}` on every path.
+ *
+ * This type exists so the reality is visible in the signature. Endpoints do not
+ * return `NullableList` to callers: they normalize with `asList`, so route code
+ * receives a real array and never has to null-check a collection.
+ */
+export type NullableList<T> = T[] | null;
+
 /** Queue ticket status, per validQueueTransitions. */
 export type QueueStatus =
 	| 'waiting'

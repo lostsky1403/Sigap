@@ -1,4 +1,4 @@
-import { apiFetch, type ApiResult } from '../client';
+import { apiFetchList, type ApiResult } from '../client';
 import type { PatientStatus, PublicServiceUnit } from '../types/api';
 
 /**
@@ -18,7 +18,7 @@ import type { PatientStatus, PublicServiceUnit } from '../types/api';
  * one anyway would be asking the server to trust a client-supplied identifier.
  */
 export function myAppointments(signal?: AbortSignal): Promise<ApiResult<PatientStatus[]>> {
-	return apiFetch<PatientStatus[]>('/api/v1/patient/appointments', { signal });
+	return apiFetchList<PatientStatus>('/api/v1/patient/appointments', { signal });
 }
 
 /** Service units available for booking, optionally narrowed to one facility. */
@@ -26,7 +26,7 @@ export function bookableServiceUnits(
 	facilityId?: string,
 	signal?: AbortSignal
 ): Promise<ApiResult<PublicServiceUnit[]>> {
-	return apiFetch<PublicServiceUnit[]>('/api/v1/public/service-units', {
+	return apiFetchList<PublicServiceUnit>('/api/v1/public/service-units', {
 		signal,
 		query: { facility_id: facilityId }
 	});
