@@ -1,4 +1,4 @@
-import { apiFetch, type ApiResult } from '../client';
+import { apiFetch, apiFetchList, type ApiResult } from '../client';
 import type {
 	AdminAppointment,
 	AdminFacility,
@@ -31,7 +31,7 @@ import type {
 /* ------------------------------ facilities ------------------------------ */
 
 export function listFacilities(signal?: AbortSignal): Promise<ApiResult<AdminFacility[]>> {
-	return apiFetch<AdminFacility[]>('/api/v1/admin/facilities', { signal });
+	return apiFetchList<AdminFacility>('/api/v1/admin/facilities', { signal });
 }
 
 export function getFacility(
@@ -100,7 +100,7 @@ export function deactivateFacility(
 export function listQueueTickets(
 	signal?: AbortSignal
 ): Promise<ApiResult<AdminQueueTicket[]>> {
-	return apiFetch<AdminQueueTicket[]>('/api/v1/admin/queues', { signal });
+	return apiFetchList<AdminQueueTicket>('/api/v1/admin/queues', { signal });
 }
 
 export function getQueueTicket(
@@ -133,7 +133,7 @@ export function updateQueueTicketStatus(
 export function listServiceUnits(
 	signal?: AbortSignal
 ): Promise<ApiResult<AdminServiceUnit[]>> {
-	return apiFetch<AdminServiceUnit[]>('/api/v1/admin/service-units', { signal });
+	return apiFetchList<AdminServiceUnit>('/api/v1/admin/service-units', { signal });
 }
 
 export function getServiceUnit(
@@ -165,7 +165,7 @@ export function createServiceUnit(
 /* ------------------------------- schedules ------------------------------ */
 
 export function listSchedules(signal?: AbortSignal): Promise<ApiResult<AdminSchedule[]>> {
-	return apiFetch<AdminSchedule[]>('/api/v1/admin/schedules', { signal });
+	return apiFetchList<AdminSchedule>('/api/v1/admin/schedules', { signal });
 }
 
 export function getSchedule(
@@ -182,7 +182,7 @@ export function getSchedule(
 export function listAppointments(
 	signal?: AbortSignal
 ): Promise<ApiResult<AdminAppointment[]>> {
-	return apiFetch<AdminAppointment[]>('/api/v1/admin/appointments', { signal });
+	return apiFetchList<AdminAppointment>('/api/v1/admin/appointments', { signal });
 }
 
 export function updateAppointmentStatus(
@@ -224,7 +224,7 @@ export function listNotifications(
 	query: NotificationQuery = {},
 	signal?: AbortSignal
 ): Promise<ApiResult<NotificationOutboxRow[]>> {
-	return apiFetch<NotificationOutboxRow[]>('/api/v1/admin/notifications', {
+	return apiFetchList<NotificationOutboxRow>('/api/v1/admin/notifications', {
 		signal,
 		query
 	});

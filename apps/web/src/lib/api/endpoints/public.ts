@@ -1,4 +1,4 @@
-import { apiFetch, type ApiResult } from '../client';
+import { apiFetch, apiFetchList, type ApiResult } from '../client';
 import type {
 	BookAppointmentResult,
 	CheckInResult,
@@ -17,7 +17,7 @@ import type {
 
 /** Facility catalog. The backend accepts no query parameters here. */
 export function listPublicFacilities(signal?: AbortSignal): Promise<ApiResult<PublicFacility[]>> {
-	return apiFetch<PublicFacility[]>('/api/v1/public/facilities', { signal });
+	return apiFetchList<PublicFacility>('/api/v1/public/facilities', { signal });
 }
 
 /**
@@ -30,7 +30,7 @@ export function listPublicServiceUnits(
 	facilityId?: string,
 	signal?: AbortSignal
 ): Promise<ApiResult<PublicServiceUnit[]>> {
-	return apiFetch<PublicServiceUnit[]>('/api/v1/public/service-units', {
+	return apiFetchList<PublicServiceUnit>('/api/v1/public/service-units', {
 		signal,
 		query: { facility_id: facilityId }
 	});

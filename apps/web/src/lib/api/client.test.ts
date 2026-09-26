@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiFetch, buildUrl } from './client';
+import { apiFetch, apiFetchList, buildUrl } from './client';
 import {
 	isPermissionDenied,
 	isRetryable,
@@ -234,5 +234,76 @@ describe('check-in 401 is a wrong code, not an auth failure', () => {
 		expect(wrongCheckInCode({ kind: 'conflict', status: 409 })).toBe(false);
 		expect(wrongCheckInCode({ kind: 'forbidden', status: 403 })).toBe(false);
 		expect(wrongCheckInCode(null)).toBe(false);
+	});
+});
+
+/**
+ * The Go API encodes a nil slice as `data: null`, so an authorized request that
+ * legitimately matches zero rows arrives as null rather than []. These cases pin
+ * the normalization so a route can call rows.map() without a null check.
+ */
+describe('apiFetchList normalizes the Go null empty list', () => {
+	it('turns data: null into an empty array', async () => {
+		globalThis.fetch = vi.fn(async () =>
+			jsonResponse({ success: true, data: null })
+		) as never;
+
+		const result = await apiFetchList('/api/v1/admin/queues');
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(Array.isArray(result.data)).toBe(true);
+			expect(result.data).toEqual([]);
+		}
+	});
+
+	it('leaves a real array untouched', async () => {
+		globalThis.fetch = vi.fn(async () =>
+			jsonResponse({ success: true, data: [{ id: 'q1' }] })
+		) as never;
+
+		const result = await apiFetchList<{ id: string }>('/api/v1/admin/queues');
+		expect(result.ok).toBe(true);
+		if (result.ok) expect(result.data).toHaveLength(1);
+	});
+
+	it('handles the fail-closed empty array the same way', async () => {
+		// The zero-facility early return passes a composite literal, so the same
+		// route can legitimately answer []. Both empty shapes must converge.
+		globalThis.fetch = vi.fn(async () =>
+			jsonResponse({ success: true, data: [] })
+		) as never;
+
+		const result = await apiFetchList('/api/v1/admin/queues');
+		expect(result.ok).toBe(true);
+		if (result.ok) expect(result.data).toEqual([]);
+	});
+
+	it('propagates a failure instead of inventing an empty list', async () => {
+		// Normalizing must never swallow a 403 into a plausible-looking empty
+		// table, which would read as "no data" instead of "no access".
+		globalThis.fetch = vi.fn(async () =>
+			jsonResponse({ success: false, error: 'Akses ditolak.' }, { status: 403 })
+		) as never;
+
+		const result = await apiFetchList('/api/v1/admin/queues');
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error.kind).toBe('forbidden');
+			expect(result.error.message).toBe('Akses ditolak.');
+		}
+	});
+
+	it('keeps an abort as an abort rather than an empty list', async () => {
+		const controller = new AbortController();
+		globalThis.fetch = vi.fn(async () => {
+			controller.abort();
+			throw new DOMException('The operation was aborted.', 'AbortError');
+		}) as never;
+
+		const result = await apiFetchList('/api/v1/admin/queues', {
+			signal: controller.signal
+		});
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error.kind).toBe('aborted');
 	});
 });
