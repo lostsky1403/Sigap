@@ -68,3 +68,10 @@ skills-lock.json
 .trae-html-share-packages/
 .omo/
 .grok/
+
+# Playwright E2E runner artifacts (Phase 3B1)
+# Local-only test output. The runner is configured to refuse any target that is
+# not loopback, so nothing produced here can contain production data.
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/.playwright/
