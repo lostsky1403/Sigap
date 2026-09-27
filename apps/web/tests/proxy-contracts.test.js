@@ -159,11 +159,71 @@ const assertUiCall = (file, pathFragment, method) => {
 	assert.ok(source.slice(pathIndex, pathIndex + 260).includes(`method: '${method}'`), `${file.join('/')} must use ${method}`);
 };
 
+/**
+ * Asserts a call is made from the page OR from the shared API client the page
+ * uses.
+ *
+ * The citizen check-in page used to call this endpoint with an inline
+ * `fetch`. Phase 3B3 moved it into `checkInAppointment()` in
+ * `$lib/api/endpoints/public.ts`, which is where it belonged: the page had no
+ * business knowing the URL, and the one place that does know it is also the
+ * place that documents why a 401 from it means a wrong code rather than a
+ * missing session.
+ *
+ * So the previous assertion would have failed on a refactor that made the code
+ * better, and "fixing" it by moving the call back inline would undo that. The
+ * contract being protected is that this page reaches this endpoint with this
+ * method, not which file spells the URL — so both are accepted, and neither
+ * alone is enough: the page must actually invoke the client, and the client
+ * must actually issue the call.
+ */
+const assertUiCallViaClient = (pageFile, clientFile, importName, pathFragment, method) => {
+	const pageSource = read(...pageFile);
+	const clientSource = read(...clientFile);
+
+	assert.ok(
+		pageSource.includes(importName),
+		`${pageFile.join('/')} must reach the endpoint through ${importName}`
+	);
+
+	const pathIndex = clientSource.indexOf(pathFragment);
+	assert.notEqual(pathIndex, -1, `${clientFile.join('/')} must call ${pathFragment}`);
+	assert.ok(
+		clientSource.slice(pathIndex, pathIndex + 260).includes(`method: '${method}'`),
+		`${clientFile.join('/')} must use ${method}`
+	);
+};
+
 assertUiCall(['apps', 'web', 'src', 'routes', 'admin', 'facilities', '+page.svelte'], '/admin/facilities/${facility.id}/deactivate', 'PATCH');
-assertUiCall(['apps', 'web', 'src', 'routes', 'appointments', 'check-in', '+page.svelte'], '/api/v1/appointments/${appointmentId}/check-in', 'POST');
+assertUiCallViaClient(
+	['apps', 'web', 'src', 'routes', 'appointments', 'check-in', '+page.svelte'],
+	['apps', 'web', 'src', 'lib', 'api', 'endpoints', 'public.ts'],
+	'checkInAppointment',
+	'/api/v1/appointments/${encodeURIComponent(appointmentId)}/check-in',
+	'POST'
+);
 assertUiCall(['apps', 'web', 'src', 'routes', 'admin', 'notifications', '+page.svelte'], '/api/v1/admin/notifications/${id}/${op}', 'POST');
 assertUiCall(['apps', 'web', 'src', 'routes', 'admin', 'queues', '+page.svelte'], '/admin/queues/${ticket.id}/status', 'PATCH');
 assertUiCall(['apps', 'web', 'src', 'routes', 'admin', 'appointments', '+page.svelte'], '/admin/appointments/${a.id}/status', 'PATCH');
+
+/**
+ * The walk-in route is the other half of that pair, and it earns its own
+ * assertion because the two are easy to confuse. They produce the same kind of
+ * artefact — a queue number — from different endpoints with opposite JSON
+ * conventions, so a walk-in page that reached the check-in route would
+ * register a duplicate ticket instead of redeeming a code.
+ */
+{
+	const walkIn = read('apps', 'web', 'src', 'routes', 'queues', 'new', '+page.svelte');
+	assert.ok(
+		walkIn.includes('generateQueueTicket'),
+		'the walk-in page must reach the queue engine through generateQueueTicket'
+	);
+	assert.ok(
+		!walkIn.includes('checkInAppointment'),
+		'the walk-in page must not redeem an appointment check-in code'
+	);
+}
 
 const adminHandler = read('apps', 'api', 'internal', 'handler', 'admin.go');
 const facilitiesRouter = between(adminHandler, 'func (h *AdminHandler) FacilitiesRouter', '// --- Validation helpers ---');
