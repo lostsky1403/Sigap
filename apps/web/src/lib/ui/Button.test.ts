@@ -16,6 +16,37 @@ describe('Button', () => {
 		expect(button).toHaveAttribute('type', 'button');
 	});
 
+	/**
+	 * `label` is a visible-text path, not just an accessible-name prop.
+	 *
+	 * This was previously broken: the component only rendered the slot, and
+	 * computed "icon-only" from `$$slots.default` alone. Every consumer that
+	 * passes `label` without a slot — EmptyState's reset, ErrorState's retry —
+	 * therefore produced an empty, unnamed button. The role and focus tests
+	 * above still passed, which is exactly why a name-and-text assertion is
+	 * needed here rather than a count of elements.
+	 */
+	it('shows the label as visible text when no slot is provided', () => {
+		render(Button, { props: { label: 'Muat ulang' } });
+		const button = screen.getByRole('button');
+		expect(button).toHaveTextContent('Muat ulang');
+		// Visible text is the accessible name, so no aria-label is needed.
+		expect(button).not.toHaveAttribute('aria-label');
+	});
+
+	it('prefers an explicit ariaLabel over the visible label', () => {
+		render(Button, { props: { label: 'Hapus', ariaLabel: 'Hapus semua filter' } });
+		const button = screen.getByRole('button', { name: 'Hapus semua filter' });
+		expect(button).toHaveTextContent('Hapus');
+	});
+
+	it('is never an unnamed control', () => {
+		// The failure mode being guarded: an element with role=button and no
+		// accessible name, which a screen reader announces as just "button".
+		render(Button, { props: { label: 'Simpan' } });
+		expect(screen.getByRole('button', { name: 'Simpan' })).toBeTruthy();
+	});
+
 	it('is focusable and activates on Enter and Space', async () => {
 		const user = userEvent.setup();
 		const onClick = vi.fn();

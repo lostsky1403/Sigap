@@ -62,7 +62,14 @@
 	}
 
 	$: height = controlHeight(size);
-	$: isIconOnly = !$$slots.default && icon !== undefined;
+	// "No visible text" means no slot AND no label prop. Testing only
+	// $$slots.default, as this originally did, made a `label`-only button render
+	// as an empty control: EmptyState and ErrorState both pass `label` without a
+	// slot, so their retry and reset buttons were invisible and unnamed. An
+	// unlabelled button is an accessibility failure, not a cosmetic one — a
+	// screen reader announces "button" and a sighted user sees a blank pill.
+	$: hasVisibleText = Boolean($$slots.default) || label.length > 0;
+	$: isIconOnly = !hasVisibleText && icon !== undefined;
 </script>
 
 <button
@@ -82,6 +89,13 @@
 	{/if}
 	{#if $$slots.default}
 		<span class="sigap-button__label"><slot /></span>
+	{:else if label}
+		<!--
+			The label prop is a real, visible text path, not only an accessible
+			name. Consumers that pass `label` instead of a slot must still see the
+			words they asked for.
+		-->
+		<span class="sigap-button__label">{label}</span>
 	{/if}
 </button>
 
