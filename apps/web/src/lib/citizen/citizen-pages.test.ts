@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
+import type { PublicFacilityType } from '$lib/api/types/api';
 import Beranda from '../../routes/+page.svelte';
 import Faskes from '../../routes/faskes/+page.svelte';
 
@@ -20,14 +21,45 @@ import Faskes from '../../routes/faskes/+page.svelte';
 /** Matches a canonical v4 UUID, the shape the Go API actually issues. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function facility(id: string, name: string, shortCode: string) {
-	return { id, name, short_code: shortCode, is_active: true };
+function facility(id: string, name: string, shortCode: string, type: PublicFacilityType) {
+	return { id, name, short_code: shortCode, type, is_active: true };
 }
 
 const CATALOG: ReturnType<typeof facility>[] = [
-	facility('11111111-1111-4111-8111-111111111111', 'Puskesmas Sukajaya', 'PKM'),
-	facility('22222222-2222-4222-8222-222222222222', 'RSUD Kota Sehat', 'RSK'),
-	facility('33333333-3333-4333-8333-333333333333', 'Puskesmas Melati Indah', 'PMI')
+	facility('11111111-1111-4111-8111-111111111111', 'Puskesmas Sukajaya', 'PKM', 'puskesmas'),
+	facility('22222222-2222-4222-8222-222222222222', 'RSUD Kota Sehat', 'RSK', 'rumah_sakit'),
+	facility('33333333-3333-4333-8333-333333333333', 'Puskesmas Melati Indah', 'PMI', 'puskesmas')
+];
+
+/**
+ * A catalog whose names actively contradict their `type`.
+ *
+ * Every facility here is named with the *other* category's prefix, so a UI
+ * that inferred the type from the name would render exactly the wrong label
+ * for all of them. This is the fixture that makes "the UI reads the wire
+ * field" a testable claim rather than an assertion about the code.
+ *
+ * "RS Foo" carrying `type: 'puskesmas'` is the sharpest case: the name is
+ * what a heuristic would read, and the enum is what the citizen is shown.
+ */
+const MISLEADING_CATALOG: ReturnType<typeof facility>[] = [
+	facility('44444444-4444-4444-8444-444444444444', 'RS Foo', 'RSF', 'puskesmas'),
+	facility('55555555-5555-4555-8555-555555555555', 'Puskesmas Bar', 'PKB', 'rumah_sakit')
+];
+
+/**
+ * A catalog built so that one query matches rows of *both* types.
+ *
+ * Composition cannot be tested on `CATALOG`: its only "sehat" row is the one
+ * hospital, so filtering that query to Puskesmas yields zero and the test
+ * cannot tell "applied both conditions" apart from "ignored the type". These
+ * three give the query two matches spanning both categories, so the surviving
+ * row is identified by the type rather than by the count.
+ */
+const COMPOSING_CATALOG: ReturnType<typeof facility>[] = [
+	facility('66666666-6666-4666-8666-666666666666', 'Pusreas Sehat', 'PRS', 'puskesmas'),
+	facility('77777777-7777-4777-8777-777777777777', 'RSUD Kota Sehat', 'RSK', 'rumah_sakit'),
+	facility('88888888-8888-4888-8888-888888888888', 'Puskesmas Melati Indah', 'PMI', 'puskesmas')
 ];
 
 /**
@@ -107,6 +139,45 @@ describe('Beranda', () => {
 		expect(document.body.textContent).toContain('RSUD Kota Sehat');
 		// Short code is a real public field and is rendered.
 		expect(document.body.textContent).toContain('PKM');
+	});
+
+	it('shows the facility type in the preview, as the frozen design requires', async () => {
+		mockCatalogWithRows();
+		render(Beranda);
+
+		await waitFor(() => expect(document.body.textContent).toContain('Puskesmas Sukajaya'));
+
+		// The frozen Beranda reference puts the classification under the
+		// identity on every preview row, so the preview is not "name and short
+		// code" — it is the same public identity as /faskes.
+		const first = Array.from(document.querySelectorAll('li')).find((li) =>
+			li.textContent?.includes('Puskesmas Sukajaya')
+		);
+		expect(first?.textContent).toContain('Puskesmas');
+
+		// And the other enum value renders too, so this is a label map and not
+		// a hardcoded string.
+		const second = Array.from(document.querySelectorAll('li')).find((li) =>
+			li.textContent?.includes('RSUD Kota Sehat')
+		);
+		expect(second?.textContent).toContain('Rumah Sakit');
+		// Never the raw wire value.
+		expect(document.body.textContent).not.toContain('rumah_sakit');
+	});
+
+	it('reads the preview type from the wire, never from the facility name', async () => {
+		mockCatalogWithRows(MISLEADING_CATALOG);
+		render(Beranda);
+
+		await waitFor(() => expect(document.body.textContent).toContain('RS Foo'));
+
+		// "RS Foo" is registered as a puskesmas. A name heuristic would call it
+		// a hospital here exactly as it would on /faskes.
+		const row = Array.from(document.querySelectorAll('li')).find((li) =>
+			li.textContent?.includes('RS Foo')
+		);
+		expect(row?.textContent).toContain('Puskesmas');
+		expect(row?.textContent).not.toContain('Rumah Sakit');
 	});
 
 	it('reads through the same-origin client, never a backend URL', async () => {
@@ -378,5 +449,301 @@ describe('/faskes', () => {
 		render(Faskes);
 		await waitFor(() => expect(screen.getByRole('searchbox')).toBeTruthy());
 		expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+	});
+});
+
+/**
+ * The facility type filter.
+ *
+ * Separated from the state tests above because these are about one specific
+ * contract claim: the classification shown and filtered on is the real enum
+ * from the wire. It is tempting to test the happy path — real names that
+ * already agree with their type — but that fixture passes even if the UI
+ * infers the type from the name, so it proves nothing. The tests below lean on
+ * `MISLEADING_CATALOG`, where every name contradicts its `type`.
+ */
+describe('/faskes facility type filter', () => {
+	beforeEach(() => {
+		document.body.innerHTML = '';
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	/** The chip row, found by its accessible group name rather than a test id. */
+	const typeGroup = () => screen.getByRole('group', { name: 'Saring berdasarkan tipe' });
+	const chip = (name: string) => within(typeGroup()).getByRole('button', { name });
+	const rows = () => document.querySelectorAll('#sigap-facility-results li');
+	const rowText = () => Array.from(rows()).map((row) => row.textContent ?? '');
+
+	/** Waits for the catalog to load, which is when the filter is offered. */
+	async function readyWith(rows: unknown[] = CATALOG) {
+		mockCatalogWithRows(rows);
+		render(Faskes);
+		await waitFor(() => expect(screen.getByRole('searchbox')).toBeTruthy());
+	}
+
+	it('offers exactly the three frozen controls, with Semua selected by default', async () => {
+		await readyWith();
+
+		// Exactly three, and no more. A fourth control would be a design change
+		// nobody approved; a control labelled with a raw enum value would leak
+		// the wire format into the citizen's UI.
+		const labels = within(typeGroup())
+			.getAllByRole('button')
+			.map((button) => button.textContent?.trim());
+		expect(labels).toEqual(['Semua', 'Puskesmas', 'Rumah Sakit']);
+
+		// Default is Semua, pressed.
+		expect(chip('Semua').getAttribute('aria-pressed')).toBe('true');
+		expect(chip('Puskesmas').getAttribute('aria-pressed')).toBe('false');
+		expect(chip('Rumah Sakit').getAttribute('aria-pressed')).toBe('false');
+	});
+
+	it('exposes the pressed state on every control, not only the selected one', async () => {
+		await readyWith();
+
+		// aria-pressed is the only thing a screen reader reports about the
+		// selection, so a control that omits it while unselected is invisible
+		// to assistive tech rather than merely unstyled.
+		for (const name of ['Semua', 'Puskesmas', 'Rumah Sakit']) {
+			expect(chip(name).getAttribute('aria-pressed'), `${name} needs aria-pressed`).toMatch(
+				/^(true|false)$/
+			);
+		}
+	});
+
+	it('shows the human-readable type on every row', async () => {
+		await readyWith();
+
+		// Both enum values render, spelled for a citizen and never as the raw
+		// wire value.
+		expect(document.body.textContent).toContain('Puskesmas');
+		expect(document.body.textContent).toContain('Rumah Sakit');
+		expect(document.body.textContent).not.toContain('puskesmas');
+		expect(document.body.textContent).not.toContain('rumah_sakit');
+	});
+
+	it('reads the type from the wire and never infers it from the name', async () => {
+		await readyWith(MISLEADING_CATALOG);
+
+		const [first, second] = rowText();
+		// "RS Foo" is a puskesmas. A name-based heuristic renders "Rumah Sakit".
+		expect(first).toContain('RS Foo');
+		expect(first).toContain('Puskesmas');
+		expect(first).not.toContain('Rumah Sakit');
+
+		// "Puskesmas Bar" is a rumah sakit. The mirror case, same fixture.
+		expect(second).toContain('Puskesmas Bar');
+		expect(second).toContain('Rumah Sakit');
+	});
+
+	it('filters to puskesmas without touching the search box', async () => {
+		await readyWith();
+
+		expect(rows()).toHaveLength(3);
+		await fireEvent.click(chip('Puskesmas'));
+		await waitFor(() => expect(rows()).toHaveLength(2));
+
+		// Both surviving rows are the real enum, not merely the right count.
+		// A count alone would pass even if the wrong rows survived.
+		for (const text of rowText()) {
+			expect(text).toContain('Puskesmas');
+			expect(text).not.toContain('Rumah Sakit');
+		}
+		expect(document.body.textContent).toContain('Puskesmas Melati Indah');
+		expect(document.body.textContent).not.toContain('RSUD Kota Sehat');
+	});
+
+	it('filters to rumah sakit', async () => {
+		await readyWith();
+		await fireEvent.click(chip('Rumah Sakit'));
+		await waitFor(() => expect(rows()).toHaveLength(1));
+
+		expect(rowText()[0]).toContain('RSUD Kota Sehat');
+		expect(rowText()[0]).toContain('Rumah Sakit');
+	});
+
+	it('restores the whole catalog when the citizen returns to Semua', async () => {
+		await readyWith();
+
+		await fireEvent.click(chip('Puskesmas'));
+		await waitFor(() => expect(rows()).toHaveLength(2));
+		await fireEvent.click(chip('Rumah Sakit'));
+		await waitFor(() => expect(rows()).toHaveLength(1));
+		await fireEvent.click(chip('Semua'));
+		await waitFor(() => expect(rows()).toHaveLength(3));
+
+		expect(chip('Semua').getAttribute('aria-pressed')).toBe('true');
+		expect(screen.getByRole('searchbox').getAttribute('value') ?? '').toBe('');
+	});
+
+	it('composes the type filter with the search query', async () => {
+		await readyWith(COMPOSING_CATALOG);
+
+		// "sehat" matches two facilities spanning both categories, so applying
+		// the type on top of the query is observable in *which* row survives,
+		// not merely in the count. On a fixture where the query matches one
+		// category only, "both applied" and "type ignored" produce the same
+		// result and the test proves nothing.
+		await fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'sehat' } });
+		await waitFor(() => expect(rows()).toHaveLength(2));
+		expect(document.body.textContent).toContain('Pusreas Sehat');
+		expect(document.body.textContent).toContain('RSUD Kota Sehat');
+
+		await fireEvent.click(chip('Puskesmas'));
+		await waitFor(() => expect(rows()).toHaveLength(1));
+		expect(rowText()[0]).toContain('Pusreas Sehat');
+		expect(rowText()[0]).toContain('Puskesmas');
+		// The hospital matched the query but not the type. It must be gone.
+		expect(document.body.textContent).not.toContain('RSUD Kota Sehat');
+
+		// Widening the type again must not lose the query: the search is still
+		// applied on top, so the hospital comes back and the third facility
+		// stays out.
+		await fireEvent.click(chip('Semua'));
+		await waitFor(() => expect(rows()).toHaveLength(2));
+		expect(document.body.textContent).toContain('RSUD Kota Sehat');
+		expect(document.body.textContent).not.toContain('Puskesmas Melati Indah');
+	});
+
+	it('reaches a no-result state from the type filter alone, without quoting a search', async () => {
+		await readyWith();
+
+		await fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'melati' } });
+		await waitFor(() => expect(rows()).toHaveLength(1));
+		// One puskesmas matched; asking for rumah sakit cannot.
+		await fireEvent.click(chip('Rumah Sakit'));
+
+		await waitFor(() =>
+			expect(document.body.textContent).toContain('Tidak ada faskes yang cocok')
+		);
+		// The citizen typed a real query, so naming it is honest here — but the
+		// type has to be named too, or the message blames the search alone.
+		expect(document.body.textContent).toContain('Rumah Sakit');
+	});
+
+	it('keeps the no-result message honest when only the type is set', async () => {
+		// A catalog holding one category only, so selecting the other produces
+		// zero rows without any search having been typed. This is the case the
+		// copy exists for: a filter the citizen chose is the cause, and quoting
+		// an empty search box would blame something they never did.
+		await readyWith([CATALOG[0], CATALOG[2]]);
+
+		await fireEvent.click(chip('Rumah Sakit'));
+		await waitFor(() =>
+			expect(document.body.textContent).toContain('Tidak ada faskes yang cocok')
+		);
+
+		// It names the type, and does not invent a search to quote.
+		expect(document.body.textContent).toContain('Tidak ada faskes bertipe Rumah Sakit');
+		expect(document.body.textContent).not.toContain('Tidak ada hasil untuk');
+		// Not the empty-catalog state: the catalog itself is fine.
+		expect(document.body.textContent).not.toContain('Belum ada data faskes');
+	});
+
+	it('clears both the query and the type on reset', async () => {
+		await readyWith();
+
+		await fireEvent.click(chip('Rumah Sakit'));
+		await fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'kot' } });
+		await waitFor(() => expect(rows()).toHaveLength(1));
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Hapus semua filter' }));
+		await waitFor(() => expect(rows()).toHaveLength(3));
+
+		// Both inputs, not just the visible one. A reset that cleared the search
+		// but left the chip on "Rumah Sakit" would show a full list the citizen
+		// could not account for.
+		expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe('');
+		expect(chip('Semua').getAttribute('aria-pressed')).toBe('true');
+		expect(chip('Rumah Sakit').getAttribute('aria-pressed')).toBe('false');
+	});
+
+	it('offers a reset for a type filter even when the result set is non-empty', async () => {
+		await readyWith();
+
+		await fireEvent.click(chip('Rumah Sakit'));
+		await waitFor(() => expect(rows()).toHaveLength(1));
+
+		// One result, no search typed, and the way back is still there. Gating
+		// the reset on a query would strand a citizen who filtered down to one
+		// facility with no visible control to widen it again.
+		expect(screen.getByRole('button', { name: 'Hapus semua filter' })).toBeTruthy();
+	});
+
+	it('activates a type control from the keyboard', async () => {
+		await readyWith();
+
+		// Real buttons, so activation is the browser's job. A div with an
+		// on:click would pass a mouse-driven test and be unreachable by
+		// keyboard entirely.
+		const target = chip('Puskesmas') as HTMLButtonElement;
+		expect(target.tagName).toBe('BUTTON');
+		expect(target.getAttribute('type')).toBe('button');
+		expect(target.disabled).toBe(false);
+
+		await fireEvent.keyDown(target, { key: 'Enter' });
+		target.click();
+		await waitFor(() => expect(chip('Puskesmas').getAttribute('aria-pressed')).toBe('true'));
+	});
+
+	it('keeps the type controls off the loading and error screens', async () => {
+		let release: (value: Response) => void = () => {};
+		mockCatalog(
+			() =>
+				new Promise<Response>((resolve) => {
+					release = resolve;
+				})
+		);
+		render(Faskes);
+		await tick();
+
+		// Filtering data that has not arrived would imply results exist.
+		expect(screen.queryByRole('group', { name: 'Saring berdasarkan tipe' })).toBeNull();
+		release(jsonResponse({ success: true, data: CATALOG }));
+		await waitFor(() => expect(screen.getByRole('searchbox')).toBeTruthy());
+
+		// And filtering an empty list on an error screen would let a citizen
+		// conclude the search is broken.
+		vi.restoreAllMocks();
+		document.body.innerHTML = '';
+		mockCatalog(() =>
+			jsonResponse({ success: false, error: 'Gagal mengambil data fasilitas.' }, 500)
+		);
+		render(Faskes);
+		await waitFor(() => expect(document.body.textContent).toContain('Gagal mengambil data fasilitas'));
+		expect(screen.queryByRole('group', { name: 'Saring berdasarkan tipe' })).toBeNull();
+	});
+
+	it('does not guess a type for a facility whose wire value is unrecognised', async () => {
+		// A value the frontend does not know. It can happen when a backend
+		// release lands ahead of a frontend one, and it must not be silently
+		// sorted into a category it was never verified as.
+		await readyWith([
+			{ ...CATALOG[0], type: 'klinik_gigi' },
+			CATALOG[1],
+			CATALOG[2]
+		]);
+
+		// The row shows what actually arrived rather than a relabelled guess.
+		// Asserted on the type line specifically: the facility is *named*
+		// "Puskesmas Sukajaya", so a substring check over the whole row would
+		// pass on the name alone and prove nothing about the label.
+		const typeLine = rows()[0]?.querySelector('.sigap-facility-row__type')?.textContent ?? '';
+		expect(typeLine).toBe('klinik_gigi');
+		expect(typeLine).not.toContain('Puskesmas');
+		expect(typeLine).not.toContain('Rumah Sakit');
+
+		// Every specific filter excludes it...
+		await fireEvent.click(chip('Puskesmas'));
+		await waitFor(() => expect(rows()).toHaveLength(1));
+		expect(rowText()[0]).toContain('Puskesmas Melati Indah');
+
+		// ...but "Semua" still shows the full catalog, because hiding an
+		// unrecognised facility would understate what is actually active.
+		await fireEvent.click(chip('Semua'));
+		await waitFor(() => expect(rows()).toHaveLength(3));
 	});
 });
