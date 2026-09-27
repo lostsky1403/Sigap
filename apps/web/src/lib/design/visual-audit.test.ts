@@ -106,7 +106,14 @@ function auditedFiles(): string[] {
 			join(webRoot, 'src', 'routes', 'appointments', 'new', '+page.svelte'),
 			join(webRoot, 'src', 'routes', 'appointments', 'check-in', '+page.svelte'),
 			join(webRoot, 'src', 'routes', 'queues', 'new', '+page.svelte'),
-			join(webRoot, 'src', 'routes', 'patient', 'status', '+page.svelte')
+			join(webRoot, 'src', 'routes', 'patient', 'status', '+page.svelte'),
+			// Phase 3B3 auth presentation. These three were the last pages in
+			// the product still carrying the unmigrated emerald Tailwind palette,
+			// so bringing them in is what proves the palette is actually gone
+			// rather than merely unused by the pages that were already done.
+			join(webRoot, 'src', 'routes', 'auth', 'login', '+page.svelte'),
+			join(webRoot, 'src', 'routes', 'auth', 'register', '+page.svelte'),
+			join(webRoot, 'src', 'routes', 'auth', 'logout', '+page.svelte')
 		]);
 
 	return files.map((f) => join(f)).filter((f) => !f.endsWith('.test.ts'));
@@ -438,12 +445,39 @@ describe('visual anti-pattern audit: scan integrity', () => {
 			'src/lib/citizen/QueueTicket.svelte',
 			'src/lib/citizen/WalkInForm.svelte',
 			'src/lib/citizen/VisitProgress.svelte',
+			'src/lib/citizen/AuthForms.svelte',
 			'src/routes/appointments/new/+page.svelte',
 			'src/routes/appointments/check-in/+page.svelte',
 			'src/routes/queues/new/+page.svelte',
-			'src/routes/patient/status/+page.svelte'
+			'src/routes/patient/status/+page.svelte',
+			'src/routes/auth/login/+page.svelte',
+			'src/routes/auth/register/+page.svelte',
+			'src/routes/auth/logout/+page.svelte'
 		]) {
 			expect(files, `${page} must be scanned by the visual audit`).toContain(page);
+		}
+
+		/*
+		 * The unmigrated palette itself.
+		 *
+		 * The colour rules ban hex literals, and emerald is expressed as
+		 * Tailwind utility classes rather than hex, so none of them would catch
+		 * a page still painted `bg-emerald-600`. tokens.css says outright that
+		 * nothing in the system may reintroduce an emerald/slate palette, so
+		 * the class names are named here explicitly. This is what makes "the
+		 * palette is gone" a checked claim instead of an inference from the
+		 * absence of hex.
+		 */
+		for (const page of [
+			'src/lib/citizen/AuthForms.svelte',
+			'src/routes/auth/login/+page.svelte',
+			'src/routes/auth/register/+page.svelte',
+			'src/routes/auth/logout/+page.svelte'
+		]) {
+			const code = readFileSync(join(webRoot, page), 'utf8');
+			expect(code, `${page} must not reintroduce the unmigrated palette`).not.toMatch(
+				/(emerald|slate)-/
+			);
 		}
 
 		// Unmigrated routes and the admin area stay out of scope. The exact list
@@ -457,6 +491,9 @@ describe('visual anti-pattern audit: scan integrity', () => {
 			'src/routes/+page.svelte',
 			'src/routes/appointments/check-in/+page.svelte',
 			'src/routes/appointments/new/+page.svelte',
+			'src/routes/auth/login/+page.svelte',
+			'src/routes/auth/logout/+page.svelte',
+			'src/routes/auth/register/+page.svelte',
 			'src/routes/faskes/+page.svelte',
 			'src/routes/patient/status/+page.svelte',
 			'src/routes/queues/new/+page.svelte'
