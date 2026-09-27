@@ -11,7 +11,9 @@ import (
 
 // CatalogHandler serves public, unauthenticated catalog data for the
 // patient booking flow.  Responses contain only non-sensitive fields
-// (id, name, code) — no addresses, phone numbers, or bed counts.
+// (id, name, short_code, type) — no addresses, phone numbers, or bed counts.
+// The facility type is a public classification, not operational data, so it
+// is safe to expose; the exact field set is pinned by catalog_test.go.
 type CatalogHandler struct {
 	pool *pgxpool.Pool
 }
@@ -22,10 +24,24 @@ func NewCatalogHandler(pool *pgxpool.Pool) *CatalogHandler {
 }
 
 // publicFacility is the minimal facility shape for the booking dropdown.
+//
+// `type` is the existing facilities.type column, whose values are the
+// facility_type enum: 'rumah_sakit' and 'puskesmas'. It is exposed
+// verbatim rather than translated here, because the wire value is a
+// database enum and the human label belongs in the presentation layer.
+// Translating server-side would give the same Indonesian label to an
+// English client and would mean the filter had to un-translate it.
+//
+// The field set stays minimal and public. Deliberately absent, and
+// asserted absent in catalog_test.go: address, kecamatan, kabupaten_kota,
+// provinsi, phone, total_beds, available_beds, and the timestamps. Bed
+// counts in particular are operational data an operator maintains, and a
+// stale public bed count reads as a live operational claim.
 type publicFacility struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	ShortCode string `json:"short_code"`
+	Type      string `json:"type"`
 	IsActive  bool   `json:"is_active"`
 }
 
@@ -38,14 +54,14 @@ type publicServiceUnit struct {
 	IsActive   bool   `json:"is_active"`
 }
 
-// ListPublicFacilities returns active facilities (id, name, short_code).
-// No authentication required.
+// ListPublicFacilities returns active facilities (id, name, short_code, type,
+// is_active). No authentication required.
 func (h *CatalogHandler) ListPublicFacilities(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
 	rows, err := h.pool.Query(ctx,
-		`SELECT id, name, short_code, is_active
+		`SELECT id, name, short_code, type, is_active
 		 FROM facilities
 		 WHERE is_active = true
 		 ORDER BY name`)
@@ -58,7 +74,9 @@ func (h *CatalogHandler) ListPublicFacilities(w http.ResponseWriter, r *http.Req
 	var results []publicFacility
 	for rows.Next() {
 		var f publicFacility
-		if err := rows.Scan(&f.ID, &f.Name, &f.ShortCode, &f.IsActive); err != nil {
+		// The scan order must match the SELECT order exactly. `type` is a
+		// facility_type enum, which pgx scans into a string.
+		if err := rows.Scan(&f.ID, &f.Name, &f.ShortCode, &f.Type, &f.IsActive); err != nil {
 			writeError(w, http.StatusInternalServerError, "Gagal membaca data fasilitas.")
 			return
 		}
