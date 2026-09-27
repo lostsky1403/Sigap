@@ -8,6 +8,7 @@
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorState from '$lib/ui/ErrorState.svelte';
+	import { facilityTypeLabel } from '$lib/citizen/facilityType';
 	import { hasSession as readHasSession } from '$lib/stores/session';
 	import { RADIUS } from '$lib/design/tokens';
 	import { FolderSearch, CloudOff } from 'lucide-svelte';
@@ -27,7 +28,7 @@
 	 *
 	 * The facility preview is a preview, labelled as such and capped, with a
 	 * link to the full catalog. It shows only what the public API actually
-	 * returns: name and short code.
+	 * returns: name, short code, and the facility type enum.
 	 */
 
 	const catalogLoader = loadPublicFacilities();
@@ -168,6 +169,17 @@
 								</span>
 							{/if}
 						</div>
+						<!--
+							The frozen reference puts the classification on its own
+							line under the identity here too, so this restores the
+							designed composition rather than adding a new element to
+							it. The value is the real enum through the shared label map,
+							so a facility named "RS Foo" that is registered as a
+							Puskesmas reads as "Puskesmas", consistently with /faskes.
+						-->
+						<p class="sigap-beranda__facility-type">
+							{facilityTypeLabel(facility.type)}
+						</p>
 					</li>
 				{/each}
 			</ul>
@@ -298,6 +310,13 @@
 		font-size: 14px;
 		font-weight: 500;
 		color: var(--sigap-foreground);
+	}
+
+	/* Mirrors the catalog row: classification under the identity, muted. */
+	.sigap-beranda__facility-type {
+		margin: 4px 0 0;
+		font-size: 12px;
+		color: var(--sigap-muted);
 	}
 
 	.sigap-beranda__more {

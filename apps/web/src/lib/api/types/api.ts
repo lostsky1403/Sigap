@@ -74,13 +74,34 @@ export type AppointmentStatus =
  * ------------------------------------------------------------------ */
 
 /**
+ * Facility classification, exactly as it exists on the wire.
+ *
+ * These are the two values of the database `facility_type` enum, projected
+ * verbatim by catalog.go. The type is a union rather than `string` on purpose:
+ * a third value cannot be added to the frontend without the compiler
+ * complaining, which is the pressure that keeps this list honest against the
+ * schema instead of letting it drift.
+ *
+ * There is deliberately no derivation from `name` or `short_code`. "RS Foo"
+ * is not a verified classification, and a citizen filtering on a guess could
+ * rule out their own clinic over a naming convention.
+ */
+export type PublicFacilityType = 'puskesmas' | 'rumah_sakit';
+
+/**
  * Intentionally minimal: the public catalog exposes no address, phone, or bed
  * counts. See catalog.go, where those fields are deliberately absent.
+ *
+ * `type` is the one classification field that is public, because a citizen
+ * choosing where to go needs to tell a district clinic from a hospital. It is
+ * the existing column, added read-only, with no new endpoint and no new query
+ * parameter behind it.
  */
 export interface PublicFacility {
 	id: string;
 	name: string;
 	short_code: string;
+	type: PublicFacilityType;
 	is_active: boolean;
 }
 

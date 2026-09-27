@@ -2,6 +2,7 @@
 	import { RADIUS } from '$lib/design/tokens';
 	import { ChevronRight } from 'lucide-svelte';
 	import Icon from '$lib/ui/Icon.svelte';
+	import { facilityTypeLabel } from '$lib/citizen/facilityType';
 	import type { PublicFacility } from '$lib/api/types/api';
 
 	/**
@@ -11,16 +12,22 @@
 	 * being explicit about what is missing and why:
 	 *
 	 * The public catalog endpoint returns exactly `id`, `name`, `short_code`,
-	 * and `is_active`. Everything else a facility listing usually shows is
-	 * therefore absent, not hidden: no address, no distance, no travel time,
-	 * no opening hours, no doctor availability, no live queue, no bed count,
-	 * no rating, no "open now", no map.
+	 * `type`, and `is_active`. Everything else a facility listing usually shows
+	 * is therefore absent, not hidden: no address, no distance, no travel
+	 * time, no opening hours, no doctor availability, no live queue, no bed
+	 * count, no rating, no "open now", no map.
 	 *
 	 * Those are not omissions to be filled in later from a guess. Several of
 	 * them (beds, live queue) exist in the database but are deliberately not
 	 * public, and the rest (distance, "open now") are not tracked at all. A
 	 * citizen has no way to distinguish an invented value from a real one, so
 	 * the row shows the truth or it does not show it.
+	 *
+	 * `type` is the one classification shown, because a citizen choosing where
+	 * to go needs to tell a district clinic from a hospital. It is the real
+	 * database enum, translated through the shared label map — never inferred
+	 * from the name, so a facility named "RS Foo" that is registered as a
+	 * Puskesmas displays as "Puskesmas".
 	 *
 	 * The UUID is used for the booking link and keyed list rendering, but never
 	 * displayed: a raw identifier is noise to a citizen, and it is not a field
@@ -38,6 +45,7 @@
 	 * citizen picking their faskes twice and picking them once.
 	 */
 	$: bookingHref = `/appointments/new?facility_id=${encodeURIComponent(facility.id)}`;
+	$: typeLabel = facilityTypeLabel(facility.type);
 </script>
 
 <div class="sigap-facility-row">
@@ -50,6 +58,7 @@
 				</span>
 			{/if}
 		</div>
+		<p class="sigap-facility-row__type">{typeLabel}</p>
 	</div>
 
 	<a
@@ -102,6 +111,21 @@
 		color: var(--sigap-muted);
 		background-color: var(--sigap-surface);
 		border: 1px solid var(--sigap-border);
+	}
+
+	/*
+		The classification, on its own line under the identity.
+
+		Below the name rather than beside it: at 390px the name and the short
+		code already compete for a single row, and a third badge there pushes
+		long facility names into two cramped lines. Muted, because it is
+		orientation, not the thing the citizen is scanning for — the booking
+		action stays the only high-contrast element in the row.
+	*/
+	.sigap-facility-row__type {
+		margin: 2px 0 0;
+		font-size: 12px;
+		color: var(--sigap-muted);
 	}
 
 	.sigap-facility-row__action {
