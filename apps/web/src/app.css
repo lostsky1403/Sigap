@@ -17,3 +17,61 @@
 body {
 	font-family: Inter, system-ui, -apple-system, sans-serif;
 }
+
+/*
+ * Shared page-level typography for citizen routes.
+ *
+ * These live here rather than in a component because Beranda and /faskes are
+ * separate pages that must present the same heading hierarchy. Scoping them to
+ * one component would guarantee the two pages drift apart. Sizes follow the
+ * frozen references: a 20px page title on mobile, 24px on desktop, with a
+ * 13px section title above grouped content.
+ *
+ * Only semantic tokens are used. No raw colour, no gradient, no shadow.
+ */
+.sigap-page-title {
+	margin: 0;
+	font-size: 20px;
+	font-weight: 600;
+	line-height: 1.5rem;
+	color: var(--sigap-foreground);
+}
+
+@media (min-width: 1024px) {
+	.sigap-page-title {
+		font-size: 24px;
+	}
+}
+
+.sigap-page-subtitle {
+	margin: 4px 0 0;
+	font-size: 14px;
+	line-height: 1.25rem;
+	color: var(--sigap-muted);
+}
+
+.sigap-section-title {
+	margin: 0;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--sigap-foreground);
+}
+
+/*
+ * Available to assistive technology, invisible on screen.
+ *
+ * Used for real labels on icon controls and for headings that exist to give a
+ * landmark a name. `clip` rather than `display: none`, which would remove the
+ * element from the accessibility tree along with its text.
+ */
+.sigap-visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
