@@ -1,191 +1,283 @@
 <script lang="ts">
-	// /appointments/check-in — Public check-in page
-	// Validates check-in code, shows queue ticket from existing check-in response fields.
+	import { onMount, tick } from 'svelte';
+	import CheckinForm from '$lib/citizen/CheckinForm.svelte';
+	import QueueTicket from '$lib/citizen/QueueTicket.svelte';
+	import { RADIUS } from '$lib/design/tokens';
+	import { TicketCheck } from 'lucide-svelte';
+	import Icon from '$lib/ui/Icon.svelte';
+	import { checkInAppointment, wrongCheckInCode } from '$lib/api/endpoints/public';
+	import { isAbort } from '$lib/api/errors';
+	import type { CheckInResult } from '$lib/api/types/api';
+	import {
+		classifyCheckInFailure,
+		resolveFailureMessage,
+		type FlowFailure
+	} from '$lib/citizen/citizenFlow';
 
-	import { onMount } from 'svelte';
+	/**
+	 * /appointments/check-in — public check-in for an existing appointment.
+	 *
+	 * NOT the walk-in flow. Those are two different things that happen to
+	 * produce a queue number: this one redeems a code against a booking that
+	 * already exists, while /queues/new registers someone who arrived without
+	 * one. They are kept apart deliberately, because conflating them would let a
+	 * walk-in registration mutate an appointment's state, and would make the
+	 * 401 below ambiguous.
+	 *
+	 * The single most important behaviour on this page: a 401 from this
+	 * endpoint is NOT an authentication failure. There is no session to expire
+	 * on a public route. The backend answers 401 "Kode check-in tidak cocok."
+	 * when the code is simply wrong, and rendering a sign-in prompt for that
+	 * would tell a citizen to log in to fix a typo — advice that cannot help
+	 * them and sends them away from the page that can.
+	 */
 
-	type CheckInResult = {
-		appointment_id?: string;
-		queue_ticket_id?: string;
-		formatted_number?: string;
-		status?: string;
-		estimated_wait_minutes?: number;
-		processing_time?: string;
-	};
+	let appointmentId = '';
+	let checkinCode = '';
+	let submitting = false;
+	let ticket: CheckInResult | null = null;
+	/**
+	 * The whole classified failure, not just its kind.
+	 *
+	 * Storing only the kind meant the server's own message had to be
+	 * reconstructed at the render site, which is how a 409's specific wording
+	 * ("...dengan status: queued") gets replaced by something vaguer. The
+	 * classifier already carries the message; keeping the object intact means
+	 * the page never has to invent one.
+	 */
+	let failure: FlowFailure | null = null;
+	let copyHint = '';
 
-	let loading = $state(false);
-	let error = $state('');
-	let success = $state(false);
-	let copyHint = $state('');
+	/**
+	 * True only for a wrong code on an existing appointment.
+	 *
+	 * Drives a dedicated, specific message rather than the generic banner,
+	 * because "retype your code" is a different instruction from "try again
+	 * later" and a citizen who typed a 5 instead of an S needs to be told
+	 * which one happened.
+	 */
+	$: isWrongCode = failure?.kind === 'wrong-code';
 
-	let appointmentId = $state('');
-	let checkinCode = $state('');
-
-	let ticket: CheckInResult | null = $state(null);
-
+	/**
+	 * Reads the deep link.
+	 *
+	 * Canonical names are `appointment_id` and `checkin_code`. The legacy
+	 * aliases `id` and `code` are still honoured, because links generated
+	 * before this phase are already in people's messages and history and
+	 * breaking them would strand a citizen who has an appointment and a code.
+	 * The canonical name wins when both are present, so a link can be
+	 * upgraded by simply renaming the parameter.
+	 */
 	onMount(() => {
-		// Demo convenience: allow deep-link from booking success page.
 		const params = new URLSearchParams(window.location.search);
-		const aid = params.get('appointment_id') || params.get('id') || '';
-		const code = params.get('checkin_code') || params.get('code') || '';
-		if (aid) appointmentId = aid;
-		if (code) checkinCode = code;
+		appointmentId = params.get('appointment_id') ?? params.get('id') ?? '';
+		checkinCode = params.get('checkin_code') ?? params.get('code') ?? '';
 	});
 
-	async function readApi(res: Response): Promise<{ ok: boolean; data: any }> {
-		const contentType = res.headers.get('content-type') || '';
-		if (!contentType.includes('application/json')) {
-			return { ok: false, data: null };
-		}
-		try {
-			return { ok: true, data: await res.json() };
-		} catch {
-			return { ok: false, data: null };
-		}
-	}
-
 	async function submit() {
-		loading = true;
-		error = '';
-		success = false;
-		ticket = null;
+		if (submitting) return;
+		submitting = true;
+		failure = null;
 		copyHint = '';
-		try {
-			const res = await fetch(`/api/v1/appointments/${appointmentId}/check-in`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ checkin_code: checkinCode })
-			});
-			const parsed = await readApi(res);
-			if (!parsed.ok) {
-				error = 'Gagal menghubungi layanan. Silakan coba lagi.';
-				return;
-			}
-			const json = parsed.data;
-			if (json.success && json.data) {
-				success = true;
-				ticket = json.data as CheckInResult;
-			} else {
-				error = json.error || 'Gagal check-in. Periksa kode dan ID janji temu.';
-			}
-		} catch (e: unknown) {
-			error = e instanceof Error ? e.message : 'Tidak dapat menghubungi server.';
-		} finally {
-			loading = false;
+
+		const outcome = await checkInAppointment(appointmentId.trim(), checkinCode.trim());
+
+		// An abort is a navigation, not a failure.
+		submitting = false;
+		if (outcome.ok) {
+			ticket = outcome.data;
+			await tick();
+			document.getElementById('sigap-checkin-result')?.focus();
+			return;
 		}
+		if (isAbort(outcome.error)) return;
+
+		/*
+			The 401 branch, and the reason `wrongCheckInCode` is consulted
+			explicitly rather than inferred from `kind === 'unauthorized'`. The
+			helper is the single place that knows this route's 401 means a
+			mistyped code. Passing it in keeps that decision visible at the call
+			site instead of hiding it inside the classifier.
+		*/
+		failure = classifyCheckInFailure(outcome.error, wrongCheckInCode(outcome.error));
 	}
 
-	async function copyText(label: string, value: string) {
+	async function copyValue(label: string, value: string) {
 		if (!value) return;
 		try {
 			await navigator.clipboard.writeText(value);
-			copyHint = `${label} disalin`;
-			setTimeout(() => {
-				if (copyHint === `${label} disalin`) copyHint = '';
-			}, 2000);
+			copyHint = `${label} tersalin.`;
 		} catch {
-			copyHint = 'Gagal menyalin';
+			copyHint = 'Tidak dapat menyalin otomatis. Salin manual dari kotak nomor.';
 		}
+		setTimeout(() => {
+			copyHint = '';
+		}, 4000);
 	}
 
 	function reset() {
-		success = false;
 		ticket = null;
-		error = '';
+		failure = null;
 		copyHint = '';
 		appointmentId = '';
 		checkinCode = '';
 	}
 </script>
 
-<div class="px-6 py-8 max-w-lg mx-auto">
-	<div class="mb-6">
-		<h1 class="text-2xl font-semibold tracking-[-0.01em]">Check-In</h1>
-		<p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Masukkan kode check-in untuk mendapat nomor antrean.</p>
-	</div>
+<svelte:head>
+	<title>Check-In — Sigap</title>
+</svelte:head>
 
-	{#if error}
-		<div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">{error}</div>
-	{/if}
+<div class="sigap-checkin">
+	<section class="sigap-checkin__intro" aria-labelledby="sigap-checkin-title">
+		<h1 id="sigap-checkin-title" class="sigap-page-title">Check-In</h1>
+		<p class="sigap-page-subtitle">
+			Masukkan kode check-in dari janji temu Anda untuk mendapat nomor antrean.
+		</p>
+	</section>
 
-	{#if success && ticket}
-		<div class="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-900 dark:bg-emerald-950">
-			<div class="font-medium text-emerald-800 dark:text-emerald-300 mb-1">Check-in berhasil!</div>
-			<div class="text-xs text-slate-600 dark:text-slate-400">Nomor antrean Anda</div>
-			<div class="mt-2 inline-flex items-center gap-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800 px-6 py-3">
-				<span class="font-mono text-3xl tracking-widest font-semibold text-slate-900 dark:text-white">
-					{ticket.formatted_number || '—'}
-				</span>
-				{#if ticket.formatted_number}
-					<button
-						type="button"
-						onclick={() => copyText('Nomor antrean', ticket?.formatted_number || '')}
-						class="text-[10px] uppercase tracking-wide text-emerald-700 dark:text-emerald-400 hover:underline"
-					>
-						Salin
-					</button>
-				{/if}
-			</div>
+	<!--
+		Two mutually exclusive outcomes. An appointment check-in redeems a code
+		against an existing booking; a walk-in registers someone who arrived
+		without one. Offering the wrong one first would send a citizen with a
+		booking down a path that cannot find it.
+	-->
+	<nav class="sigap-checkin__alt" aria-label="Alternatif check-in">
+		<span class="sigap-checkin__alt-label">Datang tanpa janji temu?</span>
+		<a
+			class="sigap-checkin__alt-link"
+			style:border-radius={RADIUS.control}
+			href="/queues/new"
+		>
+			Ambil antrean walk-in
+		</a>
+	</nav>
 
-			{#if ticket.estimated_wait_minutes != null}
-				<div class="mt-3 text-xs text-slate-600 dark:text-slate-400">
-					Estimasi tunggu: <span class="font-medium text-slate-800 dark:text-slate-200">~{ticket.estimated_wait_minutes} menit</span>
-				</div>
-			{/if}
-			{#if ticket.status}
-				<div class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-					Status: <span class="font-medium">{ticket.status}</span>
-				</div>
-			{/if}
-
-			<!-- Demo/debug refs from additive check-in response fields (UUIDs, not patient PII) -->
-			<div class="mt-4 rounded-lg border border-emerald-200/80 dark:border-emerald-800/80 bg-white/70 dark:bg-slate-900/60 p-3 space-y-2">
-				<div class="text-[10px] uppercase tracking-[1px] text-slate-500 dark:text-slate-400">Referensi demo</div>
-				{#if ticket.appointment_id}
-					<div class="flex items-start justify-between gap-2">
-						<div class="min-w-0">
-							<div class="text-[10px] text-slate-500">appointment_id</div>
-							<div class="font-mono text-[11px] break-all text-slate-700 dark:text-slate-300">{ticket.appointment_id}</div>
-						</div>
-						<button type="button" onclick={() => copyText('appointment_id', ticket?.appointment_id || '')} class="shrink-0 text-[10px] text-emerald-700 dark:text-emerald-400 hover:underline">Salin</button>
-					</div>
-				{/if}
-				{#if ticket.queue_ticket_id}
-					<div class="flex items-start justify-between gap-2">
-						<div class="min-w-0">
-							<div class="text-[10px] text-slate-500">queue_ticket_id</div>
-							<div class="font-mono text-[11px] break-all text-slate-700 dark:text-slate-300">{ticket.queue_ticket_id}</div>
-						</div>
-						<button type="button" onclick={() => copyText('queue_ticket_id', ticket?.queue_ticket_id || '')} class="shrink-0 text-[10px] text-emerald-700 dark:text-emerald-400 hover:underline">Salin</button>
-					</div>
-				{/if}
-				{#if copyHint}
-					<div class="text-[10px] text-emerald-700 dark:text-emerald-400">{copyHint}</div>
-				{/if}
-			</div>
-
-			<div class="mt-4 flex flex-wrap gap-3">
-				<a href="/patient/status" class="text-xs text-emerald-700 dark:text-emerald-400 hover:underline">→ Cek status kunjungan</a>
-				<button type="button" onclick={reset} class="text-xs text-slate-500 hover:underline">Check-in lain</button>
-			</div>
+	{#if ticket}
+		<div id="sigap-checkin-result" tabindex="-1">
+			<QueueTicket {ticket} onReset={reset} onCopy={copyValue} />
 		</div>
 	{:else}
-		<form onsubmit={(e) => { e.preventDefault(); submit(); }} class="space-y-4">
-			<div>
-				<label for="aid" class="block text-xs font-medium text-slate-500 mb-1">ID Janji Temu <span class="text-red-500">*</span></label>
-				<input id="aid" bind:value={appointmentId} required class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-mono dark:border-slate-700 dark:bg-slate-800" placeholder="UUID janji temu" />
-			</div>
-			<div>
-				<label for="code" class="block text-xs font-medium text-slate-500 mb-1">Kode Check-In <span class="text-red-500">*</span></label>
-				<input id="code" bind:value={checkinCode} required class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-mono dark:border-slate-700 dark:bg-slate-800" placeholder="Kode check-in" />
-			</div>
-			<button
-				type="submit"
-				disabled={loading}
-				class="w-full rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-			>
-				{loading ? 'Memproses…' : 'Check-In'}
-			</button>
-		</form>
+		<section class="sigap-checkin__panel" style:border-radius={RADIUS.panel}>
+			{#if failure}
+				<!--
+					The wrong-code case gets its own message. `role="alert"` because
+					it appears in response to a submit the citizen just made, and
+					without an announcement a screen reader user gets no
+					confirmation that anything happened.
+				-->
+				<div class="sigap-checkin__failure" role="alert" data-testid="checkin-error">
+					{#if isWrongCode}
+						<span class="sigap-checkin__failure-icon" aria-hidden="true">
+							<Icon icon={TicketCheck} size={18} />
+						</span>
+						<div>
+							<p class="sigap-checkin__failure-title">Kode check-in tidak cocok.</p>
+							<p class="sigap-checkin__failure-body">
+								Periksa kembali kode yang Anda terima saat membuat janji temu. Kode
+								bersifat case-insensitive.
+							</p>
+						</div>
+					{:else}
+						<p>{resolveFailureMessage(failure)}</p>
+					{/if}
+				</div>
+			{/if}
+
+			<CheckinForm bind:appointmentId bind:checkinCode {submitting} onSubmit={submit} />
+
+			<p class="sigap-checkin__copy-hint" role="status" aria-live="polite">{copyHint}</p>
+		</section>
 	{/if}
 </div>
+
+<style>
+	.sigap-checkin {
+		max-width: 640px;
+		margin: 0 auto;
+		padding: 20px 16px 8px;
+	}
+
+	@media (min-width: 768px) {
+		.sigap-checkin {
+			padding: 32px 24px 8px;
+		}
+	}
+
+	.sigap-checkin__alt {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+		margin-top: 16px;
+	}
+
+	.sigap-checkin__alt-label {
+		font-size: 13px;
+		color: var(--sigap-muted);
+	}
+
+	.sigap-checkin__alt-link {
+		display: inline-flex;
+		align-items: center;
+		/* Citizen touch floor. */
+		min-height: 44px;
+		padding: 0 12px;
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--sigap-primary);
+		border: 1px solid var(--sigap-border);
+		text-decoration: none;
+	}
+
+	.sigap-checkin__alt-link:hover {
+		border-color: var(--sigap-primary);
+	}
+
+	.sigap-checkin__alt-link:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
+	}
+
+	.sigap-checkin__panel {
+		margin-top: 16px;
+		padding: 16px;
+		background-color: var(--sigap-surface);
+		border: 1px solid var(--sigap-border);
+	}
+
+	.sigap-checkin__failure {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		margin-bottom: 16px;
+		padding: 12px;
+		font-size: 13px;
+		color: var(--sigap-danger);
+		border: 1px solid var(--sigap-danger);
+	}
+
+	.sigap-checkin__failure-icon {
+		display: flex;
+		flex: none;
+		margin-top: 1px;
+	}
+
+	.sigap-checkin__failure-title {
+		margin: 0;
+		font-weight: 500;
+	}
+
+	.sigap-checkin__failure-body {
+		margin: 2px 0 0;
+		font-size: 12px;
+		color: var(--sigap-muted);
+	}
+
+	.sigap-checkin__copy-hint {
+		margin: 12px 0 0;
+		font-size: 12px;
+		color: var(--sigap-muted);
+		min-height: 16px;
+	}
+</style>
