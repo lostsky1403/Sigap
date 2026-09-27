@@ -80,7 +80,7 @@
 		failure = null;
 		copyHint = '';
 
-		const outcome = await checkInAppointment(appointmentId.trim(), checkinCode.trim());
+		const outcome = await checkInAppointment(String(appointmentId ?? "").trim(), String(checkinCode ?? "").trim());
 
 		// An abort is a navigation, not a failure.
 		submitting = false;
