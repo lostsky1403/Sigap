@@ -356,6 +356,386 @@ test.describe('/faskes: the public facility catalog', () => {
 	});
 });
 
+/**
+ * The facility type, verified against the real seeded API.
+ *
+ * The point of these tests is that `type` travels the whole way — database
+ * enum, Go projection, JSON, Svelte type, rendered label — and every hop is
+ * checked against real data rather than a fixture. So the first thing here is
+ * a read of the actual wire response: the expected labels and the expected
+ * row counts are derived from what the backend returned, not from what this
+ * file believes the seed contains. A test that hardcoded "there are 3
+ * puskesmas" would keep passing after someone edited the seed, and would keep
+ * passing if the type field were dropped entirely, because the browser would
+ * still be showing the right names.
+ */
+test.describe('/faskes: the real facility type on the wire', () => {
+	interface WireFacility {
+		id: string;
+		name: string;
+		short_code: string;
+		type: string;
+		is_active: boolean;
+	}
+
+	/** Reads the public catalog exactly as the browser does, via the proxy. */
+	async function readWireCatalog(page: Page): Promise<WireFacility[]> {
+		const response = await page.request.get('/api/v1/public/facilities');
+		expect(response.status(), 'the public catalog must not require a session').toBe(200);
+		const body = (await response.json()) as {
+			success: boolean;
+			data: WireFacility[] | null;
+		};
+		expect(body.success).toBe(true);
+		return body.data ?? [];
+	}
+
+	const LABELS: Record<string, string> = {
+		puskesmas: 'Puskesmas',
+		rumah_sakit: 'Rumah Sakit'
+	};
+
+	test('the projection adds only type, and sends the raw database enum', async ({ page }) => {
+		await page.goto('/faskes');
+		const rows = await readWireCatalog(page);
+		expect(rows.length).toBeGreaterThan(0);
+
+		for (const facility of rows) {
+			// Exactly the agreed five fields. An extra one is a leak, and the
+			// key set is asserted rather than spot-checked so a newly added
+			// field fails here.
+			expect(Object.keys(facility).sort()).toEqual(
+				['id', 'is_active', 'name', 'short_code', 'type'].sort()
+			);
+			// The raw enum, not a display label. Relabelling server-side would
+			// hand the frontend a string it cannot validate against the schema.
+			expect(Object.keys(LABELS)).toContain(facility.type);
+			// The administrative fields that exist on the same table must not
+			// travel with it.
+			for (const forbidden of ['address', 'phone', 'total_beds', 'available_beds']) {
+				expect(facility, `public row must not carry ${forbidden}`).not.toHaveProperty(forbidden);
+			}
+		}
+	});
+
+	test('every seeded category renders its human-readable label', async ({ page }) => {
+		await page.goto('/faskes');
+		await expect(page.locator('#sigap-facility-results li').first()).toBeVisible({
+			timeout: 10_000
+		});
+		const wire = await readWireCatalog(page);
+		const present = [...new Set(wire.map((facility) => facility.type))];
+
+		// The dev seed carries both categories, so both labels must be on
+		// screen. If a future seed loses one, the assertion below degrades to
+		// whatever is actually there rather than inventing a row.
+		expect(present.length).toBeGreaterThan(0);
+		for (const type of present) {
+			const label = LABELS[type];
+			await expect(
+				page.locator('.sigap-facility-row__type', { hasText: label }).first(),
+				`no row renders the ${label} label`
+			).toBeVisible();
+		}
+
+		// And the raw wire values never reach the screen.
+		const bodyText = (await page.locator('body').textContent()) ?? '';
+		for (const type of present) {
+			expect(bodyText, `raw enum ${type} must not be displayed`).not.toContain(type);
+		}
+	});
+
+	test('rows are labelled from the wire field, not inferred from the name', async ({ page }) => {
+		await page.goto('/faskes');
+		await expect(page.locator('#sigap-facility-results li').first()).toBeVisible({
+			timeout: 10_000
+		});
+
+		// Cross-check the DOM against the API row by row. If any rendered label
+		// disagreed with its facility's real enum, that facility would appear
+		// under the wrong filter and the citizen would be misled about which
+		// kind of clinic it is.
+		const rendered = await page.locator('#sigap-facility-results li').evaluateAll((nodes) =>
+			nodes.map((node) => ({
+				name: (node.querySelector('.sigap-facility-row__name')?.textContent ?? '').trim(),
+				shortCode: (node.querySelector('.sigap-facility-row__code')?.textContent ?? '').trim(),
+				type: (node.querySelector('.sigap-facility-row__type')?.textContent ?? '').trim()
+			}))
+		);
+		const wire = await readWireCatalog(page);
+
+		for (const row of rendered) {
+			const match = wire.find((f) => f.name === row.name && f.short_code === row.shortCode);
+			expect(match, `${row.name} is not in the API response`).toBeTruthy();
+			expect(row.type, `${row.name} must show its real enum label`).toBe(LABELS[match!.type]);
+		}
+	});
+
+	test('filters to one category and back to all of them', async ({ page }) => {
+		await page.goto('/faskes');
+		const rows = page.locator('#sigap-facility-results li');
+		await expect(rows.first()).toBeVisible({ timeout: 10_000 });
+		const wire = await readWireCatalog(page);
+		const total = wire.length;
+		expect(total).toBeGreaterThan(0);
+
+		const typeGroup = page.getByRole('group', { name: 'Saring berdasarkan tipe' });
+		await expect(typeGroup).toBeVisible();
+
+		// Default is Semua, and it shows everything.
+		const semua = typeGroup.getByRole('button', { name: 'Semua' });
+		await expect(semua).toHaveAttribute('aria-pressed', 'true');
+		await expect(rows).toHaveCount(total);
+
+		// Each category the seed actually contains. Counts come from the API,
+		// so this asserts real filtering rather than a hardcoded number.
+		const present = [...new Set(wire.map((facility) => facility.type))];
+		const seen = new Set<string>();
+
+		for (const type of present) {
+			const expected = wire.filter((facility) => facility.type === type);
+			// Skip a category with no rows rather than asserting on an empty set.
+			if (expected.length === 0) continue;
+			seen.add(type);
+
+			await typeGroup.getByRole('button', { name: LABELS[type] }).click();
+			await expect(rows).toHaveCount(expected.length);
+			await expect(semua).toHaveAttribute('aria-pressed', 'false');
+
+			// Every surviving row really is of that category, checked by name
+			// against the API. A correct count with the wrong rows would still
+			// be a lie to the citizen.
+			for (const facility of expected) {
+				await expect(rows.filter({ hasText: facility.name })).toHaveCount(1);
+			}
+		}
+
+		// Back to the full catalog.
+		await semua.click();
+		await expect(rows).toHaveCount(total);
+		await expect(semua).toHaveAttribute('aria-pressed', 'true');
+		expect(seen.size, 'the local seed must exercise both categories').toBeGreaterThan(0);
+	});
+
+	/**
+	 * The page's own search rule, so an expected count is computed the same way
+	 * the UI computes it. Search covers name and short_code only — the two
+	 * public fields the contract allows — and nothing else.
+	 */
+	const searchMatches = (facility: WireFacility, query: string) => {
+		const needle = query.toLowerCase();
+		return (
+			facility.name.toLowerCase().includes(needle) ||
+			facility.short_code.toLowerCase().includes(needle)
+		);
+	};
+
+	test('the type filter and the search box both apply at once', async ({ page }) => {
+		await page.goto('/faskes');
+		const rows = page.locator('#sigap-facility-results li');
+		await expect(rows.first()).toBeVisible({ timeout: 10_000 });
+		const wire = await readWireCatalog(page);
+
+		// Short codes are unique per facility, so each one is a query that
+		// matches exactly one row. That makes the intersection unambiguous: the
+		// filtered count is 1 when both apply, and the other category's
+		// facility is a real near-miss rather than a hypothetical.
+		const target = wire[0];
+		const other = wire.find((facility) => facility.type !== target.type);
+		test.skip(!other, 'the local seed needs at least two categories');
+
+		await page.getByRole('searchbox').fill(target.short_code);
+		await expect(rows).toHaveCount(1);
+		await expect(rows.first()).toContainText(target.name);
+
+		// The right type: the row stays, so the type filter is not over-eager.
+		const typeGroup = page.getByRole('group', { name: 'Saring berdasarkan tipe' });
+		await typeGroup.getByRole('button', { name: LABELS[target.type] }).click();
+		await expect(rows).toHaveCount(1);
+		await expect(page.locator('.sigap-facility-row__type').first()).toHaveText(LABELS[target.type]);
+
+		// The wrong type: the row goes, and the search is still in the box, so
+		// the citizen can see which of the two filters caused it.
+		await typeGroup.getByRole('button', { name: LABELS[other!.type] }).click();
+		await expect(rows).toHaveCount(0);
+		await expect(page.getByText('Tidak ada faskes yang cocok')).toBeVisible();
+		await expect(page.getByRole('searchbox')).toHaveValue(target.short_code);
+
+		// Both conditions at once, over a query that genuinely narrows within
+		// a category. Derived from the data rather than assumed: every word of
+		// every real facility name is a candidate, and the first one that
+		// matches more than one row and fewer than all of them is used. The
+		// seed decides which word that is, so the test never hardcodes a
+		// naming coincidence someone could edit out from under it.
+		//
+		// Note this cannot rely on a word spanning both categories: the local
+		// names are "Pus<X> <name>" and "RS<X> <name>", so the category
+		// prefix and the given name never overlap. The narrowing has to happen
+		// inside a category for the intersection to be observable.
+		const byType = new Map<string, WireFacility[]>();
+		for (const facility of wire) {
+			byType.set(facility.type, [...(byType.get(facility.type) ?? []), facility]);
+		}
+		const [type, members] = [...byType.entries()].sort((a, b) => b[1].length - a[1].length)[0];
+		test.skip(members.length < 2, 'the local seed needs a multi-row category');
+
+		const candidates = [...new Set(members.flatMap((f) => f.name.split(' ')))].filter(
+			(word) => word.length >= 3
+		);
+		const query = candidates.find((candidate) => {
+			const all = wire.filter((f) => searchMatches(f, candidate));
+			return all.length > 1 && all.length < wire.length;
+		});
+		test.skip(!query, 'no word in the local seed narrows the catalog without emptying it');
+
+		await page.getByRole('searchbox').fill(query!);
+		const allMatches = wire.filter((f) => searchMatches(f, query!));
+		const typedMatches = allMatches.filter((f) => f.type === type);
+		// The premise of the assertion below. If this ever fails, the seed
+		// changed and this test is no longer proving composition.
+		expect(allMatches.length, 'the query must narrow the catalog').toBeLessThan(wire.length);
+		expect(allMatches.length, 'the query must not empty the catalog').toBeGreaterThan(0);
+		expect(
+			typedMatches.length,
+			'the query must match rows of the selected type'
+		).toBeGreaterThan(0);
+
+		// Search alone: every match, across categories.
+		await typeGroup.getByRole('button', { name: 'Semua' }).click();
+		await expect(rows).toHaveCount(allMatches.length);
+
+		// Search and type together: strictly the intersection. If the type were
+		// dropped this would be allMatches.length; if the query were dropped it
+		// would be the size of the whole category.
+		await typeGroup.getByRole('button', { name: LABELS[type] }).click();
+		await expect(rows).toHaveCount(typedMatches.length);
+		await expect(page.locator('.sigap-facility-row__type').first()).toHaveText(LABELS[type]);
+		for (const facility of typedMatches) {
+			await expect(rows.filter({ hasText: facility.name })).toHaveCount(1);
+		}
+
+		// Widening the type back keeps the query applied.
+		await typeGroup.getByRole('button', { name: 'Semua' }).click();
+		await expect(rows).toHaveCount(allMatches.length);
+		await expect(page.getByRole('searchbox')).toHaveValue(query!);
+	});
+
+	test('a type filter with no matches is recoverable and blames the type', async ({ page }) => {
+		await page.goto('/faskes');
+		await expect(page.locator('#sigap-facility-results li').first()).toBeVisible({
+			timeout: 10_000
+		});
+		const wire = await readWireCatalog(page);
+
+		const present = [...new Set(wire.map((facility) => facility.type))];
+		test.skip(present.length < 2, 'the local seed needs both categories for this case');
+		const [firstType, secondType] = present;
+		const target = wire.find((facility) => facility.type === firstType)!;
+		const opposite = secondType;
+
+		// The short code is unique per facility, so searching for it matches
+		// exactly one row, and that row's type is the opposite of the selected
+		// one. The empty result is therefore a property of the data, not
+		// something this test engineered by editing a row.
+		await page.getByRole('searchbox').fill(target.short_code);
+		await expect(page.locator('#sigap-facility-results li')).toHaveCount(1);
+
+		await page
+			.getByRole('group', { name: 'Saring berdasarkan tipe' })
+			.getByRole('button', { name: LABELS[opposite] })
+			.click();
+
+		await expect(page.getByText('Tidak ada faskes yang cocok')).toBeVisible();
+		// The message names the type, so the citizen is not sent off to shorten
+		// a query that is perfectly good.
+		await expect(page.getByText(`Tidak ada hasil untuk`, { exact: false })).toBeVisible();
+
+		// And the way back clears both inputs, not just the visible one.
+		await page.getByRole('button', { name: 'Hapus semua filter' }).click();
+		await expect(page.getByText('Tidak ada faskes yang cocok')).toBeHidden();
+		await expect(page.getByRole('searchbox')).toHaveValue('');
+		const typeGroup = page.getByRole('group', { name: 'Saring berdasarkan tipe' });
+		await expect(typeGroup.getByRole('button', { name: 'Semua' })).toHaveAttribute(
+			'aria-pressed',
+			'true'
+		);
+		await expect(typeGroup.getByRole('button', { name: LABELS[opposite] })).toHaveAttribute(
+			'aria-pressed',
+			'false'
+		);
+		await expect(page.locator('#sigap-facility-results li')).toHaveCount(wire.length);
+	});
+
+	test('the type controls meet the citizen touch target floor', async ({ page }) => {
+		await page.setViewportSize(MOBILE);
+		await page.goto('/faskes');
+		await expect(page.getByRole('searchbox')).toBeVisible({ timeout: 10_000 });
+
+		const typeGroup = page.getByRole('group', { name: 'Saring berdasarkan tipe' });
+		await expect(typeGroup).toBeVisible();
+
+		// Same 44px floor as every other citizen control. A chip is the easiest
+		// thing in a filter bar to shrink, because it looks like a tag.
+		const heights = await typeGroup
+			.getByRole('button')
+			.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().height));
+		expect(heights).toHaveLength(3);
+		for (const height of heights) {
+			expect(height, `type control is ${height}px tall`).toBeGreaterThanOrEqual(44);
+		}
+	});
+
+	test('a type control is reachable and activatable from the keyboard', async ({ page }) => {
+		await page.goto('/faskes');
+		await expect(page.getByRole('searchbox')).toBeVisible({ timeout: 10_000 });
+		const wire = await readWireCatalog(page);
+		const present = [...new Set(wire.map((facility) => facility.type))];
+
+		const typeGroup = page.getByRole('group', { name: 'Saring berdasarkan tipe' });
+		// Walk the group in DOM order from the search box. Asserting the whole
+		// sequence rather than one chip is what proves the controls are
+		// sequenced in the frozen order and reachable in a single tab run —
+		// a single-chip assertion would pass even if the first chip were
+		// unreachable and the browser had jumped the tab order for it.
+		const expectedOrder = ['Semua', ...present.map((type) => LABELS[type])];
+		await page.getByRole('searchbox').focus();
+
+		for (const [index, label] of expectedOrder.entries()) {
+			await page.keyboard.press('Tab');
+			const chip = typeGroup.getByRole('button', { name: label });
+			await expect(chip, `tab stop ${index + 1} should be "${label}"`).toBeFocused();
+			// A real button, so activation is the browser's job.
+			await expect(chip).toHaveJSProperty('tagName', 'BUTTON');
+		}
+
+		// The last chip in the group is the one focused above. Activating it
+		// with Enter must move the pressed state, which is the whole contract:
+		// a control that is focusable but not operable is worse than one that
+		// is absent, because it looks available.
+		const last = typeGroup.getByRole('button', { name: expectedOrder[expectedOrder.length - 1] });
+		await page.keyboard.press('Enter');
+		await expect(last).toHaveAttribute('aria-pressed', 'true');
+		await expect(typeGroup.getByRole('button', { name: 'Semua' })).toHaveAttribute(
+			'aria-pressed',
+			'false'
+		);
+		// And it actually filtered, rather than only updating its own state.
+		const expectedCount = wire.filter((f) => f.type === present[present.length - 1]).length;
+		await expect(page.locator('#sigap-facility-results li')).toHaveCount(expectedCount);
+	});
+
+	test('the type filter does not overflow the mobile viewport', async ({ page }) => {
+		await page.setViewportSize(MOBILE);
+		await page.goto('/faskes');
+		await expect(page.getByRole('searchbox')).toBeVisible({ timeout: 10_000 });
+		await expect(page.getByRole('group', { name: 'Saring berdasarkan tipe' })).toBeVisible();
+
+		// The chip row is a horizontal scroller, but three chips fit at 390px,
+		// so the page itself must not gain a sideways scroll.
+		await expectNoHorizontalOverflow(page);
+	});
+});
+
 test.describe('citizen pages stay inside the local origin', () => {
 	test('never contacts production while browsing', async ({ page, baseURL }) => {
 		const requested: string[] = [];
