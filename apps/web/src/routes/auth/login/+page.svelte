@@ -1,62 +1,117 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import AuthForms from '$lib/citizen/AuthForms.svelte';
+	import { RADIUS } from '$lib/design/tokens';
 	import type { ActionData } from './$types';
 
+	/**
+	 * Presentation only.
+	 *
+	 * The `+page.server.ts` action this page posts to is frozen: it owns every
+	 * credential decision, the 503 when Supabase is unconfigured, the 401 on a
+	 * rejected password, and the 303 to `/` on success. Nothing here may
+	 * pre-empt any of that, so this file does no validation and no fetching. It
+	 * reads the action's own outcome and hands it to AuthForms.
+	 */
+
 	export let form: ActionData;
+
+	/**
+	 * The action's outcome.
+	 *
+	 * SvelteKit hands the page only the payload of `fail(status, data)`, so
+	 * `form.message` is all that is available here. The status code exists on
+	 * the response and not on `form`, which is why AuthForms classifies from
+	 * the wording rather than from a number. That is a constraint of the
+	 * frozen action contract, not a shortcut.
+	 */
+	$: message = form?.message ?? '';
+
+	/**
+	 * The redirect target after a successful registration.
+	 *
+	 * The action sends people to `/auth/login?registered=1`, so the login page
+	 * has to recognise it. `has` rather than an equality check on `1`, because
+	 * the query is a flag and `?registered` and `?registered=0` are the same
+	 * statement.
+	 */
+	$: registered = $page.url.searchParams.has('registered');
 </script>
 
 <svelte:head>
 	<title>Masuk — Sigap</title>
 </svelte:head>
 
-<div class="max-w-md mx-auto mt-12 px-6">
-	<h1 class="text-2xl font-semibold tracking-tight">Masuk</h1>
+<div class="sigap-auth">
+	<section class="sigap-auth__panel" style:border-radius={RADIUS.panel}>
+		<h1 class="sigap-auth__title">Masuk</h1>
+		<p class="sigap-auth__subtitle">Kembali ke Sigap.</p>
 
-	{#if $page.url.searchParams.has('registered')}
-		<p class="mt-3 text-sm rounded-lg px-3 py-2 bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
-			Akun terdaftar. Jika verifikasi email diaktifkan, periksa kotak masuk Anda sebelum masuk.
-		</p>
-	{/if}
-
-	{#if form?.message}
-		<p role="alert" class="mt-3 text-sm rounded-lg px-3 py-2 bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-400">
-			{form.message}
-		</p>
-	{/if}
-
-	<form method="POST" class="mt-6 space-y-4">
-		<div>
-			<label for="email" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Email</label>
-			<input
-				id="email"
-				name="email"
-				type="email"
-				autocomplete="email"
-				required
-				class="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-			/>
+		<div class="sigap-auth__body">
+			<AuthForms mode="login" {message} {registered} />
 		</div>
-		<div>
-			<label for="password" class="block text-sm font-medium text-slate-700 dark:text-slate-300">Kata sandi</label>
-			<input
-				id="password"
-				name="password"
-				type="password"
-				autocomplete="current-password"
-				required
-				class="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-			/>
-		</div>
-		<button
-			type="submit"
-			class="w-full rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
-		>
-			Masuk
-		</button>
-	</form>
+	</section>
 
-	<p class="mt-4 text-sm text-slate-500">
+	<p class="sigap-auth__alt">
 		Belum punya akun?
-		<a href="/auth/register" class="text-emerald-700 dark:text-emerald-400 hover:underline">Daftar</a>
+		<a class="sigap-auth__alt-link" href="/auth/register">Daftar</a>
 	</p>
 </div>
+
+<style>
+	.sigap-auth {
+		max-width: 440px;
+		margin: 0 auto;
+		padding: 24px 16px 8px;
+	}
+
+	@media (min-width: 768px) {
+		.sigap-auth {
+			padding: 40px 24px 8px;
+		}
+	}
+
+	.sigap-auth__panel {
+		padding: 20px 16px;
+		background-color: var(--sigap-surface);
+		border: 1px solid var(--sigap-border);
+	}
+
+	.sigap-auth__title {
+		margin: 0;
+		font-size: 20px;
+		font-weight: 600;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-auth__subtitle {
+		margin: 4px 0 0;
+		font-size: 14px;
+		color: var(--sigap-muted);
+	}
+
+	.sigap-auth__body {
+		margin-top: 20px;
+	}
+
+	.sigap-auth__alt {
+		margin: 16px 0 0;
+		font-size: 13px;
+		color: var(--sigap-muted);
+	}
+
+	.sigap-auth__alt-link {
+		font-weight: 500;
+		color: var(--sigap-primary);
+		text-decoration: none;
+	}
+
+	.sigap-auth__alt-link:hover {
+		text-decoration: underline;
+	}
+
+	.sigap-auth__alt-link:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
+	}
+</style>
