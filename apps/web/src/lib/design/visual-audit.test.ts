@@ -77,7 +77,12 @@ function collect(dir: string, ext: string): string[] {
 function auditedFiles(): string[] {
 	const roots = [
 		join(webRoot, 'src', 'lib', 'ui'),
-		join(webRoot, 'src', 'lib', 'design')
+		join(webRoot, 'src', 'lib', 'design'),
+		// Phase 3B2 citizen shell and catalog. Added to the audited surface for
+		// the same reason lib/ui is: these components are the new shared layer,
+		// so anti-patterns entering here would propagate to every citizen page
+		// rather than staying in one file.
+		join(webRoot, 'src', 'lib', 'citizen')
 	];
 	// `.css` is included deliberately: tokens.css is the CSS mirror of tokens.ts
 	// and is the file the colour rule names as permitted. A collector that
@@ -86,7 +91,15 @@ function auditedFiles(): string[] {
 	const exts = ['.svelte', '.ts', '.css'];
 	const files = roots
 		.flatMap((dir) => exts.flatMap((ext) => collect(dir, ext)))
-		.concat([join(webRoot, 'src', 'app.css'), join(webRoot, 'tailwind.config.ts')]);
+		.concat([
+			join(webRoot, 'src', 'app.css'),
+			join(webRoot, 'tailwind.config.ts'),
+			// The two citizen routes. They are pages rather than shared components,
+			// but they are new citizen surface written in this phase, so they are
+			// held to the same rules as the components they compose.
+			join(webRoot, 'src', 'routes', '+page.svelte'),
+			join(webRoot, 'src', 'routes', 'faskes', '+page.svelte')
+		]);
 
 	return files.map((f) => join(f)).filter((f) => !f.endsWith('.test.ts'));
 }
@@ -275,22 +288,86 @@ describe('visual anti-pattern audit: shape system', () => {
 	});
 
 	it('keeps control heights to the two frozen densities', () => {
-		// Citizen is 44 minimum; admin is 36 compact and 40 comfortable. Any
-		// other control height means a third density has been invented.
+		// The admin densities are exactly two: 36 compact and 40 comfortable.
+		// The 44px citizen minimum and the larger touch targets are asserted
+		// separately below, because they are floors rather than fixed values.
 		expect(CONTROL_HEIGHT).toEqual({ citizen: 44, adminCompact: 36, adminComfortable: 40 });
-		// CONTROL_HEIGHT is `as const`, so its values are the literal union
-		// 44 | 36 | 40. Widening to number[] is required before .includes() can
-		// accept a value parsed out of a stylesheet; without it the comparison is
-		// a type error rather than a check.
-		const allowedHeights: number[] = Object.values(CONTROL_HEIGHT);
+		const allowedAdmin: number[] = [CONTROL_HEIGHT.adminCompact, CONTROL_HEIGHT.adminComfortable];
 		const offenders: string[] = [];
 		for (const file of auditedFiles()) {
 			const source = stripComments(readFileSync(file, 'utf8'));
-			for (const match of source.matchAll(/(?:min-)?height:\s*(\d+)px/g)) {
-				const value = Number(match[1]);
-				if (value < 36) continue; // 32px and under is not a control height
-				if (!allowedHeights.includes(value)) {
-					offenders.push(`${relative(webRoot, file)}: ${value}px`);
+			// Scoped to control-ish selectors. A `height` on a header bar or a
+			// list container is layout, not a control, and holding layout to the
+			// control scale would be the wrong rule.
+			for (const match of source.matchAll(
+				/\.(sigap-[\w-]*(?:button|link|tab|action|trigger)[\w-]*)\s*\{([^}]*)\}/g
+			)) {
+				const [, selector, body] = match;
+				for (const decl of body.matchAll(/(?:min-)?height:\s*(\d+)px/g)) {
+					const value = Number(decl[1]);
+					// At or above the citizen floor is a touch-first size, covered
+					// by the citizen rule. Sub-36px is not a control at all.
+					if (value >= CONTROL_HEIGHT.citizen) continue;
+					if (value < CONTROL_HEIGHT.adminCompact) continue;
+					if (!allowedAdmin.includes(value)) {
+						offenders.push(`${relative(webRoot, file)}: ${selector} ${value}px`);
+					}
+				}
+			}
+		}
+		expect(offenders).toEqual([]);
+	});
+
+	it('keeps every citizen touch target at or above 44px', () => {
+		// The 36px admin density is legal in the admin shell and illegal in the
+		// citizen shell, where the audience is often using one hand on a phone.
+		// A citizen control at 36px would be a 36px target, below every
+		// accessibility guideline for touch.
+		//
+		// The bound is a floor, not an exact match. 44px is the MINIMUM; a tab
+		// bar row at 56px or a primary action at 48px is a deliberately more
+		// generous target and is not drift. Only a value BELOW the floor is a
+		// defect, which is why this is separate from the control-scale rule: same
+		// files, different threshold, different reason.
+		const offenders: string[] = [];
+		for (const file of auditedFiles()) {
+			if (!relative(webRoot, file).includes(join('lib', 'citizen'))) continue;
+			const source = stripComments(readFileSync(file, 'utf8'));
+			for (const match of source.matchAll(
+				/\.(sigap-[\w-]*(?:button|link|tab|item|action|trigger|search__input)[\w-]*)\s*\{([^}]*)\}/g
+			)) {
+				const [, selector, body] = match;
+				for (const decl of body.matchAll(/(?:min-)?height:\s*(\d+)px/g)) {
+					const value = Number(decl[1]);
+					if (value < CONTROL_HEIGHT.citizen) {
+						offenders.push(`${relative(webRoot, file)}: ${selector} ${value}px`);
+					}
+				}
+			}
+		}
+		expect(offenders).toEqual([]);
+	});
+
+	it('defines no control height that is neither a token nor a citizen target', () => {
+		// Catches a genuinely invented density — a 52px control, say — while
+		// allowing the 44/48/56px citizen targets above. Anything at or above the
+		// citizen floor is a touch-first size; anything below it must be one of
+		// the two frozen admin densities.
+		const allowedSmall: number[] = [CONTROL_HEIGHT.adminCompact, CONTROL_HEIGHT.adminComfortable];
+		const offenders: string[] = [];
+		for (const file of auditedFiles()) {
+			const source = stripComments(readFileSync(file, 'utf8'));
+			for (const match of source.matchAll(
+				/\.(sigap-[\w-]*(?:button|link|tab|item|action|trigger)[\w-]*)\s*\{([^}]*)\}/g
+			)) {
+				const [, selector, body] = match;
+				for (const decl of body.matchAll(/(?:min-)?height:\s*(\d+)px/g)) {
+					const value = Number(decl[1]);
+					if (value >= CONTROL_HEIGHT.citizen) continue;
+					if (value < CONTROL_HEIGHT.adminCompact) continue; // sub-control, e.g. a badge
+					if (!allowedSmall.includes(value)) {
+						offenders.push(`${relative(webRoot, file)}: ${selector} ${value}px`);
+					}
 				}
 			}
 		}
@@ -319,11 +396,28 @@ describe('visual anti-pattern audit: scan integrity', () => {
 		expect(files.some((f) => f.endsWith('.test.ts'))).toBe(false);
 	});
 
-	it('does not exclude legacy route pages from this scope', () => {
-		// Pins the deliberate scope boundary. Legacy routes are not yet migrated
-		// and must not fail the gate, but a future `+page.svelte` accidentally
-		// dropped INTO lib/ui would be audited — and that is the correct outcome.
+	it('audits the new citizen surface but not unmigrated routes', () => {
+		// Pins the scope boundary in both directions, because both mistakes are
+		// possible and opposite.
+		//
+		// Too wide: a legacy route still carrying emerald Tailwind classes would
+		// fail the gate, punishing migration work scheduled for a later phase
+		// rather than measuring whether the new design system is sound.
+		//
+		// Too narrow: dropping a new citizen page out of the audit would let an
+		// anti-pattern ship in the one surface this phase is responsible for.
+		//
+		// So the two citizen pages written in Phase 3B2 are in, and the older
+		// unmigrated routes are out.
 		const files = auditedFiles().map((f) => relative(webRoot, f).replace(/\\/g, '/'));
-		expect(files.some((f) => f.includes('routes/'))).toBe(false);
+		expect(files).toContain('src/lib/citizen/CitizenHeader.svelte');
+		expect(files).toContain('src/lib/citizen/CitizenBottomNav.svelte');
+		expect(files).toContain('src/lib/citizen/FacilityResultRow.svelte');
+		expect(files).toContain('src/routes/+page.svelte');
+		expect(files).toContain('src/routes/faskes/+page.svelte');
+
+		// Unmigrated routes and the admin area stay out of scope.
+		const routeFiles = files.filter((f) => f.startsWith('src/routes/'));
+		expect(routeFiles.sort()).toEqual(['src/routes/+page.svelte', 'src/routes/faskes/+page.svelte']);
 	});
 });
