@@ -45,6 +45,73 @@ if (!('inert' in HTMLElement.prototype)) {
 }
 
 /**
+ * jsdom has no Web Animations API, so `Element.prototype.animate` is absent.
+ *
+ * Svelte's built-in transitions (fade, fly, slide) call it unconditionally when
+ * an element enters or leaves the DOM. Without a shim, any component that uses
+ * a transition throws `element.animate is not a function` the moment it tries
+ * to animate — which fails the test for an environment reason while telling you
+ * nothing about the component.
+ *
+ * The subtle part is `onfinish`. Svelte does not use `addEventListener('finish')`;
+ * it assigns the `onfinish` *property* twice, and the second assignment is
+ * chained inside the first one's callback:
+ *
+ *   1. a zero-duration "dummy" animation is created, and its `onfinish` starts
+ *      the real animation;
+ *   2. the real animation is created, and its `onfinish` calls the transition's
+ *      completion callback, which is what dispatches `outroend` and finally
+ *      removes the element from the DOM.
+ *
+ * A shim that returns a static object silently breaks that chain: the property
+ * assignment succeeds, nothing is ever called, and an element with an outro
+ * transition stays in the DOM forever. A test then fails with "expected null,
+ * got element" and looks like a component bug when it is an environment gap.
+ *
+ * So the shim fires `onfinish` on a macrotask. A macrotask (not a microtask) is
+ * required: the second animation is created *inside* the first callback, so its
+ * property has to be assignable before anything fires. Each call returns a fresh
+ * object so the two chained animations do not overwrite each other, and
+ * `cancel()` latches so an aborted animation cannot fire a late completion.
+ */
+if (!Element.prototype.animate) {
+	Element.prototype.animate = function animate() {
+		let onFinish: (() => void) | null = null;
+		let cancelled = false;
+
+		const handle = {
+			currentTime: 0,
+			effect: null,
+			playState: 'finished',
+			persist: () => {},
+			reverse: () => {},
+			pause: () => {},
+			play: () => {},
+			finish: () => {},
+			cancel: () => {
+				cancelled = true;
+			},
+			addEventListener: () => {},
+			removeEventListener: () => {},
+			dispatchEvent: () => false
+		} as unknown as Animation;
+
+		Object.defineProperty(handle, 'onfinish', {
+			configurable: true,
+			get: () => onFinish,
+			set: (handler: (() => void) | null) => {
+				onFinish = handler;
+				setTimeout(() => {
+					if (!cancelled) onFinish?.call(handle, new Event('finish') as never);
+				}, 0);
+			}
+		});
+
+		return handle;
+	} as Element['animate'];
+}
+
+/**
  * jsdom implements the <dialog> element but not its modal behaviour: showModal()
  * and close() are absent, and `open` is not reflected as a property.
  *
