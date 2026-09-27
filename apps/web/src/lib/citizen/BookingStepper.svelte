@@ -122,7 +122,11 @@
 
 	.sigap-stepper__item--current .sigap-stepper__marker {
 		background-color: var(--sigap-primary);
-		color: var(--sigap-primary-foreground, #ffffff);
+		/* Text on a primary fill is --sigap-surface, the same pairing the
+		   primary button uses. There is no separate on-primary token, and
+		   inventing one, or falling back to a raw #ffffff, would put an
+		   unfrozen colour in the system. */
+		color: var(--sigap-surface);
 	}
 
 	.sigap-stepper__label {

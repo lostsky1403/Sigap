@@ -94,11 +94,19 @@ function auditedFiles(): string[] {
 		.concat([
 			join(webRoot, 'src', 'app.css'),
 			join(webRoot, 'tailwind.config.ts'),
-			// The two citizen routes. They are pages rather than shared components,
-			// but they are new citizen surface written in this phase, so they are
-			// held to the same rules as the components they compose.
+			// The citizen routes migrated so far. They are pages rather than shared
+			// components, but they are new citizen surface written in this
+			// redesign, so they are held to the same rules as the components they
+			// compose. Listing them explicitly is the only way a route page is
+			// scanned at all, which is the whole point: a rule that cannot see a
+			// file cannot hold it.
 			join(webRoot, 'src', 'routes', '+page.svelte'),
-			join(webRoot, 'src', 'routes', 'faskes', '+page.svelte')
+			join(webRoot, 'src', 'routes', 'faskes', '+page.svelte'),
+			// Phase 3B3 transactional flows.
+			join(webRoot, 'src', 'routes', 'appointments', 'new', '+page.svelte'),
+			join(webRoot, 'src', 'routes', 'appointments', 'check-in', '+page.svelte'),
+			join(webRoot, 'src', 'routes', 'queues', 'new', '+page.svelte'),
+			join(webRoot, 'src', 'routes', 'patient', 'status', '+page.svelte')
 		]);
 
 	return files.map((f) => join(f)).filter((f) => !f.endsWith('.test.ts'));
@@ -407,8 +415,8 @@ describe('visual anti-pattern audit: scan integrity', () => {
 		// Too narrow: dropping a new citizen page out of the audit would let an
 		// anti-pattern ship in the one surface this phase is responsible for.
 		//
-		// So the two citizen pages written in Phase 3B2 are in, and the older
-		// unmigrated routes are out.
+		// So every migrated citizen page is in, and the older unmigrated routes
+		// and the whole admin area are out.
 		const files = auditedFiles().map((f) => relative(webRoot, f).replace(/\\/g, '/'));
 		expect(files).toContain('src/lib/citizen/CitizenHeader.svelte');
 		expect(files).toContain('src/lib/citizen/CitizenBottomNav.svelte');
@@ -416,8 +424,43 @@ describe('visual anti-pattern audit: scan integrity', () => {
 		expect(files).toContain('src/routes/+page.svelte');
 		expect(files).toContain('src/routes/faskes/+page.svelte');
 
-		// Unmigrated routes and the admin area stay out of scope.
-		const routeFiles = files.filter((f) => f.startsWith('src/routes/'));
-		expect(routeFiles.sort()).toEqual(['src/routes/+page.svelte', 'src/routes/faskes/+page.svelte']);
+		/*
+		 * The Phase 3B3 transactional pages, asserted individually rather than
+		 * as one list. An exact-array assertion is the wrong tool here: adding a
+		 * legitimately migrated route would then fail the suite and invite
+		 * someone to delete the audit entry instead of adding theirs. Naming
+		 * each page keeps the guarantee while leaving room to migrate more.
+		 */
+		for (const page of [
+			'src/lib/citizen/BookingStepper.svelte',
+			'src/lib/citizen/BookingSummary.svelte',
+			'src/lib/citizen/CheckinForm.svelte',
+			'src/lib/citizen/QueueTicket.svelte',
+			'src/lib/citizen/WalkInForm.svelte',
+			'src/lib/citizen/VisitProgress.svelte',
+			'src/routes/appointments/new/+page.svelte',
+			'src/routes/appointments/check-in/+page.svelte',
+			'src/routes/queues/new/+page.svelte',
+			'src/routes/patient/status/+page.svelte'
+		]) {
+			expect(files, `${page} must be scanned by the visual audit`).toContain(page);
+		}
+
+		// Unmigrated routes and the admin area stay out of scope. The exact list
+		// is still pinned, because here the risk is a legacy page being pulled in
+		// by accident and blocking the gate.
+		const routeFiles = files
+			.filter((f) => f.startsWith('src/routes/'))
+			.map((f) => f.replace(/\\/g, '/'))
+			.sort();
+		expect(routeFiles).toEqual([
+			'src/routes/+page.svelte',
+			'src/routes/appointments/check-in/+page.svelte',
+			'src/routes/appointments/new/+page.svelte',
+			'src/routes/faskes/+page.svelte',
+			'src/routes/patient/status/+page.svelte',
+			'src/routes/queues/new/+page.svelte'
+		]);
+		expect(files.some((f) => f.includes('/admin/'))).toBe(false);
 	});
 });

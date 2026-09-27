@@ -39,9 +39,22 @@ export interface FieldErrors {
 	[key: string]: string;
 }
 
-/** Digits only, matching `normalizePhone` in booking.go. */
+/**
+ * Digits only, matching `normalizePhone` in booking.go.
+ *
+ * Coerces rather than assuming a string. A validator that throws on null is
+ * worse than one that reports a missing field: the throw happens inside an
+ * event handler, so the citizen gets a silent no-op and a console error
+ * instead of the "wajib diisi" message sitting right there. `?? ''` is what
+ * turns a bind-to-undefined-prop into a normal validation failure.
+ */
 function digitsOnly(value: string): string {
-	return value.replace(/\D/g, '');
+	return String(value ?? '').replace(/\D/g, '');
+}
+
+/** Coerces any bind-produced value to a string. See `digitsOnly`. */
+function asText(value: string): string {
+	return String(value ?? '');
 }
 
 /**
@@ -53,7 +66,7 @@ function digitsOnly(value: string): string {
  * international number.
  */
 export function validatePhone(value: string): string {
-	const trimmed = value.trim();
+	const trimmed = asText(value).trim();
 	if (!trimmed) return 'Nomor telepon wajib diisi.';
 	const digits = digitsOnly(trimmed);
 	if (digits.length < 10 || digits.length > 15) {
@@ -63,12 +76,12 @@ export function validatePhone(value: string): string {
 }
 
 export function validateRequired(value: string, label: string): string {
-	if (!value.trim()) return `${label} wajib diisi.`;
+	if (!asText(value).trim()) return `${label} wajib diisi.`;
 	return '';
 }
 
 export function validateName(value: string): string {
-	const trimmed = value.trim();
+	const trimmed = asText(value).trim();
 	if (!trimmed) return 'Nama pasien wajib diisi.';
 	// Same ceiling as validateBookAppointment, so a 51-character name is caught
 	// here rather than after a round trip.
@@ -89,8 +102,8 @@ export function validateName(value: string): string {
  * having the server guess, so what the citizen sees is what gets stored.
  */
 export function validateAppointmentTime(value: string, now: Date = new Date()): string {
-	if (!value) return 'Waktu janji temu wajib diisi.';
-	const parsed = new Date(value);
+	if (!asText(value)) return 'Waktu janji temu wajib diisi.';
+	const parsed = new Date(asText(value));
 	if (Number.isNaN(parsed.getTime())) return 'Format waktu janji temu tidak valid.';
 	if (parsed.getTime() <= now.getTime()) return 'Waktu janji temu harus di masa depan.';
 	return '';
@@ -98,7 +111,7 @@ export function validateAppointmentTime(value: string, now: Date = new Date()): 
 
 /** The backend's cap on a lookup code, from `maxPatientCodeLen` in patient.go. */
 export function validateLookupCode(value: string): string {
-	const trimmed = value.trim();
+	const trimmed = asText(value).trim();
 	if (!trimmed) return 'Kode wajib diisi.';
 	if (trimmed.length > 64) return 'Kode terlalu panjang.';
 	// The backend's safeCodeRe. Checking it here turns a round trip into an
@@ -279,6 +292,110 @@ export function resolveFailureMessage(failure: FlowFailure | null): string {
 		case 'unknown':
 			return failure.message || GENERIC_UNAVAILABLE;
 	}
+}
+
+/**
+ * Citizen-facing progress steps.
+ *
+ * A CURRENT-STATE indicator only. There is deliberately no timeline, no
+ * history, and no per-step duration, because the backend has none to give:
+ * `PatientStatusLookup` returns one appointment status, one check-in label,
+ * and optionally a queue number. Rendering "checked in at 09:12, queued at
+ * 09:20" would mean inventing both timestamps, and a civic health page that
+ * fabricates a wait history is worse than one that admits it only knows the
+ * present.
+ *
+ * The four labels are fixed by design: Check-In, Antre, Dilayani, Selesai.
+ */
+export type VisitProgressStep = 'check-in' | 'antre' | 'dilayani' | 'selesai';
+
+export const VISIT_PROGRESS_LABELS: Record<VisitProgressStep, string> = {
+	'check-in': 'Check-In',
+	antre: 'Antre',
+	dilayani: 'Dilayani',
+	// Quoted because `selesai` collides with nothing in JS but reads as a
+	// stray word next to the other three; the quoting keeps the four keys
+	// visibly parallel.
+	selesai: 'Selesai'
+};
+
+/** The four steps in the order they occur. */
+export const VISIT_PROGRESS_ORDER: VisitProgressStep[] = [
+	'check-in',
+	'antre',
+	'dilayani',
+	'selesai'
+];
+
+/**
+ * Reproduces `mapCheckinStatus` in patient.go, exactly.
+ *
+ * This is the one function in the frontend that duplicates a backend rule, and
+ * the duplication is deliberate: the label a citizen reads has to be the label
+ * the backend computed, and re-deriving it from `appointment_status` in the
+ * browser would be a second implementation free to drift. The mapping below is
+ * transcribed from the Go switch, including its `default` arm.
+ *
+ * The output is a step in the progress indicator, plus two terminal states
+ * that are not progress at all:
+ *
+ *   - `dibatalkan` and `tidak_hadir` are outcomes, not steps. A cancelled
+ *     appointment must not render as "Selesai" or sit at step 1 looking like
+ *     the citizen simply has not arrived yet. They get their own presentation.
+ *   - An unrecognised value is passed through rather than guessed, so a status
+ *     added on the backend shows up as itself instead of being quietly
+ *     relabelled as something the citizen would act on.
+ */
+export type VisitProgress =
+	| { kind: 'step'; step: VisitProgressStep }
+	| { kind: 'cancelled' }
+	| { kind: 'no-show' }
+	| { kind: 'unknown'; raw: string };
+
+/**
+ * Maps the backend's `checkin_status` onto a progress presentation.
+ *
+ * The switch mirrors `mapCheckinStatus` in patient.go:
+ *   not_checked_in → Check-In
+ *   checked_in     → Antre
+ *   in_queue       → Dilayani
+ *   selesai        → Selesai
+ *   dibatalkan     → Dibatalkan
+ *   tidak_hadir    → Tidak hadir
+ *   anything else  → returned unchanged by the backend, and passed through here
+ */
+export function visitProgressFrom(checkinStatus: string): VisitProgress {
+	switch (checkinStatus) {
+		case 'not_checked_in':
+			return { kind: 'step', step: 'check-in' };
+		case 'checked_in':
+			return { kind: 'step', step: 'antre' };
+		case 'in_queue':
+			return { kind: 'step', step: 'dilayani' };
+		case 'selesai':
+			return { kind: 'step', step: 'selesai' };
+		case 'dibatalkan':
+			return { kind: 'cancelled' };
+		case 'tidak_hadir':
+			return { kind: 'no-show' };
+		default:
+			// The backend's `default: return status` arm. Passing the raw value
+			// through means an unmapped status is visible rather than silently
+			// presented as progress the citizen is not actually making.
+			return { kind: 'unknown', raw: checkinStatus };
+	}
+}
+
+/**
+ * The headline for a non-progress outcome.
+ *
+ * A cancelled or missed appointment is information, not a step, and it needs
+ * to say what happened rather than leave the indicator stuck at the start.
+ */
+export function visitOutcomeLabel(progress: VisitProgress): string {
+	if (progress.kind === 'cancelled') return 'Janji temu dibatalkan';
+	if (progress.kind === 'no-show') return 'Tidak hadir';
+	return '';
 }
 
 /* ------------------------------------------------------------------ *
