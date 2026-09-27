@@ -28,17 +28,17 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// Prevent clickjacking — no framing of the admin UI.
 	response.headers.set('X-Frame-Options', 'DENY');
 
-	// Content Security Policy:
-	//   - default-src 'self': only load resources from same origin
-	//   - script-src 'self': no inline scripts
-	//   - style-src 'self' 'unsafe-inline': SvelteKit needs unsafe-inline for scoped styles
-	//   - connect-src 'self': API calls and SSE go to same origin (proxied)
-	//   - img-src 'self' data: inline images for Svelte components
-	//   - frame-ancestors 'none': prevent framing entirely
-	response.headers.set(
-		'Content-Security-Policy',
-		"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'"
-	);
+	// The Content-Security-Policy header itself is set by SvelteKit from
+	// `kit.csp.directives` in svelte.config.js, together with the matching
+	// per-request nonce on its inline hydration script.
+	//
+	// It used to be hardcoded here as `script-src 'self'`, which is a genuine
+	// defect: SvelteKit emits its hydration payload as an inline <script>, so
+	// that policy blocked the very script that makes the app interactive. Pages
+	// still rendered their server HTML, and every server-side test passed, but
+	// in a browser no fetch fired, no form submitted, and no navigation worked.
+	// Two independent places now guard it — a CSP nonce in svelte.config.js, and
+	// a hydration assertion in e2e/citizen-shell.spec.ts.
 
 	// Prevent MIME sniffing.
 	response.headers.set('X-Content-Type-Options', 'nosniff');
