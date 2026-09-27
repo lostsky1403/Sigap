@@ -32,11 +32,36 @@ const walletContent = fs.readFileSync(walletPath, 'utf-8');
 assert(!walletContent.includes(': any'), 'Wallet should not contain untyped any');
 
 // Demo polish: surface additive API response fields already returned by backend
+//
+// These assertions check what the citizen actually SEES, so they read the page
+// together with the components it renders. Phase 3B3 moved the check-in ticket
+// markup out of the page and into $lib/citizen/QueueTicket.svelte, which is
+// where it belonged: the page owns fetching and the failure states, the
+// component owns the success presentation. Asserting on the page file alone
+// would have failed on that split while the fields were on screen the whole
+// time, and "fixing" it by inlining the markup back would undo the split.
+//
+// So each marker is looked for across the page and the components it imports.
+// A marker that is dropped from the UI still fails; one that moved does not.
+const citizenTicketPath = path.join(root, 'src/lib/citizen/QueueTicket.svelte');
 const checkInPath = path.join(root, 'src/routes/appointments/check-in/+page.svelte');
 const checkInContent = fs.readFileSync(checkInPath, 'utf-8');
-assert(checkInContent.includes('appointment_id'), 'Check-in success UI should surface appointment_id');
-assert(checkInContent.includes('queue_ticket_id'), 'Check-in success UI should surface queue_ticket_id');
-assert(checkInContent.includes('formatted_number'), 'Check-in success UI should show formatted queue number');
+const checkInUi =
+	checkInContent +
+	fs.readFileSync(citizenTicketPath, 'utf-8') +
+	fs.readFileSync(path.join(root, 'src/lib/citizen/CheckinForm.svelte'), 'utf-8');
+
+assert(checkInUi.includes('appointment_id'), 'Check-in success UI should surface appointment_id');
+assert(checkInUi.includes('queue_ticket_id'), 'Check-in success UI should surface queue_ticket_id');
+assert(checkInUi.includes('formatted_number'), 'Check-in success UI should show formatted queue number');
+
+// And the page must actually compose that component. Without this, deleting the
+// <QueueTicket> usage would leave the markers present in an unreferenced file
+// and every assertion above would still pass.
+assert(
+	checkInContent.includes('QueueTicket'),
+	'Check-in page must render the QueueTicket component that surfaces those fields'
+);
 
 const bookingPath = path.join(root, 'src/routes/appointments/new/+page.svelte');
 const bookingContent = fs.readFileSync(bookingPath, 'utf-8');
