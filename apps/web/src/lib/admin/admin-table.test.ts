@@ -82,9 +82,19 @@ describe('DataTable: semantics', () => {
 
 	it('marks only the declared secondary column as secondary', () => {
 		render(DataTable, { columns, caption: 'x' });
-		const secondary = document.querySelectorAll('.sigap-data-table__th--secondary');
+		const secondary = document.querySelectorAll('.sigap-table-col-secondary');
 		expect(secondary).toHaveLength(1);
 		expect(secondary[0].textContent).toContain('Terdaftar');
+	});
+
+	it('uses ONE class for both halves of a secondary column', () => {
+		// The header and the cell must be hidden by the same rule. A scoped rule on
+		// the header alone would leave the cell visible, producing a table with more
+		// cells than headers and every later value under the wrong label.
+		render(DataTable, { columns, caption: 'x' });
+		const header = document.querySelectorAll('thead th');
+		expect(header[2].classList.contains('sigap-table-col-secondary')).toBe(true);
+		expect(header[0].classList.contains('sigap-table-col-secondary')).toBe(false);
 	});
 
 	it('renders the caller-supplied rows inside tbody', () => {
