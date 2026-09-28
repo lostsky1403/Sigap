@@ -171,12 +171,18 @@
 		align-items: center;
 		gap: 10px;
 		/*
-			38px, not the 36px admin control height and not the 44px citizen floor.
-			A sidebar row is navigation, and the frozen reference fixes it at 38px:
-			tight enough to fit six destinations plus an account block on a laptop
-			screen, tall enough to be a comfortable pointer target.
+			`var(--sigap-control-admin-comfortable)` = 40px, not a literal.
+
+			The frozen HTML reference draws its nav rows at 38px, but 38 is not a
+			design token: CONTROL_HEIGHT is exactly { citizen: 44, adminCompact: 36,
+			adminComfortable: 40 }. Copying the mockup's number would introduce a
+			third admin density that no token names, and the visual audit rejects
+			any control height that is neither a token nor a citizen target. The
+			comfortable density is the right of the two anyway — it is the size
+			meant for an operator working a queue all day — and 40 > 38, so the row
+			is the more comfortable of the two candidates.
 		*/
-		height: 38px;
+		height: var(--sigap-control-admin-comfortable);
 		padding: 0 12px;
 		font-size: 14px;
 		font-weight: 450;
@@ -223,7 +229,8 @@
 		display: flex;
 		align-items: center;
 		gap: 10px;
-		height: 38px;
+		/* Same frozen density as the nav rows above, for the same reason. */
+		height: var(--sigap-control-admin-comfortable);
 		padding: 0 12px;
 		font-size: 13px;
 		color: var(--sigap-foreground);

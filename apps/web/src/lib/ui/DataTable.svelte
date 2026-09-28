@@ -1,3 +1,27 @@
+<script lang="ts" context="module">
+	/**
+	 * A column definition.
+	 *
+	 * Declared in the module context because a Svelte component can only export
+	 * runtime values from its instance script — exporting an `interface` from
+	 * there produces a runtime "does not export" error rather than a type one,
+	 * which is a confusing way to learn the rule.
+	 */
+	export interface DataTableColumn {
+		/** Column header text. Rendered uppercase in the header row. */
+		label: string;
+		/**
+		 * Hide below 1280px. Only ever true for genuinely lower-priority columns;
+		 * never for status, actions, or the primary identity of the row.
+		 */
+		secondary?: boolean;
+		/** Right-align the column, for numbers and timestamps. */
+		numeric?: boolean;
+		/** Header alignment, when it differs from the column's body alignment. */
+		headerNumeric?: boolean;
+	}
+</script>
+
 <script lang="ts">
 	/**
 	 * The one table primitive in SIGAP.
@@ -23,20 +47,6 @@
 	 * hiding rule is a property of the column rather than a media query each page
 	 * writes for itself.
 	 */
-	export interface DataTableColumn {
-		/** Column header text. Rendered uppercase in the header row. */
-		label: string;
-		/**
-		 * Hide below 1280px. Only ever true for genuinely lower-priority columns;
-		 * never for status, actions, or the primary identity of the row.
-		 */
-		secondary?: boolean;
-		/** Right-align the column, for numbers and timestamps. */
-		numeric?: boolean;
-		/** Header alignment, when it differs from the column's body alignment. */
-		headerNumeric?: boolean;
-	}
-
 	export let columns: readonly DataTableColumn[] = [];
 	export let caption: string = '';
 	export let showCaption: boolean = false;
@@ -61,7 +71,7 @@
 				{#each columns as column (column.label)}
 					<th
 						scope="col"
-						class:sigap-data-table__th--secondary={column.secondary}
+						class:sigap-table-col-secondary={column.secondary}
 						class:sigap-data-table__th--numeric={column.numeric ?? column.headerNumeric}
 					>
 						{column.label}
@@ -187,9 +197,15 @@
 		1280px column drop are deliberately different breakpoints: the shell
 		reflows first, then the table sheds its least important columns, so the
 		operator is never asked to read a table that has not finished adapting.
+
+		`:global` is load-bearing. The matching `<td>` lives in a ROW component
+		whose styles are scoped, so a scoped rule here would hide the header and
+		leave the cell visible — a table with seven headers and nine columns, and
+		every value after the hidden one shifted under the wrong label. Declaring
+		the rule globally means one breakpoint governs both halves of a column.
 	*/
 	@media (max-width: 1279px) {
-		.sigap-data-table__th--secondary {
+		:global(.sigap-table-col-secondary) {
 			display: none;
 		}
 	}
