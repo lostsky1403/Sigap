@@ -34,8 +34,6 @@
 	 */
 	export let secondary: readonly DataTableColumn[] = [];
 
-	export let rows: readonly unknown[] = [];
-
 	/** The derived column set: essential first, then secondary. */
 	$: columns = [...essential, ...secondary.map((column) => ({ ...column, secondary: true }))];
 </script>
