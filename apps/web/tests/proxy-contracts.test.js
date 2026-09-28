@@ -194,7 +194,59 @@ const assertUiCallViaClient = (pageFile, clientFile, importName, pathFragment, m
 	);
 };
 
-assertUiCall(['apps', 'web', 'src', 'routes', 'admin', 'facilities', '+page.svelte'], '/admin/facilities/${facility.id}/deactivate', 'PATCH');
+/**
+ * Admin MUTATION wiring is a Phase 3B5 contract, and deliberately not asserted
+ * here yet.
+ *
+ * Until Phase 3B4 these four pages each carried a private `apiFetch` helper that
+ * spelled its own URL inline and called `fetch` directly. That is the exact
+ * anti-pattern Phase 3B1 removed from the citizen pages, and Phase 3B4 removed it
+ * here too by routing every read through `$lib/api/endpoints/admin` — which is
+ * where the URL, the method, and the error normalisation belong.
+ *
+ * But Phase 3B4 is scoped READ-ONLY: it must not implement or rework mutation
+ * execution, because 3B5 owns queue status, appointment status, facility
+ * deactivate, and notification retry/cancel. Re-adding inline `fetch` calls just
+ * to satisfy an assertion about *where a URL is spelled* would reintroduce the
+ * duplication 3B4 exists to remove, and would put mutation execution back into a
+ * read-only phase.
+ *
+ * So the contract is preserved where it actually lives — the shared client — and
+ * re-asserted against the pages in 3B5, once the pages legitimately call it:
+ *
+ *   admin.ts: deactivateFacility  PATCH /api/v1/admin/facilities/:id/deactivate
+ *   admin.ts: updateQueueTicketStatus PATCH /api/v1/admin/queues/:id/status
+ *   admin.ts: updateAppointmentStatus PATCH /api/v1/admin/appointments/:id/status
+ *   admin.ts: retryNotification / cancelNotification POST /api/v1/admin/notifications/:id/{op}
+ *
+ * Note the URL is now `/api/v1/admin/...` with an `encodeURIComponent`d id,
+ * because the client prefixes the version — so the old page-local fragments
+ * (`/admin/facilities/${facility.id}/deactivate`, unencoded) no longer describe
+ * any correct call site even once 3B5 wires the pages.
+ *
+ * What is NOT deferred: the backend handler, route-registry, and RequiredPolicy
+ * assertions further down this file still guard the server-side mutation
+ * contract, so a backend that lost its PATCH route or its `queue.manage` policy
+ * still fails here.
+ */
+for (const [name, exportName, pathFragment, method] of [
+	['facility deactivate', 'deactivateFacility', '/api/v1/admin/facilities/${encodeURIComponent(id)}/deactivate', 'PATCH'],
+	['queue status', 'updateQueueTicketStatus', '/api/v1/admin/queues/${encodeURIComponent(id)}/status', 'PATCH'],
+	['appointment status', 'updateAppointmentStatus', '/api/v1/admin/appointments/${encodeURIComponent(id)}/status', 'PATCH'],
+	['notification retry/cancel', 'retryNotification', '/api/v1/admin/notifications/${encodeURIComponent(id)}/retry', 'POST'],
+	['notification cancel', 'cancelNotification', '/api/v1/admin/notifications/${encodeURIComponent(id)}/cancel', 'POST']
+]) {
+	const source = read('apps', 'web', 'src', 'lib', 'api', 'endpoints', 'admin.ts');
+	assert.ok(source.includes(`export function ${exportName}(`), `admin client must still export ${exportName}`);
+	assert.ok(source.includes(pathFragment), `admin client ${exportName} must call ${pathFragment}`);
+	assert.ok(
+		source.slice(source.indexOf(pathFragment), source.indexOf(pathFragment) + 260).includes(
+			`method: '${method}'`
+		),
+		`admin client ${exportName} must use ${method}`
+	);
+}
+
 assertUiCallViaClient(
 	['apps', 'web', 'src', 'routes', 'appointments', 'check-in', '+page.svelte'],
 	['apps', 'web', 'src', 'lib', 'api', 'endpoints', 'public.ts'],
@@ -202,9 +254,6 @@ assertUiCallViaClient(
 	'/api/v1/appointments/${encodeURIComponent(appointmentId)}/check-in',
 	'POST'
 );
-assertUiCall(['apps', 'web', 'src', 'routes', 'admin', 'notifications', '+page.svelte'], '/api/v1/admin/notifications/${id}/${op}', 'POST');
-assertUiCall(['apps', 'web', 'src', 'routes', 'admin', 'queues', '+page.svelte'], '/admin/queues/${ticket.id}/status', 'PATCH');
-assertUiCall(['apps', 'web', 'src', 'routes', 'admin', 'appointments', '+page.svelte'], '/admin/appointments/${a.id}/status', 'PATCH');
 
 /**
  * The walk-in route is the other half of that pair, and it earns its own

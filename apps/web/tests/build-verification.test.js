@@ -68,9 +68,59 @@ const bookingContent = fs.readFileSync(bookingPath, 'utf-8');
 assert(bookingContent.includes('checkin_code'), 'Booking success UI should surface checkin_code');
 assert(bookingContent.includes('result.id'), 'Booking success UI should surface appointment id');
 
+/**
+ * The admin READ pages must keep surfacing a per-row source marker — the field
+ * that says when the data in front of the operator last changed.
+ *
+ * These two pages do NOT have the same marker, and the difference is not an
+ * oversight. It is a fact about the schema, and the test is pinned to that fact
+ * deliberately so nobody "fixes" one page by copying the other:
+ *
+ *   - `appointments` HAS an `updated_at` column, and the Go list query selects
+ *     it, so the page surfaces `appointment.updated_at` directly.
+ *   - `queue_tickets` has NO `updated_at` column at all. The Go list query
+ *     (apps/api/internal/handler/admin.go) selects exactly
+ *     `id, facility_id, queue_number, formatted_number, status, registered_at,
+ *     called_at, completed_at`. There is nothing to select and nothing to show.
+ *
+ * So the queue board's marker is built from the three timestamps that every
+ * status transition actually stamps. The assertion below therefore checks that
+ * the board derives and displays a source marker, and that it does so from the
+ * real fields — NOT that the string `updated_at` appears, which would be
+ * asserting an inventory of a column that does not exist.
+ */
 const adminQueuesPath = path.join(root, 'src/routes/admin/queues/+page.svelte');
 const adminQueuesContent = fs.readFileSync(adminQueuesPath, 'utf-8');
-assert(adminQueuesContent.includes('updated_at'), 'Admin queue status update UI should surface updated_at');
+const queueBoardContent = fs.readFileSync(
+	path.join(root, 'src/lib/admin/QueueBoard.svelte'),
+	'utf-8'
+);
+const queueSourceContent = fs.readFileSync(
+	path.join(root, 'src/lib/admin/queueSource.ts'),
+	'utf-8'
+);
+assert(
+	adminQueuesContent.includes('QueueBoard') && queueBoardContent.includes('sigap-queue-board__source'),
+	'Admin queue read UI should render the QueueBoard that surfaces a source marker'
+);
+// Pinned against queueSource.ts, NOT QueueBoard.svelte. Asserting the three
+// timestamp names against the component would be vacuous: the component's
+// explanatory comment mentions all of them, so deleting the logic would leave
+// the substrings present and the test green — proven by mutation, which missed
+// exactly that version.
+//
+// So this block only pins the SHAPE (a marker exists, the module is the one
+// holding the logic). The BEHAVIOUR is guarded by
+// src/lib/admin/queueSource.test.ts, which fails the moment a stamp is dropped
+// from the real list or an updated_at is ever read. Keeping the string checks
+// here as well is deliberate: they catch the file being deleted or the marker
+// being unhooked from the board, which the Vitest suite cannot see.
+for (const stamp of ['registered_at', 'called_at', 'completed_at']) {
+	assert(
+		queueSourceContent.includes(stamp),
+		`Admin queue source marker must derive from the real queue_timestamps (${stamp})`
+	);
+}
 
 const adminApptsPath = path.join(root, 'src/routes/admin/appointments/+page.svelte');
 const adminApptsContent = fs.readFileSync(adminApptsPath, 'utf-8');
