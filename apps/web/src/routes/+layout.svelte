@@ -2,7 +2,6 @@
 	import '../app.css';
 	import { page } from '$app/stores';
 	import CitizenHeader from '$lib/citizen/CitizenHeader.svelte';
-	import AccountMenu from '$lib/citizen/AccountMenu.svelte';
 	import type { LayoutData } from './$types';
 
 	export let data: LayoutData;
@@ -10,16 +9,19 @@
 	/**
 	 * The citizen shell.
 	 *
-	 * One root layout serves the whole app, so this is what every citizen route
-	 * inherits. That is intentional: the header, the two navigations, and the
+	 * One root layout serves the citizen routes, so this is what they all
+	 * inherit. That is intentional: the header, the two navigations, and the
 	 * session presentation are the shell, and rebuilding them per page is how
 	 * two pages end up disagreeing about where "Status" lives.
 	 *
-	 * The admin product is a separate shell, and Phase 3B4 owns it. The citizen
-	 * bar is therefore not rendered under `/admin`, and the pre-existing admin
-	 * affordance is preserved verbatim below so admin pages do not lose the
-	 * navigation they have always had. Nothing here is an admin design: it is
-	 * the current link, unchanged, so 3B4 can replace it deliberately.
+	 * `/admin` is excluded. The admin product is a separate shell with its own
+	 * destinations and density, and `routes/admin/+layout.svelte` owns it. This
+	 * file used to render a documented admin passthrough here — a single link to
+	 * /admin/queues, there only so admin pages stayed reachable before Phase 3B4
+	 * built a real shell. That shell now exists, so the passthrough is removed
+	 * rather than left to render alongside it: two shells on one page would give
+	 * the admin product a citizen header and tab bar it should not have, and two
+	 * competing navigation landmarks.
 	 */
 	$: isAdminArea = $page.url.pathname.startsWith('/admin');
 	$: hasSession = data.hasSession ?? false;
@@ -28,37 +30,12 @@
 
 {#if isAdminArea}
 	<!--
-		Admin reachability, preserved and nothing more.
-
-		Before Phase 3B2 the single shared header exposed admin through exactly
-		one link, to /admin/queues, and the admin pages carry no cross-links
-		between them. So restoring that one link restores the prior reachability
-		exactly: no admin destination is newly reachable and none is lost.
-
-		This is deliberately not an admin navigation. Choosing an admin IA —
-		grouping, labelling, ordering, current-state treatment — is Phase 3B4's
-		decision to make with the frozen admin reference in hand, not something
-		to settle implicitly while working on the citizen shell.
+		Rendered as a bare fragment on purpose. The admin layout owns the shell,
+		and this branch exists only to withhold the citizen chrome; adding a
+		wrapper element here would put the admin pages inside a second landmark
+		nesting level for no structural gain.
 	-->
-	<header class="sigap-admin-passthrough">
-		<div class="sigap-admin-passthrough__inner">
-			<a class="sigap-admin-passthrough__brand" href="/">Sigap</a>
-			<a
-				class="sigap-admin-passthrough__admin"
-				href="/admin/queues"
-				aria-current={$page.url.pathname === '/admin/queues' ? 'page' : undefined}
-			>
-				Admin
-			</a>
-			<div class="sigap-admin-passthrough__account">
-				<AccountMenu {hasSession} {userEmail} />
-			</div>
-		</div>
-	</header>
-
-	<main>
-		<slot />
-	</main>
+	<slot />
 {:else}
 	<CitizenHeader path={$page.url.pathname} {hasSession} {userEmail} />
 
@@ -79,53 +56,5 @@
 		 * that have one.
 		 */
 		padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
-	}
-
-	.sigap-admin-passthrough {
-		background-color: var(--sigap-surface);
-		border-bottom: 1px solid var(--sigap-border);
-	}
-
-	.sigap-admin-passthrough__inner {
-		display: flex;
-		align-items: center;
-		gap: 16px;
-		height: 56px;
-		padding: 0 16px;
-	}
-
-	.sigap-admin-passthrough__brand {
-		font-size: 17px;
-		font-weight: 600;
-		color: var(--sigap-foreground);
-		text-decoration: none;
-	}
-
-	.sigap-admin-passthrough__admin {
-		display: inline-flex;
-		align-items: center;
-		height: 44px;
-		padding: 0 8px;
-		font-size: 14px;
-		color: var(--sigap-foreground);
-		text-decoration: none;
-	}
-
-	.sigap-admin-passthrough__admin:hover {
-		color: var(--sigap-primary);
-	}
-
-	.sigap-admin-passthrough__admin:focus-visible {
-		outline: 2px solid var(--sigap-primary);
-		outline-offset: -2px;
-	}
-
-	.sigap-admin-passthrough__admin[aria-current='page'] {
-		color: var(--sigap-primary);
-		font-weight: 500;
-	}
-
-	.sigap-admin-passthrough__account {
-		margin-left: auto;
 	}
 </style>
