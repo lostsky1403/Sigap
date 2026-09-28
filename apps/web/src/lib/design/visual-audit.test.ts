@@ -82,7 +82,12 @@ function auditedFiles(): string[] {
 		// the same reason lib/ui is: these components are the new shared layer,
 		// so anti-patterns entering here would propagate to every citizen page
 		// rather than staying in one file.
-		join(webRoot, 'src', 'lib', 'citizen')
+		join(webRoot, 'src', 'lib', 'citizen'),
+		// Phase 3B4 admin read layer. Brought in for the same reason: these are new
+		// shared components that every admin page composes, so an anti-pattern
+		// entering here would propagate to all six destinations rather than staying
+		// in one file.
+		join(webRoot, 'src', 'lib', 'admin')
 	];
 	// `.css` is included deliberately: tokens.css is the CSS mirror of tokens.ts
 	// and is the file the colour rule names as permitted. A collector that
@@ -113,7 +118,18 @@ function auditedFiles(): string[] {
 			// rather than merely unused by the pages that were already done.
 			join(webRoot, 'src', 'routes', 'auth', 'login', '+page.svelte'),
 			join(webRoot, 'src', 'routes', 'auth', 'register', '+page.svelte'),
-			join(webRoot, 'src', 'routes', 'auth', 'logout', '+page.svelte')
+			join(webRoot, 'src', 'routes', 'auth', 'logout', '+page.svelte'),
+			// Phase 3B4 admin read pages and the admin layout. Named explicitly for
+			// the same reason as the citizen pages: a rule that cannot see a file
+			// cannot hold it, and these are the six destinations a GATE 4 review
+			// looks at.
+			join(webRoot, 'src', 'routes', 'admin', '+layout.svelte'),
+			join(webRoot, 'src', 'routes', 'admin', '+page.svelte'),
+			join(webRoot, 'src', 'routes', 'admin', 'queues', '+page.svelte'),
+			join(webRoot, 'src', 'routes', 'admin', 'appointments', '+page.svelte'),
+			join(webRoot, 'src', 'routes', 'admin', 'schedules', '+page.svelte'),
+			join(webRoot, 'src', 'routes', 'admin', 'facilities', '+page.svelte'),
+			join(webRoot, 'src', 'routes', 'admin', 'notifications', '+page.svelte')
 		]);
 
 	return files.map((f) => join(f)).filter((f) => !f.endsWith('.test.ts'));
@@ -411,7 +427,7 @@ describe('visual anti-pattern audit: scan integrity', () => {
 		expect(files.some((f) => f.endsWith('.test.ts'))).toBe(false);
 	});
 
-	it('audits the new citizen surface but not unmigrated routes', () => {
+	it('audits the new citizen and admin surfaces', () => {
 		// Pins the scope boundary in both directions, because both mistakes are
 		// possible and opposite.
 		//
@@ -419,11 +435,14 @@ describe('visual anti-pattern audit: scan integrity', () => {
 		// fail the gate, punishing migration work scheduled for a later phase
 		// rather than measuring whether the new design system is sound.
 		//
-		// Too narrow: dropping a new citizen page out of the audit would let an
+		// Too narrow: dropping a new page out of the audit would let an
 		// anti-pattern ship in the one surface this phase is responsible for.
 		//
-		// So every migrated citizen page is in, and the older unmigrated routes
-		// and the whole admin area are out.
+		// Phase 3B4 moved the admin area IN. It was previously excluded on purpose
+		// ("the whole admin area is out of scope") because those pages had not been
+		// migrated yet; now that they are new surface written in this redesign,
+		// excluding them would let a gradient or a colour literal ship across all
+		// six destinations.
 		const files = auditedFiles().map((f) => relative(webRoot, f).replace(/\\/g, '/'));
 		expect(files).toContain('src/lib/citizen/CitizenHeader.svelte');
 		expect(files).toContain('src/lib/citizen/CitizenBottomNav.svelte');
@@ -463,16 +482,26 @@ describe('visual anti-pattern audit: scan integrity', () => {
 		 * The colour rules ban hex literals, and emerald is expressed as
 		 * Tailwind utility classes rather than hex, so none of them would catch
 		 * a page still painted `bg-emerald-600`. tokens.css says outright that
-		 * nothing in the system may reintroduce an emerald/slate palette, so
-		 * the class names are named here explicitly. This is what makes "the
+		 * nothing in the system may reintroduce an emerald/slate palette, so the
+		 * class names are named here explicitly. This is what makes "the
 		 * palette is gone" a checked claim instead of an inference from the
 		 * absence of hex.
+		 *
+		 * The admin pages are included from 3B4. The pre-3B4 notifications page
+		 * was the worst offender in the repository for exactly this reason, with
+		 * `bg-emerald-100 text-emerald-700` status classes throughout.
 		 */
 		for (const page of [
 			'src/lib/citizen/AuthForms.svelte',
 			'src/routes/auth/login/+page.svelte',
 			'src/routes/auth/register/+page.svelte',
-			'src/routes/auth/logout/+page.svelte'
+			'src/routes/auth/logout/+page.svelte',
+			'src/routes/admin/+page.svelte',
+			'src/routes/admin/queues/+page.svelte',
+			'src/routes/admin/appointments/+page.svelte',
+			'src/routes/admin/schedules/+page.svelte',
+			'src/routes/admin/facilities/+page.svelte',
+			'src/routes/admin/notifications/+page.svelte'
 		]) {
 			const code = readFileSync(join(webRoot, page), 'utf8');
 			expect(code, `${page} must not reintroduce the unmigrated palette`).not.toMatch(
@@ -480,15 +509,22 @@ describe('visual anti-pattern audit: scan integrity', () => {
 			);
 		}
 
-		// Unmigrated routes and the admin area stay out of scope. The exact list
-		// is still pinned, because here the risk is a legacy page being pulled in
-		// by accident and blocking the gate.
+		// The remaining unmigrated routes stay out of scope, and the exact list is
+		// still pinned: here the risk is a legacy page being pulled in by accident
+		// and blocking the gate.
 		const routeFiles = files
 			.filter((f) => f.startsWith('src/routes/'))
 			.map((f) => f.replace(/\\/g, '/'))
 			.sort();
 		expect(routeFiles).toEqual([
 			'src/routes/+page.svelte',
+			'src/routes/admin/+layout.svelte',
+			'src/routes/admin/+page.svelte',
+			'src/routes/admin/appointments/+page.svelte',
+			'src/routes/admin/facilities/+page.svelte',
+			'src/routes/admin/notifications/+page.svelte',
+			'src/routes/admin/queues/+page.svelte',
+			'src/routes/admin/schedules/+page.svelte',
 			'src/routes/appointments/check-in/+page.svelte',
 			'src/routes/appointments/new/+page.svelte',
 			'src/routes/auth/login/+page.svelte',
@@ -498,6 +534,5 @@ describe('visual anti-pattern audit: scan integrity', () => {
 			'src/routes/patient/status/+page.svelte',
 			'src/routes/queues/new/+page.svelte'
 		]);
-		expect(files.some((f) => f.includes('/admin/'))).toBe(false);
 	});
 });
