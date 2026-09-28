@@ -560,74 +560,89 @@ test.describe('D. walk-in', () => {
 
 		await page.locator('#sigap-walkin-fullName').fill('Rina Marlina');
 		await page.locator('#sigap-walkin-phone').fill(uniquePhone());
+
+		/*
+		 * A 5xx is a first-class test failure, not an accepted alternative.
+		 * Register the response listener before clicking so the real backend
+		 * result is observed even if the frontend immediately renders an error.
+		 *
+		 * The approved local stack includes the Rust queue engine. Booking and
+		 * check-in can retry against FakeQueueService when that engine is absent,
+		 * but the queue handler has no equivalent request-time fallback.
+		 */
+		const queueResponse = page.waitForResponse(
+			(response) =>
+				response.url().includes('/api/v1/queues/generate') &&
+				response.request().method() === 'POST',
+			{ timeout: SETTLE.timeout }
+		);
+
 		await page.getByRole('button', { name: /Ambil Nomor Antrean/ }).click();
 
 		/*
-		 * The walk-in endpoint, unlike booking and check-in, has NO
-		 * request-time SIGAP_ENGINE_FALLBACK retry. The booking handler falls
-		 * back to FakeQueueService when the Rust engine is absent
-		 * (booking.go, "Dev fallback"); the queue handler only has the
-		 * startup-time fallback, which grpc.Dial's lazy connection defeats —
-		 * it dials successfully against a dead address, so the fallback is
-		 * never selected and every Generate fails at request time.
+		 * The backend MUST succeed. A 5xx here is a real infrastructure failure,
+		 * not a state to assert around: the Rust queue engine is part of the
+		 * authoritative local stack, so a 500 means the gRPC hop or the
+		 * transactional counter is broken.
 		 *
-		 * With no engine on 127.0.0.1:50051 the endpoint answers 500. That is
-		 * a pre-existing backend gap in committed code, unrelated to this
-		 * phase: `git diff 80e285d..HEAD -- '*.go'` is empty.
-		 *
-		 * So the assertion here is the FRONTEND contract, which is the part
-		 * this phase owns: a 5xx shows the single generic retry state and never
-		 * a raw server string. Whether the engine is running is the stack's
-		 * business, and asserting a queue number here would be asserting a
-		 * deployment detail that is false in this environment.
-		 *
-		 * The success-path rendering — number, estimate wording, CTA — is
-		 * proven deterministically in walkin-flows.test.ts, where the wire
-		 * response is supplied directly and both `formatted_number` and
-		 * `FormattedNumber` are covered.
+		 * Assert on the response as well as the rendered panel. A DOM-only
+		 * assertion cannot distinguish a correctly rendered 500 from the required
+		 * success state.
 		 */
+		const generated = await queueResponse;
+		expect(
+			generated.status(),
+			'POST /api/v1/queues/generate must succeed. A 5xx means the Rust queue engine is not ' +
+				'reachable from the Go API: check that it is listening on the port in SIGAP_ENGINE_ADDR ' +
+				'and that /readyz reports ready before the suite starts.'
+		).toBe(200);
+
+		const body = (await generated.json()) as {
+			success?: boolean;
+			data?: {
+				formatted_number?: string;
+				FormattedNumber?: string;
+				estimated_wait_minutes?: number;
+			};
+			error?: string;
+		};
+		expect(body.success, `the engine answered with: ${JSON.stringify(body)}`).toBe(true);
+
+		// The wire accepts either casing, so assert through the normalized value
+		// the UI actually reads. Both spellings have deterministic unit coverage.
+		const wireNumber = body.data?.formatted_number ?? body.data?.FormattedNumber ?? '';
+		expect(wireNumber, 'the engine must return a formatted queue number').not.toBe('');
+
 		const number = page.locator('[data-testid="walkin-number"]');
-		const failure = page.locator('[data-testid="walkin-error"]');
-		await expect(number.or(failure).first()).toBeVisible(SETTLE);
+		await expect(number).toBeVisible(SETTLE);
 
-		if (await number.isVisible()) {
-			// An engine was reachable after all, so the full success contract
-			// is checked.
-			const displayed = ((await number.textContent()) ?? '').trim();
-			expect(displayed.length, 'a formatted queue number must be shown').toBeGreaterThan(0);
-			// A dash is the failure mode of reading the wrong casing: it looks
-			// exactly like a server error, and the citizen would read it at
-			// the counter.
-			expect(displayed).not.toBe('-');
+		// The number shown is the number the backend issued. A success panel that
+		// renders a different value would silently send a citizen to the wrong
+		// place in the queue.
+		const displayed = ((await number.textContent()) ?? '').trim();
+		expect(displayed.length, 'a formatted queue number must be shown').toBeGreaterThan(0);
+		expect(displayed).not.toBe('-');
+		expect(displayed, 'the displayed number must be the one the engine issued').toBe(wireNumber);
+		expect(displayed, 'the real engine formats the number from the facility short code').toMatch(
+			/^[A-Z]{2,4}-\d{4,}$/
+		);
 
-			const body = ((await page.locator('body').textContent()) ?? '').toLowerCase();
-			for (const forbidden of ['realtime', 'real-time', 'live', 'dipastikan', 'pasti']) {
-				expect(body, `walk-in must not claim ${forbidden}`).not.toContain(forbidden);
-			}
-
-			// The onward CTA exists once there is a number to check on.
-			await expect(
-				page.getByRole('link', { name: /Cek status kunjungan/i })
-			).toHaveAttribute('href', '/patient/status');
-		} else {
-			// The generic retry state, and nothing leaked from the server.
-			await expect(failure).toContainText(/Layanan sedang bermasalah/);
-			await expect(page.locator('body')).not.toContainText(
-				'Terjadi kesalahan sistem. Silakan coba lagi atau hubungi petugas.'
-			);
-			// And the form is still there to retry with.
-			await expect(page.locator('#sigap-walkin-fullName')).toBeVisible();
-			// No status CTA without a number: there would be nothing to look up,
-			// and offering one would send a citizen to a page that can only
-			// disappoint them.
-			await expect(
-				page.getByRole('link', { name: /Cek status kunjungan/i })
-			).toHaveCount(0);
+		// The estimate is labelled as an estimate. The backend computes it once
+		// at generation, so presenting it as current would overstate the system.
+		const text = ((await page.locator('body').textContent()) ?? '').toLowerCase();
+		expect(text).toContain('estimasi');
+		for (const forbidden of ['realtime', 'real-time', 'live', 'dipastikan', 'pasti']) {
+			expect(text, `walk-in must not claim ${forbidden}`).not.toContain(forbidden);
 		}
 
-		// The alternative route is present either way. Someone who did book
-		// has a code and should be told about it, regardless of whether their
-		// walk-in attempt just failed.
+		// The way onward, now that there is a number to check on.
+		await expect(
+			page.getByRole('link', { name: /Cek status kunjungan/i })
+		).toHaveAttribute('href', '/patient/status');
+		await expect(page.locator('[data-testid="walkin-error"]')).toHaveCount(0);
+
+		// The booking-code route remains available as the alternative for a
+		// citizen who did not arrive as a walk-in.
 		await expect(
 			page.getByRole('link', { name: /Gunakan kode check-in/i })
 		).toHaveAttribute('href', '/appointments/check-in');
