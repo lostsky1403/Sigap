@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Deterministic local seeded-stack runner for the Phase 3B1 GATE 2 Playwright suite.
+    Deterministic local seeded-stack runner for the GATE 2/GATE 3 Playwright suite.
 
 .DESCRIPTION
     Brings up everything the baseline E2E smoke needs, in the one order that
@@ -19,6 +19,23 @@
          even when the Go API is off, which is not evidence the stack is real.
          This script starts the API and the database, and the smoke suite has a
          backend-backed scenario that fails without them.
+      4. A missing queue engine. `POST /api/v1/queues/generate` is the one
+         transactional route with no request-time dev fallback: booking and
+         check-in retry against FakeQueueService when the Rust engine is absent
+         (booking.go, "Dev fallback"), but the queue handler only has the
+         STARTUP-time fallback in main.go. `grpc.Dial` is lazy, so it succeeds
+         against a dead address, the fallback is never selected, and every
+         walk-in then fails at request time with a 500.
+
+         This is a local infrastructure gap, not a product defect, so the fix
+         belongs here and not in committed Go code. The script now starts the
+         real Rust engine and waits for it BEFORE the Go API, which matters for
+         a second reason that is easy to miss: gRPC connections are lazy AND the
+         API's first Generate is its first real use of the channel, so an API
+         started against a not-yet-listening engine keeps a stale channel and
+         stays broken even after the engine comes up. Starting the engine first
+         is what makes the whole chain work, and it is why the API readiness
+         check below polls /readyz rather than /health.
 
     The database is a DISPOSABLE cluster created with initdb under .local-e2e/,
     bound to a free loopback port. It is intentionally separate from any Postgres
@@ -41,6 +58,20 @@
 .PARAMETER WebPort
     Port for the web preview. Defaults to 4173, matching playwright.config.ts.
 
+.PARAMETER EnginePort
+    Port for the Rust queue engine. Defaults to 50051, which is the address
+    hardcoded in apps/queue-engine/src/main.rs and the default SIGAP_ENGINE_ADDR.
+    The engine binary binds a fixed 0.0.0.0:50051 and reads no port variable, so
+    the effective port is the first free one at or above this value and is
+    reported before the run. If the port is occupied by a process this script did
+    not start, it refuses rather than killing an unrelated process.
+
+.PARAMETER SkipEngineBuild
+    Reuse an existing release binary instead of rebuilding it. A cold
+    `cargo build --release` of the engine is by far the slowest step in this
+    script, and it only needs rerunning when the engine source or its proto
+    changes.
+
 .EXAMPLE
     pwsh -NoProfile -File scripts/dev/Start-LocalE2E.ps1
 
@@ -50,20 +81,26 @@
     # ... then in another shell:
     pnpm --filter sigap-web exec playwright test e2e/smoke.spec.ts
 
+.EXAMPLE
+    # Re-run without paying for a cold Rust rebuild.
+    pwsh -NoProfile -File scripts/dev/Start-LocalE2E.ps1 -SkipEngineBuild
+
 .NOTES
-    Requires PowerShell 7+, Go, Node/pnpm, and a local PostgreSQL install
-    (initdb/pg_ctl/createdb/psql on PATH or under Program Files).
-    Never contacts production. The dev identity flags used here are gated by
-    SIGAP_ENV=local in apps/api/internal/config/envguard.go and will refuse to
+    Requires PowerShell 7+, Go, Node/pnpm, a Rust toolchain, protoc, and a local
+    PostgreSQL install (initdb/pg_ctl/createdb/psql on PATH or under Program
+    Files). Never contacts production. The dev identity flags used here are gated
+    by SIGAP_ENV=local in apps/api/internal/config/envguard.go and will refuse to
     start anywhere else.
 #>
 
 [CmdletBinding()]
 param(
     [switch]$KeepRunning,
+    [switch]$SkipEngineBuild,
     [int]$DatabasePort = 55433,
     [int]$ApiPort = 18080,
-    [int]$WebPort = 4173
+    [int]$WebPort = 4173,
+    [int]$EnginePort = 50051
 )
 
 Set-StrictMode -Version Latest
@@ -193,6 +230,54 @@ function Get-FreePort([int]$Preferred) {
     return $port
 }
 
+<#
+    Stop a process TREE, not just the handle it was started with.
+
+    WHY THIS EXISTS. The web preview is launched as `vite.cmd`, a .cmd shim that
+    PowerShell can only start through cmd.exe. So the handle returned by
+    Start-Process is a cmd.exe process, while the process that actually HOLDS THE
+    PORT is a node.exe grandchild of it. Stopping only the tracked handle left the
+    grandchild alive and still listening: observed as 127.0.0.1:4173 answering
+    HTTP 200 for minutes after teardown, with its parent already reaped.
+
+    That is a real cleanup-safety defect, and an indirect one — a leaked preview
+    occupies the very port the next run wants, so `Get-FreePort` hands the
+    following run a DIFFERENT port and it then tests something other than what
+    the banner printed.
+
+    Descendants are collected by parent pid BEFORE anything is stopped, then
+    killed deepest-first, because a dying parent reparents its children and the
+    link needed to find them disappears with it. Strictly scoped to this run's
+    own subtree, so an engine or preview someone started by hand is never killed.
+#>
+function Stop-OwnedTree([System.Diagnostics.Process]$Root, [string]$Label) {
+    if (-not $Root) { return }
+
+    $ids = New-Object System.Collections.Generic.List[int]
+    $queue = New-Object System.Collections.Generic.Queue[int]
+    if (-not $Root.HasExited) {
+        $ids.Add($Root.Id)
+        $queue.Enqueue($Root.Id)
+    }
+    while ($queue.Count -gt 0) {
+        $parent = $queue.Dequeue()
+        $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$parent" -ErrorAction SilentlyContinue)
+        foreach ($child in $children) {
+            $childId = [int]$child.ProcessId
+            if (-not $ids.Contains($childId)) {
+                $ids.Add($childId)
+                $queue.Enqueue($childId)
+            }
+        }
+    }
+
+    $ordered = $ids.ToArray() | Sort-Object -Descending
+    foreach ($processId in $ordered) {
+        try { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue } catch { }
+    }
+    if ($ordered) { Write-Host "    stopped $Label (pid $($ordered -join ', '))" -ForegroundColor DarkGray }
+}
+
 # The cluster is persistent, so its port has to be too. Re-probing a free port on
 # every run means a leftover postmaster from a killed run keeps the old port,
 # pg_ctl then refuses to start against a different port with a stale pid file
@@ -209,12 +294,44 @@ if ((Test-Path $PortFile) -and (Test-Path (Join-Path $DataDir 'PG_VERSION'))) {
 $WebPort = Get-FreePort $WebPort
 $ApiPort = Get-FreePort $ApiPort
 
+<#
+    The engine is a fixed-address binary, so the "find a free port" treatment the
+    other services get does not apply to it: main.rs binds a literal
+    0.0.0.0:50051 and reads no port from the environment, so a busy 50051 cannot
+    be moved.
+
+    The rule here is therefore refuse, never take over. A listener on the engine
+    port is either a stale process from a previous run that a human can judge, or
+    something unrelated that must not be killed to make a test pass. Auto-killing
+    either is exactly the kind of "make the gate green" move that hides a real
+    problem, so the script names the owner and stops. `-KeepRunning` reuses a port
+    this script's own previous run left open, which is the common case, so the
+    message tells the user how to clear it.
+#>
+$EnginePortBusy = Get-NetTCPConnection -State Listen -LocalPort $EnginePort -ErrorAction SilentlyContinue
+if ($EnginePortBusy) {
+    $owners = ($EnginePortBusy | Select-Object -ExpandProperty OwningProcess -Unique)
+    $described = ($owners | ForEach-Object {
+        try {
+            $p = Get-Process -Id $_ -ErrorAction Stop
+            "$($p.ProcessName) (pid $($p.Id))"
+        } catch { "pid $_" }
+    }) -join ', '
+    Write-Fail @"
+Port $EnginePort is already in use by: $described
+The Rust queue engine binds a fixed address (apps/queue-engine/src/main.rs), so it
+cannot be moved to a different port. Stop that process and re-run, or pass
+-EnginePort if a previous run of THIS script left it open.
+"@
+}
+
 Write-Host ""
 Write-Host "=================================================" -ForegroundColor Cyan
-Write-Host " Sigap local seeded stack (GATE 2 E2E)" -ForegroundColor Cyan
+Write-Host " Sigap local seeded stack (GATE 2 / GATE 3 E2E)" -ForegroundColor Cyan
 Write-Host "=================================================" -ForegroundColor Cyan
 Write-Host "  web        http://127.0.0.1:$WebPort"
 Write-Host "  Go API     http://127.0.0.1:$ApiPort"
+Write-Host "  Engine     127.0.0.1:$EnginePort (Rust, real gRPC)"
 Write-Host "  Postgres   postgresql://$DbUser@127.0.0.1:$DbPort/$DbName (disposable)"
 Write-Host "  SIGAP_ENV  local"
 Write-Host "=================================================" -ForegroundColor Cyan
@@ -222,6 +339,7 @@ Write-Host ""
 
 $apiProcess = $null
 $webProcess = $null
+$engineProcess = $null
 
 # NOTE on process startup: the long-running children (the Go API and the Vite
 # preview) are started WITHOUT stream redirection on purpose. They never exit, so
@@ -320,7 +438,79 @@ try {
     Write-Host "    seeded facilities: $facilityCount" -ForegroundColor DarkGray
     if ([int]$facilityCount -eq 0) { Write-Fail "seed produced no facilities." }
 
-    # --- 3. Go API ---------------------------------------------------------------
+    # --- 3. Rust queue engine ---------------------------------------------------
+    # This is the real engine, not a fake, and that is the entire point: a
+    # FakeQueueService would return a plausible ticket without proving anything,
+    # because the walk-in E2E exists to prove the gRPC hop and the transactional
+    # row-locking counter actually work end to end.
+    #
+    # Order is load-bearing and cannot be rearranged. The engine must be listening
+    # BEFORE the Go API starts, for two independent reasons:
+    #   - grpc.Dial is lazy, so main.go's startup fallback never triggers against
+    #     a dead address and the API would silently hold a broken channel.
+    #   - The API's channel does not reconnect usefully for a Generate that
+    #     happens too early, so an API started first stays broken even after the
+    #     engine appears. Observed directly: the API had to be restarted by hand
+    #     after the engine came up before /readyz turned ready.
+    Write-Step "Building the Rust queue engine"
+    $engineDir = Join-Path $RepoRoot 'apps\queue-engine'
+    $engineExe = Join-Path $engineDir 'target\release\sigap-queue-engine.exe'
+    if ($SkipEngineBuild -and (Test-Path $engineExe)) {
+        Write-Host "    reusing existing engine binary (-SkipEngineBuild)" -ForegroundColor DarkGray
+    } else {
+        # `cargo build --release` is the slowest step here by a wide margin, and
+        # build.rs shells out to protoc, so both are preconditions rather than
+        # surprises discovered 200 lines into a failed run. Kept as a separate
+        # check so the failure names the missing tool instead of a codegen error.
+        if (-not (Get-Command 'cargo' -ErrorAction SilentlyContinue)) {
+            Write-Fail "cargo not found on PATH. Install the Rust toolchain (https://rustup.rs) to run the local E2E stack."
+        }
+        if (-not (Get-Command 'protoc' -ErrorAction SilentlyContinue)) {
+            Write-Fail "protoc not found on PATH. build.rs compiles protos/sigap/queue_engine.proto with tonic-build, which requires it."
+        }
+        Invoke-Native -FilePath (Get-Command 'cargo').Source -Label 'cargo build --release' -TimeoutSeconds 1800 `
+            -WorkingDirectory $engineDir `
+            -Arguments @('build', '--release') | Out-Null
+    }
+    if (-not (Test-Path $engineExe)) {
+        Write-Fail "Queue engine binary not found at $engineExe after the build."
+    }
+
+    Write-Step "Starting the Rust queue engine on 127.0.0.1:$EnginePort"
+    # DATABASE_URL, not SIGAP_DATABASE_URL: main.rs reads that exact name and
+    # exits immediately if it is missing, so the engine shares the same
+    # disposable Postgres the API and migrations just used.
+    $env:DATABASE_URL = $dbUrl
+    $engineProcess = Start-Process -FilePath $engineExe -PassThru -WindowStyle Hidden
+
+    # Readiness is a TCP connect, and it is a sound signal here specifically
+    # because of the engine's own startup order: PgPool::connect completes BEFORE
+    # Server::serve is called, so a listening socket means the pool is already
+    # open against the migrated, seeded database. A "listening but not yet
+    # migrated" window does not exist in this binary. Verified against the real
+    # response: the first successful generate returned "PMI-0001" for the seeded
+    # Puskesmas Melati Indah, a short code that only the engine reads from the
+    # facilities table.
+    $engineReady = $false
+    for ($i = 0; $i -lt 60; $i++) {
+        Start-Sleep -Milliseconds 500
+        if ($engineProcess.HasExited) {
+            Write-Fail "Queue engine exited during startup (code $($engineProcess.ExitCode)). Run it by hand to see the error: $engineExe"
+        }
+        try {
+            $probe = [System.Net.Sockets.TcpClient]::new()
+            $probe.Connect('127.0.0.1', $EnginePort)
+            $engineReady = $probe.Connected
+            $probe.Close()
+            if ($engineReady) { break }
+        } catch { $engineReady = $false }
+    }
+    if (-not $engineReady) {
+        Write-Fail "Queue engine did not start listening on 127.0.0.1:$EnginePort. Run it by hand to see the error: $engineExe"
+    }
+    Write-Host "    engine listening on 127.0.0.1:$EnginePort" -ForegroundColor DarkGray
+
+    # --- 4. Go API ---------------------------------------------------------------
     Write-Step "Building the Go API binary"
     # `go run` compiles first, and a cold compile can outlast the readiness poll
     # below, which looks exactly like a server that refuses to start. Building a
@@ -347,11 +537,17 @@ try {
     # child simply inherits them, which needs no quoting and no wrapper.
     $env:SIGAP_DATABASE_URL   = $dbUrl
     $env:SIGAP_API_PORT        = "$ApiPort"
-    $env:SIGAP_ENGINE_ADDR     = '127.0.0.1:50051'
+    $env:SIGAP_ENGINE_ADDR     = "127.0.0.1:$EnginePort"
     $env:SIGAP_ENV             = 'local'
     $env:SIGAP_AUTH_MODE       = 'dev'
     $env:SIGAP_DEV_IDENTITY    = 'true'
-    $env:SIGAP_ENGINE_FALLBACK = 'dev'
+    # Left unset on purpose for the authoritative run. The engine is really
+    # running, so the fallback is not needed — and keeping it set would mean a
+    # future engine outage silently produced plausible-looking tickets instead of
+    # failing, which is precisely the failure mode this script exists to remove.
+    # Booking and check-in keep their own request-time retry in committed code;
+    # that is untouched. This is about not letting the E2E stack depend on it.
+    Remove-Item Env:SIGAP_ENGINE_FALLBACK -ErrorAction SilentlyContinue
     $env:SIGAP_WEB_ORIGIN      = "http://127.0.0.1:$WebPort"
     $env:SIGAP_API_INTERNAL    = "http://127.0.0.1:$ApiPort"
     $env:SIGAP_API_BASE        = "http://127.0.0.1:$ApiPort"
@@ -359,20 +555,34 @@ try {
     $apiProcess = Start-Process -FilePath (Join-Path $WorkDir 'sigap-api.exe') `
         -PassThru -WindowStyle Hidden
 
+    # /readyz, NOT /health. This is the check that would have caught the original
+    # problem: /health only proves the HTTP server is up and returns 200 with a
+    # dead engine behind it, so a /health poll declared a stack ready that could
+    # not complete a walk-in. /readyz probes the queue service and reports
+    # "engine unreachable" when it is not connected, which is the exact state
+    # that made every walk-in 500.
     $apiReady = $false
     for ($i = 0; $i -lt 60; $i++) {
         Start-Sleep -Milliseconds 500
+        if ($apiProcess.HasExited) {
+            Write-Fail "Go API exited during startup (code $($apiProcess.ExitCode)). Start it by hand to see the error: $WorkDir\sigap-api.exe"
+        }
         try {
-            $health = Invoke-WebRequest "http://127.0.0.1:$ApiPort/health" -UseBasicParsing -TimeoutSec 2
+            $health = Invoke-WebRequest "http://127.0.0.1:$ApiPort/readyz" -UseBasicParsing -TimeoutSec 2
             if ($health.StatusCode -eq 200) { $apiReady = $true; break }
         } catch { }
     }
     if (-not $apiReady) {
-        Write-Fail "Go API did not become healthy on 127.0.0.1:$ApiPort. Start it by hand to see the error: $WorkDir\sigap-api.exe"
+        Write-Fail @"
+Go API did not report ready on 127.0.0.1:$ApiPort.
+/readyz is the check because /health returns 200 with a dead engine behind it.
+If it reports "engine unreachable", the queue engine on 127.0.0.1:$EnginePort is
+not reachable. Start it by hand to see the error: $engineExe
+"@
     }
-    Write-Host "    API healthy" -ForegroundColor DarkGray
+    Write-Host "    API ready (queue engine connected)" -ForegroundColor DarkGray
 
-    # --- 4. Build BEFORE the preview starts -------------------------------------
+    # --- 5. Build BEFORE the preview starts -------------------------------------
     # Ordering is load-bearing. The build replaces the hashed assets a running
     # preview is streaming, so a build during preview is what kills it with ENOENT.
     Write-Step "Building web app (must complete before the preview starts)"
@@ -380,7 +590,7 @@ try {
         -WorkingDirectory (Join-Path $RepoRoot 'apps\web') `
         -Arguments @('-NoProfile', '-Command', 'pnpm run build; exit $LASTEXITCODE') | Out-Null
 
-    # --- 5. Web preview ----------------------------------------------------------
+    # --- 6. Web preview ----------------------------------------------------------
     Write-Step "Starting web preview on 127.0.0.1:$WebPort"
     # Same reasoning as the API: set the proxy target on this process and launch
     # the preview binary directly instead of wrapping it in `pwsh -Command`.
@@ -416,14 +626,67 @@ try {
     }
     Write-Host "    web ready" -ForegroundColor DarkGray
 
-    # --- 6. Prove the proxy path before handing over to Playwright ----------------
+    # --- 7. Prove the proxy path before handing over to Playwright ----------------
     Write-Step "Verifying web -> proxy -> API -> DB"
     $facilities = Invoke-WebRequest "http://127.0.0.1:$WebPort/api/v1/public/facilities" -UseBasicParsing -TimeoutSec 15
     $parsed = $facilities.Content | ConvertFrom-Json
     Write-Host "    proxy returned $($parsed.data.Count) facilities" -ForegroundColor DarkGray
     if ($parsed.data.Count -lt 1) { Write-Fail "Proxy returned no facilities; the seeded stack is not live." }
 
-    # --- 7. Playwright -----------------------------------------------------------
+    # --- 8. Prove the walk-in chain before the browser suite --------------------
+    # The full transactional hop, exercised once here so a broken engine fails in
+    # ONE line with a readable cause instead of surfacing as a Playwright
+    # timeout on a selector 40 seconds into a browser run.
+    #
+    # This also guards against the exact regression that motivated the change: a
+    # 200 here is only meaningful if the ticket came from the Rust engine. A
+    # FakeQueueService answer is always "RSK-0001" with a fixed "123μs"
+    # processing time regardless of facility, and the facility-driven prefix
+    # check below catches it — a fake response cannot agree with the facility
+    # that was actually requested.
+    Write-Step "Verifying walk-in against the real queue engine"
+    $catalog = $parsed.data | Where-Object { $_.is_active } | Select-Object -First 1
+    if (-not $catalog) { Write-Fail "No active facility in the catalog to test the walk-in with." }
+
+    # Unique per attempt so the in-memory daily limiter (2 per phone per facility
+    # per day, keyed on the API process) cannot reject a repeat run.
+    $walkinPhone = '081' + (Get-Random -Minimum 10000000 -Maximum 99999999)
+    $walkinBody = @{
+        facilityId = $catalog.id
+        patient    = @{ fullName = 'Local Stack Walk-in Probe'; phone = $walkinPhone }
+    } | ConvertTo-Json -Depth 5
+
+    try {
+        $walkin = Invoke-WebRequest "http://127.0.0.1:$WebPort/api/v1/queues/generate" `
+            -Method POST -ContentType 'application/json' -Body $walkinBody -UseBasicParsing -TimeoutSec 20
+    } catch {
+        $code = try { [int]$_.Exception.Response.StatusCode } catch { 'unknown' }
+        Write-Fail @"
+Walk-in failed through the full chain (HTTP $code).
+browser -> web -> proxy -> Go API -> Rust engine ($EnginePort) -> Postgres
+Run the engine by hand to see the error: $engineExe
+"@
+    }
+
+    $ticket = ($walkin.Content | ConvertFrom-Json).data
+    Write-Host "    HTTP $($walkin.StatusCode)  ticket=$($ticket.formatted_number)  wait=$($ticket.estimated_wait_minutes)m" -ForegroundColor DarkGray
+
+    if ($walkin.StatusCode -ne 200) { Write-Fail "Walk-in returned HTTP $($walkin.StatusCode); the engine chain is not serving." }
+    if (-not $ticket.formatted_number) { Write-Fail "Walk-in succeeded but returned no formatted_number; the success path is not renderable." }
+    if ($ticket.formatted_number -ne "$($catalog.short_code)-0001") {
+        Write-Fail @"
+Walk-in returned '$($ticket.formatted_number)' for facility short_code '$($catalog.short_code)'.
+Expected '$($catalog.short_code)-0001'. A mismatch means the ticket did not come from
+the real engine reading the facilities table (the dev fake always returns RSK-0001
+regardless of facility), so the stack is not exercising the gRPC hop it claims to.
+"@
+    }
+    if ($ticket.formatted_number -eq 'RSK-0001' -and $catalog.short_code -ne 'RSK') {
+        Write-Fail "Walk-in returned the FakeQueueService constant RSK-0001. The real engine is not serving requests."
+    }
+    Write-Host "    walk-in verified end to end" -ForegroundColor DarkGray
+
+    # --- 9. Playwright -----------------------------------------------------------
     Write-Step "Running Playwright against the local seeded stack"
     $env:SIGAP_E2E_BASE_URL = "http://127.0.0.1:$WebPort"
     # Playwright writes progress to stderr, so it goes through Invoke-Native for
@@ -447,7 +710,7 @@ try {
 
     Write-Host ""
     Write-Host "=================================================" -ForegroundColor Green
-    Write-Host " GATE 2 E2E: PASS against the local seeded stack" -ForegroundColor Green
+    Write-Host " GATE 2 / GATE 3 E2E: PASS against the local seeded stack" -ForegroundColor Green
     Write-Host "=================================================" -ForegroundColor Green
 }
 catch {
@@ -463,14 +726,27 @@ finally {
         Write-Host "(-KeepRunning) Stack left running:" -ForegroundColor Yellow
         Write-Host "  web      http://127.0.0.1:$WebPort" -ForegroundColor Yellow
         Write-Host "  API      http://127.0.0.1:$ApiPort" -ForegroundColor Yellow
+        Write-Host "  Engine   127.0.0.1:$EnginePort" -ForegroundColor Yellow
         Write-Host "  Postgres postgresql://$DbUser@127.0.0.1:$DbPort/$DbName" -ForegroundColor Yellow
+        Write-Host ""
+        # Only printed when the engine actually started. Under Set-StrictMode a
+        # failed run reaches this finally block with $engineProcess still $null,
+        # and reading .Id off that would throw and bury the real failure message.
+        if ($engineProcess) {
+            Write-Host "  The engine keeps holding port $EnginePort, so a re-run needs that process" -ForegroundColor DarkGray
+            Write-Host "  stopped first. Its pid is $($engineProcess.Id)." -ForegroundColor DarkGray
+        }
         exit 0
     }
 
     Write-Host ""
     Write-Step "Stopping local seeded stack"
-    if ($webProcess -and -not $webProcess.HasExited) { Stop-Process -Id $webProcess.Id -Force -ErrorAction SilentlyContinue }
-    if ($apiProcess -and -not $apiProcess.HasExited) { Stop-Process -Id $apiProcess.Id -Force -ErrorAction SilentlyContinue }
+    Stop-OwnedTree $webProcess 'web preview'
+    Stop-OwnedTree $apiProcess 'Go API'
+    # Engine last, so the API is never left talking to a dead channel mid-teardown.
+    # The engine is a single .exe with no shim, so a plain stop is exact here;
+    # the tree walk is harmless and keeps one teardown path.
+    Stop-OwnedTree $engineProcess 'queue engine'
     # Stop by PID file only when one exists, so a teardown that follows an early
     # failure does not emit a confusing "Is server running?" error.
     if (Test-Path (Join-Path $DataDir 'postmaster.pid')) {
