@@ -1,262 +1,302 @@
 <script lang="ts">
-	// /admin/queues — Queue Operator Console
-	// List queue tickets with status badges, allow status updates.
+	import { onDestroy, onMount } from 'svelte';
+	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
+	import AdminReadState from '$lib/admin/AdminReadState.svelte';
+	import AdminToolbar from '$lib/admin/AdminToolbar.svelte';
+	import FacilityFilter from '$lib/admin/FacilityFilter.svelte';
+	import QueueBoard from '$lib/admin/QueueBoard.svelte';
+	import {
+		boardUpdatedLabel,
+		createQueueBoard,
+		showsStaleWarning,
+		type QueueBoardState
+	} from '$lib/admin/queueBoard';
+	import { listFacilities, listQueueTickets } from '$lib/api/endpoints/admin';
+	import { isEmptyScope } from '$lib/admin/readState';
+	import { RADIUS } from '$lib/design/tokens';
+	import Icon from '$lib/ui/Icon.svelte';
+	import { AlertTriangle } from 'lucide-svelte';
+	import { subscribeToSession, getSession } from '$lib/stores/session';
+	import type { AdminFacility } from '$lib/api/types/api';
 
-	import { onMount } from 'svelte';
+	/**
+	 * T-3B4-04: the queue read board.
+	 *
+	 * Polling is delegated wholesale to `createQueueBoard`, which wraps the
+	 * Phase 3B1 `createPolling` helper. What this page owns is the wiring and the
+	 * two things the helper cannot know: which facilities the operator has, and
+	 * that a failed refresh must not blank the board.
+	 *
+	 * Facilities are loaded ONCE and never polled. Facility scope changes when an
+	 * administrator changes a grant, which is rare, and the ticket rows carry
+	 * their own facility references — polling a second list every thirty seconds
+	 * would add a request per board for data that is already in hand.
+	 */
+	const board = createQueueBoard({ read: (signal) => listQueueTickets(signal) });
 
-	type QueueTicket = {
-		id: string;
-		facility_id: string;
-		queue_number: number;
-		formatted_number: string;
-		status: 'waiting' | 'called' | 'in_service' | 'completed' | 'cancelled' | 'skipped';
-		registered_at: string;
-		called_at?: string;
-		completed_at?: string;
-	};
+	let state: QueueBoardState = board.state;
+	let facilities: AdminFacility[] = [];
+	let facilitiesLoaded = false;
+	let facilityFilter = '';
+	let search = '';
+	let unsubscribeSession: (() => void) | undefined;
+	let unsubscribeBoard: (() => void) | undefined;
 
-	type StatusUpdateResult = {
-		id?: string;
-		status?: string;
-		updated_at?: string;
-	};
+	/**
+	 * `hasSession` is read from the store rather than from layout data. It is the
+	 * ONLY session fact the client holds — no role, no permission list, no scope —
+	 * and it exists solely to choose between the sign-in and refusal panels for a
+	 * 403. Reading it from the store means every admin page consults the same
+	 * source, so two pages can never disagree about whether anyone is signed in.
+	 */
+	let hasSession = getSession().hasSession;
 
-	let tickets = $state<QueueTicket[]>([]);
-	let loading = $state(false);
-	let error = $state('');
-	let facilityId = $state('');
-	let busyId = $state<string | null>(null);
-	let lastUpdate = $state<StatusUpdateResult | null>(null);
-
-	const statusLabels: Record<string, string> = {
-		waiting: 'Menunggu',
-		called: 'Dipanggil',
-		in_service: 'Dilayani',
-		completed: 'Selesai',
-		cancelled: 'Dibatalkan',
-		skipped: 'Dilewati'
-	};
-
-	const statusColors: Record<string, string> = {
-		waiting: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400',
-		called: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-400',
-		in_service: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-400',
-		completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400',
-		cancelled: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400',
-		skipped: 'bg-slate-100 text-slate-700 dark:bg-slate-900 dark:text-slate-400'
-	};
-
-	const validTransitions: Record<string, string[]> = {
-		waiting: ['called', 'cancelled'],
-		called: ['in_service', 'cancelled', 'skipped'],
-		in_service: ['completed']
-	};
-
-	function formatTs(value?: string): string {
-		if (!value) return '—';
-		try {
-			return new Date(value).toLocaleString('id-ID');
-		} catch {
-			return value;
-		}
-	}
-
-	async function readApi(res: Response): Promise<{ ok: boolean; data: any }> {
-		const contentType = res.headers.get('content-type') || '';
-		if (!contentType.includes('application/json')) {
-			return { ok: false, data: null };
-		}
-		try {
-			return { ok: true, data: await res.json() };
-		} catch {
-			return { ok: false, data: null };
-		}
-	}
-
-	async function apiFetch(path: string, opts?: RequestInit) {
-		const res = await fetch(`/api/v1${path}`, {
-			...opts,
-			headers: {
-				'Content-Type': 'application/json',
-				...opts?.headers
-			}
+	onMount(async () => {
+		unsubscribeSession = subscribeToSession((session) => {
+			hasSession = session.hasSession;
 		});
-		if (res.status === 401 || res.status === 403) {
-			throw new Error('Akses ditolak. Pastikan Anda memiliki izin yang sesuai.');
+		unsubscribeBoard = board.subscribe((next) => {
+			state = next;
+		});
+		board.start();
+
+		// The scoped-facility read is what decides the class-1 empty state, so it
+		// must resolve before the page claims anything about emptiness. Until it
+		// does, `facilitiesLoaded` is false and no empty verdict is rendered.
+		const result = await listFacilities();
+		if (result.ok) {
+			facilities = result.data;
+			facilitiesLoaded = true;
+		} else {
+			// A failed scope read must not masquerade as an empty scope. Leaving
+			// `facilitiesLoaded` false keeps the board authoritative and avoids
+			// telling an operator they have no facilities.
+			facilitiesLoaded = false;
 		}
-		return res;
-	}
-
-	async function loadTickets() {
-		loading = true;
-		error = '';
-		try {
-			const query = facilityId ? `?facility_id=${encodeURIComponent(facilityId)}` : '';
-			const res = await apiFetch(`/admin/queues${query}`);
-			const parsed = await readApi(res);
-			if (!parsed.ok) {
-				error = 'Gagal menghubungi layanan. Silakan coba lagi.';
-				return;
-			}
-			const json = parsed.data;
-			if (json.success && json.data) {
-				tickets = json.data;
-			} else {
-				error = json.error || 'Gagal memuat antrean.';
-			}
-		} catch (e: unknown) {
-			error = e instanceof Error ? e.message : 'Tidak dapat menghubungi API.';
-		} finally {
-			loading = false;
-		}
-	}
-
-	async function updateStatus(ticket: QueueTicket, newStatus: string) {
-		busyId = ticket.id;
-		error = '';
-		try {
-			const res = await apiFetch(`/admin/queues/${ticket.id}/status`, {
-				method: 'PATCH',
-				body: JSON.stringify({ status: newStatus })
-			});
-			const parsed = await readApi(res);
-			if (!parsed.ok) {
-				error = 'Gagal menghubungi layanan. Silakan coba lagi.';
-				return;
-			}
-			const json = parsed.data;
-			if (json.success) {
-				// Surface additive response fields (id, status, updated_at) for demo feedback.
-				const data = (json.data || {}) as StatusUpdateResult;
-				lastUpdate = {
-					id: data.id || ticket.id,
-					status: data.status || newStatus,
-					updated_at: data.updated_at
-				};
-				// Optimistic local patch keeps ticket number visible while list reloads.
-				tickets = tickets.map((t) =>
-					t.id === ticket.id
-						? { ...t, status: (data.status || newStatus) as QueueTicket['status'] }
-						: t
-				);
-				await loadTickets();
-			} else {
-				error = json.error || 'Gagal memperbarui status.';
-			}
-		} catch (e: unknown) {
-			error = e instanceof Error ? e.message : 'Gagal memperbarui status.';
-		} finally {
-			busyId = null;
-		}
-	}
-
-	function availableTransitions(status: string): string[] {
-		return validTransitions[status] || [];
-	}
-
-	onMount(() => {
-		loadTickets();
 	});
+
+	onDestroy(() => {
+		// Required, not optional: createPolling deliberately does not tear itself
+		// down, because a store and a component have different teardown contracts.
+		// Without this the timer and the visibilitychange listener outlive the page.
+		board.stop();
+		unsubscribeBoard?.();
+		unsubscribeSession?.();
+	});
+
+	/** Client-side narrowing over already-scoped, already-loaded rows. */
+	$: scopedRows = state.load.rows;
+	$: filtered = scopedRows.filter((ticket) => {
+		if (facilityFilter && ticket.facility_id !== facilityFilter) return false;
+		if (search) {
+			const needle = search.trim().toLowerCase();
+			if (!ticket.formatted_number.toLowerCase().includes(needle)) return false;
+		}
+		return true;
+	});
+
+	$: updatedLabel = boardUpdatedLabel(state);
+	$: stale = showsStaleWarning(state);
 </script>
 
-<div class="px-6 py-8">
-	<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-3">
-		<div>
-			<h1 class="text-2xl font-semibold tracking-[-0.01em]">Konsole Antrean</h1>
-			<p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Kelola status antrean pasien per fasilitas.</p>
-		</div>
-		<div class="flex gap-2">
+<div class="sigap-admin-page">
+	<AdminPageHeader
+		title="Antrean"
+		subtitle="Pantau antrean dalam lingkup akses Anda. Pembaruan otomatis sekitar 30 detik, dijeda saat tab tidak aktif."
+	>
+		<svelte:fragment slot="aside">
+			{#if updatedLabel}
+				<!--
+					Always present once data has loaded, INCLUDING in the stale state. An
+					operator looking at possibly-out-of-date rows is exactly who needs to
+					be told when those rows were true.
+				-->
+				<span class="sigap-admin-updated" aria-live="polite">{updatedLabel}</span>
+			{/if}
+		</svelte:fragment>
+	</AdminPageHeader>
+
+	<AdminToolbar
+		refreshing={state.refreshing}
+		onRefresh={() => void board.refresh()}
+		note="Daftar antrean sudah dibatasi fasilitas dalam lingkup akses Anda. Filter di bawah hanya mempersempit tampilan data yang sudah dimuat."
+	>
+		<div class="sigap-admin-search">
+			<label class="sigap-admin-search__label" for="queue-search">Cari nomor</label>
 			<input
-				bind:value={facilityId}
-				placeholder="Filter ID Fasilitas…"
-				class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm w-52 focus:border-emerald-600 dark:border-slate-700 dark:bg-slate-900"
+				class="sigap-admin-search__input"
+				style:border-radius={RADIUS.control}
+				id="queue-search"
+				type="search"
+				placeholder="Nomor antrean"
+				bind:value={search}
 			/>
-			<button
-				onclick={loadTickets}
-				disabled={loading}
-				class="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900 disabled:opacity-60"
-			>
-				{loading ? 'Memuat…' : 'Muat'}
-			</button>
 		</div>
-	</div>
 
-	{#if error}
-		<div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">{error}</div>
-	{/if}
+		<FacilityFilter
+			{facilities}
+			selected={facilityFilter}
+			visible={filtered.length}
+			total={scopedRows.length}
+			onSelect={(value) => (facilityFilter = value)}
+		/>
+	</AdminToolbar>
 
-	{#if lastUpdate}
-		<div class="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
-			<div class="font-medium">Status antrean diperbarui</div>
-			<div class="mt-1 text-xs font-mono break-all">
-				id: {lastUpdate.id}
-				· status: {statusLabels[lastUpdate.status || ''] || lastUpdate.status}
-				{#if lastUpdate.updated_at}
-					· updated_at: {formatTs(lastUpdate.updated_at)}
-				{/if}
+	{#if stale}
+		<!--
+			The stale banner, not a replacement. The rows below stay on screen because
+			they are the last thing that was true, and an operator mid-shift needs
+			them far more than they need a tidy error page.
+		-->
+		<div class="sigap-admin-stale" style:border-radius={RADIUS.panel} role="alert">
+			<Icon icon={AlertTriangle} size={18} />
+			<div>
+				<p class="sigap-admin-stale__title">Gagal memperbarui antrean.</p>
+				<p class="sigap-admin-stale__body">
+					Menampilkan data terakhir yang berhasil dimuat ({updatedLabel}). Periksa
+					koneksi Anda, lalu coba lagi.
+				</p>
 			</div>
 		</div>
 	{/if}
 
-	{#if loading}
-		<div class="py-12 text-center text-sm text-slate-500">Memuat antrean…</div>
-	{:else if tickets.length === 0}
-		<div class="py-12 text-center text-sm text-slate-500">
-			<div class="mb-2">Tidak ada antrean.</div>
-			{#if facilityId}
-				<button onclick={() => { facilityId = ''; loadTickets(); }} class="text-emerald-600 hover:underline text-sm">Reset filter.</button>
-			{:else}
-				<span class="text-slate-400">Masukkan ID fasilitas untuk memfilter.</span>
-			{/if}
-		</div>
-	{:else}
-		<div class="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
-			<table class="w-full text-sm">
-				<thead class="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
-					<tr class="text-left text-[10px] uppercase tracking-[1px] text-slate-500 dark:text-slate-400">
-						<th class="px-4 py-3 font-medium">Nomor</th>
-						<th class="px-4 py-3 font-medium">Fasilitas ID</th>
-						<th class="px-4 py-3 font-medium">Status</th>
-						<th class="px-4 py-3 font-medium">Terdaftar</th>
-						<th class="px-4 py-3 font-medium text-right">Aksi</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each tickets as t (t.id)}
-						<tr class="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900/50">
-							<td class="px-4 py-3">
-								<div class="font-mono font-semibold text-base tracking-wide">{t.formatted_number}</div>
-								<div class="text-[10px] text-slate-400">#{t.queue_number}</div>
-							</td>
-							<td class="px-4 py-3 font-mono text-xs text-slate-500">{t.facility_id.slice(0, 8)}…</td>
-							<td class="px-4 py-3">
-								<span class="inline-block rounded-full text-[10px] px-2 py-0.5 font-medium {statusColors[t.status] || 'bg-slate-100 text-slate-700'}">
-									{statusLabels[t.status] || t.status}
-								</span>
-							</td>
-							<td class="px-4 py-3 text-slate-500 dark:text-slate-400 text-xs">
-								{formatTs(t.registered_at)}
-							</td>
-							<td class="px-4 py-3 text-right">
-								{#if busyId === t.id}
-									<span class="text-xs text-slate-400">Memperbarui…</span>
-								{:else if availableTransitions(t.status).length > 0}
-									{#each availableTransitions(t.status) as next}
-										<button
-											onclick={() => updateStatus(t, next)}
-											class="ml-2 text-xs rounded px-2 py-0.5 {next === 'cancelled' ? 'text-red-600 hover:bg-red-50 dark:hover:bg-red-950' : 'text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950'} border border-slate-200 dark:border-slate-700"
-										>
-											→ {statusLabels[next] || next}
-										</button>
-									{/each}
-								{:else}
-									<span class="text-xs text-slate-400">—</span>
-								{/if}
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
-	{/if}
+	<AdminReadState
+		loading={state.load.loading}
+		error={state.load.failed ? state.load.error : null}
+		{hasSession}
+		rowCount={scopedRows.length}
+		scopeEmpty={facilitiesLoaded && isEmptyScope(facilities)}
+		emptyTitle="Belum ada antrean"
+		emptyDescription="Belum ada antrean dalam lingkup operator saat ini."
+		onRetry={() => void board.refresh()}
+	>
+		{#if filtered.length === 0}
+			<div class="sigap-admin-nomatch" style:border-radius={RADIUS.panel} role="status">
+				<p class="sigap-admin-nomatch__title">Tidak ada antrean yang cocok</p>
+				<p class="sigap-admin-nomatch__body">
+					Ubah atau hapus pencarian dan filter fasilitas Anda.
+				</p>
+				<button
+					type="button"
+					class="sigap-admin-nomatch__reset"
+					style:border-radius={RADIUS.control}
+					on:click={() => {
+						search = '';
+						facilityFilter = '';
+					}}
+				>
+					Hapus filter
+				</button>
+			</div>
+		{:else}
+			<QueueBoard tickets={filtered} {facilities} />
+		{/if}
+	</AdminReadState>
 </div>
+
+<style>
+	.sigap-admin-page {
+		min-width: 0;
+	}
+
+	.sigap-admin-updated {
+		font-size: 12px;
+		color: var(--sigap-muted);
+		/* Tabular figures so the label does not jitter as the minutes tick over. */
+		font-variant-numeric: tabular-nums;
+	}
+
+	.sigap-admin-search {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.sigap-admin-search__label {
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-admin-search__input {
+		height: 36px;
+		width: 180px;
+		padding: 0 10px;
+		border: 1px solid var(--sigap-border);
+		background-color: var(--sigap-surface);
+		color: var(--sigap-foreground);
+		font: inherit;
+		font-size: 13px;
+	}
+
+	.sigap-admin-search__input:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
+	}
+
+	.sigap-admin-stale {
+		display: flex;
+		gap: 10px;
+		align-items: flex-start;
+		margin: 12px 0;
+		padding: 12px;
+		font-size: 13px;
+		line-height: 1.45;
+		background-color: var(--sigap-surface);
+		border: 1px solid var(--sigap-border);
+		border-left: 3px solid var(--sigap-danger);
+		color: var(--sigap-danger);
+	}
+
+	.sigap-admin-stale__title {
+		margin: 0;
+		font-weight: 600;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-admin-stale__body {
+		margin: 0;
+		color: var(--sigap-muted);
+	}
+
+	.sigap-admin-nomatch {
+		padding: 24px;
+		text-align: center;
+		background-color: var(--sigap-surface);
+		border: 1px dashed var(--sigap-border);
+	}
+
+	.sigap-admin-nomatch__title {
+		margin: 0 0 4px;
+		font-size: 15px;
+		font-weight: 600;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-admin-nomatch__body {
+		margin: 0 0 12px;
+		font-size: 14px;
+		color: var(--sigap-muted);
+	}
+
+	.sigap-admin-nomatch__reset {
+		height: 36px;
+		padding: 0 14px;
+		font: inherit;
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--sigap-primary);
+		background-color: var(--sigap-surface);
+		border: 1px solid var(--sigap-border);
+		cursor: pointer;
+	}
+
+	.sigap-admin-nomatch__reset:hover {
+		background-color: var(--sigap-canvas);
+	}
+
+	.sigap-admin-nomatch__reset:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
+	}
+</style>

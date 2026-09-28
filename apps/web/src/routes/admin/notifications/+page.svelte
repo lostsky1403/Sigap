@@ -1,510 +1,482 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
+	import AdminReadState from '$lib/admin/AdminReadState.svelte';
+	import DataTable from '$lib/ui/DataTable.svelte';
+	import StatusBadge from '$lib/ui/StatusBadge.svelte';
+	import Skeleton from '$lib/ui/Skeleton.svelte';
+	import { RADIUS } from '$lib/design/tokens';
+	import {
+		getNotificationSummary,
+		listFacilities,
+		listNotifications
+	} from '$lib/api/endpoints/admin';
+	import { formatRelativeTime, formatNumber } from '$lib/domain/format';
+	import { isEmptyScope } from '$lib/admin/readState';
+	import { getSession, subscribeToSession } from '$lib/stores/session';
+	import {
+		NOTIFICATION_LIMIT_NOTE,
+		NOTIFICATION_STATUS_LABEL,
+		NOTIFICATION_STATUS_ORDER,
+		NOTIFICATION_STATUS_TONE,
+		applyFiltersToUrl,
+		buildNotificationQuery,
+		emptyFilters,
+		filtersFromParams,
+		hasActiveFilters,
+		zeroSummary,
+		type NotificationFilters
+	} from '$lib/admin/notifications';
+	import type { ApiError } from '$lib/api/errors';
+	import type {
+		AdminFacility,
+		NotificationOutboxRow,
+		NotificationSummary
+	} from '$lib/api/types/api';
 
-	// Matches apps/api/internal/notification/types.go and the JSON
-	// projection in handler/notifications.go. We deliberately do NOT
-	// have a `recipient_contact` or `recipient_contact_hash` field —
-	// the server never returns either.
-	type NotificationStatus = 'pending' | 'processing' | 'delivered' | 'failed' | 'cancelled';
-	type NotificationChannel = 'dev' | 'sms' | 'whatsapp' | 'email';
-	type NotificationRecipientType = 'patient' | 'staff' | 'facility_admin';
+	/**
+	 * T-3B4-08: the notification outbox read layer.
+	 *
+	 * This page had the strongest existing behaviour in the admin area and keeps
+	 * it. What is corrected:
+	 *
+	 *  1. `relativeTime` was returning SECONDS as "d" and DAYS as "h" — a copy-paste
+	 *     inversion, so a notification sent ten seconds ago read "10d lalu" and one
+	 *     sent two days ago read "2h lalu". The Phase 3B1 `formatRelativeTime`
+	 *     helper already orders minutes before hours before days correctly and is
+	 *     used here instead.
+	 *
+	 *  2. The list and the summary keep SEPARATE loading and error states. They are
+	 *     two requests and they fail independently: a summary outage must not blank
+	 *     a list of notifications an operator needs to act on, and a list failure
+	 *     must not be hidden behind five plausible-looking zero cards.
+	 *
+	 * Recipient masking is preserved exactly. The server sends only
+	 * `recipient_contact_masked`; the raw contact and the internal dedup hash are
+	 * never in the response, and nothing here reconstructs them.
+	 */
+	let rows: NotificationOutboxRow[] = [];
+	let summary: NotificationSummary = zeroSummary();
+	let listError: ApiError | null = null;
+	let summaryError: ApiError | null = null;
+	let listLoading = true;
+	let summaryLoading = true;
+	let facilities: AdminFacility[] = [];
+	let facilitiesLoaded = false;
+	let hasSession = getSession().hasSession;
+	let unsubscribeSession: (() => void) | undefined;
+	let filters: NotificationFilters = emptyFilters();
 
-	interface NotificationRow {
-		id: string;
-		facility_id?: string;
-		channel: NotificationChannel;
-		template_key: string;
-		subject: string;
-		body_template: string;
-		recipient_type: NotificationRecipientType;
-		recipient_contact_masked: string;
-		status: NotificationStatus;
-		attempt_count: number;
-		next_attempt_at: string;
-		last_error_code?: string;
-		created_at: string;
-		updated_at: string;
-	}
+	const CHANNELS = ['dev', 'sms', 'whatsapp', 'email'] as const;
 
-	interface SummaryCounts {
-		pending: number;
-		processing: number;
-		delivered: number;
-		failed: number;
-		cancelled: number;
-	}
+	/**
+	 * Filters are DERIVED from the URL rather than held in local state and mirrored
+	 * into it. The URL is the single source of truth, which is what makes a pasted
+	 * link reproduce the operator's view exactly and what stops the two from
+	 * drifting after a back/forward navigation.
+	 */
+	$: filters = filtersFromParams($page.url.searchParams);
 
-	const STATUSES: NotificationStatus[] = ['pending', 'processing', 'delivered', 'failed', 'cancelled'];
-	const CHANNELS: NotificationChannel[] = ['dev', 'sms', 'whatsapp', 'email'];
-
-	let rows = $state<NotificationRow[]>([]);
-	let summary = $state<SummaryCounts | null>(null);
-	let listError = $state('');
-	let summaryError = $state('');
-	let listLoaded = $state(false);
-	let summaryLoaded = $state(false);
-	let busyId = $state<string | null>(null);
-
-	// Filter state — mirrors URL search params for shareable links.
-	let filterStatus = $state<string>('');
-	let filterChannel = $state<string>('');
-	let filterTemplate = $state<string>('');
-	let filterFrom = $state<string>('');
-	let filterTo = $state<string>('');
-
-	const hasActiveFilters = $derived(
-		filterStatus !== '' ||
-			filterChannel !== '' ||
-			filterTemplate !== '' ||
-			filterFrom !== '' ||
-			filterTo !== ''
-	);
-
-	function buildQueryString(): string {
-		const p = new URLSearchParams();
-		p.set('limit', '200');
-		if (filterStatus) p.set('status', filterStatus);
-		if (filterChannel) p.set('channel', filterChannel);
-		if (filterTemplate) p.set('template_key', filterTemplate);
-		if (filterFrom) p.set('created_from', `${filterFrom}T00:00:00Z`);
-		if (filterTo) p.set('created_to', `${filterTo}T23:59:59Z`);
-		return p.toString();
-	}
-
-	function syncFromUrl() {
-		const params = $page.url.searchParams;
-		filterStatus = params.get('status') ?? '';
-		filterChannel = params.get('channel') ?? '';
-		filterTemplate = params.get('template_key') ?? '';
-		filterFrom = params.get('created_from')?.slice(0, 10) ?? '';
-		filterTo = params.get('created_to')?.slice(0, 10) ?? '';
-	}
-
-	function pushFiltersToUrl() {
-		const url = new URL($page.url);
-		const set = (k: string, v: string) => {
-			if (v) url.searchParams.set(k, v);
-			else url.searchParams.delete(k);
-		};
-		set('status', filterStatus);
-		set('channel', filterChannel);
-		set('template_key', filterTemplate);
-		set('created_from', filterFrom ? `${filterFrom}T00:00:00Z` : '');
-		set('created_to', filterTo ? `${filterTo}T23:59:59Z` : '');
+	function onFilterChange<K extends keyof NotificationFilters>(
+		key: K,
+		value: NotificationFilters[K]
+	) {
+		const next = { ...filters, [key]: value };
+		const url = applyFiltersToUrl(new URL($page.url), next);
+		// replaceState rather than pushState: typing in a filter should not fill the
+		// browser history with one entry per keystroke.
 		history.replaceState(history.state, '', url.toString());
 	}
 
-	function relativeTime(iso: string): string {
-		try {
-			const t = new Date(iso).getTime();
-			const diff = Math.max(0, Date.now() - t);
-			const sec = Math.floor(diff / 1000);
-			if (sec < 60) return `${sec}d lalu`;
-			const min = Math.floor(sec / 60);
-			if (min < 60) return `${min}m lalu`;
-			const hr = Math.floor(min / 60);
-			if (hr < 24) return `${hr}j lalu`;
-			const d = Math.floor(hr / 24);
-			return `${d}h lalu`;
-		} catch {
-			return iso;
-		}
-	}
-
-	function statusClasses(s: NotificationStatus): string {
-		switch (s) {
-			case 'delivered':
-				return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400';
-			case 'pending':
-			case 'processing':
-				return 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400';
-			case 'failed':
-				return 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400';
-			case 'cancelled':
-				return 'bg-slate-100 text-slate-700 dark:bg-slate-900 dark:text-slate-400';
-			default:
-				return 'bg-slate-100 text-slate-700 dark:bg-slate-900 dark:text-slate-400';
-		}
-	}
-
-	function summaryCardClasses(s: NotificationStatus): string {
-		switch (s) {
-			case 'pending':
-				return 'border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/40';
-			case 'processing':
-				return 'border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40';
-			case 'delivered':
-				return 'border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/40';
-			case 'failed':
-				return 'border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40';
-			case 'cancelled':
-				return 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40';
-		}
-	}
-
-	function summaryDotClasses(s: NotificationStatus): string {
-		switch (s) {
-			case 'pending':
-				return 'bg-blue-500';
-			case 'processing':
-				return 'bg-amber-500';
-			case 'delivered':
-				return 'bg-emerald-500';
-			case 'failed':
-				return 'bg-red-500';
-			case 'cancelled':
-				return 'bg-slate-400';
-		}
-	}
-
-	async function loadNotifications() {
-		listError = '';
-		try {
-			const qs = buildQueryString();
-			const res = await fetch(`/api/v1/admin/notifications?${qs}`, {
-				headers: { Accept: 'application/json' }
-			});
-			if (!res.ok) {
-				listError = `Gagal memuat outbox (HTTP ${res.status}).`;
-				rows = [];
-				return;
-			}
-			const body = await res.json();
-			rows = (body?.data ?? []) as NotificationRow[];
-		} catch (e) {
-			listError = `Kesalahan jaringan: ${(e as Error).message}`;
-			rows = [];
-		} finally {
-			listLoaded = true;
-		}
-	}
-
-	async function loadSummary() {
-		summaryError = '';
-		try {
-			const qs = buildQueryString();
-			const res = await fetch(`/api/v1/admin/notifications/summary?${qs}`, {
-				headers: { Accept: 'application/json' }
-			});
-			if (!res.ok) {
-				summaryError = `Gagal memuat ringkasan (HTTP ${res.status}).`;
-				summary = null;
-				return;
-			}
-			const body = await res.json();
-			summary = (body?.data ?? null) as SummaryCounts | null;
-		} catch (e) {
-			summaryError = `Kesalahan jaringan: ${(e as Error).message}`;
-			summary = null;
-		} finally {
-			summaryLoaded = true;
-		}
-	}
-
-	async function loadAll() {
-		listLoaded = false;
-		summaryLoaded = false;
-		await Promise.all([loadNotifications(), loadSummary()]);
-	}
-
-	function applyFilters() {
-		pushFiltersToUrl();
-		loadAll();
-	}
-
-	function resetFilters() {
-		filterStatus = '';
-		filterChannel = '';
-		filterTemplate = '';
-		filterFrom = '';
-		filterTo = '';
-		pushFiltersToUrl();
-		loadAll();
-	}
-
-	async function callAction(id: string, op: 'retry' | 'cancel') {
-		busyId = `${op}:${id}`;
-		try {
-			const res = await fetch(`/api/v1/admin/notifications/${id}/${op}`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' }
-			});
-			if (!res.ok) {
-				listError = `Aksi ${op} gagal (HTTP ${res.status}).`;
-				return;
-			}
-			listError = '';
-			await loadAll();
-		} catch (e) {
-			listError = `Kesalahan jaringan: ${(e as Error).message}`;
-		} finally {
-			busyId = null;
-		}
+	function clearFilters() {
+		const url = applyFiltersToUrl(new URL($page.url), emptyFilters());
+		history.replaceState(history.state, '', url.toString());
 	}
 
 	onMount(() => {
-		syncFromUrl();
-		loadAll();
+		unsubscribeSession = subscribeToSession((session) => {
+			hasSession = session.hasSession;
+		});
+
+		// The list and the summary are independent requests with independent
+		// lifetimes, so they are NOT awaited together. Combining them would mean a
+		// summary outage delayed the list, and a list outage blanked the cards.
+		listNotifications(buildNotificationQuery(filters))
+			.then((result) => {
+				if (result.ok) rows = result.data;
+				else listError = result.error;
+			})
+			.finally(() => (listLoading = false));
+
+		getNotificationSummary()
+			.then((result) => {
+				if (result.ok) summary = result.data;
+				else summaryError = result.error;
+			})
+			.finally(() => (summaryLoading = false));
+
+		// The scoped-facility read backs the class-1 empty state. It is separate
+		// again, and its failure never becomes an empty-scope verdict: telling an
+		// operator they have no facilities because one request failed is worse than
+		// saying nothing.
+		listFacilities()
+			.then((result) => {
+				if (!result.ok) return;
+				facilities = result.data;
+				facilitiesLoaded = true;
+			})
+			.catch(() => {
+				/* left unloaded on purpose; see above */
+			});
 	});
+
+	/**
+	 * The recipient column shows ONLY the masked form the server sent.
+	 *
+	 * There is deliberately no fallback to any other field. A masked value like
+	 * `b••••@contoh.id` is what the server chose to disclose, and inventing a
+	 * longer version of it from another field would defeat the masking.
+	 */
+	function recipientOf(row: NotificationOutboxRow): string {
+		return row.recipient_contact_masked || '-';
+	}
 </script>
 
-<div class="px-6 py-8">
-	<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-3">
-		<div>
-			<h1 class="text-2xl font-semibold tracking-[-0.01em]">Outbox Notifikasi</h1>
-			<p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
-				Antrean notifikasi appointment & check-in. Dev provider only — belum ada vendor SMS/WhatsApp/email.
-			</p>
-		</div>
-		<button
-			type="button"
-			onclick={loadAll}
-			class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
-		>
-			Muat ulang
-		</button>
-	</div>
+<div class="sigap-admin-page">
+	<AdminPageHeader
+		title="Notifikasi"
+		subtitle="Outbox notifikasi dalam lingkup akses Anda. Penerima ditampilkan dalam bentuk tersamar."
+	/>
 
-	<!-- Summary cards -->
-	<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
-		{#each STATUSES as s (s)}
-			<div class={`rounded-xl border p-4 ${summaryCardClasses(s)}`}>
-				<div class="flex items-center gap-2 mb-1">
-					<span class={`inline-block w-2 h-2 rounded-full ${summaryDotClasses(s)}`}></span>
-					<span class="text-[10px] uppercase tracking-[1px] text-slate-500 dark:text-slate-400 font-medium">
-						{s}
-					</span>
-				</div>
-				<div class="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
-					{#if !summaryLoaded}
-						<span class="text-slate-400">…</span>
-					{:else if summaryError}
-						<span class="text-slate-400 text-sm">—</span>
-					{:else}
-						{summary?.[s] ?? 0}
-					{/if}
-				</div>
+	<!--
+		Summary cards, with their OWN loading and error states.
+
+		Five `aria-busy` skeletons while the counts load, and a single inline error
+		if the summary fails — deliberately separate from the list's error below, so
+		one failing endpoint never masks the other's state.
+	-->
+	<section class="sigap-notif-summary" aria-label="Ringkasan notifikasi">
+		{#if summaryLoading}
+			<div class="sigap-notif-summary__grid" aria-busy="true">
+				{#each NOTIFICATION_STATUS_ORDER as status (status)}
+					<div class="sigap-notif-summary__card">
+						<Skeleton height="22px" width="100%" />
+					</div>
+				{/each}
 			</div>
-		{/each}
-	</div>
-	{#if summaryError}
-		<div
-			class="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
-		>
-			Ringkasan tidak dapat dimuat. Tabel di bawah masih menampilkan data terbaru.
-		</div>
-	{/if}
+		{:else if summaryError}
+			<div class="sigap-notif-summary__error" role="alert" style:border-radius={RADIUS.panel}>
+				Ringkasan notifikasi tidak dapat dimuat. Daftar notifikasi di bawah tetap dapat
+				dibaca.
+			</div>
+		{:else}
+			<div class="sigap-notif-summary__grid">
+				{#each NOTIFICATION_STATUS_ORDER as status (status)}
+					<div class="sigap-notif-summary__card" style:border-radius={RADIUS.panel}>
+						<StatusBadge
+							label={NOTIFICATION_STATUS_LABEL[status]}
+							tone={NOTIFICATION_STATUS_TONE[status]}
+							size="sm"
+						/>
+						<!--
+							These counts come from the scoped summary endpoint only. They are
+							never derived from the filtered list below, which would produce a
+							number scoped to the current filter and present it as a total.
+						-->
+						<p class="sigap-notif-summary__count">{formatNumber(summary[status])}</p>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</section>
 
-	<!-- Filter bar -->
-	<div
-		class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4 mb-4"
+	<div class="sigap-notif-filters">
+		<div class="sigap-admin-field">
+			<label class="sigap-admin-field__label" for="notif-status">Status</label>
+			<select
+				class="sigap-admin-field__select"
+				style:border-radius={RADIUS.control}
+				id="notif-status"
+				value={filters.status}
+				on:change={(event) => onFilterChange('status', event.currentTarget.value)}
+			>
+				<option value="">Semua status</option>
+				{#each NOTIFICATION_STATUS_ORDER as status (status)}
+					<option value={status}>{NOTIFICATION_STATUS_LABEL[status]}</option>
+				{/each}
+			</select>
+		</div>
+
+		<div class="sigap-admin-field">
+			<label class="sigap-admin-field__label" for="notif-channel">Kanal</label>
+			<select
+				class="sigap-admin-field__select"
+				style:border-radius={RADIUS.control}
+				id="notif-channel"
+				value={filters.channel}
+				on:change={(event) => onFilterChange('channel', event.currentTarget.value)}
+			>
+				<option value="">Semua kanal</option>
+				{#each CHANNELS as channel (channel)}
+					<option value={channel}>{channel}</option>
+				{/each}
+			</select>
+		</div>
+
+		<div class="sigap-admin-field">
+			<label class="sigap-admin-field__label" for="notif-template">Template</label>
+			<input
+				class="sigap-admin-field__input"
+				style:border-radius={RADIUS.control}
+				id="notif-template"
+				type="search"
+				placeholder="template_key"
+				value={filters.templateKey}
+				on:change={(event) => onFilterChange('templateKey', event.currentTarget.value)}
+			/>
+		</div>
+
+		<div class="sigap-admin-field">
+			<label class="sigap-admin-field__label" for="notif-from">Dibuat dari</label>
+			<input
+				class="sigap-admin-field__input"
+				style:border-radius={RADIUS.control}
+				id="notif-from"
+				type="date"
+				value={filters.createdFrom}
+				on:change={(event) => onFilterChange('createdFrom', event.currentTarget.value)}
+			/>
+		</div>
+
+		<div class="sigap-admin-field">
+			<label class="sigap-admin-field__label" for="notif-to">Dibuat sampai</label>
+			<input
+				class="sigap-admin-field__input"
+				style:border-radius={RADIUS.control}
+				id="notif-to"
+				type="date"
+				value={filters.createdTo}
+				on:change={(event) => onFilterChange('createdTo', event.currentTarget.value)}
+			/>
+		</div>
+	</div>
+
+	<!--
+		The LIST's own state, separate from the summary's above.
+	-->
+	<AdminReadState
+		loading={listLoading}
+		error={listError}
+		{hasSession}
+		rowCount={rows.length}
+		scopeEmpty={facilitiesLoaded && isEmptyScope(facilities)}
+		emptyTitle="Belum ada notifikasi"
 	>
-		<div class="flex flex-col lg:flex-row gap-3 lg:items-end">
-			<div class="flex-1 min-w-0">
-				<label class="block text-[10px] uppercase tracking-[1px] text-slate-500 dark:text-slate-400 mb-1" for="filter-status">
-					Status
-				</label>
-				<select
-					id="filter-status"
-					bind:value={filterStatus}
-					class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
-				>
-					<option value="">Semua</option>
-					{#each STATUSES as s (s)}
-						<option value={s}>{s}</option>
-					{/each}
-				</select>
-			</div>
-			<div class="flex-1 min-w-0">
-				<label class="block text-[10px] uppercase tracking-[1px] text-slate-500 dark:text-slate-400 mb-1" for="filter-channel">
-					Channel
-				</label>
-				<select
-					id="filter-channel"
-					bind:value={filterChannel}
-					class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
-				>
-					<option value="">Semua</option>
-					{#each CHANNELS as c (c)}
-						<option value={c}>{c}</option>
-					{/each}
-				</select>
-			</div>
-			<div class="flex-1 min-w-0">
-				<label class="block text-[10px] uppercase tracking-[1px] text-slate-500 dark:text-slate-400 mb-1" for="filter-template">
-					Template key
-				</label>
-				<input
-					id="filter-template"
-					type="text"
-					bind:value={filterTemplate}
-					placeholder="contoh: appointment.booked"
-					class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-mono"
-				/>
-			</div>
-			<div class="flex-1 min-w-0">
-				<label class="block text-[10px] uppercase tracking-[1px] text-slate-500 dark:text-slate-400 mb-1" for="filter-from">
-					Dari
-				</label>
-				<input
-					id="filter-from"
-					type="date"
-					bind:value={filterFrom}
-					class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
-				/>
-			</div>
-			<div class="flex-1 min-w-0">
-				<label class="block text-[10px] uppercase tracking-[1px] text-slate-500 dark:text-slate-400 mb-1" for="filter-to">
-					Sampai
-				</label>
-				<input
-					id="filter-to"
-					type="date"
-					bind:value={filterTo}
-					class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
-				/>
-			</div>
-			<div class="flex gap-2">
-				<button
-					type="button"
-					onclick={applyFilters}
-					class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
-				>
-					Terapkan
-				</button>
-				{#if hasActiveFilters}
+		{#if rows.length === 0}
+			<div class="sigap-admin-nomatch" style:border-radius={RADIUS.panel} role="status">
+				<p class="sigap-admin-nomatch__title">
+					{hasActiveFilters(filters)
+						? 'Tidak ada notifikasi yang cocok'
+						: 'Belum ada notifikasi dalam lingkup operator saat ini.'}
+				</p>
+				{#if hasActiveFilters(filters)}
+					<p class="sigap-admin-nomatch__body">Ubah atau hapus filter Anda.</p>
 					<button
 						type="button"
-						onclick={resetFilters}
-						class="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900"
+						class="sigap-admin-nomatch__reset"
+						style:border-radius={RADIUS.control}
+						on:click={clearFilters}
 					>
-						Reset
+						Hapus filter
 					</button>
 				{/if}
 			</div>
-		</div>
-	</div>
-
-	{#if listError}
-		<div
-			class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
-		>
-			{listError}
-			<button
-				type="button"
-				onclick={loadNotifications}
-				class="ml-3 underline text-red-800 dark:text-red-200"
+		{:else}
+			<DataTable
+				caption="Outbox notifikasi dalam lingkup akses"
+				columns={[
+					{ label: 'Dibuat' },
+					{ label: 'Kanal' },
+					{ label: 'Subjek' },
+					{ label: 'Penerima', secondary: true },
+					{ label: 'Fasilitas', secondary: true },
+					{ label: 'Status' },
+					{ label: 'Percobaan', secondary: true, numeric: true }
+				]}
 			>
-				Coba lagi
-			</button>
-		</div>
-	{/if}
-
-	<!-- Table -->
-	<div class="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
-		<table class="w-full text-sm">
-			<thead class="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
-				<tr class="text-left text-[10px] uppercase tracking-[1px] text-slate-500 dark:text-slate-400">
-					<th class="px-4 py-3 font-medium">Created</th>
-					<th class="px-4 py-3 font-medium">Channel</th>
-					<th class="px-4 py-3 font-medium">Template</th>
-					<th class="px-4 py-3 font-medium">Penerima (masked)</th>
-					<th class="px-4 py-3 font-medium">Status</th>
-					<th class="px-4 py-3 font-medium">Attempts</th>
-					<th class="px-4 py-3 font-medium text-right">Aksi</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#if !listLoaded}
-					{#each Array(5) as _, i (i)}
-						<tr class="border-b border-slate-100 dark:border-slate-800">
-							<td class="px-4 py-3">
-								<div class="h-3 w-16 bg-slate-200 dark:bg-slate-800 rounded animate-pulse"></div>
-								<div class="h-2 w-12 bg-slate-100 dark:bg-slate-900 rounded mt-2 animate-pulse"></div>
-							</td>
-							<td class="px-4 py-3"><div class="h-3 w-10 bg-slate-200 dark:bg-slate-800 rounded animate-pulse"></div></td>
-							<td class="px-4 py-3">
-								<div class="h-3 w-40 bg-slate-200 dark:bg-slate-800 rounded animate-pulse"></div>
-								<div class="h-2 w-32 bg-slate-100 dark:bg-slate-900 rounded mt-2 animate-pulse"></div>
-							</td>
-							<td class="px-4 py-3"><div class="h-3 w-24 bg-slate-200 dark:bg-slate-800 rounded animate-pulse"></div></td>
-							<td class="px-4 py-3"><div class="h-5 w-16 bg-slate-200 dark:bg-slate-800 rounded-full animate-pulse"></div></td>
-							<td class="px-4 py-3"><div class="h-3 w-6 bg-slate-200 dark:bg-slate-800 rounded animate-pulse mx-auto"></div></td>
-							<td class="px-4 py-3"></td>
-						</tr>
-					{/each}
-				{:else if rows.length === 0 && !listError}
+				{#each rows as row (row.id)}
 					<tr>
-						<td colspan="7" class="px-4 py-12 text-center text-sm text-slate-500">
-							{#if hasActiveFilters}
-								Tidak ada notifikasi yang cocok dengan filter yang dipilih.
-							{:else}
-								Tidak ada notifikasi dalam outbox.
-							{/if}
+						<td class="sigap-notif-row__time">
+							<!--
+								`formatRelativeTime` from Phase 3B1, not the local helper this
+								page used to carry. The old one returned seconds as "d" and days
+								as "h", so a notification ten seconds old read "10d lalu".
+							-->
+							{formatRelativeTime(row.created_at)}
+						</td>
+						<td>{row.channel}</td>
+						<td class="sigap-notif-row__subject">{row.subject}</td>
+						<td class="sigap-table-col-secondary">{recipientOf(row)}</td>
+						<!--
+							Always "-". A notification row carries `facility_id`, but
+							resolving it to a name here would need a facility catalog this
+							page does not load, and falling back to the raw id would put a
+							UUID in the UI. The join rule says: no label, so "-".
+						-->
+						<td class="sigap-table-col-secondary">-</td>
+						<td>
+							<StatusBadge
+								label={NOTIFICATION_STATUS_LABEL[row.status]}
+								tone={NOTIFICATION_STATUS_TONE[row.status]}
+								size="sm"
+							/>
+						</td>
+						<td class="sigap-table-col-secondary sigap-notif-row__attempts">
+							{formatNumber(row.attempt_count)}
 						</td>
 					</tr>
-				{:else}
-					{#each rows as r (r.id)}
-						<tr
-							class="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900/50"
-						>
-							<td class="px-4 py-3">
-								<div class="font-medium">{relativeTime(r.created_at)}</div>
-								<div class="text-[10px] text-slate-400 font-mono">{r.id.slice(0, 8)}…</div>
-							</td>
-							<td class="px-4 py-3">
-								<span class="font-mono text-xs uppercase">{r.channel}</span>
-							</td>
-							<td class="px-4 py-3">
-								<div class="font-mono text-xs">{r.template_key}</div>
-								<div class="text-[10px] text-slate-400 mt-0.5 max-w-md truncate" title={r.subject}>
-									{r.subject}
-								</div>
-							</td>
-							<td class="px-4 py-3 font-mono text-xs">
-								<div>{r.recipient_contact_masked}</div>
-								<div class="text-[10px] text-slate-400">{r.recipient_type}</div>
-							</td>
-							<td class="px-4 py-3">
-								<span
-									class={`inline-block rounded-full text-[10px] px-2 py-0.5 font-medium ${statusClasses(r.status)}`}
-								>
-									{r.status}
-								</span>
-								{#if r.last_error_code}
-									<div class="text-[10px] text-red-600 dark:text-red-400 mt-0.5">
-										{r.last_error_code}
-									</div>
-								{/if}
-							</td>
-							<td class="px-4 py-3 text-center">{r.attempt_count}</td>
-							<td class="px-4 py-3 text-right">
-								{#if r.status === 'failed' || r.status === 'pending'}
-									<button
-										type="button"
-										onclick={() => callAction(r.id, 'retry')}
-										disabled={busyId === `retry:${r.id}`}
-										class="text-xs rounded px-2 py-0.5 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950 border border-slate-200 dark:border-slate-700 disabled:opacity-50"
-									>
-										Retry
-									</button>
-								{/if}
-								{#if r.status === 'pending' || r.status === 'failed'}
-									<button
-										type="button"
-										onclick={() => callAction(r.id, 'cancel')}
-										disabled={busyId === `cancel:${r.id}`}
-										class="ml-2 text-xs rounded px-2 py-0.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-950 border border-slate-200 dark:border-slate-700 disabled:opacity-50"
-									>
-										Cancel
-									</button>
-								{/if}
-							</td>
-						</tr>
-					{/each}
-				{/if}
-			</tbody>
-		</table>
-	</div>
+				{/each}
+			</DataTable>
+		{/if}
+	</AdminReadState>
+
+	<p class="sigap-notif-row__note">{NOTIFICATION_LIMIT_NOTE}</p>
 </div>
+
+<style>
+	.sigap-admin-page {
+		min-width: 0;
+	}
+
+	.sigap-notif-summary {
+		margin-bottom: 16px;
+	}
+
+	.sigap-notif-summary__grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+		gap: 12px;
+	}
+
+	.sigap-notif-summary__card {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 12px;
+		background-color: var(--sigap-surface);
+		border: 1px solid var(--sigap-border);
+	}
+
+	.sigap-notif-summary__count {
+		margin: 0;
+		font-size: 20px;
+		font-weight: 600;
+		color: var(--sigap-foreground);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.sigap-notif-summary__error {
+		padding: 12px;
+		font-size: 13px;
+		color: var(--sigap-danger);
+		background-color: var(--sigap-surface);
+		border: 1px solid var(--sigap-border);
+		border-left: 3px solid var(--sigap-danger);
+	}
+
+	.sigap-notif-filters {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-end;
+		gap: 12px;
+		margin-bottom: 12px;
+	}
+
+	.sigap-admin-field {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.sigap-admin-field__label {
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-admin-field__select,
+	.sigap-admin-field__input {
+		height: 36px;
+		min-width: 150px;
+		padding: 0 10px;
+		border: 1px solid var(--sigap-border);
+		background-color: var(--sigap-surface);
+		color: var(--sigap-foreground);
+		font: inherit;
+		font-size: 13px;
+	}
+
+	.sigap-admin-field__select:focus-visible,
+	.sigap-admin-field__input:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
+	}
+
+	.sigap-notif-row__time {
+		color: var(--sigap-muted);
+		white-space: nowrap;
+	}
+
+	.sigap-notif-row__subject {
+		font-weight: 500;
+	}
+
+	.sigap-notif-row__attempts {
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.sigap-notif-row__note {
+		margin: 8px 0 0;
+		font-size: 12px;
+		color: var(--sigap-muted);
+	}
+
+	.sigap-admin-nomatch {
+		padding: 24px;
+		text-align: center;
+		background-color: var(--sigap-surface);
+		border: 1px dashed var(--sigap-border);
+	}
+
+	.sigap-admin-nomatch__title {
+		margin: 0 0 4px;
+		font-size: 15px;
+		font-weight: 600;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-admin-nomatch__body {
+		margin: 0 0 12px;
+		font-size: 14px;
+		color: var(--sigap-muted);
+	}
+
+	.sigap-admin-nomatch__reset {
+		height: 36px;
+		padding: 0 14px;
+		font: inherit;
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--sigap-primary);
+		background-color: var(--sigap-surface);
+		border: 1px solid var(--sigap-border);
+		cursor: pointer;
+	}
+
+	.sigap-admin-nomatch__reset:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
+	}
+</style>
