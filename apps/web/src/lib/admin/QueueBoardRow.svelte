@@ -76,7 +76,7 @@
 <style>
 	/*
 		`tr` carries no styles of its own. Row presentation belongs to the
-		`td` rules in DataTable, which own the 44px row height and the hover
+		`td` rules in DataTable, which own the 40px row height and the hover
 		state; duplicating them here would give the two densities a second place
 		to drift apart.
 	*/

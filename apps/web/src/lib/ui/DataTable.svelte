@@ -144,7 +144,14 @@
 		color: var(--sigap-foreground);
 	}
 
-	.sigap-data-table thead th {
+	/*
+		Declared global for the same reason as the row rule: the header cells are
+		rendered here, but the `th` in the empty-state and the row components'
+		geometry are not this component's to scope, and a zero-specificity
+		`:where()` chain is the kind of selector that fails silently. Measured in
+		the browser at 11px uppercase by e2e/admin-table-density.spec.ts.
+	*/
+	:global(.sigap-data-table thead th) {
 		position: sticky;
 		top: 0;
 		z-index: 1;
@@ -165,26 +172,90 @@
 		text-align: right;
 	}
 
-	.sigap-data-table tbody td {
+	/*
+		`:global` is LOAD-BEARING, and this is the second time this component has
+		been bitten by Svelte scoping — the first was the secondary-column rule.
+
+		Svelte compiles a scoped descendant selector by adding the component's own
+		scope hash to EVERY element in the chain. So
+		`.sigap-data-table tbody td` shipped as:
+
+		    .sigap-data-table.svelte-1rpfqoq tbody:where(.svelte-1rpfqoq) td:where(.svelte-1rpfqoq)
+
+		But the `<td>` elements do not live in this component. They live in the
+		caller's row components, each with its own hash — measured on
+		/admin/facilities, the cell carried `svelte-u76v92` while the rule wanted
+		`svelte-1rpfqoq`. The selector therefore matched nothing, and every admin
+		row silently fell back to its content height: a measured 26px, not the
+		44px (or 40px) the stylesheet claimed.
+
+		So the whole selector is declared global, and the same is true of the
+		`thead th` rule above. `:global` is what makes a PRIMITIVE able to style
+		content it does not own — which is the entire purpose of a table that
+		takes rows through a slot.
+
+		Row height is then pinned by a measured E2E test
+		(e2e/admin-table-density.spec.ts), because a scoped rule that silently
+		fails to match produces a stylesheet that looks correct and renders
+		incorrectly, and only a real browser can tell the difference.
+	*/
+	:global(.sigap-data-table tbody td) {
 		/*
-			44px, the frozen `--admin-row-h`. Comfortable for a full shift of
-			queue work, and comfortably above the 36px compact CONTROL density —
-			which is for controls, not rows. The audit's control-height rule reads
-			`.sigap-`-prefixed selectors, so this is deliberately a `td` rule and
-			not a `.sigap-data-table__row` block height, keeping the two scales
-			unambiguous.
+			ADMIN TABLE ROW DENSITY: 40px, the top of the 36-40px band.
+
+			WHY 40 AND NOT 36. T-3B4-02 in
+			design/sigap-redesign-task-breakdown.md sets the acceptance criterion as
+			"admin density (36-40px rows, 11px uppercase headers)". The top of the
+			band is chosen deliberately:
+
+			  - The action column holds a real admin-density `Button` (36px compact
+			    today, 40px comfortable available). A cell cannot be shorter than
+			    its content without clipping the control, so 36px would force the
+			    buttons down and shrink the target of the only interactive thing in
+			    the row. 40px holds a 40px control exactly, with nothing clipped
+			    and nothing shrunk to hit a number.
+			  - 40px is `controlHeight(DENSITY.adminComfortable)`, so the row and
+			    its controls share one number instead of drifting apart.
+
+			NOTE ON A CONFLICTING SIGNAL, recorded rather than hidden. The frozen
+			mockup in design/generated/sigap-admin-desktop declares
+			`--admin-row-h: 44px` in colors_and_type.css. That is a CITIZEN-scale
+			value applied to an ADMIN row, and the canonical task breakdown — which
+			the phase spec names as the authority for acceptance criteria — narrows
+			admin rows to 36-40px. Where the mockup and the canonical acceptance
+			criterion disagree, the acceptance criterion governs, and the 44px token
+			in the frozen reference is left untouched because it is a generated
+			artefact that must not be regenerated.
+
+			Scope check: `DataTable` is imported only by admin surfaces
+			(`routes/admin/{appointments,schedules,facilities,notifications}` and
+			`lib/admin/{QueueBoard,AdminTable,AdminResponsiveTablePattern}`). No
+			citizen route uses it, so this is admin presentation by construction
+			and not by a fragile naming convention. Citizen controls keep their
+			>= 44px floor through `lib/ui/density.ts`, untouched here.
 		*/
-		height: 44px;
+		height: 40px;
 		padding: 0 12px;
 		border-bottom: 1px solid var(--sigap-border);
 		vertical-align: middle;
 		background-color: var(--sigap-surface);
 	}
 
-	.sigap-data-table tbody tr:hover td {
+	/*
+		Hover, global for the same reason as the row rule above: the `td` belongs
+		to the caller's row component, so a scoped selector would not match it and
+		the hover state would silently do nothing.
+	*/
+	:global(.sigap-data-table tbody tr:hover td) {
 		background-color: var(--sigap-canvas);
 	}
 
+	/*
+		The empty-state cell belongs to THIS component, so it keeps its scoped
+		selector. It also sets `height: auto` deliberately: it is a message, not a
+		data row, and it carries 24px of padding. Forcing the row band onto it
+		would clip the message.
+	*/
 	.sigap-data-table__empty {
 		height: auto;
 		padding: 24px 12px;

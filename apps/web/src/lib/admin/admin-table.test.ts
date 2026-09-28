@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import DataTable from '$lib/ui/DataTable.svelte';
@@ -124,6 +127,57 @@ describe('the column-priority rule', () => {
 	});
 });
 
+/**
+ * Regression guard for a rule that LOOKED correct and rendered as nothing.
+ *
+ * Phase 3B4.1 measured admin rows at 26px and found the cause: DataTable's row
+ * rule was written as `.sigap-data-table tbody td`, which Svelte compiles to
+ *
+ *   .sigap-data-table.svelte-XXX tbody:where(.svelte-XXX) td:where(.svelte-XXX)
+ *
+ * The `td` elements belong to the CALLER's row components and carry a different
+ * scope hash, so the selector matched nothing and every row silently fell back
+ * to its content height. The stylesheet asserted a height; the browser never
+ * applied one.
+ *
+ * A unit test cannot catch this class of bug — jsdom injects no component
+ * stylesheet at all, so a computed-style assertion passes against any value.
+ * The real guard is e2e/admin-table-density.spec.ts, which measures rendered
+ * rows in Chromium. These two assertions below only ensure the *source* has not
+ * quietly gone back to a scoped selector, so a future refactor fails loudly here
+ * instead of shipping a table that looks right and measures 26px.
+ */
+describe('DataTable: the row rule must be able to reach the caller rows', () => {
+	// Resolved through fileURLToPath + join, the same way visual-audit.test.ts
+	// does it. `new URL(...).pathname` is not a usable path on Windows: it comes
+	// back as "/F:/..." and readFileSync throws, which fails the whole suite at
+	// collection time rather than at the assertion.
+	const here = dirname(fileURLToPath(import.meta.url));
+	const source = readFileSync(join(here, '..', 'ui', 'DataTable.svelte'), 'utf8');
+
+	it('declares the row height rule global, not scoped', () => {
+		// `:global(.sigap-data-table tbody td)`. A bare `.sigap-data-table tbody
+		// td` compiles to a chain that cannot match a slotted row's cells.
+		expect(source).toContain(':global(.sigap-data-table tbody td)');
+		expect(source).not.toMatch(/^\s*\.sigap-data-table tbody td\s*\{/m);
+	});
+
+	it('declares the hover rule global for the same reason', () => {
+		expect(source).toContain(':global(.sigap-data-table tbody tr:hover td)');
+	});
+
+	it('keeps the admin row height inside the 36-40px band', () => {
+		// The value itself, so a future edit cannot quietly widen the band. The
+		// rendered measurement is the E2E test's job; this is the cheap tripwire.
+		const block = source.slice(source.indexOf(':global(.sigap-data-table tbody td)'));
+		const height = /height:\s*(\d+)px/.exec(block);
+		expect(height, 'the admin row rule must declare an explicit px height').not.toBeNull();
+		const value = Number(height?.[1]);
+		expect(value).toBeGreaterThanOrEqual(36);
+		expect(value).toBeLessThanOrEqual(40);
+	});
+});
+
 describe('AdminTable: the four states', () => {
 	const columns = [{ label: 'Nomor' }];
 
@@ -205,16 +259,29 @@ describe('FacilityFilter: a client-side narrowing control', () => {
 		expect(screen.getByText(/Menampilkan: 3 dari 12/)).toBeTruthy();
 	});
 
-	it('omits the count when nothing is filtered', async () => {
-		// "Menampilkan: 12 dari 12" on an unfiltered list is noise, and printing
-		// it unconditionally trains the eye to skip the informative case.
+	it('says "Menampilkan: Y dari Y" when nothing is filtered', async () => {
+		// Phase 3B4.1 changed this. Suppressing the count while unfiltered was
+		// tidiness, and it removed the only statement on the control that the
+		// dataset is COMPLETE. Without it an operator cannot tell "12 rows, that
+		// is all of them" from "12 rows, of many more" — and the difference is
+		// the whole reason a count label exists.
 		render(FacilityFilter, { facilities: FACILITIES, selected: '', visible: 12, total: 12, onSelect: () => {} });
-		expect(screen.queryByText(/Menampilkan:/)).toBeNull();
+		expect(screen.getByText(/Menampilkan: 12 dari 12/)).toBeTruthy();
+	});
+
+	it('still says "Menampilkan: 0 dari Y" when a narrowing matches nothing', async () => {
+		// Zero results from a client-side narrowing is still a claim about a KNOWN
+		// dataset, and the count is what says how many rows were excluded. The
+		// "no rows match" empty state that renders underneath says nothing about
+		// the size of the set being narrowed, so the count must survive.
+		render(FacilityFilter, { facilities: FACILITIES, selected: 'f2', visible: 0, total: 12, onSelect: () => {} });
+		expect(screen.getByText(/Menampilkan: 0 dari 12/)).toBeTruthy();
 	});
 
 	it('omits the count while loading, rather than claiming zero', async () => {
 		// "Menampilkan: 0 dari 0" over a table that is still arriving reads as
 		// "your clinic has no data", which is a different and alarming claim.
+		// Withheld totals mean there is nothing truthful to print yet.
 		render(FacilityFilter, { facilities: FACILITIES, selected: 'f1', onSelect: () => {} });
 		expect(screen.queryByText(/Menampilkan:/)).toBeNull();
 	});
