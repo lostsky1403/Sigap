@@ -41,12 +41,30 @@
 	$: shown = visible ?? 0;
 	$: loaded = total ?? 0;
 	/**
-	 * The label is suppressed while loading and whenever the filter is not
-	 * narrowing anything. "Menampilkan: 12 dari 12" on an unfiltered list is
-	 * noise, and printing it unconditionally is how the genuinely informative
-	 * case gets scrolled past.
-	*/
-	$: showCount = visible !== undefined && total !== undefined && selected !== '';
+	 * The count is shown whenever the loaded totals are known — INCLUDING when
+	 * nothing is selected.
+	 *
+	 * Suppressing it while unfiltered was defensible tidiness and is now wrong:
+	 * "Menampilkan: Y dari Y" is the only thing on this control that states the
+	 * dataset is complete and un-narrowed, and an operator who cannot see the
+	 * total cannot tell the difference between "12 rows, that is all of them"
+	 * and "12 rows, of many more". The single-rule form also covers every state
+	 * T-3B4-02 names:
+	 *
+	 *   unfiltered   -> Menampilkan: Y dari Y
+	 *   narrowed     -> Menampilkan: X dari Y
+	 *   no matches   -> Menampilkan: 0 dari Y
+	 *
+	 * `0 dari Y` in particular must not be swapped for an empty-state message
+	 * while the filter is active: zero results from a client-side narrowing is
+	 * still a statement about a known dataset, and the empty state that replaces
+	 * it says nothing about how many rows were excluded.
+	 *
+	 * `undefined` totals mean the parent has not finished loading, so there is
+	 * nothing truthful to print yet and the label is withheld rather than
+	 * printing a misleading "0 dari 0" over a table that is still arriving.
+	 */
+	$: showCount = visible !== undefined && total !== undefined;
 </script>
 
 <div class="sigap-facility-filter">
