@@ -692,6 +692,13 @@ regardless of facility), so the stack is not exercising the gRPC hop it claims t
     # Playwright writes progress to stderr, so it goes through Invoke-Native for
     # the same reason as every other native child: an unbuffered pipe would stall
     # the run with no visible output.
+    #
+    # Pre-seeded because Invoke-Native THROWS on a non-zero exit, and under
+    # Set-StrictMode reading an unset variable is itself a terminating error. The
+    # catch block below prints `$_.Exception.Message`, which already carries the
+    # reporter's stdout and stderr; without this seed a failing suite would
+    # replace its own failure report with "variable cannot be retrieved".
+    $playwrightOut = ''
     try {
         $playwrightOut = Invoke-Native -FilePath $pwshExe -Label 'Playwright' -TimeoutSeconds 900 `
             -WorkingDirectory (Join-Path $RepoRoot 'apps\web') `

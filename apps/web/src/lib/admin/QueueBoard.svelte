@@ -3,6 +3,8 @@
 	import QueueBoardRow from './QueueBoardRow.svelte';
 	import { indexBy, facilityName } from '$lib/domain/joins';
 	import { allowedQueueTransitions } from '$lib/domain/status';
+	import { latestQueueChange } from './queueSource';
+	import { formatDateTime } from '$lib/domain/format';
 	import type { AdminFacility, AdminQueueTicket, QueueStatus } from '$lib/api/types/api';
 
 	/**
@@ -39,6 +41,14 @@
 	$: finished = tickets.filter(
 		(t) => t.status === 'completed' || t.status === 'cancelled' || t.status === 'skipped'
 	);
+
+	/**
+	 * The board-level source marker. Delegates to `latestQueueChange`, which owns
+	 * the schema question documented there: `queue_tickets` carries no
+	 * `updated_at`, so the marker is derived from the three timestamps a status
+	 * transition actually stamps.
+	 */
+	$: lastRowChange = latestQueueChange(tickets);
 
 	const GROUPS = [
 		{ key: 'called', label: 'Dipanggil', hint: 'Sedang dipanggil atau dilayani' },
@@ -97,6 +107,17 @@
 			{/if}
 		</section>
 	{/each}
+
+	<!--
+		The board-level source marker. Paired with the page's "Diperbarui pukul"
+		label, which answers WHEN THE PAGE LOADED; this answers WHEN THE DATA LAST
+		CHANGED. Those are different questions and an operator comparing them is how
+		a stalled feed gets noticed.
+	-->
+	<p class="sigap-queue-board__source">
+		Diperbarui pukul {formatDateTime(lastRowChange)} — waktu perubahan antrean
+		terakhir yang tercatat pada data ini.
+	</p>
 </div>
 
 <style>
@@ -145,5 +166,11 @@
 		background-color: var(--sigap-surface);
 		border: 1px dashed var(--sigap-border);
 		border-radius: 8px;
+	}
+
+	.sigap-queue-board__source {
+		margin: 0;
+		font-size: 12px;
+		color: var(--sigap-muted);
 	}
 </style>

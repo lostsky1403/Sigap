@@ -24,8 +24,15 @@
 	needs `hasSession` will declare it in its own file. The root layout above
 	already reads it, and `hasSession` remains the only session fact the client
 	ever sees.
+
+	The layout slot belongs INSIDE the shell, not beside it. `AdminShell` renders
+	its own `<slot />` in the content column, so passing it children is what puts
+	a page there; a self-closing `<AdminShell />` type-checks and renders a
+	perfectly valid sidebar around nothing at all.
 -->
-<AdminShell path={$page.url.pathname} />
+<AdminShell path={$page.url.pathname}>
+	<slot />
+</AdminShell>
 
 <style>
 	/*
