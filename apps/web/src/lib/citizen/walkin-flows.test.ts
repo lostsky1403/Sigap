@@ -242,3 +242,101 @@ describe('/queues/new: the exact contract', () => {
 		).toBe('/patient/status');
 	});
 });
+
+/**
+ * How a walk-in failure is PRESENTED.
+ *
+ * A separate suite from the one above, and a separate concern from the real-stack
+ * E2E. This is the behaviour a citizen sees when the backend is down, and it has
+ * to be pinned WITHOUT needing the backend to actually be down — which is the
+ * whole reason it cannot live in the Playwright run, where producing a genuine
+ * 5xx would mean breaking the engine that run exists to verify.
+ *
+ * The separation is the lesson from the version this replaces. The E2E walk-in
+ * test used to accept EITHER a ticket or this error state, on the reasoning that
+ * the queue engine was not always available locally. The result was a green suite
+ * in which a totally broken walk-in was indistinguishable from a working one: the
+ * same assertion passed on success and on a 500. The engine is now genuinely part
+ * of the local stack, so the E2E test requires success and fails on 5xx, and the
+ * presentation behaviour is proven deterministically here instead. Neither test
+ * substitutes for the other — this one cannot prove the transaction works, and
+ * the E2E one cannot cheaply prove every failure state.
+ */
+describe('/queues/new: a backend failure is presented, not leaked', () => {
+	async function submitWalkinWith(status: number, serverBody: unknown) {
+		mockApi((url) => {
+			if (url.includes('/public/facilities')) {
+				return jsonResponse({ success: true, data: FACILITIES });
+			}
+			return jsonResponse(serverBody, status);
+		});
+		render(WalkIn);
+		await chooseFacility();
+		await fireEvent.input(field('Nama lengkap'), { target: { value: 'Budi Santoso' } });
+		await fireEvent.input(field('Nomor telepon'), { target: { value: '081234567890' } });
+		await fireEvent.click(screen.getByRole('button', { name: /Ambil Nomor Antrean/ }));
+		await waitFor(() => expect(document.querySelector('[data-testid="walkin-error"]')).toBeTruthy());
+	}
+
+	it('shows the generic retry line for a 500, never the server string', async () => {
+		/*
+		 * This is the Go API's real response when the queue engine is unreachable,
+		 * verbatim. It must not reach the citizen: "Terjadi kesalahan sistem"
+		 * describes the server's internals, tells the reader nothing about what
+		 * to do next, and frames a transient condition as a fault at the clinic.
+		 */
+		await submitWalkinWith(500, {
+			success: false,
+			error: 'Terjadi kesalahan sistem. Silakan coba lagi atau hubungi petugas.'
+		});
+
+		expect(document.querySelector('[data-testid="walkin-error"]')?.textContent).toContain(
+			'Layanan sedang bermasalah'
+		);
+		expect(document.body.textContent).not.toContain('Terjadi kesalahan sistem');
+		expect(document.body.textContent).not.toContain('hubungi petugas');
+	});
+
+	it('leaves the form usable so the citizen can actually retry', async () => {
+		await submitWalkinWith(500, { success: false, error: 'Terjadi kesalahan sistem.' });
+
+		// What they typed is still there and the button is not stuck pending. An
+		// error that clears the form makes a citizen retype their name and phone
+		// number just to try again, which is how a transient blip turns into a
+		// citizen giving up at the counter.
+		expect((field('Nama lengkap') as HTMLInputElement).value).toBe('Budi Santoso');
+		expect((field('Nomor telepon') as HTMLInputElement).value).toBe('081234567890');
+		const submit = screen.getByRole('button', { name: /Ambil Nomor Antrean/ }) as HTMLButtonElement;
+		expect(submit.disabled).toBe(false);
+	});
+
+	it('offers no status lookup and no ticket when there is no number', async () => {
+		await submitWalkinWith(500, { success: false, error: 'Terjadi kesalahan sistem.' });
+
+		// The status CTA is the reward for a successful registration. With no
+		// number there is nothing to look up, and a link would send the citizen
+		// to a page that can only disappoint them. A rendered number would be
+		// worse: they would read it at the counter.
+		expect(screen.queryByRole('link', { name: /Cek status kunjungan/ })).toBeNull();
+		expect(document.querySelector('[data-testid="walkin-number"]')).toBeNull();
+	});
+
+	it('still offers the check-in route as the alternative', async () => {
+		// Someone whose walk-in failed but who DID book must keep a path forward,
+		// or a temporary backend fault costs them the whole visit.
+		await submitWalkinWith(500, { success: false, error: 'Terjadi kesalahan sistem.' });
+		expect(
+			screen.getByRole('link', { name: /Gunakan kode check-in/ }).getAttribute('href')
+		).toBe('/appointments/check-in');
+	});
+
+	it('treats a 503 the same as a 500, and leaks no upstream detail', async () => {
+		// The engine being down surfaces as a 5xx of whatever flavour the proxy
+		// happened to emit. Citizen-facing behaviour must not depend on which one.
+		await submitWalkinWith(503, { success: false, error: 'upstream connect error' });
+		expect(document.querySelector('[data-testid="walkin-error"]')?.textContent).toContain(
+			'Layanan sedang bermasalah'
+		);
+		expect(document.body.textContent).not.toContain('upstream connect error');
+	});
+});
