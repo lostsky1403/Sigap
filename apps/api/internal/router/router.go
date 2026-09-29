@@ -50,6 +50,23 @@ var Registry = []Route{
 	{Method: http.MethodPatch, Path: "/api/v1/admin/service-units/", Prefix: true, RequiredPolicy: "schedule.manage"},
 	{Method: http.MethodGet, Path: "/api/v1/admin/schedules", RequiredPolicy: "schedule.read"},
 	{Method: http.MethodGet, Path: "/api/v1/admin/schedules/", Prefix: true, RequiredPolicy: "schedule.read"},
+	// Phase 3B5.0: the schedule MUTATION OPTIONS list is matched by the
+	// `schedule.read` prefix rule above. That policy is deliberate, and it is
+	// NOT `schedule.manage`.
+	//
+	// This route answers "which facilities may I build a schedule for?", and the
+	// answer is computed per facility from DB-resolved `schedule.manage`
+	// provenance inside the handler. Gating it on schedule.manage would 403 the
+	// mixed actor — one who manages only facility B but reads both A and B —
+	// before the handler ran, which would (a) refuse a legitimate operator and
+	// (b) answer a per-facility domain question with a global status code.
+	//
+	// No separate entry is registered for it. `Match` returns the FIRST matching
+	// rule and the prefix rule above already matches this path, so an exact entry
+	// placed after it would be unreachable — and placed BEFORE it, it would
+	// silently take over matching for every /api/v1/admin/schedules/* detail
+	// read. The prefix rule is the single source of truth, and
+	// TestScheduleOptionsRoutePolicy pins that.
 	{Method: http.MethodPost, Path: "/api/v1/admin/schedules", RequiredPolicy: "schedule.manage"},
 	{Method: http.MethodPatch, Path: "/api/v1/admin/schedules/", Prefix: true, RequiredPolicy: "schedule.manage"},
 	{Method: http.MethodGet, Path: "/api/v1/admin/appointments", RequiredPolicy: "appointment.read"},

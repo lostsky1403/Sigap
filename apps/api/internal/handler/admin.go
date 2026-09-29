@@ -1985,8 +1985,15 @@ func (h *AdminHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) SchedulesRouter(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		if r.URL.Path == "/api/v1/admin/schedules" {
+		switch r.URL.Path {
+		case "/api/v1/admin/schedules":
 			h.ListSchedules(w, r)
+			return
+		case "/api/v1/admin/schedules/options":
+			// Matched BEFORE the {id} branch. The sub-path is a literal, so
+			// without this ordering "options" would be parsed as a schedule id
+			// and every request would 404 on a valid UUID failure.
+			h.ListScheduleOptions(w, r)
 			return
 		}
 		h.GetSchedule(w, r)
