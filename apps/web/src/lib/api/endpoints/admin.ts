@@ -44,6 +44,17 @@ export function getFacility(
 	});
 }
 
+/**
+ * The facility create/update body, matching `CreateFacilityRequest` /
+ * `UpdateFacilityRequest` in admin.go field for field.
+ *
+ * `available_beds` was missing from the pre-3B5 type. That is not a cosmetic
+ * gap: the API declares the field, so omitting it from the body meant Go
+ * decoded the zero value and every facility created through this client got
+ * `available_beds = 0` — a real facility reporting no free beds to a patient
+ * looking for one. Adding it is the difference between the form and the API
+ * agreeing about what a facility is.
+ */
 export interface FacilityInput {
 	name: string;
 	type: 'rumah_sakit' | 'puskesmas';
@@ -53,6 +64,7 @@ export interface FacilityInput {
 	provinsi: string;
 	phone: string;
 	total_beds: number;
+	available_beds: number;
 	short_code: string;
 }
 
