@@ -82,6 +82,14 @@ const manifest = [
 		methods: { GET: ["'/api/v1/admin/schedules'"], POST: ["'/api/v1/admin/schedules'"] }
 	},
 	{
+		// Phase 3B5.0: the schedule MUTATION OPTIONS proxy. GET only — the
+		// options endpoint is a read, and the schedule mutations keep their own
+		// POST/PATCH handlers on the sibling routes. Adding a mutation method
+		// here would give the affordance read a write path it must never have.
+		route: 'admin/schedules/options/+server.ts',
+		methods: { GET: ["'/api/v1/admin/schedules/options'"] }
+	},
+	{
 		route: 'admin/schedules/[id]/+server.ts',
 		methods: {
 			GET: ["`/api/v1/admin/schedules/${encodeURIComponent(event.params.id ?? '')}`"],

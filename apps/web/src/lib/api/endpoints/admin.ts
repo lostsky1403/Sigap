@@ -10,6 +10,7 @@ import type {
 	NotificationOutboxRow,
 	NotificationSummary,
 	QueueStatus,
+	ScheduleMutationOptions,
 	StatusUpdateResult
 } from '../types/api';
 
@@ -175,6 +176,36 @@ export function getSchedule(
 	return apiFetch<AdminSchedule>(`/api/v1/admin/schedules/${encodeURIComponent(id)}`, {
 		signal
 	});
+}
+
+/**
+ * Schedule MUTATION options (Phase 3B5.0).
+ *
+ * The list above is the read table: it answers "what schedules exist?".
+ * This one answers the different question a create/edit form has to ask
+ * first — "which facilities may I actually build a schedule for?" — and the
+ * server answers it by including only facilities where the actor holds
+ * schedule.manage AT that facility.
+ *
+ * That is the whole point, and it is why the browser is not asked to work it
+ * out. The client holds `hasSession` and nothing else; there is no permission
+ * list here to reason from, by design. The list of options IS the answer, and
+ * it is a list of ids and names with no accompanying reason, no role, and no
+ * scope echo, so it cannot be used to infer the authorization model.
+ *
+ * An empty `facilities` array is a SUCCESSFUL response meaning "you may manage
+ * schedules at no facility" — not a 403 and not an error. The caller renders a
+ * capability refusal from it. Treating it as a failure would be wrong: the
+ * request was authorized, it simply had nothing to offer.
+ *
+ * ADVISORY ONLY. The mutation endpoints re-derive authorization from the
+ * submitted facility on every call, so a grant revoked between this call and a
+ * later POST is still refused.
+ */
+export function getScheduleMutationOptions(
+	signal?: AbortSignal
+): Promise<ApiResult<ScheduleMutationOptions>> {
+	return apiFetch<ScheduleMutationOptions>('/api/v1/admin/schedules/options', { signal });
 }
 
 /* ----------------------------- appointments ----------------------------- */
