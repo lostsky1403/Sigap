@@ -8,12 +8,16 @@
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { RADIUS } from '$lib/design/tokens';
 	import {
+		cancelNotification,
 		getNotificationSummary,
 		listFacilities,
-		listNotifications
+		listNotifications,
+		retryNotification
 	} from '$lib/api/endpoints/admin';
 	import { formatRelativeTime, formatNumber } from '$lib/domain/format';
 	import { isEmptyScope } from '$lib/admin/readState';
+	import { runAdminMutation } from '$lib/admin/adminMutation';
+	import AdminMutationFeedback from '$lib/admin/AdminMutationFeedback.svelte';
 	import { getSession, subscribeToSession } from '$lib/stores/session';
 	import {
 		NOTIFICATION_LIMIT_NOTE,
@@ -140,6 +144,104 @@
 	 */
 	function recipientOf(row: NotificationOutboxRow): string {
 		return row.recipient_contact_masked || '-';
+	}
+
+	/* ------------------------- T-3B5-05 mutations ------------------------- */
+
+	/**
+	 * ACTIONABILITY COMES FROM THE SERVER AND ONLY FROM THE SERVER.
+	 *
+	 * §12 forbids recomputing `notification.manage` here, and forbids inferring
+	 * it from the email, the role, the facility, or the status. The reasons that
+	 * rule exists are worth keeping in view, because each of them is a way this
+	 * code could have been written and been wrong:
+	 *
+	 *   - The permission is FACILITY-SCOPED, and the row stores one facility. An
+	 *     operator may read the whole outbox and still not manage notifications
+	 *     for the facility a particular row belongs to. Any global "is admin"
+	 *     check would offer Retry on rows whose facility the operator cannot touch.
+	 *   - STATUS alone is not permission. A `failed` row is retryable BY STATUS;
+	 *     whether THIS operator may retry it is a separate question with a
+	 *     separate answer.
+	 *
+	 * The server answers both, per row, as `can_retry` and `can_cancel`. Those
+	 * two booleans are the entire input to the visibility rule below.
+	 *
+	 * AND THEY ARE ADVISORY ONLY. The mutation endpoints re-authorize
+	 * independently on every call, so a row that still shows Retry after a grant
+	 * is revoked will be refused — which is correct, and the refusal is shown
+	 * with the server's own words.
+	 */
+	let pendingId = '';
+	let pendingAction: 'retry' | 'cancel' | '' = '';
+	let errorId = '';
+	let errorMessage = '';
+
+	/**
+	 * The re-read after a mutation, preserving the URL filters.
+	 *
+	 * The filter set is held in the URL, not in local state, so a plain re-read
+	 * naturally keeps the operator's narrowed view. Re-deriving `filters` here
+	 * would be the bug: it is already reactive on `$page.url.searchParams`.
+	 */
+	async function reloadNotifications() {
+		const [listResult, summaryResult] = await Promise.all([
+			listNotifications(buildNotificationQuery(filters)),
+			getNotificationSummary()
+		]);
+
+		if (listResult.ok) {
+			rows = listResult.data;
+			listError = null;
+			// The actionability booleans belong to the rows just re-read, so any
+			// rejection from a previous attempt is stale: the row may no longer be
+			// in the state that produced it.
+			errorId = '';
+			errorMessage = '';
+		} else {
+			listError = listResult.error;
+		}
+
+		// The summary is refreshed but a failure is deliberately NOT surfaced
+		// here: it has its own inline error state with its own retry, and
+		// overwriting it from a mutation would replace a persistent problem with a
+		// transient-looking one.
+		if (summaryResult.ok) {
+			summary = summaryResult.data;
+		}
+	}
+
+	async function handleAction(row: NotificationOutboxRow, action: 'retry' | 'cancel') {
+		errorId = '';
+		errorMessage = '';
+		pendingId = row.id;
+		pendingAction = action;
+
+		const outcome = await runAdminMutation(
+			() => (action === 'retry' ? retryNotification(row.id) : cancelNotification(row.id)),
+			{
+				subject: recipientOf(row),
+				fromLabel: NOTIFICATION_STATUS_LABEL[row.status],
+				toLabel:
+					action === 'retry'
+						? NOTIFICATION_STATUS_LABEL.pending
+						: NOTIFICATION_STATUS_LABEL.cancelled,
+				noun: 'Notifikasi',
+				reload: reloadNotifications
+			},
+			hasSession
+		);
+
+		pendingId = '';
+		pendingAction = '';
+
+		// §13: a rejected mutation is 409, and the message is the server's.
+		// "Retry tidak diizinkan untuk status saat ini." names the actual rule;
+		// any client-side substitute would be a guess about which rule fired.
+		if (!outcome.ok && outcome.failure) {
+			errorId = row.id;
+			errorMessage = outcome.failure.message;
+		}
 	}
 </script>
 
@@ -302,7 +404,8 @@
 					{ label: 'Penerima', secondary: true },
 					{ label: 'Fasilitas', secondary: true },
 					{ label: 'Status' },
-					{ label: 'Percobaan', secondary: true, numeric: true }
+					{ label: 'Percobaan', secondary: true, numeric: true },
+				{ label: 'Aksi' }
 				]}
 			>
 				{#each rows as row (row.id)}
@@ -333,9 +436,66 @@
 							/>
 						</td>
 						<td class="sigap-table-col-secondary sigap-notif-row__attempts">
-							{formatNumber(row.attempt_count)}
+						{formatNumber(row.attempt_count)}
+					</td>
+					<td class="sigap-notif-row__actions">
+						<!--
+							THE ONLY INPUT IS THE SERVER'S TWO BOOLEANS.
+
+							Retry appears if and only if `can_retry` is true; Cancel if and
+							only if `can_cancel` is true. There is no status test here, no
+							role test, no facility test, and no email-shaped heuristic —
+							§12 rules all of those out, and each would produce a control
+							that exists only to be refused.
+						-->
+						{#if row.can_retry}
+							<button
+								type="button"
+								class="sigap-notif-row__action"
+								style:border-radius={RADIUS.control}
+								disabled={pendingId === row.id}
+								on:click={() => handleAction(row, 'retry')}
+							>
+								{pendingId === row.id && pendingAction === 'retry'
+									? 'Mengirim ulang...'
+									: 'Kirim ulang'}
+							</button>
+						{/if}
+						{#if row.can_cancel}
+							<button
+								type="button"
+								class="sigap-notif-row__action sigap-notif-row__action--danger"
+								style:border-radius={RADIUS.control}
+								disabled={pendingId === row.id}
+								on:click={() => handleAction(row, 'cancel')}
+							>
+								{pendingId === row.id && pendingAction === 'cancel'
+									? 'Membatalkan...'
+									: 'Batalkan'}
+							</button>
+						{/if}
+						<!--
+							A row with neither action is not an error and not empty by
+							accident — it is a settled or unauthorized row. Saying so keeps
+							an operator from wondering whether the buttons failed to load.
+						-->
+						{#if !row.can_retry && !row.can_cancel}
+							<span class="sigap-notif-row__noaction">Tidak ada aksi</span>
+						{/if}
+					</td>
+				</tr>
+				{#if errorId === row.id && errorMessage !== ''}
+					<tr class="sigap-notif-row__outcome">
+						<td colspan="8" class="sigap-notif-row__outcome-cell">
+							<!--
+								VERBATIM. The 409 message from the server names the rule that
+								actually refused the action; substituting our own wording
+								would hide which one it was.
+							-->
+							<span role="alert">{errorMessage}</span>
 						</td>
 					</tr>
+				{/if}
 				{/each}
 			</DataTable>
 		{/if}
@@ -344,9 +504,63 @@
 	<p class="sigap-notif-row__note">{NOTIFICATION_LIMIT_NOTE}</p>
 </div>
 
+<!--
+	The polite live region and the toast queue, mounted once per page.
+
+	No dialog on this page: retry and cancel are both reversible enough states to
+	act on directly, and §11 requires a dialog only where an action cannot be
+	taken back. A failed delivery re-sent, or a pending one cancelled, are
+	recoverable by another action on the same row.
+-->
+<AdminMutationFeedback />
+
 <style>
 	.sigap-admin-page {
 		min-width: 0;
+	}
+
+	.sigap-notif-row__actions {
+		white-space: nowrap;
+	}
+
+	.sigap-notif-row__action {
+		height: 32px;
+		padding: 0 12px;
+		font: inherit;
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--sigap-primary);
+		background-color: var(--sigap-surface);
+		border: 1px solid var(--sigap-border);
+		cursor: pointer;
+	}
+
+	.sigap-notif-row__action--danger {
+		color: var(--sigap-danger);
+		margin-left: 6px;
+	}
+
+	.sigap-notif-row__action:disabled {
+		color: var(--sigap-muted);
+		cursor: not-allowed;
+	}
+
+	.sigap-notif-row__action:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
+	}
+
+	.sigap-notif-row__noaction {
+		font-size: 12px;
+		color: var(--sigap-muted);
+	}
+
+	.sigap-notif-row__outcome-cell {
+		padding: 8px 12px;
+		font-size: 13px;
+		line-height: 1.45;
+		background-color: var(--sigap-surface);
+		border-left: 3px solid var(--sigap-border);
 	}
 
 	.sigap-notif-summary {
