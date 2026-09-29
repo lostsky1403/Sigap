@@ -100,7 +100,15 @@ param(
     [int]$DatabasePort = 55433,
     [int]$ApiPort = 18080,
     [int]$WebPort = 4173,
-    [int]$EnginePort = 50051
+    [int]$EnginePort = 50051,
+    # Phase 3B5 §2. The DB-seeded subject the local RBAC selector authenticates
+    # as, and the one the web tier names in X-Sigap-Local-Test-Subject.
+    #
+    # Defaults to the authorized schedule actor (facility_admin at the demo
+    # facility, so it genuinely holds schedule.manage THERE). Pass
+    # `e2e-schedule-mixed` to run the mixed-provenance case, where
+    # schedule.read@A and schedule.manage@B must yield B only.
+    [string]$LocalActor = 'e2e-schedule-manager'
 )
 
 Set-StrictMode -Version Latest
@@ -541,6 +549,23 @@ try {
     $env:SIGAP_ENV             = 'local'
     $env:SIGAP_AUTH_MODE       = 'dev'
     $env:SIGAP_DEV_IDENTITY    = 'true'
+    # Phase 3B5 §2: arm the local DB-backed identity selector.
+    #
+    # This makes the API resolve `e2e-schedule-manager` through the REAL RBAC
+    # resolver on every request, which is what lets the mutation E2E run as an
+    # actor whose schedule.manage genuinely comes from user_roles rather than
+    # from a synthetic permission list.
+    #
+    # It REPLACES the dev identity provider (cmd/server/main.go), so from here
+    # on `X-Sigap-Dev-User-ID` is inert and `X-Sigap-Local-Test-Subject` is the
+    # only thing that selects an actor. The web tier mirrors that precedence in
+    # `localE2eActorHeader`, which is why both sides set SIGAP_ENV=local.
+    #
+    # Override with -LocalActor to run the mixed-provenance or denied-actor
+    # cases. Both are refused by the API outside SIGAP_ENV=local, and
+    # GuardDevCapabilities refuses to START such a process at all.
+    $env:SIGAP_LOCAL_RBAC_TEST_IDENTITY = 'true'
+    $env:SIGAP_LOCAL_E2E_ACTOR          = $LocalActor
     # Left unset on purpose for the authoritative run. The engine is really
     # running, so the fallback is not needed — and keeping it set would mean a
     # future engine outage silently produced plausible-looking tickets instead of
@@ -601,6 +626,12 @@ not reachable. Start it by hand to see the error: $engineExe
     $env:SIGAP_API_BASE     = "http://127.0.0.1:$ApiPort"
     $env:SIGAP_ENV          = 'local'
     $env:SIGAP_DEV_IDENTITY = 'true'
+    # The web tier needs the SAME actor the API is armed with, because
+    # `localE2eActorHeader` emits the subject header and the API's local
+    # provider is the one that reads it. Setting only one side is the
+    # interesting failure mode: the API would receive no subject and answer with
+    # a zero actor, surfacing as a 401 on every admin read.
+    $env:SIGAP_LOCAL_E2E_ACTOR = $LocalActor
 
     $WebDir = Join-Path $RepoRoot 'apps\web'
     # pnpm keeps the package's binaries under apps\web\node_modules\.bin, NOT the
@@ -633,7 +664,63 @@ not reachable. Start it by hand to see the error: $engineExe
     Write-Host "    proxy returned $($parsed.data.Count) facilities" -ForegroundColor DarkGray
     if ($parsed.data.Count -lt 1) { Write-Fail "Proxy returned no facilities; the seeded stack is not live." }
 
-    # --- 8. Prove the walk-in chain before the browser suite --------------------
+    # --- 8. Prove the local DB-backed actor chain before any mutation E2E -----
+    #
+    # Phase 3B5 §2 requires this BEFORE mutation E2E, because a mutation suite
+    # running as the dev identity would prove nothing about facility-scoped
+    # schedule.manage: the dev actor carries a synthetic permission list with
+    # unrestricted grants, so every affordance would trivially appear.
+    #
+    # Two things are checked here, and the second matters more than the first.
+    Write-Step "Verifying the local DB-backed actor chain (T-3B5 §2)"
+    Write-Host "    actor: $LocalActor" -ForegroundColor DarkGray
+
+    # (a) The chain works: browser -> web -> proxy -> Go -> DB RBAC resolver.
+    # The options endpoint is the one read whose content is derived from
+    # facility-scoped schedule.manage, so a non-empty result is proof the real
+    # resolver ran rather than a synthetic permission set.
+    $options = Invoke-WebRequest "http://127.0.0.1:$WebPort/api/v1/admin/schedules/options" `
+        -UseBasicParsing -TimeoutSec 15
+    $manageable = ($options.Content | ConvertFrom-Json).data.facilities
+    if ($manageable.Count -lt 1) {
+        Write-Fail @"
+The schedule options endpoint returned no manageable facilities for '$LocalActor'.
+
+The local RBAC selector is armed but resolved to zero schedule.manage grants, so
+either the subject is not seeded or its role is not attached. Check that
+packages/db/seed/dev.sql created '$LocalActor' and that demo.sql granted it a
+role at a facility.
+"@
+    }
+    $manageableNames = ($manageable | ForEach-Object { $_.name }) -join ', '
+    Write-Host "    manageable facilities: $manageableNames" -ForegroundColor DarkGray
+
+    # (b) The browser CANNOT bypass the proxy or select an arbitrary identity.
+    # A browser-supplied X-Sigap-* header is not forwarded by the proxy, which
+    # reconstructs the upstream header set from proxyHeaders() alone. This is
+    # asserted here as well as in the unit suite because it is the property the
+    # whole §2 argument rests on, and an HTTP-level probe is the only way to
+    # show it against a running stack rather than a mocked one.
+    $forged = Invoke-WebRequest "http://127.0.0.1:$WebPort/api/v1/admin/schedules/options" `
+        -Headers @{ 'X-Sigap-Local-Test-Subject' = 'e2e-schedule-mixed' } `
+        -UseBasicParsing -TimeoutSec 15
+    $forgedFacilities = ($forged.Content | ConvertFrom-Json).data.facilities
+    $forgedNames = ($forgedFacilities | ForEach-Object { $_.name }) -join ', '
+
+    if ($forgedNames -ne $manageableNames) {
+        Write-Fail @"
+A browser-supplied X-Sigap-Local-Test-Subject header CHANGED the resolved identity.
+
+  configured actor: $LocalActor -> $manageableNames
+  forged header:    e2e-schedule-mixed -> $forgedNames
+
+The proxy must reconstruct upstream headers from proxyHeaders() and never forward
+caller-supplied X-Sigap-* headers. If this fired, identity is browser-controllable.
+"@
+    }
+    Write-Host "    browser-supplied X-Sigap-* header correctly ignored" -ForegroundColor DarkGray
+
+    # --- 9. Prove the walk-in chain before the browser suite --------------------
     # The full transactional hop, exercised once here so a broken engine fails in
     # ONE line with a readable cause instead of surfacing as a Playwright
     # timeout on a selector 40 seconds into a browser run.
@@ -686,7 +773,7 @@ regardless of facility), so the stack is not exercising the gRPC hop it claims t
     }
     Write-Host "    walk-in verified end to end" -ForegroundColor DarkGray
 
-    # --- 9. Playwright -----------------------------------------------------------
+    # --- 10. Playwright -----------------------------------------------------------
     Write-Step "Running Playwright against the local seeded stack"
     $env:SIGAP_E2E_BASE_URL = "http://127.0.0.1:$WebPort"
     # Playwright writes progress to stderr, so it goes through Invoke-Native for
