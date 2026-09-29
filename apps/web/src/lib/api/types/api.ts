@@ -252,6 +252,53 @@ export interface AdminSchedule {
 	updated_at?: string;
 }
 
+/* ------------------- schedule mutation affordance (3B5.0) ------------------ */
+
+/**
+ * One selectable service unit within a manageable facility.
+ *
+ * `facility_id` is the parent facility. It is returned only so the editor can
+ * bind the nesting without a second request, and it always points at a facility
+ * already present in the enclosing list, so it discloses nothing new.
+ */
+export interface ScheduleOptionServiceUnit {
+	id: string;
+	facility_id: string;
+	name: string;
+}
+
+/**
+ * One facility the current actor may build a schedule for.
+ *
+ * This is a DOMAIN CHOICE, not a capability statement. The server includes a
+ * facility only when `schedule.manage` is held AT that facility, so its
+ * presence carries the answer — but there is no accompanying field explaining
+ * why, and no field that would let a client reason about the authorization
+ * model. The client learns which option to render and nothing more.
+ *
+ * An empty `service_units` array is meaningful: the facility is manageable but
+ * has no active service unit yet. The editor should say so rather than
+ * presenting a facility that silently offers nothing.
+ */
+export interface ScheduleOptionFacility {
+	id: string;
+	name: string;
+	service_units: ScheduleOptionServiceUnit[];
+}
+
+/**
+ * The schedule mutation-options payload.
+ *
+ * An EMPTY `facilities` array is a normal, successful answer meaning "you hold
+ * schedule.manage at no facility". It is not an error and carries no
+ * information about the wider system — the client renders a capability refusal
+ * from it, and cannot tell whether the actor is a reader everywhere, a manager
+ * nowhere, or simply unscoped. That indistinguishability is the point.
+ */
+export interface ScheduleMutationOptions {
+	facilities: ScheduleOptionFacility[];
+}
+
 /**
  * The one PHI-bearing type. Gated behind appointment.read on the server.
  *
@@ -325,6 +372,27 @@ export interface NotificationOutboxRow {
 	related_resource_id?: string;
 	created_at: string;
 	updated_at: string;
+	/**
+	 * Phase 3B5.0 — per-row action affordances, computed server-side.
+	 *
+	 * Two booleans and nothing else. They exist so the table can decide whether
+	 * to draw a retry or cancel control, which is the only question a browser
+	 * should be answering. They deliberately do NOT reveal WHY: there is no
+	 * reason code, no permission name, and no facility-scope echo, so a client
+	 * cannot use them to infer the authorization model.
+	 *
+	 * `false` is ambiguous by design — the row may be ineligible by status, by
+	 * permission at this row's facility, or both — and that ambiguity is
+	 * intentional. Disambiguating it would mean shipping the reason, which is
+	 * the thing this contract exists to avoid.
+	 *
+	 * ADVISORY ONLY. `retryNotification` and `cancelNotification` re-derive
+	 * their own authorization and state on every call, so `true` grants
+	 * nothing and a stale `true` is answered with 403/404/409 rather than
+	 * being honoured.
+	 */
+	can_retry?: boolean;
+	can_cancel?: boolean;
 }
 
 /**
