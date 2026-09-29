@@ -37,6 +37,21 @@
 	export let onCancel: () => void = () => {};
 
 	/**
+	 * The dialog body, as a Svelte 5 snippet.
+	 *
+	 * Declared explicitly because this project runs Svelte 5 in legacy mode, where
+	 * a component that renders `<slot />` still has to declare the prop for the
+	 * type checker to accept a call site passing children. Without it,
+	 * `svelte-check` rejects every `<AdminConfirmDialog>` with content — which
+	 * reads like a broken component rather than a missing declaration, and would
+	 * push a caller toward avoiding the shared dialog entirely.
+	 *
+	 * `Snippet` is imported as a TYPE only, so nothing is added to the runtime
+	 * bundle.
+	 */
+	export let children: import('svelte').Snippet | undefined = undefined;
+
+	/**
 	 * Escape and the close button both route here.
 	 *
 	 * They must, because a dialog dismissed any other way leaves the caller
@@ -49,6 +64,7 @@
 </script>
 
 <Dialog {open} {title} {description} onClose={handleClose} closeLabel="Tutup dialog konfirmasi">
+	{#if children}{@render children()}{/if}
 	<svelte:fragment slot="footer">
 		<Button
 			variant="secondary"
