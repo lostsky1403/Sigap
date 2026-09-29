@@ -1602,11 +1602,41 @@ func (h *AdminHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := `SELECT id, facility_id, practitioner_id, service_unit_id,
+	// COALESCE(practitioner_id, '00000000-0000-0000-0000-000000000000'::uuid)
+	// is LOAD-BEARING, and fixes a real bug that Phase 3B5 §6 exposed.
+	//
+	// practitioner_schedules.practitioner_id is NULLABLE, and this handler scans
+	// it into a Go `string`. pgx cannot scan a NULL uuid into a string — it
+	// returns "cannot scan NULL into *string" — so ONE schedule row with no
+	// practitioner made the ENTIRE list fail with 500 "Gagal membaca data
+	// jadwal." Not just that row: the whole table, for every caller.
+	//
+	// Why it survived until now: every seeded schedule had a practitioner, so the
+	// null path was never executed. §6 requires CREATE and UPDATE to OMIT
+	// practitioner_id entirely, which leaves the column NULL by design, and the
+	// very first such schedule made the admin schedule list unusable.
+	//
+	// WHY THE ZERO UUID AND NOT ''. An empty string is not a valid uuid in
+	// PostgreSQL — `''::uuid` raises "invalid input syntax for type uuid" — so
+	// the obvious COALESCE target would turn a scan error into a query error and
+	// fix nothing. The all-zero uuid is the canonical "absent" value, is accepted
+	// by the cast, and is what the Go side already treats as empty: every uuid
+	// comparison here uses uuid.Nil, which is exactly this value.
+	//
+	// COALESCE to a uuid rather than a nullable Go type because the JSON contract
+	// is `omitempty` on a string — NULL and the zero uuid are absent from the
+	// wire identically, so no consumer changes.
+	//
+	// NOTE this changes no authorization path. FacilityScopeResult,
+	// FacilityGrant provenance, stored-facility checks, and global super_admin
+	// resolution are untouched — this is a read-shape fix only.
+	query := `SELECT id, facility_id,
+		    COALESCE(practitioner_id, '00000000-0000-0000-0000-000000000000'::uuid),
+		    service_unit_id,
 		    schedule_date::text, start_time::text, end_time::text,
 		    slot_minutes, capacity_per_slot, is_active,
 		    created_at, updated_at
-		 FROM practitioner_schedules`
+	 FROM practitioner_schedules`
 	args := []any{}
 	if !readSet.Unrestricted {
 		query += " WHERE facility_id = ANY($1)"
@@ -1698,7 +1728,10 @@ func (h *AdminHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 
 	var s scheduleResponse
 	err := h.pool.QueryRow(ctx,
-		`SELECT id, facility_id, practitioner_id, service_unit_id,
+		// Same COALESCE, same reason as ListSchedules: a NULL practitioner_id
+		// cannot be scanned into a Go string, and would make a single-detail read
+		// of a practitioner-less schedule fail 500 as well.
+		`SELECT id, facility_id, COALESCE(practitioner_id, '00000000-0000-0000-0000-000000000000'::uuid), service_unit_id,
 		    schedule_date::text, start_time::text, end_time::text,
 		    slot_minutes, capacity_per_slot, is_active,
 		    created_at, updated_at
@@ -2277,10 +2310,17 @@ func (h *AdminHandler) ListAppointments(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	query := `SELECT id, facility_id, service_unit_id, practitioner_id, practitioner_schedule_id,
+	// COALESCE on both nullable uuid columns, for the same reason as
+	// ListSchedules: pgx cannot scan NULL into a Go string, so ONE appointment
+	// without a practitioner or without a linked schedule would fail the whole
+	// list with 500. The seeded appointment happens to have both set, which is
+	// why this was latent; it is the same class of bug, fixed in the same pass.
+	query := `SELECT id, facility_id, service_unit_id,
+		    COALESCE(practitioner_id, '00000000-0000-0000-0000-000000000000'::uuid),
+		    COALESCE(practitioner_schedule_id, '00000000-0000-0000-0000-000000000000'::uuid),
 		    appointment_time, status, patient_display_name, checkin_code, queue_ticket_id,
 		    created_at, updated_at
-		 FROM appointments`
+	 FROM appointments`
 	args := []any{}
 	if !readSet.Unrestricted {
 		query += " WHERE facility_id = ANY($1)"
@@ -2502,3 +2542,4 @@ func (h *AdminHandler) logAppointmentAccess(r *http.Request, actor identity.Acto
 		}),
 	})
 }
+
