@@ -185,8 +185,92 @@ func (h *NotificationsHandler) ListNotifications(w http.ResponseWriter, r *http.
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": rows})
-	h.log(actor, "notification.list", "ok", fmt.Sprintf("count=%d", len(rows)))
+	// Phase 3B5.0: project per-row actionability.
+	//
+	// ADVISORY ONLY. RetryNotification and CancelNotification re-derive their own
+	// authorization and state checks on every call, so a `can_retry: true` here
+	// grants nothing. It answers "should the UI draw this button?" and nothing
+	// else.
+	//
+	// The permission is evaluated AT THE ROW'S OWN STORED FACILITY, never from
+	// the flat actor permission set and never from the read scope. Those two
+	// shortcuts are the specific bugs this projection must not have:
+	//
+	//   - flat HasPermission("notification.manage") is true for an actor who
+	//     manages only facility B, and would mark a facility-A row actionable
+	//     that the server will refuse.
+	//   - the read set is notification.READ, which an actor may hold at a
+	//     facility where they cannot manage anything.
+	//
+	// An actor holding notification.read at A and notification.manage only at B
+	// therefore sees can_retry=false for every A row regardless of status, and
+	// true only for B rows whose status permits it.
+	responses := make([]notificationListItem, 0, len(rows))
+	for _, row := range rows {
+		responses = append(responses, notificationListItem{
+			OutboxRow:     row,
+			Actionability: h.actionabilityForRow(r, actor, row),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": responses})
+	h.log(actor, "notification.list", "ok", fmt.Sprintf("count=%d", len(responses)))
+}
+
+// notificationListItem is a listed notification plus its per-row affordance.
+//
+// The OutboxRow is EMBEDDED, so the response is byte-for-byte the previous shape
+// with two extra keys. This is additive on purpose: the existing admin client
+// keeps working, and no field is renamed or removed.
+//
+// Actionability is ALSO embedded, and anonymously. That is load-bearing, not
+// cosmetic. encoding/json flattens an anonymous struct's exported fields into
+// the parent object, so `can_retry` and `can_cancel` land at the TOP level of
+// each row. Declaring it as a named field instead — even with the tags spelled
+// `json:"can_retry"` — would nest them under "Actionability", and tagging it
+// `json:"-"` would drop them entirely. The N-series tests assert the top-level
+// shape, which is what pins this choice.
+type notificationListItem struct {
+	notification.OutboxRow
+	// The affordance projection. Its two booleans are permission-neutral on
+	// their own — the handler has already AND-ed them with
+	// permission-at-facility — and they carry no role, permission name, grant,
+	// or scope information.
+	notification.Actionability
+}
+
+// actionabilityForRow AND-s the status rules with permission-at-stored-facility.
+//
+// A nil FacilityID (a notification that belongs to no facility) is only
+// actionable for an actor holding an UNRESTRICTED notification.manage grant,
+// which is the same rule AuthorizeFacilityRead applies to a nil facility.
+func (h *NotificationsHandler) actionabilityForRow(
+	r *http.Request,
+	actor identity.Actor,
+	row notification.OutboxRow,
+) notification.Actionability {
+	// The status half, straight from the one declared source.
+	affordance := notification.ActionabilityForStatus(string(row.Status))
+
+	live, err := auth.ActorWithLiveGrants(r.Context(), actor, h.grantResolver)
+	if err != nil {
+		// Fail closed: an unresolvable actor is offered nothing.
+		return notification.Actionability{}
+	}
+
+	if row.FacilityID == nil || *row.FacilityID == uuid.Nil {
+		for _, grant := range live.FacilityGrants {
+			if grant.Key == "notification.manage" && grant.Unrestricted {
+				return affordance
+			}
+		}
+		return notification.Actionability{}
+	}
+
+	if !live.HasPermissionAtFacility("notification.manage", *row.FacilityID) {
+		return notification.Actionability{}
+	}
+	return affordance
 }
 
 // GetNotificationSummary handles GET /api/v1/admin/notifications/summary
