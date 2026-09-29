@@ -78,7 +78,9 @@ DELETE FROM user_roles
 WHERE user_id IN (
     '00000000-0000-0000-0000-00000000d990'::uuid,
     '00000000-0000-0000-0000-00000000d991'::uuid,
-    '00000000-0000-0000-0000-00000000d992'::uuid
+    '00000000-0000-0000-0000-00000000d992'::uuid,
+    '00000000-0000-0000-0000-00000000d993'::uuid,
+    '00000000-0000-0000-0000-00000000d994'::uuid
 );
 
 INSERT INTO user_roles (user_id, role_id, facility_id, status, deleted_at)
@@ -92,7 +94,27 @@ FROM (
     VALUES
         ('00000000-0000-0000-0000-00000000d990'::uuid, 'super_admin', NULL::uuid),
         ('00000000-0000-0000-0000-00000000d991'::uuid, 'facility_admin', '00000000-0000-0000-0000-00000000d000'::uuid),
-        ('00000000-0000-0000-0000-00000000d992'::uuid, 'facility_admin', NULL::uuid)
+        ('00000000-0000-0000-0000-00000000d992'::uuid, 'facility_admin', NULL::uuid),
+        -- Phase 3B5.0 — authorized local schedule actor. facility_admin at the
+        -- canonical demo facility, so it genuinely holds schedule.manage THERE
+        -- and nowhere else. The options endpoint returns exactly this facility.
+        ('00000000-0000-0000-0000-00000000d993'::uuid, 'facility_admin', '00000000-0000-0000-0000-00000000d000'::uuid),
+        -- Phase 3B5.0 — MIXED-PROVENANCE local actor. This is the important
+        -- one. Two DIFFERENT roles at TWO DIFFERENT facilities for a single
+        -- user, which is exactly the shape user_roles' (user_id, role_id) key
+        -- exists to express:
+        --
+        --   facility A (e000) — operator: schedule.read, NO schedule.manage
+        --   facility B (d000) — facility_admin: schedule.manage
+        --
+        -- The flat permission union contains schedule.manage, so an
+        -- implementation that forgot facility provenance would offer BOTH
+        -- facilities as mutation options. The contract says it must offer
+        -- only B. That divergence is the regression this actor exists to
+        -- catch, and it is why the seed uses real system roles instead of a
+        -- purpose-built one.
+        ('00000000-0000-0000-0000-00000000d994'::uuid, 'operator', '00000000-0000-0000-0000-00000000e000'::uuid),
+        ('00000000-0000-0000-0000-00000000d994'::uuid, 'facility_admin', '00000000-0000-0000-0000-00000000d000'::uuid)
 ) AS seeded(user_id, role_name, facility_id)
 JOIN roles r ON r.name = seeded.role_name
 ON CONFLICT (user_id, role_id) DO UPDATE SET
@@ -174,6 +196,75 @@ BEGIN
           )
     ) THEN
         RAISE EXCEPTION 'Local zero-scope admin seed verification failed';
+    END IF;
+
+    -- Phase 3B5.0 — verify the authorized local schedule actor really resolves
+    -- schedule.manage AT the demo facility. Checking the role assignment alone
+    -- would be too weak: the role could lose the permission in a future
+    -- rbac.sql edit and the seed would still "verify". This asserts the
+    -- resolved provenance, which is what the endpoint actually reads.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM app_users u
+        JOIN user_roles ur ON ur.user_id = u.id
+        JOIN roles r ON r.id = ur.role_id
+        JOIN role_permissions rp ON rp.role_id = r.id
+        JOIN permissions p ON p.id = rp.permission_id
+        WHERE u.id = '00000000-0000-0000-0000-00000000d993'::uuid
+          AND u.status = 'active'
+          AND u.deleted_at IS NULL
+          AND ur.facility_id = '00000000-0000-0000-0000-00000000d000'::uuid
+          AND ur.status = 'active'
+          AND ur.deleted_at IS NULL
+          AND p.key = 'schedule.manage'
+    ) THEN
+        RAISE EXCEPTION 'Local E2E schedule manager seed verification failed: no schedule.manage at the demo facility';
+    END IF;
+
+    -- Phase 3B5.0 — verify the MIXED-PROVENANCE actor has the exact
+    -- divergence the security tests rely on, in both directions:
+    --   facility A → schedule.read present, schedule.manage ABSENT
+    --   facility B → schedule.manage present
+    --
+    -- Both halves are asserted. Asserting only that B manages something would
+    -- pass even if the seed accidentally gave A manage as well, which is
+    -- precisely the bug class this actor is meant to rule out.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM user_roles ur
+        JOIN roles r ON r.id = ur.role_id
+        WHERE ur.user_id = '00000000-0000-0000-0000-00000000d994'::uuid
+          AND ur.facility_id = '00000000-0000-0000-0000-00000000e000'::uuid
+          AND ur.status = 'active' AND ur.deleted_at IS NULL
+          AND r.name = 'operator'
+    ) THEN
+        RAISE EXCEPTION 'Local E2E mixed-provenance seed verification failed: no operator role at facility A';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM user_roles ur
+        JOIN role_permissions rp ON rp.role_id = ur.role_id
+        JOIN permissions p ON p.id = rp.permission_id
+        WHERE ur.user_id = '00000000-0000-0000-0000-00000000d994'::uuid
+          AND ur.facility_id = '00000000-0000-0000-0000-00000000e000'::uuid
+          AND ur.status = 'active' AND ur.deleted_at IS NULL
+          AND p.key = 'schedule.manage'
+    ) THEN
+        RAISE EXCEPTION 'Local E2E mixed-provenance seed verification failed: facility A must NOT hold schedule.manage';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM user_roles ur
+        JOIN role_permissions rp ON rp.role_id = ur.role_id
+        JOIN permissions p ON p.id = rp.permission_id
+        WHERE ur.user_id = '00000000-0000-0000-0000-00000000d994'::uuid
+          AND ur.facility_id = '00000000-0000-0000-0000-00000000d000'::uuid
+          AND ur.status = 'active' AND ur.deleted_at IS NULL
+          AND p.key = 'schedule.manage'
+    ) THEN
+        RAISE EXCEPTION 'Local E2E mixed-provenance seed verification failed: facility B must hold schedule.manage';
     END IF;
 END $$;
 
