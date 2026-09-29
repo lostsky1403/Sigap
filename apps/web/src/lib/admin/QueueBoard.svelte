@@ -25,8 +25,15 @@
 	 */
 	export let tickets: readonly AdminQueueTicket[] = [];
 	export let facilities: readonly AdminFacility[] = [];
-	export let actionsEnabled: boolean = false;
 	export let onTransition: (ticketId: string, status: QueueStatus) => void = () => {};
+	/** Ticket id whose transition is in flight, or ''. */
+	export let pendingTicketId: string = '';
+	/** The status that transition is moving to, for the in-flight row's label. */
+	export let pendingStatus: QueueStatus | '' = '';
+	/** Ticket id whose transition was rejected, or ''. */
+	export let errorTicketId: string = '';
+	/** The backend's verbatim message for the rejected transition. */
+	export let errorMessage: string = '';
 
 	$: facilityIndex = indexBy(facilities, (facility) => facility.id);
 
@@ -99,8 +106,9 @@
 							calledAt={ticket.called_at}
 							completedAt={ticket.completed_at}
 							transitions={allowedQueueTransitions(ticket.status)}
-							{actionsEnabled}
 							{onTransition}
+							pendingStatus={pendingTicketId === ticket.id ? pendingStatus : ''}
+							errorMessage={errorTicketId === ticket.id ? errorMessage : ''}
 						/>
 					{/each}
 				</DataTable>

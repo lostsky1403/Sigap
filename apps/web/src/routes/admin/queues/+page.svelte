@@ -11,13 +11,16 @@
 		showsStaleWarning,
 		type QueueBoardState
 	} from '$lib/admin/queueBoard';
-	import { listFacilities, listQueueTickets } from '$lib/api/endpoints/admin';
+	import { listFacilities, listQueueTickets, updateQueueTicketStatus } from '$lib/api/endpoints/admin';
 	import { isEmptyScope } from '$lib/admin/readState';
+	import { runAdminMutation } from '$lib/admin/adminMutation';
+	import AdminMutationFeedback from '$lib/admin/AdminMutationFeedback.svelte';
+	import { QUEUE_STATUS_LABEL } from '$lib/domain/status';
 	import { RADIUS } from '$lib/design/tokens';
 	import Icon from '$lib/ui/Icon.svelte';
 	import { AlertTriangle } from 'lucide-svelte';
 	import { subscribeToSession, getSession } from '$lib/stores/session';
-	import type { AdminFacility } from '$lib/api/types/api';
+	import type { AdminFacility, QueueStatus } from '$lib/api/types/api';
 
 	/**
 	 * T-3B4-04: the queue read board.
@@ -97,6 +100,65 @@
 
 	$: updatedLabel = boardUpdatedLabel(state);
 	$: stale = showsStaleWarning(state);
+
+	/**
+	 * T-3B5-01: the transition handler.
+	 *
+	 * Each piece of state below is scoped to ONE ticket, not to the board. Three
+	 * reasons:
+	 *
+	 *  1. An operator works a queue by advancing ticket after ticket. Blocking the
+	 *     whole board during one request makes the tool slower than the work.
+	 *  2. Two tickets can be mid-flight; a single pending slot would make the
+	 *     second one appear to do nothing.
+	 *  3. An error belongs to the row that caused it. A board-level banner would
+	 *     make an operator hunt for which of forty rows was rejected.
+	 */
+	let pendingTicketId = '';
+	let pendingStatus: QueueStatus | '' = '';
+	let errorTicketId = '';
+	let errorMessage = '';
+
+	async function handleTransition(ticketId: string, next: QueueStatus) {
+		// Clear any previous rejection first. Leaving it visible while a retry is
+		// in flight would show a stale error next to a live request, and the two
+		// can contradict each other.
+		errorTicketId = '';
+		errorMessage = '';
+		pendingTicketId = ticketId;
+		pendingStatus = next;
+
+		const ticket = state.load.rows.find((row) => row.id === ticketId);
+		const fromLabel = QUEUE_STATUS_LABEL[ticket?.status ?? 'waiting'];
+
+		const outcome = await runAdminMutation(
+			() => updateQueueTicketStatus(ticketId, next),
+			{
+				subject: ticket?.formatted_number ?? '',
+				fromLabel,
+				toLabel: QUEUE_STATUS_LABEL[next],
+				noun: 'Antrean',
+				// Reload rather than patch the local row. The server stamps
+				// `called_at` / `completed_at` on the transition and does not echo
+				// the row back, so a local patch would leave the timestamps empty
+				// until the next poll snapped them into place.
+				reload: () => board.refresh()
+			},
+			hasSession
+		);
+
+		pendingTicketId = '';
+		pendingStatus = '';
+
+		// Every failure lands on the row, whatever its kind. A 403 in particular
+		// does NOT replace the board with a panel: the operator was mid-queue,
+		// and destroying forty rows over one refused click is a worse outcome
+		// than showing them why that one row would not move.
+		if (!outcome.ok && outcome.failure) {
+			errorTicketId = ticketId;
+			errorMessage = outcome.failure.message;
+		}
+	}
 </script>
 
 <div class="sigap-admin-page">
@@ -189,9 +251,24 @@
 				</button>
 			</div>
 		{:else}
-			<QueueBoard tickets={filtered} {facilities} />
+			<QueueBoard
+				tickets={filtered}
+				{facilities}
+				onTransition={handleTransition}
+				{pendingTicketId}
+				{pendingStatus}
+				{errorTicketId}
+				{errorMessage}
+			/>
 		{/if}
 	</AdminReadState>
+
+	<!--
+		The one place a mutation result becomes visible and audible. Mounted here so
+		every transition on the board reports through it, whether it was started
+		from this page or would be from anywhere else.
+	-->
+	<AdminMutationFeedback />
 </div>
 
 <style>

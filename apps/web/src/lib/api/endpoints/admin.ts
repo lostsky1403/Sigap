@@ -114,9 +114,20 @@ export function getQueueTicket(
 }
 
 /**
- * Advances a ticket. The backend enforces the state machine and answers 409 for
- * an illegal transition, which the client surfaces as `conflict` rather than
- * pretending the update succeeded.
+ * Advances a ticket.
+ *
+ * The response is `{id, status, updated_at}` — the server does NOT echo the
+ * whole ticket, so a caller must reload to see the `called_at` / `completed_at`
+ * columns the transition stamps. Patching the local row instead would claim a
+ * timestamp the server has not confirmed.
+ *
+ * STATUS CODES, corrected against the source rather than assumed. An illegal
+ * transition is **400**, not 409, and the message names both statuses:
+ * "Transisi status tidak valid: waiting → in_service." The client surfaces that
+ * text verbatim — see `mutationFailure`, which prefers the server's words over
+ * any generic fallback. The only 409s in this admin surface belong to the
+ * notification endpoints, so a caller that assumes 409 here will mis-classify
+ * every rejected transition.
  */
 export function updateQueueTicketStatus(
 	id: string,
@@ -206,6 +217,78 @@ export function getScheduleMutationOptions(
 	signal?: AbortSignal
 ): Promise<ApiResult<ScheduleMutationOptions>> {
 	return apiFetch<ScheduleMutationOptions>('/api/v1/admin/schedules/options', { signal });
+}
+
+/**
+ * The schedule create/update body.
+ *
+ * `practitioner_id` IS DELIBERATELY ABSENT, and its absence is enforced by the
+ * type system rather than by a test. The backend accepts the field
+ * (`CreateScheduleRequest.PractitionerID` is `string` with `omitempty`), so a
+ * body that carried it would be accepted, persisted, and silently attach a real
+ * schedule row to a practitioner. That is exactly the surface this phase must
+ * not create:
+ *
+ *   - SIGAP has no practitioner UI, no practitioner directory, and no
+ *     practitioner E2E. There is nothing for a human to check a name against,
+ *     so any value here would be unfalsifiable.
+ *   - The column is nullable (`NULLIF($2, '')::uuid` on create, and update can
+ *     set it to NULL), so OMITTING it leaves the row's practitioner untouched
+ *     on update and NULL on create. Sending `""`, `null`, or the row's current
+ *     value would each be a different, wrong behaviour.
+ *
+ * So the key is not merely unset by convention: it is absent from the type, so
+ * the editor that builds this body has nothing to pass it through, and there is
+ * no form field anywhere that produces one. A test additionally asserts the
+ * SERIALIZED body lacks the key — a type alone would not catch a
+ * `...(rest as any)` spread, and the requirement is about what goes on the
+ * wire, not about what the compiler allows.
+ */
+export interface ScheduleInput {
+	facility_id: string;
+	service_unit_id: string;
+	/** YYYY-MM-DD */
+	schedule_date: string;
+	/** HH:MM or HH:MM:SS */
+	start_time: string;
+	/** HH:MM or HH:MM:SS */
+	end_time: string;
+	slot_minutes: number;
+	capacity_per_slot: number;
+}
+
+/**
+ * Schedule fields that can be changed after creation.
+ *
+ * `is_active` is present because the backend honours it on PATCH, and every
+ * other field is optional there too — a partial update is legal. Note the
+ * asymmetry with `ScheduleInput`, which is total: create requires everything,
+ * update requires nothing. That is the backend's contract, not a client
+ * convenience.
+ */
+export type ScheduleUpdateInput = Partial<ScheduleInput> & { is_active?: boolean };
+
+export function createSchedule(
+	input: ScheduleInput,
+	signal?: AbortSignal
+): Promise<ApiResult<{ id: string }>> {
+	return apiFetch<{ id: string }>('/api/v1/admin/schedules', {
+		method: 'POST',
+		body: input,
+		signal
+	});
+}
+
+export function updateSchedule(
+	id: string,
+	input: ScheduleUpdateInput,
+	signal?: AbortSignal
+): Promise<ApiResult<{ id: string }>> {
+	return apiFetch<{ id: string }>(`/api/v1/admin/schedules/${encodeURIComponent(id)}`, {
+		method: 'PATCH',
+		body: input,
+		signal
+	});
 }
 
 /* ----------------------------- appointments ----------------------------- */

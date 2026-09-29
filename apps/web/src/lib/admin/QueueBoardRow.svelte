@@ -10,22 +10,14 @@
 	/**
 	 * One row of the queue board.
 	 *
-	 * The transition buttons are DISABLED and clearly marked as such, and they
-	 * reflect only the verified state machine in `domain/status.ts`, which
-	 * mirrors the Go map exactly. Two reasons they are present at all in a
-	 * read-only phase:
+	 * The transition buttons are derived from the verified state machine in
+	 * `domain/status.ts`, which mirrors the Go map exactly. That derivation is
+	 * what keeps the board honest: a button is shown only where the server would
+	 * accept it, so an operator is never offered an action that fails.
 	 *
-	 *  1. An operator needs to see what the system considers possible next. A row
-	 *     with no affordances tells them nothing about why they cannot complete a
-	 *     ticket that is already in service.
-	 *  2. Offering an action the server would reject with 409 is worse than
-	 *     offering none, so the visible set is derived from the same table the
-	 *     server enforces rather than from a page's own guess.
-	 *
-	 * Phase 3B5 wires the execution. Until then each button carries a disabled
-	 * reason, so an operator is told the transition exists AND that it is not
-	 * available here — rather than being shown a control that silently does
-	 * nothing.
+	 * T-3B5-01 wires the execution. The visible set is unchanged from Phase 3B4 —
+	 * what changed is that the buttons now do something, and a rejection from
+	 * the server appears on this row with the backend's own wording.
 	 */
 	export let ticketId: string = '';
 	export let formattedNumber: string = '';
@@ -36,8 +28,25 @@
 	export let completedAt: string | undefined = undefined;
 	/** Labels for the transitions this status allows. Empty for terminal states. */
 	export let transitions: readonly QueueStatus[] = [];
-	export let actionsEnabled: boolean = false;
 	export let onTransition: (ticketId: string, status: QueueStatus) => void = () => {};
+	/**
+	 * The transition currently in flight for THIS row, or ''.
+	 *
+	 * Per-row rather than per-board on purpose. An operator advancing three
+	 * tickets in a row must be able to keep working: disabling the whole board
+	 * during one request would make the queue slower to work through, which is
+	 * the opposite of what the control is for.
+	 */
+	export let pendingStatus: QueueStatus | '' = '';
+	/**
+	 * The backend's message for a rejected transition on THIS row, or ''.
+	 *
+	 * Rendered verbatim. The server names both statuses in the sentence
+	 * ("Transisi status tidak valid: waiting → in_service."), which is more
+	 * useful than anything a client could substitute, and rewriting it would
+	 * hide which rule was actually broken.
+	 */
+	export let errorMessage: string = '';
 </script>
 
 <tr class="sigap-queue-row">
@@ -62,16 +71,38 @@
 					variant={next === 'completed' ? 'primary' : 'secondary'}
 					size={DENSITY.adminCompact}
 					label={QUEUE_STATUS_LABEL[next]}
-					disabled={!actionsEnabled}
-					disabledReason={actionsEnabled
-						? undefined
-						: `Perubahan status ke ${QUEUE_STATUS_LABEL[next]} belum diaktifkan pada tahap ini.`}
+					disabled={pendingStatus !== ''}
 					onClick={() => onTransition(ticketId, next)}
 				/>
 			{/each}
 		{/if}
 	</td>
 </tr>
+
+{#if pendingStatus !== '' || errorMessage !== ''}
+	<!--
+		A second row carrying the outcome of the mutation attempted on the row
+		above. It is a separate <tr> rather than a cell inside the original row
+		because the message can be long, and letting it reflow inside a
+		40px-height cell would break the row-density contract the whole board is
+		built on.
+
+		`role="alert"` because a rejected mutation is a failure the operator
+		did not expect and needs to hear about; the buttons themselves were
+		polite.
+	-->
+	<tr class="sigap-queue-row__outcome">
+		<td colspan="7" class="sigap-queue-row__outcome-cell">
+			{#if pendingStatus !== ''}
+				<span class="sigap-queue-row__pending" role="status">
+					Menyimpan perubahan ke {QUEUE_STATUS_LABEL[pendingStatus]}…
+				</span>
+			{:else if errorMessage !== ''}
+				<span class="sigap-queue-row__error" role="alert">{errorMessage}</span>
+			{/if}
+		</td>
+	</tr>
+{/if}
 
 <style>
 	/*
@@ -107,6 +138,28 @@
 	.sigap-queue-row__terminal {
 		font-size: 12px;
 		color: var(--sigap-muted);
+	}
+
+	/*
+		The outcome row. It carries no density constraint of its own — the 40px
+		contract belongs to a data row, and this is a message, not data. It is
+		bordered and coloured on the leading edge so it reads as belonging to the
+		row above rather than as a new band on the board.
+	*/
+	.sigap-queue-row__outcome-cell {
+		padding: 8px 12px;
+		font-size: 13px;
+		line-height: 1.45;
+		background-color: var(--sigap-surface);
+		border-left: 3px solid var(--sigap-border);
+	}
+
+	.sigap-queue-row__pending {
+		color: var(--sigap-muted);
+	}
+
+	.sigap-queue-row__error {
+		color: var(--sigap-danger);
 	}
 
 	/*
