@@ -4,10 +4,26 @@
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
 	import DataTable from '$lib/ui/DataTable.svelte';
 	import StatusBadge from '$lib/ui/StatusBadge.svelte';
-	import { listFacilities } from '$lib/api/endpoints/admin';
+	import FacilityEditor from '$lib/admin/FacilityEditor.svelte';
+	import AdminConfirmDialog from '$lib/admin/AdminConfirmDialog.svelte';
+	import AdminMutationFeedback from '$lib/admin/AdminMutationFeedback.svelte';
+	import {
+		createFacility,
+		deactivateFacility,
+		listFacilities,
+		updateFacility
+	} from '$lib/api/endpoints/admin';
 	import { facilityStateLabel, isFacilityActive } from '$lib/admin/facilityState';
+	import {
+		blankFacility,
+		toFacilityCreateRequest,
+		toFacilityUpdateRequest,
+		type FacilityFormValues
+	} from '$lib/admin/facilityForm';
+	import { runAdminMutation } from '$lib/admin/adminMutation';
 	import { formatNumber } from '$lib/domain/format';
 	import { isEmptyScope } from '$lib/admin/readState';
+	import { RADIUS } from '$lib/design/tokens';
 	import { getSession, subscribeToSession } from '$lib/stores/session';
 	import type { ApiError } from '$lib/api/errors';
 	import type { AdminFacility } from '$lib/api/types/api';
@@ -61,6 +77,164 @@
 		// an empty address, so an empty cell would be the common case.
 		return parts.length > 0 ? parts.join(', ') : '-';
 	}
+
+	/* ------------------------- T-3B5-04 mutations ------------------------- */
+
+	/** The facility being created (null) or edited. */
+	let editing: AdminFacility | null = null;
+	let editorOpen = false;
+	let saving = false;
+	let saveError = '';
+	let editorRef: { submit: () => void } | null = null;
+
+	/** The facility awaiting deactivation confirmation, or null. */
+	let deactivateTarget: AdminFacility | null = null;
+	let deactivating = false;
+	let deactivateError = '';
+
+	/** The unedited form values, so an update can send only what changed. */
+	let pristine: FacilityFormValues = blankFacility();
+
+	async function reloadFacilities() {
+		const result = await listFacilities();
+		if (result.ok) {
+			facilities = result.data;
+			error = null;
+		} else {
+			error = result.error;
+		}
+		loading = false;
+	}
+
+	function openCreate() {
+		editing = null;
+		pristine = blankFacility();
+		saveError = '';
+		editorOpen = true;
+	}
+
+	function openEdit(facility: AdminFacility) {
+		editing = facility;
+		// Captured so `toFacilityUpdateRequest` can diff against what the server
+		// held, not against what the operator may have changed and changed back.
+		pristine = {
+			name: facility.name ?? '',
+			type: (facility.type ?? '') as FacilityFormValues['type'],
+			address: facility.address ?? '',
+			kecamatan: facility.kecamatan ?? '',
+			kabupaten_kota: facility.kabupaten_kota ?? '',
+			provinsi: facility.provinsi ?? '',
+			phone: facility.phone ?? '',
+			total_beds: String(facility.total_beds ?? 0),
+			available_beds: String(facility.available_beds ?? 0),
+			short_code: facility.short_code ?? ''
+		};
+		saveError = '';
+		editorOpen = true;
+	}
+
+	function closeEditor() {
+		editorOpen = false;
+		editing = null;
+		saveError = '';
+	}
+
+	async function handleSubmit(values: FacilityFormValues) {
+		saving = true;
+		saveError = '';
+
+		const isCreate = editing === null;
+		const outcome = await runAdminMutation(
+			() =>
+				isCreate
+					? createFacility(toFacilityCreateRequest(values))
+					: updateFacility(editing!.id, toFacilityUpdateRequest(values, pristine)),
+			{
+				subject: '',
+				fromLabel: '',
+				toLabel: isCreate ? 'fasilitas baru' : 'fasilitas diperbarui',
+				noun: 'Fasilitas',
+				reload: reloadFacilities
+			},
+			hasSession
+		);
+
+		saving = false;
+
+		if (outcome.ok) {
+			closeEditor();
+			return;
+		}
+
+		// The form keeps its input. Closing on a single refused field would make
+		// the operator retype nine fields to fix one.
+		if (outcome.failure) {
+			saveError = outcome.failure.message;
+		}
+	}
+
+	function requestDeactivate(facility: AdminFacility) {
+		deactivateError = '';
+		deactivateTarget = facility;
+	}
+
+	function dismissDeactivate() {
+		deactivateTarget = null;
+		deactivateError = '';
+	}
+
+	/**
+	 * §10: PATCH, one-way, and the string "false" handled correctly.
+	 *
+	 * The response carries `is_active` as the STRING "false", because the
+	 * handler builds a `map[string]string`. `Boolean("false")` is `true` in
+	 * JavaScript, so the row is never patched from the response — it is
+	 * re-read from the list, which carries a real boolean. The alternative would
+	 * be to trust the response and get the state exactly backwards on the one
+	 * screen whose job is to say whether a facility is still taking patients.
+	 */
+	async function confirmDeactivate() {
+		const target = deactivateTarget;
+		if (!target) return;
+		deactivating = true;
+		deactivateError = '';
+
+		const outcome = await runAdminMutation(
+			() => deactivateFacility(target.id),
+			{
+				subject: target.name,
+				fromLabel: 'aktif',
+				toLabel: 'nonaktif',
+				noun: 'Fasilitas',
+				reload: reloadFacilities
+			},
+			hasSession
+		);
+
+		deactivating = false;
+
+		if (outcome.ok) {
+			deactivateTarget = null;
+			return;
+		}
+
+		if (outcome.failure) {
+			deactivateError = outcome.failure.message;
+		}
+	}
+
+	/**
+	 * The deactivation consequence, in the terms the operator and the public
+	 * share.
+	 *
+	 * §10 requires the dialog to state the approved public impact. It does, and
+	 * it does not soften it: the facility stops appearing for citizens, and
+	 * nothing in the product can undo that. An operator who has to be told this
+	 * by a colleague after the fact has been given a false impression.
+	 */
+	$: deactivateDescription = deactivateTarget
+		? `${deactivateTarget.name} akan dinonaktifkan permanen. Setelah itu, faskes ini tidak lagi muncul untuk warga. Tindakan ini tidak dapat dibatalkan dan tidak ada cara mengaktifkan kembali fasilitas yang sudah dinonaktifkan.`
+		: '';
 </script>
 
 <div class="sigap-admin-page">
@@ -68,6 +242,18 @@
 		title="Fasilitas"
 		subtitle="Fasilitas dalam lingkup akses Anda. Penonaktifan bersifat permanen dan tidak dapat dibatalkan."
 	/>
+
+	<div class="sigap-admin-actions">
+		<button
+			type="button"
+			class="sigap-admin-actions__primary"
+			style:border-radius={RADIUS.control}
+			disabled={loading}
+			on:click={openCreate}
+		>
+			Fasilitas baru
+		</button>
+	</div>
 
 	<AdminReadState
 		{loading}
@@ -86,7 +272,8 @@
 				{ label: 'Lokasi', secondary: true },
 				{ label: 'Kontak', secondary: true },
 				{ label: 'Kasur', secondary: true },
-				{ label: 'Status' }
+				{ label: 'Status' },
+				{ label: 'Aksi' }
 			]}
 		>
 			{#each facilities as facility (facility.id)}
@@ -120,6 +307,35 @@
 							<span class="sigap-facility-row__permanent">Penonaktifan bersifat permanen.</span>
 						{/if}
 					</td>
+					<td class="sigap-facility-row__actions">
+						<button
+							type="button"
+							class="sigap-facility-row__edit"
+							style:border-radius={RADIUS.control}
+							on:click={() => openEdit(facility)}
+						>
+							Ubah
+						</button>
+						<!--
+							NO REACTIVATE ACTION, and the absence is the point.
+
+							The backend has no reverse operation, so a "Aktifkan" button here
+							would be a control that exists only to fail. The condition is
+							`active`, not a permission check: an already-inactive facility
+							simply has nothing left to deactivate, and showing the operator a
+							second identical action would imply a second outcome exists.
+						-->
+						{#if active}
+							<button
+								type="button"
+								class="sigap-facility-row__deactivate"
+								style:border-radius={RADIUS.control}
+								on:click={() => requestDeactivate(facility)}
+							>
+								Nonaktifkan
+							</button>
+						{/if}
+					</td>
 				</tr>
 			{/each}
 		</DataTable>
@@ -131,9 +347,129 @@
 	</AdminReadState>
 </div>
 
+<!-- The create/edit form. Accessible Dialog, no window.confirm. -->
+<AdminConfirmDialog
+	open={editorOpen}
+	title={editing ? 'Ubah fasilitas' : 'Fasilitas baru'}
+	description="Data fasilitas yang tersimpan akan langsung dipakai pada halaman warga."
+	confirmLabel="Simpan"
+	confirmVariant="primary"
+	busy={saving}
+	onCancel={closeEditor}
+	onConfirm={() => editorRef?.submit()}
+>
+	<FacilityEditor
+		bind:this={editorRef}
+		facility={editing}
+		busy={saving}
+		submitError={saveError}
+		onSubmit={handleSubmit}
+		onCancel={closeEditor}
+	/>
+</AdminConfirmDialog>
+
+<!--
+	The deactivation confirmation.
+
+	§10's exact requirement is that this states the public impact — "faskes ini
+	tidak lagi muncul untuk warga" — and it does, in `deactivateDescription`. The
+	dialog is required rather than optional because the backend has no reverse
+	operation: there is no undo, no confirmation-after, and no way for the
+	operator to discover the mistake later except by being told.
+-->
+<AdminConfirmDialog
+	open={deactivateTarget !== null}
+	title="Nonaktifkan fasilitas?"
+	description={deactivateDescription}
+	confirmLabel="Ya, nonaktifkan"
+	cancelLabel="Batal"
+	confirmVariant="danger"
+	busy={deactivating}
+	onCancel={dismissDeactivate}
+	onConfirm={confirmDeactivate}
+/>
+
+<AdminMutationFeedback />
+
+{#if deactivateError}
+	<p class="sigap-admin-inline-error" role="alert">{deactivateError}</p>
+{/if}
+
 <style>
 	.sigap-admin-page {
 		min-width: 0;
+	}
+
+	.sigap-admin-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+
+	.sigap-admin-actions__primary {
+		height: 40px;
+		padding: 0 16px;
+		font: inherit;
+		font-size: 14px;
+		font-weight: 500;
+		color: var(--sigap-surface);
+		background-color: var(--sigap-primary);
+		border: 1px solid var(--sigap-primary);
+		cursor: pointer;
+	}
+
+	.sigap-admin-actions__primary:disabled {
+		background-color: var(--sigap-muted);
+		border-color: var(--sigap-muted);
+		cursor: not-allowed;
+	}
+
+	.sigap-admin-actions__primary:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
+	}
+
+	.sigap-admin-inline-error {
+		margin: 12px 0 0;
+		padding: 8px 12px;
+		font-size: 13px;
+		line-height: 1.45;
+		color: var(--sigap-danger);
+		background-color: var(--sigap-surface);
+		border-left: 3px solid var(--sigap-danger);
+	}
+
+	.sigap-facility-row__actions {
+		white-space: nowrap;
+	}
+
+	.sigap-facility-row__edit,
+	.sigap-facility-row__deactivate {
+		height: 32px;
+		padding: 0 12px;
+		font: inherit;
+		font-size: 13px;
+		font-weight: 500;
+		cursor: pointer;
+	}
+
+	.sigap-facility-row__edit {
+		color: var(--sigap-primary);
+		background-color: var(--sigap-surface);
+		border: 1px solid var(--sigap-border);
+	}
+
+	.sigap-facility-row__deactivate {
+		color: var(--sigap-danger);
+		background-color: var(--sigap-surface);
+		border: 1px solid var(--sigap-border);
+		margin-left: 6px;
+	}
+
+	.sigap-facility-row__edit:focus-visible,
+	.sigap-facility-row__deactivate:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
 	}
 
 	.sigap-facility-row__code {
