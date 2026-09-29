@@ -5,18 +5,19 @@
 	import AdminToolbar from '$lib/admin/AdminToolbar.svelte';
 	import FacilityFilter from '$lib/admin/FacilityFilter.svelte';
 	import DataTable from '$lib/ui/DataTable.svelte';
-	import StatusBadge from '$lib/ui/StatusBadge.svelte';
-	import Button from '$lib/ui/Button.svelte';
+	import AppointmentRow from '$lib/admin/AppointmentRow.svelte';
+	import AdminConfirmDialog from '$lib/admin/AdminConfirmDialog.svelte';
+	import AdminMutationFeedback from '$lib/admin/AdminMutationFeedback.svelte';
 	import { RADIUS } from '$lib/design/tokens';
-	import { DENSITY } from '$lib/ui/density';
-	import { listAppointments, listFacilities, listServiceUnits } from '$lib/api/endpoints/admin';
-	import { indexBy, facilityName, serviceUnitName } from '$lib/domain/joins';
 	import {
-		APPOINTMENT_STATUS_LABEL,
-		allowedAppointmentTransitions,
-		appointmentTone,
-		isTerminalAppointmentStatus
-	} from '$lib/domain/status';
+		listAppointments,
+		listFacilities,
+		listServiceUnits,
+		updateAppointmentStatus
+	} from '$lib/api/endpoints/admin';
+	import { indexBy, facilityName, serviceUnitName } from '$lib/domain/joins';
+	import { APPOINTMENT_STATUS_LABEL } from '$lib/domain/status';
+	import { runAdminMutation } from '$lib/admin/adminMutation';
 	import { formatDateTime } from '$lib/domain/format';
 	import { isEmptyScope, ORDINARY_EMPTY_DESCRIPTION } from '$lib/admin/readState';
 	import { getSession, subscribeToSession } from '$lib/stores/session';
@@ -100,10 +101,11 @@
 	});
 
 	/**
-	 * The transition labels, in the order an operator would use them.
+	 * The status filter's labels, in the order an operator would use them.
 	 *
-	 * Read-only in this phase: the set is derived and displayed, but nothing is
-	 * wired. Phase 3B5 turns these on.
+	 * Used for the filter, so every status is listed including the terminal
+	 * ones — an operator needs to filter to "everything already cancelled"
+	 * exactly as much as to filter to "scheduled".
 	 */
 	const TRANSITION_LABEL: Record<AppointmentStatus, string> = {
 		scheduled: 'Terjadwal',
@@ -113,6 +115,122 @@
 		cancelled: 'Dibatalkan',
 		no_show: 'Tidak Datang'
 	};
+
+	/**
+	 * T-3B5-02: the mutation state.
+	 *
+	 * Per-appointment, for the same reason the queue board is per-ticket: an
+	 * operator moves several appointments through a clinic session in a row, and
+	 * a page-wide lock would make that slower rather than safer.
+	 */
+	let pendingId = '';
+	let pendingStatus: AppointmentStatus | '' = '';
+	let errorId = '';
+	let errorMessage = '';
+
+	/** The appointment awaiting cancellation confirmation, or null. */
+	let cancelTarget: AdminAppointment | null = null;
+
+	/**
+	 * The re-read used by every mutation.
+	 *
+	 * It exists as a named function rather than inline in `onMount` for one
+	 * reason: a mutation must re-read the data WITHOUT resetting the operator's
+	 * facility and status filters. Reloading from `onMount` would silently widen
+	 * the table back to every row in the middle of a clinic session.
+	 */
+	async function reloadAppointments() {
+		const result = await listAppointments();
+		if (result.ok) {
+			appointments = result.data;
+			// A successful re-read clears the page-level failure too: the reason
+			// the page was replaced is gone once rows render again.
+			error = null;
+			// A successful re-read means any previous rejection is stale: the row it
+			// referred to may no longer be in the state that caused it.
+			errorId = '';
+			errorMessage = '';
+		} else {
+			error = result.error;
+		}
+		loading = false;
+	}
+
+	async function handleTransition(id: string, next: AppointmentStatus) {
+		errorId = '';
+		errorMessage = '';
+		pendingId = id;
+		pendingStatus = next;
+
+		const target = appointments.find((appointment) => appointment.id === id);
+		const fromLabel = APPOINTMENT_STATUS_LABEL[target?.status ?? 'scheduled'];
+
+		const outcome = await runAdminMutation(
+			() => updateAppointmentStatus(id, next),
+			{
+				subject: target?.patient_display_name ?? '',
+				fromLabel,
+				toLabel: APPOINTMENT_STATUS_LABEL[next],
+				noun: 'Janji temu',
+				// `reloadAppointments` re-reads without touching the filters, so the
+				// operator's narrowed view survives the mutation.
+				reload: reloadAppointments
+			},
+			hasSession
+		);
+
+		pendingId = '';
+		pendingStatus = '';
+
+		// Every failure lands on the row, whatever its kind, and with the
+		// backend's own wording. A rejected transition is a fact about that one
+		// appointment, not a reason to replace the table.
+		if (!outcome.ok && outcome.failure) {
+			errorId = id;
+			errorMessage = outcome.failure.message;
+		}
+	}
+
+	/**
+	 * Cancelling is the only action routed through a dialog.
+	 *
+	 * `cancelled` is terminal, so there is no second action an operator can take
+	 * to undo a mistaken click. Every other transition leaves the row in a state
+	 * where more actions remain available, which is what makes immediate
+	 * execution honest for them and annoying for this one.
+	 */
+	function requestCancel(appointment: AdminAppointment) {
+		cancelTarget = appointment;
+	}
+
+	function dismissCancel() {
+		cancelTarget = null;
+	}
+
+	async function confirmCancel() {
+		const target = cancelTarget;
+		if (!target) return;
+		// Closed before the request: the dialog has done its job, and leaving it
+		// up while the mutation runs would trap the operator behind a modal that
+		// is no longer asking them anything.
+		cancelTarget = null;
+		await handleTransition(target.id, 'cancelled');
+	}
+
+	/**
+	 * The dialog body, naming the appointment and stating the consequence.
+	 *
+	 * A confirmation that does not name its subject is a confirmation of
+	 * something abstract, and an operator working through a list of similar rows
+	 * cannot tell which one they are about to destroy. `cancelled` is also
+	 * terminal — no reactivation control exists — so the text says that plainly
+	 * rather than implying the action is reversible.
+	 */
+	$: cancelDescription = cancelTarget
+		? `Janji temu ${cancelTarget.patient_display_name} pada ${formatDateTime(
+				cancelTarget.appointment_time
+			)} akan dibatalkan. Status "Dibatalkan" bersifat final dan tidak dapat diaktifkan kembali.`
+		: '';
 </script>
 
 <div class="sigap-admin-page">
@@ -189,42 +307,15 @@
 				]}
 			>
 				{#each filtered as appointment (appointment.id)}
-					<tr class="sigap-appointment-row">
-						<td class="sigap-appointment-row__time">
-							{formatDateTime(appointment.appointment_time)}
-						</td>
-						<td class="sigap-appointment-row__patient">
-							{appointment.patient_display_name}
-						</td>
-						<td class="sigap-table-col-secondary">
-							{facilityName(facilityIndex, appointment.facility_id)}
-						</td>
-						<td class="sigap-table-col-secondary">
-							{serviceUnitName(unitIndex, appointment.service_unit_id)}
-						</td>
-						<td>
-							<StatusBadge
-								label={APPOINTMENT_STATUS_LABEL[appointment.status]}
-								tone={appointmentTone(appointment.status)}
-								size="sm"
-							/>
-						</td>
-						<td class="sigap-appointment-row__actions">
-							{#if isTerminalAppointmentStatus(appointment.status)}
-								<span class="sigap-appointment-row__terminal">Status final</span>
-							{:else}
-								{#each allowedAppointmentTransitions(appointment.status) as next (next)}
-									<Button
-										variant="secondary"
-										size={DENSITY.adminCompact}
-										label={APPOINTMENT_STATUS_LABEL[next]}
-										disabled={true}
-										disabledReason="Perubahan status janji temu belum diaktifkan pada tahap ini."
-									/>
-								{/each}
-							{/if}
-						</td>
-					</tr>
+					<AppointmentRow
+						{appointment}
+						facilityName={facilityName(facilityIndex, appointment.facility_id)}
+						serviceUnitName={serviceUnitName(unitIndex, appointment.service_unit_id)}
+						pendingStatus={pendingId === appointment.id ? pendingStatus : ''}
+						errorMessage={errorId === appointment.id ? errorMessage : ''}
+						onTransition={handleTransition}
+						onRequestCancel={requestCancel}
+					/>
 				{/each}
 			</DataTable>
 
@@ -241,6 +332,30 @@
 		{/if}
 	</AdminReadState>
 </div>
+
+<!--
+	THE ONLY CONFIRMATION DIALOG ON THIS PAGE.
+
+	Cancellation is routed here by `AppointmentRow`; the other four transitions
+	execute on a single click. The dialog's own accessibility — focus entry, trap,
+	Escape, `aria-labelledby`/`aria-describedby`, and focus returning to the
+	button that opened it — is `Dialog.svelte`'s contract, so this component only
+	has to hand it the right strings.
+-->
+<AdminConfirmDialog
+	open={cancelTarget !== null}
+	title="Batalkan janji temu?"
+	description={cancelDescription}
+	confirmLabel="Ya, batalkan"
+	onCancel={dismissCancel}
+	onConfirm={confirmCancel}
+/>
+
+<!--
+	The polite live region and the toast queue. Mounted once per page: a second
+	host would double every announcement and stack duplicate toasts.
+-->
+<AdminMutationFeedback />
 
 <style>
 	.sigap-admin-page {
@@ -275,28 +390,11 @@
 		outline-offset: 2px;
 	}
 
-	.sigap-appointment-row__time {
-		color: var(--sigap-muted);
-		font-variant-numeric: tabular-nums;
-		white-space: nowrap;
-	}
-
-	.sigap-appointment-row__patient {
-		font-weight: 500;
-	}
-
-	.sigap-appointment-row__actions {
-		white-space: nowrap;
-	}
-
-	.sigap-appointment-row__actions :global(.sigap-button) {
-		margin-right: 6px;
-	}
-
-	.sigap-appointment-row__terminal {
-		font-size: 12px;
-		color: var(--sigap-muted);
-	}
+	/*
+		The row's own geometry lives in `AppointmentRow.svelte`, not here.
+		Duplicating it would give the 40px contract a second place to drift
+		apart, which is the exact failure the density E2E exists to catch.
+	*/
 
 	.sigap-appointment-row__source {
 		margin: 8px 0 0;
