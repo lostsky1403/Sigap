@@ -210,6 +210,43 @@ func main() {
 	} else {
 		provider = auth.NewProvider(authCfg)
 	}
+
+	// Phase 3B5.0: the local DB-backed test identity selector.
+	//
+	// This is NOT a fallback and NOT a weakening of the provider above. It is
+	// a separate, explicitly armed provider that resolves a named subject
+	// through the SAME real RBAC resolver the JWT path uses, so local E2E can
+	// exercise genuine facility-scoped schedule.manage without the dev
+	// identity gaining a permission it deliberately lacks.
+	//
+	// Two independent gates keep it out of production, and both must open:
+	// SIGAP_ENV=local (checked inside the constructor) and
+	// SIGAP_LOCAL_RBAC_TEST_IDENTITY=true (also registered with
+	// GuardDevCapabilities above, so a non-local deploy with the flag set
+	// refuses to start rather than running armed).
+	//
+	// It takes precedence when armed, because a request that names a local
+	// test subject is a test request by definition. In every other case the
+	// configured provider stands unchanged.
+	if armed := os.Getenv("SIGAP_LOCAL_RBAC_TEST_IDENTITY") == "true"; armed {
+		if dbPool == nil {
+			// Fail closed and loudly. Without the pool there is no resolver,
+			// and a selector with no resolver could not report anything
+			// trustworthy — so it authenticates nobody.
+			slog.Warn("local RBAC test identity requested but no DB pool is available; " +
+				"the selector stays disarmed and will authenticate nobody")
+		} else {
+			localProvider := auth.NewLocalRBACTestIdentityProvider(auth.NewRBACResolver(dbPool))
+			if localProvider.Armed() {
+				provider = localProvider
+				slog.Warn("local RBAC test identity SELECTOR ACTIVE — requests may choose a " +
+					"DB-seeded identity via X-Sigap-Local-Test-Subject. Local only.")
+			} else {
+				slog.Warn("local RBAC test identity requested outside SIGAP_ENV=local; " +
+					"the selector stays disarmed")
+			}
+		}
+	}
 	slog.Info("auth provider configured", "mode", authCfg.Mode)
 
 	mux := http.NewServeMux()
