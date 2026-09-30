@@ -476,6 +476,7 @@
 >
 	<ScheduleEditor
 		bind:this={editorRef}
+		hideActions
 		options={mutationOptions}
 		{optionsLoading}
 		{editing}

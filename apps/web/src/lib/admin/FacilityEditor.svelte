@@ -30,6 +30,23 @@
 	export let submitError: string = '';
 	export let onSubmit: (values: FacilityFormValues) => void = () => {};
 	export let onCancel: () => void = () => {};
+	/**
+	 * Hide the form's own action row.
+	 *
+	 * T-3B5-04. The editor is mounted as the BODY of `AdminConfirmDialog`, which
+	 * already renders a Batal/Simpan pair in its footer. Keeping both gives the
+	 * operator two Save buttons and two Cancel buttons inside one modal, and the
+	 * two do not even mean the same thing: the form's submit does not close the
+	 * dialog, while the footer's confirm both submits and lets the page close it
+	 * on success. That ambiguity is a defect regardless of how the buttons are
+	 * clicked, and it is invisible in a screenshot — it needs two of each
+	 * control to notice.
+	 *
+	 * The action row is kept for the standalone case (`hideActions=false`), so
+	 * the form is still usable outside a dialog without becoming a second
+	 * implementation of submission.
+	 */
+	export let hideActions = false;
 
 	/**
 	 * Seeded from the row, so an edit starts from what the server holds.
@@ -282,24 +299,26 @@
 		<p class="sigap-facility-editor__error" role="alert">{submitError}</p>
 	{/if}
 
-	<div class="sigap-facility-editor__actions">
-		<button
-			type="button"
-			class="sigap-facility-editor__cancel"
-			style:border-radius={RADIUS.control}
-			on:click={onCancel}
-		>
-			Batal
-		</button>
-		<button
-			type="submit"
-			class="sigap-facility-editor__submit"
-			style:border-radius={RADIUS.control}
-			disabled={busy}
-		>
-			{busy ? 'Menyimpan...' : 'Simpan'}
-		</button>
-	</div>
+	{#if !hideActions}
+		<div class="sigap-facility-editor__actions">
+			<button
+				type="button"
+				class="sigap-facility-editor__cancel"
+				style:border-radius={RADIUS.control}
+				on:click={onCancel}
+			>
+				Batal
+			</button>
+			<button
+				type="submit"
+				class="sigap-facility-editor__submit"
+				style:border-radius={RADIUS.control}
+				disabled={busy}
+			>
+				{busy ? 'Menyimpan...' : 'Simpan'}
+			</button>
+		</div>
+	{/if}
 </form>
 
 <style>
