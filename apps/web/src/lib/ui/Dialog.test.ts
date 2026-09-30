@@ -148,4 +148,64 @@ describe('Dialog', () => {
 		await waitFor(() => expect(document.activeElement).toBe(trigger));
 		trigger.remove();
 	});
+
+	/**
+	 * T-3B5-11. The case above does NOT cover how a real dialog closes.
+	 *
+	 * `AdminConfirmDialog` renders `Dialog` unconditionally and drives visibility
+	 * with the `open` prop, so closing is `open: true -> false` and the component
+	 * is never destroyed. `onDestroy` — and therefore `teardown()` — never runs on
+	 * that path, so focus restoration used to depend entirely on the caller
+	 * invoking `close()`. Escape does; a parent-owned Cancel button does not.
+	 *
+	 * Found by the real-browser mutation E2E: dismissing the appointment-cancel
+	 * dialog with its own Cancel button left `document.activeElement` on <body>,
+	 * while Escape returned focus correctly. A keyboard user lost their place in
+	 * the table in one case and not the other, which is exactly the sort of
+	 * asymmetry no screenshot reveals.
+	 */
+	it('returns focus when the parent closes it by flipping the open prop', async () => {
+		const trigger = document.createElement('button');
+		trigger.textContent = 'Buka';
+		document.body.appendChild(trigger);
+		trigger.focus();
+
+		const { container, rerender } = render(Dialog, {
+			props: { open: true, title: 'Konfirmasi' }
+		});
+		await waitForOpen(container);
+		await waitFor(() => {
+			const dialog = container.querySelector('dialog');
+			expect(dialog?.contains(document.activeElement)).toBe(true);
+		});
+
+		// The parent's own close path: no close(), no unmount, just open -> false.
+		await rerender({ open: false, title: 'Konfirmasi' });
+
+		await waitFor(() => expect(document.activeElement).toBe(trigger));
+		trigger.remove();
+	});
+
+	it('restores focus exactly once when a close also goes through close()', async () => {
+		const trigger = document.createElement('button');
+		trigger.textContent = 'Buka';
+		document.body.appendChild(trigger);
+		trigger.focus();
+
+		const { container, rerender } = render(Dialog, {
+			props: { open: true, title: 'Konfirmasi' }
+		});
+		await waitForOpen(container);
+
+		// The Escape path calls close() (which restores focus) AND the parent's
+		// onClose flips the prop. Both must run without the second one stealing
+		// focus or throwing — restoreFocus is idempotent by nulling its target,
+		// and this is the test that keeps that true.
+		const dialog = container.querySelector('dialog') as HTMLDialogElement;
+		dialog.dispatchEvent(new Event('cancel', { cancelable: true }));
+		await rerender({ open: false, title: 'Konfirmasi' });
+
+		await waitFor(() => expect(document.activeElement).toBe(trigger));
+		trigger.remove();
+	});
 });

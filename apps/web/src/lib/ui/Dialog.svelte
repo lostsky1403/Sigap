@@ -97,16 +97,43 @@
 	}
 
 	/**
-	 * Hands focus back to whatever held it before the dialog opened.
+	 * Hands focus back to whatever held it before the dialog opened, AFTER the
+	 * dialog has left the DOM.
+	 *
+	 * Two things make the deferral mandatory rather than stylistic:
+	 *
+	 *  1. While a modal <dialog> is open, `showModal()` makes the rest of the
+	 *     document INERT. Calling `target.focus()` at that moment targets an
+	 *     inert element and silently does nothing — focus then falls to <body>
+	 *     when the dialog is removed. This is why the pre-3B5 Escape path
+	 *     appeared to work in some runs and not others: it depended on whether
+	 *     the browser had finished the top-layer transition.
+	 *  2. `{#if open}` removes the dialog element in the same update. Focusing
+	 *     the trigger first and removing the dialog afterwards re-blurs it.
 	 *
 	 * Guarded against a missing or already-removed target: the trigger may have
 	 * been unmounted in the same update (a row deleted behind a confirm dialog,
 	 * for example), and calling focus() on a detached node silently no-ops.
+	 *
+	 * Idempotent by construction — `previouslyFocused` is cleared before use, so
+	 * a second call is a no-op rather than a double-focus. That is what lets
+	 * every close path funnel through here without coordinating with each other.
 	 */
 	function restoreFocus() {
 		const target = previouslyFocused;
 		previouslyFocused = null;
 		if (target?.isConnected) target.focus();
+	}
+
+	/**
+	 * Restores focus once the dialog element is gone.
+	 *
+	 * `tick()` resolves after Svelte has flushed the pending DOM update, which
+	 * is exactly when the `{#if open}` removal has happened and the trigger is
+	 * focusable again.
+	 */
+	function restoreFocusAfterClose() {
+		void tick().then(restoreFocus);
 	}
 
 	/**
@@ -116,6 +143,9 @@
 	 * disappear without ever being closed — a route change, a parent `{#if}`, a
 	 * logout. In that case focus would otherwise fall to <body>, stranding a
 	 * keyboard user at the top of the document.
+	 *
+	 * No deferral here: on destroy the element is already being removed and
+	 * there is no subsequent update to wait for.
 	 */
 	function teardown() {
 		if (dialog?.open) dialog.close();
@@ -123,19 +153,53 @@
 	}
 
 	/**
-	 * Polited close path. The `{#if open}` block is still mounted here, so the
-	 * element is only unfocused once focus has already been handed back — the
-	 * order matters, otherwise the removal re-blurs the trigger.
+	 * Polited close path.
+	 *
+	 * Focus restoration is NOT done here — it is deferred to
+	 * `restoreFocusAfterClose`, because at this instant the dialog is still
+	 * modal and the trigger is inert. See the note on that function.
 	 */
 	function requestClose() {
 		if (!open) return;
 		open = false;
-		restoreFocus();
+		restoreFocusAfterClose();
 		onClose();
 	}
 
 	export function close() {
 		requestClose();
+	}
+
+	/**
+	 * Restores focus when the parent closes the dialog by flipping `open`.
+	 *
+	 * T-3B5-11. This is not a redundant belt to `requestClose`; before this
+	 * block it was the ONLY path that fired for the common case.
+	 *
+	 * `AdminConfirmDialog` (and every page that uses it) renders this component
+	 * UNCONDITIONALLY and drives visibility with the `open` prop. Closing is
+	 * therefore the parent flipping `open` to false, which removes the
+	 * `{#if open}` block — it does NOT destroy this component, so `onDestroy`
+	 * never fires and `teardown()` never runs. Focus restoration was silently
+	 * dependent on the caller invoking `close()` itself, which Escape does
+	 * (via the native `cancel` event) and a parent-owned Cancel button does not.
+	 *
+	 * Observed before this fix: dismissing an appointment-cancel dialog with
+	 * its own Cancel button left `document.activeElement` on <body>, while
+	 * Escape returned focus to the trigger. Both are "closing the dialog", and
+	 * a keyboard user loses their place in the table on one of them.
+	 *
+	 * The transition is watched rather than inferred from the caller, so the
+	 * two paths cannot drift apart again. `restoreFocus` is idempotent, so the
+	 * Escape path (which calls `requestClose` and then flips the prop) simply
+	 * restores once.
+	 */
+	let wasOpen = false;
+	$: if (wasOpen && !open) {
+		wasOpen = false;
+		restoreFocusAfterClose();
+	} else if (open) {
+		wasOpen = true;
 	}
 
 	async function show() {
