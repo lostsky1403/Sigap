@@ -274,19 +274,35 @@ test.describe('admin reads are real and scoped', () => {
 		const select = page.getByLabel(/filter fasilitas/i);
 		await expect(select).toBeVisible(SETTLE);
 
+		// What the backend says this actor may see. This is read from the API
+		// rather than hardcoded, because the local E2E stack arms a real
+		// DB-backed, facility-scoped actor (Phase 3B5 §2) whose scope is a
+		// property of the seed, not of this test. Asserting a literal
+		// "Puskesmas…" would make this test fail the moment the actor genuinely
+		// holds a narrower scope — which is the correct behaviour, and not a
+		// defect in the filter.
+		const scoped = await page.request.get('/api/v1/admin/facilities');
+		expect(scoped.ok(), 'the scoped facility read must succeed').toBe(true);
+		const expectedNames = ((await scoped.json()).data as Array<{ name: string }>).map(
+			(facility) => facility.name
+		);
+		expect(expectedNames.length, 'this actor must hold at least one facility').toBeGreaterThan(0);
+
 		// The control renders immediately with only "Semua fasilitas"; the options
-		// arrive with the scoped-facility read a moment later. Sampling the options
-		// once would race that read and pass or fail on backend timing, so this
-		// polls for a named option to exist before reading the list. The
-		// assertion is that the backend really sent scoped facility NAMES — not
-		// that they turned up quickly.
+		// arrive with the scoped-facility read a moment later. Sampling the
+		// options once would race that read and pass or fail on backend timing, so
+		// this polls until the options settle. The assertion is that the backend
+		// really sent scoped facility NAMES — not that they turned up quickly.
 		await expect
 			.poll(
 				async () => {
 					const options = await select.locator('option').allTextContents();
-					return options.some((o) => /Puskesmas|RSUD|RS Mitra/i.test(o));
+					return expectedNames.every((name) => options.includes(name));
 				},
-				{ timeout: 15_000, message: 'no seeded facility name reached the filter' }
+				{
+					timeout: 15_000,
+					message: `no backend-scoped facility name reached the filter (expected ${expectedNames.join(', ')})`
+				}
 			)
 			.toBe(true);
 
