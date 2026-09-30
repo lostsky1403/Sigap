@@ -489,14 +489,42 @@
 		white-space: nowrap;
 	}
 
+	/*
+		The status cell carries the one-way notice stacked UNDER the status label.
+
+		It must not push the row past the frozen 40px admin band, and the first
+		attempt at that was wrong in an instructive way. Overlaying it absolutely
+		kept the row at 40px and produced an ILLEGIBLE row: the notice collided
+		with the status badge and was clipped mid-word, which a passing height
+		assertion happily reported as fixed. The measured 41px was only one pixel
+		over, so the honest fix is to make the content genuinely fit rather than to
+		hide the overflow.
+
+		Two things buy that pixel back:
+
+		  - `line-height: 1` on an 11px label makes its line box 11px instead of
+		    ~13px. That is the whole deficit, and it costs nothing visually at
+		    this size.
+		  - `nowrap` keeps the notice on ONE line, so it can never wrap and grow
+		    the row — the failure mode that would otherwise come back the first
+		    time a longer facility name is used.
+
+		`position: relative` is retained deliberately: it establishes the cell as
+		the positioning context so the notice cannot be captured by an ancestor
+		with a transform, and it costs no layout when nothing inside is absolute.
+	*/
 	.sigap-facility-row__state {
+		position: relative;
 		white-space: nowrap;
 	}
 
 	.sigap-facility-row__permanent {
 		display: block;
+		margin-top: 1px;
 		font-size: 11px;
+		line-height: 1;
 		color: var(--sigap-muted);
+		white-space: nowrap;
 	}
 
 	.sigap-facility-row__note {
