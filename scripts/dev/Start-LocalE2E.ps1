@@ -128,10 +128,28 @@ param(
     #     because deactivation is ONE-WAY: the deactivation test needs a
     #     disposable facility, and the demo facility is load-bearing for the
     #     queue, appointment, and schedule suites.
+    #   - `e2e-schedule-mixed` reads at one facility and manages at another. It
+    #     exists to prove the options list is filtered by `schedule.manage`
+    #     PROVENANCE rather than by the flat permission union.
+    #   - `local-zero-scope-admin` holds no facility at all, so every admin
+    #     page must fail closed with an empty state and no leaked identifier.
+    #   - `e2e-schedule-reader` (Phase 3B5.1) reads at one facility and manages
+    #     NOWHERE. It is the only actor that reaches the capability-refusal
+    #     state, and it is the reason the matrix has four data actors: without
+    #     it, "readable scope but zero manageable options" is unobservable and
+    #     the ForbiddenPanel rendering is untested.
     #
     # Each spec skips the halves its actor cannot perform, so running the matrix
-    # is additive rather than a way of making one green actor cover both.
-    [string[]]$ActorMatrix = @('e2e-schedule-manager', 'local-global-super-admin')
+    # is additive rather than a way of making one green actor cover both. A
+    # capability-refusal spec gates on ITS OWN actor and skips elsewhere, so
+    # adding an actor does not multiply the whole suite by five.
+    [string[]]$ActorMatrix = @(
+        'e2e-schedule-manager',
+        'local-global-super-admin',
+        'e2e-schedule-mixed',
+        'e2e-schedule-reader',
+        'local-zero-scope-admin'
+    )
 )
 
 Set-StrictMode -Version Latest
@@ -700,23 +718,68 @@ not reachable. Start it by hand to see the error: $engineExe
 
     # (a) The chain works: browser -> web -> proxy -> Go -> DB RBAC resolver.
     # The options endpoint is the one read whose content is derived from
-    # facility-scoped schedule.manage, so a non-empty result is proof the real
-    # resolver ran rather than a synthetic permission set.
+    # facility-scoped schedule.manage, so its content is proof the real resolver
+    # ran rather than a synthetic permission set.
+    #
+    # BOTH outcomes are legitimate, and which one is expected depends on the
+    # actor rather than on the harness being broken:
+    #
+    #   - non-empty  -> the actor holds schedule.manage somewhere. Expected for
+    #                  e2e-schedule-manager, local-global-super-admin, and
+    #                  e2e-schedule-mixed.
+    #   - empty      -> the actor holds schedule.manage NOWHERE while still
+    #                  holding a readable facility scope. Expected for
+    #                  e2e-schedule-reader, whose entire purpose is to prove the
+    #                  capability-refusal rendering.
+    #
+    # So the check cannot simply be "non-empty", or the reader actor could never
+    # boot the stack — and asserting non-empty for the reader would also be
+    # asserting the opposite of what that actor exists to prove. What must hold
+    # for EVERY actor is that the request SUCCEEDED and that the subject resolved
+    # at all, which the status code and the facility-read probe below establish.
     $options = Invoke-WebRequest "http://127.0.0.1:$WebPort/api/v1/admin/schedules/options" `
         -UseBasicParsing -TimeoutSec 15
     $manageable = ($options.Content | ConvertFrom-Json).data.facilities
-    if ($manageable.Count -lt 1) {
-        Write-Fail @"
-The schedule options endpoint returned no manageable facilities for '$LocalActor'.
 
-The local RBAC selector is armed but resolved to zero schedule.manage grants, so
-either the subject is not seeded or its role is not attached. Check that
-packages/db/seed/dev.sql created '$LocalActor' and that demo.sql granted it a
-role at a facility.
+    # The subject must resolve to SOMETHING, or nothing downstream means anything.
+    # Facility READ is the coarsest gate that every 3B5 actor holds, so a success
+    # here proves the DB resolver ran for this subject.
+    $readable = Invoke-WebRequest "http://127.0.0.1:$WebPort/api/v1/admin/facilities" `
+        -UseBasicParsing -TimeoutSec 15
+    $readableFacilities = ($readable.Content | ConvertFrom-Json).data
+    if ($null -eq $readableFacilities) {
+        Write-Fail @"
+The facility read returned no body for '$LocalActor'.
+
+The local RBAC selector is armed but the subject did not resolve. Check that
+packages/db/seed/dev.sql created '$LocalActor'.
 "@
     }
+    $readableNames = ($readableFacilities | ForEach-Object { $_.name }) -join ', '
+
+    # Assigned unconditionally so the forged-header comparison below always has
+    # a baseline, including for the capability-refusal actor whose list is empty.
     $manageableNames = ($manageable | ForEach-Object { $_.name }) -join ', '
-    Write-Host "    manageable facilities: $manageableNames" -ForegroundColor DarkGray
+
+    if ($manageable.Count -lt 1) {
+        # Empty is only CORRECT for an actor that can read something. An actor
+        # with no readable scope at all is mis-seeded, and that is a real failure
+        # rather than a legitimate state.
+        if ($readableFacilities.Count -lt 1) {
+            Write-Fail @"
+'$LocalActor' resolved to zero readable facilities AND zero manageable schedule
+options, which is the zero-scope state rather than the capability-refusal state.
+
+A capability-refusal actor must still hold a readable facility scope; otherwise
+the page would render the class-1 empty state and the ForbiddenPanel could never
+be observed. Check the role assignment in packages/db/seed/demo.sql.
+"@
+        }
+        Write-Host "    manageable facilities: (none - capability refusal state, as expected for this actor)" -ForegroundColor DarkGray
+    } else {
+        Write-Host "    manageable facilities: $manageableNames" -ForegroundColor DarkGray
+    }
+    Write-Host "    readable facilities: $readableNames" -ForegroundColor DarkGray
 
     # (b) The browser CANNOT bypass the proxy or select an arbitrary identity.
     # A browser-supplied X-Sigap-* header is not forwarded by the proxy, which
@@ -755,8 +818,36 @@ caller-supplied X-Sigap-* headers. If this fired, identity is browser-controllab
     # check below catches it — a fake response cannot agree with the facility
     # that was actually requested.
     Write-Step "Verifying walk-in against the real queue engine"
-    $catalog = $parsed.data | Where-Object { $_.is_active } | Select-Object -First 1
-    if (-not $catalog) { Write-Fail "No active facility in the catalog to test the walk-in with." }
+    #
+    # The facility MUST come from the pinned actor's own readable set, not from
+    # the public catalog. Picking the first publicly-active facility created a
+    # ticket OUTSIDE every facility-scoped actor's scope, and that ticket then
+    # sat on the board looking like a row with no facility — which broke the
+    # queue read specs for any actor whose scope excluded it.
+    #
+    # That went unnoticed while the only data actors happened to be unscoped or
+    # facility_admin at the demo facility. It surfaced as soon as an actor existed
+    # whose scope was exactly one OTHER facility: the walk-in probe was the only
+    # ticket in the database, it belonged to a facility the actor cannot read, and
+    # the board rendered a row whose status band never appeared.
+    #
+    # The read below is already scoped BY the server to this actor, so taking the
+    # first entry from it is both correct and the only version that cannot drift.
+    $scopedCatalog = Invoke-WebRequest "http://127.0.0.1:$WebPort/api/v1/admin/facilities" `
+        -UseBasicParsing -TimeoutSec 15
+    $scopedFacilities = ($scopedCatalog.Content | ConvertFrom-Json).data |
+        Where-Object { $_.is_active }
+    $catalog = $scopedFacilities | Select-Object -First 1
+    if (-not $catalog) {
+        Write-Fail @"
+No ACTIVE facility is readable by '$LocalActor', so the walk-in chain cannot be
+verified against the queue engine.
+
+The probe deliberately books at a facility the pinned actor can actually read, so
+that the resulting ticket is visible on that actor's board. Booking at an
+arbitrary public facility instead would leave a row no actor can attribute.
+"@
+    }
 
     # Unique per attempt so the in-memory daily limiter (2 per phone per facility
     # per day, keyed on the API process) cannot reject a repeat run.
@@ -849,7 +940,22 @@ regardless of facility), so the stack is not exercising the gRPC hop it claims t
             -UseBasicParsing -TimeoutSec 15
         $actorFacilities = ($actorOptions.Content | ConvertFrom-Json).data.facilities
         $actorNames = ($actorFacilities | ForEach-Object { $_.name }) -join ', '
-        Write-Host "    manageable facilities: $actorNames" -ForegroundColor DarkGray
+
+        # Readable scope is reported alongside, because for the capability-refusal
+        # actor the manageable list is legitimately empty and the interesting
+        # question becomes whether it is empty WITH scope or empty BECAUSE there
+        # is no scope. Those are different states with different renderings.
+        $actorReadable = Invoke-WebRequest "http://127.0.0.1:$WebPort/api/v1/admin/facilities" `
+            -UseBasicParsing -TimeoutSec 15
+        $actorReadableFacilities = ($actorReadable.Content | ConvertFrom-Json).data
+        $actorReadableNames = ($actorReadableFacilities | ForEach-Object { $_.name }) -join ', '
+
+        if ([string]::IsNullOrEmpty($actorNames)) {
+            Write-Host "    manageable facilities: (none)" -ForegroundColor DarkGray
+        } else {
+            Write-Host "    manageable facilities: $actorNames" -ForegroundColor DarkGray
+        }
+        Write-Host "    readable facilities: $actorReadableNames" -ForegroundColor DarkGray
 
         $actorForged = Invoke-WebRequest "http://127.0.0.1:$WebPort/api/v1/admin/schedules/options" `
             -Headers @{ 'X-Sigap-Local-Test-Subject' = 'e2e-schedule-mixed' } `
@@ -907,7 +1013,13 @@ caller-supplied X-Sigap-* headers. If this fired, identity is browser-controllab
 
     # Leave the web tier pinned to the actor the caller asked for, so a
     # -KeepRunning stack is the one they expect to poke at by hand.
-    if ($ActorMatrix[-1] -ne $LocalActor) {
+    #
+    # `-eq` against the last matrix entry, guarded for an EMPTY matrix: passing
+    # `-ActorMatrix @()` is a legitimate way to boot the stack and run Playwright
+    # by hand against a single pinned actor, and indexing `[-1]` on an empty
+    # array throws under StrictMode rather than evaluating to null.
+    $lastMatrixActor = if ($ActorMatrix.Count -gt 0) { $ActorMatrix[-1] } else { '' }
+    if ($lastMatrixActor -ne $LocalActor) {
         Stop-OwnedTree $webProcess 'web preview (actor matrix)'
         $env:SIGAP_LOCAL_E2E_ACTOR = $LocalActor
         $webProcess = Start-Process -FilePath $viteCmd `

@@ -114,7 +114,37 @@ FROM (
         -- catch, and it is why the seed uses real system roles instead of a
         -- purpose-built one.
         ('00000000-0000-0000-0000-00000000d994'::uuid, 'operator', '00000000-0000-0000-0000-00000000e000'::uuid),
-        ('00000000-0000-0000-0000-00000000d994'::uuid, 'facility_admin', '00000000-0000-0000-0000-00000000d000'::uuid)
+        ('00000000-0000-0000-0000-00000000d994'::uuid, 'facility_admin', '00000000-0000-0000-0000-00000000d000'::uuid),
+        -- Phase 3B5.1 — the CAPABILITY-REFUSAL actor. `operator` at the
+        -- DEMO facility (d000) and at no other, so:
+        --
+        --   - facility scope is NON-EMPTY, so the schedules page is NOT in the
+        --     class-1 "no facilities in scope" empty state;
+        --   - `operator` carries schedule.read but NOT schedule.manage, so the
+        --     schedule LIST and `/api/v1/admin/schedules/options` are both
+        --     reachable;
+        --   - `schedule.manage` resolves at NO facility for this user, so
+        --     `AuthorizedFacilityIDsForPermission(..., 'schedule.manage')` is
+        --     empty and the options endpoint answers 200 with `facilities: []`.
+        --
+        -- WHY d000 SPECIFICALLY, and not the facility A the mixed actor reads.
+        -- The two seeded schedules both live at d000, so an actor scoped there
+        -- can actually SEE schedule rows. That is what makes the state
+        -- demonstrable rather than merely assertable: the page renders a real
+        -- table of real rows at the same time as it renders the capability
+        -- refusal, which is exactly the combination an operator in this
+        -- position would see. An actor scoped to a facility with no schedules
+        -- would produce an empty table, and "empty table plus refusal panel"
+        -- could not be distinguished from the ordinary no-rows state.
+        --
+        -- Reading d000 costs nothing: `operator` grants no mutation on the
+        -- schedule endpoint, and the demo facility's rows are never modified by
+        -- this actor.
+        --
+        -- The capability-denied rendering depends on this combination, so the
+        -- seed asserts all three halves below and fails loudly if a future
+        -- rbac.sql edit quietly gives `operator` schedule.manage.
+        ('00000000-0000-0000-0000-00000000d995'::uuid, 'operator', '00000000-0000-0000-0000-00000000d000'::uuid)
 ) AS seeded(user_id, role_name, facility_id)
 JOIN roles r ON r.name = seeded.role_name
 ON CONFLICT (user_id, role_id) DO UPDATE SET
@@ -265,6 +295,73 @@ BEGIN
           AND p.key = 'schedule.manage'
     ) THEN
         RAISE EXCEPTION 'Local E2E mixed-provenance seed verification failed: facility B must hold schedule.manage';
+    END IF;
+
+    -- Phase 3B5.1 — verify the CAPABILITY-REFUSAL actor really produces the
+    -- state the ForbiddenPanel rendering depends on. All THREE halves are
+    -- asserted, because any one of them failing silently turns this actor into a
+    -- different actor and the E2E would then be testing the wrong thing:
+    --
+    --   1. facility scope is NON-EMPTY      -> not the class-1 empty state
+    --   2. schedule.read resolves at that facility -> the list and the options
+    --                                            endpoint are both reachable
+    --   3. schedule.manage resolves NOWHERE -> options answers 200 with []
+    --   4. that facility actually has schedule ROWS -> the page can render a
+    --                                        real table beside the refusal
+    --
+    -- (3) is the assertion that actually protects this actor. If a future
+    -- rbac.sql edit gave `operator` schedule.manage, every seed would still
+    -- apply, the E2E would open a working editor instead of a ForbiddenPanel, and
+    -- the capability-refusal coverage would be silently gone. Asserting only
+    -- (1) and (2) would let that happen.
+    --
+    -- (4) is what keeps the E2E honest about WHICH state it is in. Without a
+    -- readable row, "empty table + refusal panel" would be indistinguishable
+    -- from the ordinary no-rows state, and the test would prove much less than
+    -- it claims.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM user_roles ur
+        JOIN roles r ON r.id = ur.role_id
+        JOIN role_permissions rp ON rp.role_id = r.id
+        JOIN permissions p ON p.id = rp.permission_id
+        WHERE ur.user_id = '00000000-0000-0000-0000-00000000d995'::uuid
+          AND ur.facility_id = '00000000-0000-0000-0000-00000000d000'::uuid
+          AND ur.status = 'active' AND ur.deleted_at IS NULL
+          AND p.key = 'schedule.read'
+    ) THEN
+        RAISE EXCEPTION 'Local E2E schedule reader seed verification failed: the demo facility must hold schedule.read';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM user_roles ur
+        JOIN role_permissions rp ON rp.role_id = ur.role_id
+        JOIN permissions p ON p.id = rp.permission_id
+        WHERE ur.user_id = '00000000-0000-0000-0000-00000000d995'::uuid
+          AND ur.status = 'active' AND ur.deleted_at IS NULL
+          AND p.key = 'schedule.manage'
+    ) THEN
+        RAISE EXCEPTION 'Local E2E schedule reader seed verification failed: schedule.manage must resolve at NO facility for this actor';
+    END IF;
+
+    -- Exactly ONE facility assignment, and it is a facility-scoped one. A
+    -- second row, or a NULL facility_id (which means unrestricted scope), would
+    -- make the actor an authorized manager instead of a reader and the E2E would
+    -- assert the wrong state.
+    IF 1 <> (
+        SELECT COUNT(*)
+        FROM user_roles ur
+        WHERE ur.user_id = '00000000-0000-0000-0000-00000000d995'::uuid
+          AND ur.status = 'active' AND ur.deleted_at IS NULL
+    ) OR EXISTS (
+        SELECT 1
+        FROM user_roles ur
+        WHERE ur.user_id = '00000000-0000-0000-0000-00000000d995'::uuid
+          AND ur.status = 'active' AND ur.deleted_at IS NULL
+          AND ur.facility_id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'Local E2E schedule reader seed verification failed: expected exactly one facility-scoped assignment';
     END IF;
 END $$;
 
@@ -551,6 +648,24 @@ BEGIN
         patient_phone = EXCLUDED.patient_phone,
         checkin_code = EXCLUDED.checkin_code,
         updated_at = NOW();
+
+    -- Phase 3B5.1 — the fourth half of the capability-refusal actor's contract,
+    -- asserted HERE rather than beside the role assignment because the rows it
+    -- depends on are created further down this file. Placing it earlier would
+    -- have asserted against an empty table and failed the seed for the wrong
+    -- reason.
+    --
+    -- The reader is scoped to the demo facility precisely so it can SEE schedule
+    -- rows. Without at least one, the page would render an empty table beside
+    -- the refusal panel, and "no rows + refusal" is indistinguishable from the
+    -- ordinary no-rows state — the E2E would then prove far less than it claims.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM practitioner_schedules ps
+        WHERE ps.facility_id = '00000000-0000-0000-0000-00000000d000'::uuid
+    ) THEN
+        RAISE EXCEPTION 'Local E2E schedule reader seed verification failed: the demo facility must carry at least one schedule row';
+    END IF;
 END $$;
 
 COMMIT;
