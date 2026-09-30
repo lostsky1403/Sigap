@@ -360,6 +360,7 @@
 >
 	<FacilityEditor
 		bind:this={editorRef}
+		hideActions
 		facility={editing}
 		busy={saving}
 		submitError={saveError}
