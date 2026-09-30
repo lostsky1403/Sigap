@@ -49,6 +49,20 @@
 	export let onSubmit: (body: ReturnType<typeof toScheduleRequest>, id: string | null) => void =
 		() => {};
 	export let onCancel: () => void = () => {};
+	/**
+	 * Hide the form's own action row.
+	 *
+	 * T-3B5-03, for the same reason as `FacilityEditor.hideActions`: this form is
+	 * mounted inside `AdminConfirmDialog`, which supplies its own Simpan/Batal
+	 * pair in the footer. Two of each inside one modal is ambiguous — the form's
+	 * submit does not close the dialog, the footer's confirm does — and it is
+	 * invisible until you count the buttons.
+	 *
+	 * The footer confirm calls this component's `submit()` through `bind:this`,
+	 * so validation still runs on the single remaining path. Keyboard submission
+	 * of the form itself is unchanged.
+	 */
+	export let hideActions = false;
 
 	function blank(): ScheduleFormValues {
 		return {
@@ -369,24 +383,26 @@
 		<p class="sigap-schedule-editor__error" role="alert">{submitError}</p>
 	{/if}
 
-	<div class="sigap-schedule-editor__actions">
-		<button
-			type="button"
-			class="sigap-schedule-editor__cancel"
-			style:border-radius={RADIUS.control}
-			on:click={onCancel}
-		>
-			Batal
-		</button>
-		<button
-			type="submit"
-			class="sigap-schedule-editor__submit"
-			style:border-radius={RADIUS.control}
-			disabled={busy || optionsLoading}
-		>
-			{busy ? 'Menyimpan...' : editing ? 'Simpan perubahan' : 'Simpan jadwal'}
-		</button>
-	</div>
+	{#if !hideActions}
+		<div class="sigap-schedule-editor__actions">
+			<button
+				type="button"
+				class="sigap-schedule-editor__cancel"
+				style:border-radius={RADIUS.control}
+				on:click={onCancel}
+			>
+				Batal
+			</button>
+			<button
+				type="submit"
+				class="sigap-schedule-editor__submit"
+				style:border-radius={RADIUS.control}
+				disabled={busy || optionsLoading}
+			>
+				{busy ? 'Menyimpan...' : editing ? 'Simpan perubahan' : 'Simpan jadwal'}
+			</button>
+		</div>
+	{/if}
 </form>
 
 <style>
