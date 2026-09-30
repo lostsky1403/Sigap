@@ -74,6 +74,37 @@ ON CONFLICT (id) DO UPDATE SET
 --                                the actor that proves no Cartesian
 --                                authorization regression sneaks back in.
 --
+-- d995  e2e-schedule-reader    — operator (schedule.read, NO schedule.manage)
+--                                at ONE facility and NOWHERE else. This is the
+--                                only actor that reaches the capability-refusal
+--                                state: it can READ schedules, so the page is
+--                                not in the class-1 empty scope, yet it manages
+--                                schedules nowhere, so
+--                                `/api/v1/admin/schedules/options` answers 200
+--                                with `facilities: []`.
+--
+--                                WHY THIS ACTOR CANNOT BE FAKED BY ANOTHER.
+--                                The three pre-existing actors each fail to
+--                                produce the state for a structural reason, not
+--                                an incidental one:
+--                                  - e2e-schedule-manager manages a facility, so
+--                                    options is non-empty and the editor opens.
+--                                  - e2e-schedule-mixed ALSO holds
+--                                    schedule.manage (at B), so options is
+--                                    non-empty. Its read/manage divergence proves
+--                                    the options list is provenance-filtered; it
+--                                    cannot prove the EMPTY case.
+--                                  - local-zero-scope-admin has no facility scope
+--                                    at all, so `isEmptyScope(facilities)` is true
+--                                    and the page renders the class-1 empty state.
+--                                    That is a DIFFERENT state with a different
+--                                    message, and conflating the two would tell a
+--                                    reader who can see schedules that they have
+--                                    no facilities — which is false.
+--                                So the empty-options-with-readable-scope state
+--                                needs its own actor, and the seed below
+--                                self-verifies that it exists.
+--
 -- These are LOCAL TEST DATA. They are not a migration, they are not applied in
 -- any shared environment, and access derives from seeded roles rather than
 -- from any hardcoded grant in application code.
@@ -81,7 +112,8 @@ ON CONFLICT (id) DO UPDATE SET
 INSERT INTO app_users (id, email, display_name, status, subject, deleted_at)
 VALUES
     ('00000000-0000-0000-0000-00000000d993'::uuid, 'e2e-schedule-manager@sigap.local', 'Local E2E Schedule Manager (synthetic)', 'active', 'e2e-schedule-manager', NULL),
-    ('00000000-0000-0000-0000-00000000d994'::uuid, 'e2e-schedule-mixed@sigap.local', 'Local E2E Mixed-Provenance Schedule Actor (synthetic)', 'active', 'e2e-schedule-mixed', NULL)
+    ('00000000-0000-0000-0000-00000000d994'::uuid, 'e2e-schedule-mixed@sigap.local', 'Local E2E Mixed-Provenance Schedule Actor (synthetic)', 'active', 'e2e-schedule-mixed', NULL),
+    ('00000000-0000-0000-0000-00000000d995'::uuid, 'e2e-schedule-reader@sigap.local', 'Local E2E Schedule Reader (synthetic)', 'active', 'e2e-schedule-reader', NULL)
 ON CONFLICT (id) DO UPDATE SET
     email = EXCLUDED.email,
     display_name = EXCLUDED.display_name,

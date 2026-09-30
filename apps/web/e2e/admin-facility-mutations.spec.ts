@@ -72,6 +72,35 @@ const CAN_CREATE = ACTOR === UNRESTRICTED_ACTOR;
 const HOLDS_NO_DATA = ACTOR === 'local-zero-scope-admin';
 
 /**
+ * True when the configured actor holds `facility.manage` at a SCOPED facility.
+ *
+ * THIS IS THE ACTOR SET THAT CAN REACH THE 404 BRANCH, and it is derived from
+ * the seed rather than from a capability probe, for the reason the test body
+ * explains: `POST /api/v1/admin/facilities` is gated twice — the route registry
+ * demands `facility.manage`, and only the handler then demands
+ * `scope.Unrestricted` and answers 404. An actor can only observe the second
+ * gate by passing the first, so this set is exactly the actors holding
+ * `facility.manage` under a facility-scoped `user_roles` row:
+ *
+ *   - `e2e-schedule-manager`  (d993) facility_admin @ demo facility
+ *   - `e2e-schedule-mixed`    (d994) facility_admin @ demo facility, plus
+ *                                        operator @ a second facility
+ *   - `local-facility-admin`  (d991) facility_admin @ demo facility
+ *
+ * The unscoped actors are deliberately absent. `local-global-super-admin` is
+ * already skipped by `CAN_CREATE` because it is the one actor that SUCCEEDS;
+ * `local-zero-scope-admin` is skipped by `HOLDS_NO_DATA` because it holds no
+ * row to act on. `e2e-schedule-reader` is absent because it is `operator`,
+ * which carries no `facility.manage` at all — the server refuses it at the
+ * registry, which is a different and equally correct claim.
+ */
+const HOLDS_FACILITY_MANAGE = [
+	'e2e-schedule-manager',
+	'e2e-schedule-mixed',
+	'local-facility-admin'
+].includes(ACTOR);
+
+/**
  * The facility this run creates, named so a re-run against a retained database
  * cannot collide with the previous run's row.
  *
@@ -194,6 +223,32 @@ test.describe('T-3B5-04 facility create, update, and one-way deactivate', () => 
 		test.skip(
 			HOLDS_NO_DATA,
 			'this actor holds no facility rows; its denial is asserted in admin-read.spec.ts'
+		);
+
+		// THE 404 PREMISE IS A PERMISSION-SHAPED CLAIM, not a generic one.
+		//
+		// `POST /api/v1/admin/facilities` is gated TWICE, in this order:
+		//
+		//   1. the route registry requires `facility.manage`, and
+		//   2. the handler then requires `scope.Unrestricted`, answering 404
+		//      "Fasilitas tidak ditemukan." otherwise.
+		//
+		// Only an actor that clears gate 1 ever reaches gate 2. A facility-scoped
+		// actor that does NOT hold `facility.manage` is therefore refused at the
+		// registry with 403 "Akses ditolak: izin tidak mencukupi." and never
+		// produces the not-found-shaped refusal this test is written to assert.
+		//
+		// Asserting the 404 unconditionally would be asserting an implementation
+		// detail of the route table, and it would be asserting something FALSE for
+		// an actor that simply lacks the permission: the server is not claiming the
+		// facility is missing, it is saying the actor may not create one. Those are
+		// different facts and the test must only claim the one the server actually
+		// makes. The actor that proves the 404 branch is the one that HOLDS
+		// `facility.manage` and is still facility-scoped — the same actor the file
+		// header names as the subject of this test.
+		test.skip(
+			!HOLDS_FACILITY_MANAGE,
+			'this actor is refused at the route gate (no facility.manage) before the handler runs; the 404 branch is unreachable for it'
 		);
 
 		await gotoAdmin(page, '/admin/facilities');
