@@ -60,6 +60,18 @@ const ACTOR = (process.env.SIGAP_E2E_ACTOR ?? '').trim();
 const CAN_CREATE = ACTOR === UNRESTRICTED_ACTOR;
 
 /**
+ * True when the configured actor is scoped to nothing at all.
+ *
+ * Such an actor correctly sees an empty, table-less admin. Every assertion in
+ * this file is about acting ON a facility, so there is nothing for it to act on
+ * and the specs skip rather than pretend otherwise. Its denial is asserted as a
+ * positive claim in admin-read.spec.ts — empty state shown, no table, no leaked
+ * identifier — which is a stronger statement than "these mutation tests did not
+ * apply".
+ */
+const HOLDS_NO_DATA = ACTOR === 'local-zero-scope-admin';
+
+/**
  * The facility this run creates, named so a re-run against a retained database
  * cannot collide with the previous run's row.
  *
@@ -76,20 +88,57 @@ const CAN_CREATE = ACTOR === UNRESTRICTED_ACTOR;
  * name keeps the row identifiable AND unique, so the suite is re-runnable and
  * cannot leak into another spec's assumptions.
  */
-const RUN_TAG = `${String(Date.now()).slice(-6)}${String(ACTOR.length)}`;
+
+/**
+ * Derives the per-run digits, rejecting any tag that would collide with a
+ * forbidden substring elsewhere.
+ *
+ * WHY THE FILTER EXISTS. The tag is derived from the clock, so it is arbitrary
+ * digits — and an arbitrary digit string will occasionally contain "429", which
+ * is one of the strings the §14 rate-limit spec asserts is absent from every
+ * admin page. A tag of 76429624 therefore made `/admin/facilities` fail that
+ * spec through no fault of the page: the digits were inside a facility NAME the
+ * page rendered correctly.
+ *
+ * That is a real flake with a real trigger, not a hypothetical, and it was
+ * observed on a matrix run. Two things are worth separating:
+ *
+ *   - the rate-limit spec's INTENT, which is that no page claims a 429 state, and
+ *   - its METHOD, which greps raw page text for the digits "429".
+ *
+ * The intent is legitimate and stays. The method is what needs help: a three-digit
+ * HTTP status is a word in this UI's language, not a number that may appear inside
+ * an identifier. Rather than weaken the assertion, this makes the test DATA safe —
+ * the same way a fixture avoids a reserved character — so the spec can only fail
+ * for the reason it was written to catch.
+ *
+ * Regenerating until the tag is clean keeps the uniqueness guarantee intact; it
+ * only skips tags that would be ambiguous to a substring search. The attempt
+ * counter is part of the tag, so two runs in the same millisecond still differ.
+ */
+function runTagWithout(substring: string): string {
+	for (let attempt = 0; attempt < 1000; attempt += 1) {
+		const tag = `${String(Date.now()).slice(-6)}${String(ACTOR.length)}${attempt}`;
+		if (!tag.includes(substring)) return tag;
+	}
+	throw new Error(`could not derive a run tag free of "${substring}"`);
+}
+
+/** The digits actually used, filtered so they cannot spoof a status code. */
+const SAFE_RUN_TAG = runTagWithout('429');
 
 test.describe.configure({ mode: 'serial' });
 
 /** A short code within the backend's length rule, unique to this run. */
 function shortCode(): string {
-	return `E2E${RUN_TAG}`;
+	return `E2E${SAFE_RUN_TAG}`;
 }
 
 /** The facility this run creates, before the rename. */
-const CREATED_NAME = `Klinik E2E Sementara ${RUN_TAG}`;
+const CREATED_NAME = `Klinik E2E Sementara ${SAFE_RUN_TAG}`;
 
 /** The facility after the update test renames it. */
-const RENAMED_NAME = `Klinik E2E Diperbarui ${RUN_TAG}`;
+const RENAMED_NAME = `Klinik E2E Diperbarui ${SAFE_RUN_TAG}`;
 
 async function gotoAdmin(page: Page, path: string) {
 	await page.goto(path);
@@ -139,6 +188,13 @@ test.describe('T-3B5-04 facility create, update, and one-way deactivate', () => 
 		page
 	}) => {
 		test.skip(CAN_CREATE, 'the configured actor may create facilities');
+		// A zero-scope actor holds no facility rows, so the list precondition below
+		// cannot be met. Its denial is already asserted in admin-read.spec.ts, and
+		// duplicating it here would prove the same thing twice.
+		test.skip(
+			HOLDS_NO_DATA,
+			'this actor holds no facility rows; its denial is asserted in admin-read.spec.ts'
+		);
 
 		await gotoAdmin(page, '/admin/facilities');
 		await expect(page.locator('table tbody tr').first()).toBeVisible(SETTLE);
@@ -272,6 +328,11 @@ test.describe('T-3B5-04 facility create, update, and one-way deactivate', () => 
 	});
 
 	test('rejects a phone containing the characters the backend forbids', async ({ page }) => {
+		// This drives the CREATE form, so it belongs to the unrestricted actor. The
+		// refusal under test is a field-level validation, which is only reachable
+		// by an actor allowed to open that form at all.
+		test.skip(!CAN_CREATE, 'facility creation requires the unrestricted DB actor');
+
 		await gotoAdmin(page, '/admin/facilities');
 		await expect(page.locator('table tbody tr').first()).toBeVisible(SETTLE);
 
@@ -373,146 +434,158 @@ test.describe('T-3B5-04 facility create, update, and one-way deactivate', () => 
 
 	/* --------------------------- §11 dialog accessibility --------------------------- */
 
-	test('traps focus, closes on Escape, and returns focus to the trigger', async ({ page }) => {
-		await gotoAdmin(page, '/admin/facilities');
-		const table = page.locator('table');
-		await expect(table.locator('tbody tr').first()).toBeVisible(SETTLE);
+	/*
+		The dialog contract is about a dialog, but it can only be demonstrated from a
+		real trigger — a row action — so it needs an actor that can see a facility.
+		For a zero-scope actor there is no row, hence no trigger, hence nothing to
+		prove about focus restoration; the same behaviour is covered by the
+		Dialog.test.ts component tests, which need no data at all, and end to end
+		for every actor that holds a row.
+	*/
+	test.describe('dialog accessibility, from a real row trigger', () => {
+		test.skip(HOLDS_NO_DATA, 'this actor holds no facility row, so there is no trigger');
 
-		// A DATA row this run is allowed to edit. Scoped to `tbody` rather than
-		// `tr`, because `table.locator('tr').first()` is the HEADER row and
-		// carries no action buttons at all. Under the global actor every seeded
-		// facility is in scope, so the first row is a safe, stable target for an
-		// EDIT (as opposed to a deactivate, which is one-way).
-		const row = table.locator('tbody tr').first();
-		const trigger = row.getByRole('button', { name: 'Ubah' });
-		await expect(trigger).toBeVisible(SETTLE);
-
-		// Focus enters the dialog.
-		await trigger.click();
-		const modal = dialog(page);
-		await expect(modal).toBeVisible(SETTLE);
-		const focusInsideDialog = await page.evaluate(() => {
-			const open = document.querySelector('dialog[open]');
-			return !!open && !!open.contains(document.activeElement);
-		});
-		expect(focusInsideDialog, 'focus must move into the dialog on open').toBe(true);
-
-		// aria-labelledby names the title, so the dialog has an accessible name.
-		const labelledBy = await modal.getAttribute('aria-labelledby');
-		expect(labelledBy, 'the dialog must be labelled by its title').toBeTruthy();
-		const labelText = await page.evaluate((id: string) => {
-			const el = document.getElementById(id);
-			return el?.textContent?.trim() ?? '';
-		}, labelledBy!);
-		expect(labelText.length, 'the accessible name must not be empty').toBeGreaterThan(0);
-
-		// Focus is TRAPPED: tabbing from the last control wraps inside the modal
-		// rather than reaching the page behind it.
-		for (let i = 0; i < 25; i += 1) {
-			await page.keyboard.press('Tab');
-		}
-		const stillInside = await page.evaluate(() => {
-			const open = document.querySelector('dialog[open]');
-			return !!open && !!open.contains(document.activeElement);
-		});
-		expect(stillInside, 'focus must stay inside the dialog while it is open').toBe(true);
-
-		// Escape closes it, and focus goes back to the control that opened it.
-		await page.keyboard.press('Escape');
-		await expect(modal).toHaveCount(0, SETTLE);
-		await expect
-			.poll(() => page.evaluate(() => document.activeElement?.textContent?.trim() ?? ''), {
-				timeout: SETTLE.timeout
-			})
-			.toBe('Ubah');
-	});
-
-	test('Cancel returns focus to the trigger and changes nothing', async ({ page }) => {
-		await gotoAdmin(page, '/admin/facilities');
-		const table = page.locator('table');
-		await expect(table.locator('tbody tr').first()).toBeVisible(SETTLE);
-
-		const row = table.locator('tbody tr').first();
-		const trigger = row.getByRole('button', { name: 'Ubah' });
-		await trigger.click();
-
-		const modal = dialog(page);
-		await expect(modal).toBeVisible(SETTLE);
-
-		// Typed and then abandoned: the point of the assertion below is that
-		// nothing was sent, so a change has to be on the table.
-		const original = await modal.getByLabel('Nama fasilitas').inputValue();
-		await modal.getByLabel('Nama fasilitas').fill('Tidak Akan Tersimpan');
-
-		// `Batal` must be matched exactly: the deactivation dialog's confirm
-		// label is "Ya, nonaktifkan", and a substring match would be ambiguous
-		// across the two dialogs.
-		await modal.getByRole('button', { name: 'Batal', exact: true }).click();
-		await expect(modal).toHaveCount(0, SETTLE);
-
-		// Focus returns. Without this the operator is dropped onto <body> and
-		// has to re-navigate the whole table with the keyboard.
-		await expect
-			.poll(() => page.evaluate(() => document.activeElement?.textContent?.trim() ?? ''), {
-				timeout: SETTLE.timeout
-			})
-			.toBe('Ubah');
-
-		// Nothing was persisted.
-		const stillThere = await page.request.get('/api/v1/admin/facilities');
-		const names = ((await stillThere.json()).data as Array<{ name: string }>).map(
-			(facility) => facility.name
-		);
-		expect(names, 'a cancelled edit must not persist').not.toContain('Tidak Akan Tersimpan');
-		expect(names).toContain(original);
-	});
-
-	test('keyboard alone reaches and activates the deactivate confirmation', async ({
-		page
-	}) => {
-		await gotoAdmin(page, '/admin/facilities');
-		const table = page.locator('table');
-		await expect(table.locator('tbody tr').first()).toBeVisible(SETTLE);
-
-		// Keyboard activation, not a click: a control that only responds to a
-		// pointer is inaccessible, and this is the most destructive action in the
-		// admin surface.
-		//
-		// Targeted by the CONTROL, not by position. An inactive row has no
-		// deactivate button by design, and the deactivate test above leaves one
-		// behind, so "the first row" is not a stable choice — it depends on
-		// where this run's own disposable facility happens to sort.
-		const trigger = table.getByRole('button', { name: 'Nonaktifkan' }).first();
-		await expect(trigger).toBeVisible(SETTLE);
-		await trigger.focus();
-		await page.keyboard.press('Enter');
-
-		const modal = dialog(page);
-		await expect(modal).toBeVisible(SETTLE);
-		await expect(modal).toContainText('tidak lagi muncul untuk warga');
-
-		// Dismissed, not confirmed — this test is about reaching the dialog and
-		// leaving it, and confirming would deactivate the demo facility for the
-		// rest of the run.
-		await page.keyboard.press('Escape');
-		await expect(modal).toHaveCount(0, SETTLE);
-	});
-
-	test('uses no window.confirm anywhere on the facilities page', async ({ page }) => {
-		const native: string[] = [];
-		page.on('dialog', (browserDialog) => {
-			native.push(browserDialog.type());
-			void browserDialog.dismiss();
-		});
-
-		await gotoAdmin(page, '/admin/facilities');
-		await expect(page.locator('table tbody tr').first()).toBeVisible(SETTLE);
-
-		const row = page.locator('table tbody tr').first();
-		await row.getByRole('button', { name: 'Ubah' }).click();
-		await expect(dialog(page)).toBeVisible(SETTLE);
-		await dialog(page).getByRole('button', { name: 'Batal', exact: true }).click();
-
-		expect(native, 'native dialogs are not accessible and must not be used').toEqual([]);
+			test('traps focus, closes on Escape, and returns focus to the trigger', async ({ page }) => {
+				await gotoAdmin(page, '/admin/facilities');
+				const table = page.locator('table');
+				await expect(table.locator('tbody tr').first()).toBeVisible(SETTLE);
+	
+				// A DATA row this run is allowed to edit. Scoped to `tbody` rather than
+				// `tr`, because `table.locator('tr').first()` is the HEADER row and
+				// carries no action buttons at all. Under the global actor every seeded
+				// facility is in scope, so the first row is a safe, stable target for an
+				// EDIT (as opposed to a deactivate, which is one-way).
+				const row = table.locator('tbody tr').first();
+				const trigger = row.getByRole('button', { name: 'Ubah' });
+				await expect(trigger).toBeVisible(SETTLE);
+	
+				// Focus enters the dialog.
+				await trigger.click();
+				const modal = dialog(page);
+				await expect(modal).toBeVisible(SETTLE);
+				const focusInsideDialog = await page.evaluate(() => {
+					const open = document.querySelector('dialog[open]');
+					return !!open && !!open.contains(document.activeElement);
+				});
+				expect(focusInsideDialog, 'focus must move into the dialog on open').toBe(true);
+	
+				// aria-labelledby names the title, so the dialog has an accessible name.
+				const labelledBy = await modal.getAttribute('aria-labelledby');
+				expect(labelledBy, 'the dialog must be labelled by its title').toBeTruthy();
+				const labelText = await page.evaluate((id: string) => {
+					const el = document.getElementById(id);
+					return el?.textContent?.trim() ?? '';
+				}, labelledBy!);
+				expect(labelText.length, 'the accessible name must not be empty').toBeGreaterThan(0);
+	
+				// Focus is TRAPPED: tabbing from the last control wraps inside the modal
+				// rather than reaching the page behind it.
+				for (let i = 0; i < 25; i += 1) {
+					await page.keyboard.press('Tab');
+				}
+				const stillInside = await page.evaluate(() => {
+					const open = document.querySelector('dialog[open]');
+					return !!open && !!open.contains(document.activeElement);
+				});
+				expect(stillInside, 'focus must stay inside the dialog while it is open').toBe(true);
+	
+				// Escape closes it, and focus goes back to the control that opened it.
+				await page.keyboard.press('Escape');
+				await expect(modal).toHaveCount(0, SETTLE);
+				await expect
+					.poll(() => page.evaluate(() => document.activeElement?.textContent?.trim() ?? ''), {
+						timeout: SETTLE.timeout
+					})
+					.toBe('Ubah');
+			});
+	
+			test('Cancel returns focus to the trigger and changes nothing', async ({ page }) => {
+				await gotoAdmin(page, '/admin/facilities');
+				const table = page.locator('table');
+				await expect(table.locator('tbody tr').first()).toBeVisible(SETTLE);
+	
+				const row = table.locator('tbody tr').first();
+				const trigger = row.getByRole('button', { name: 'Ubah' });
+				await trigger.click();
+	
+				const modal = dialog(page);
+				await expect(modal).toBeVisible(SETTLE);
+	
+				// Typed and then abandoned: the point of the assertion below is that
+				// nothing was sent, so a change has to be on the table.
+				const original = await modal.getByLabel('Nama fasilitas').inputValue();
+				await modal.getByLabel('Nama fasilitas').fill('Tidak Akan Tersimpan');
+	
+				// `Batal` must be matched exactly: the deactivation dialog's confirm
+				// label is "Ya, nonaktifkan", and a substring match would be ambiguous
+				// across the two dialogs.
+				await modal.getByRole('button', { name: 'Batal', exact: true }).click();
+				await expect(modal).toHaveCount(0, SETTLE);
+	
+				// Focus returns. Without this the operator is dropped onto <body> and
+				// has to re-navigate the whole table with the keyboard.
+				await expect
+					.poll(() => page.evaluate(() => document.activeElement?.textContent?.trim() ?? ''), {
+						timeout: SETTLE.timeout
+					})
+					.toBe('Ubah');
+	
+				// Nothing was persisted.
+				const stillThere = await page.request.get('/api/v1/admin/facilities');
+				const names = ((await stillThere.json()).data as Array<{ name: string }>).map(
+					(facility) => facility.name
+				);
+				expect(names, 'a cancelled edit must not persist').not.toContain('Tidak Akan Tersimpan');
+				expect(names).toContain(original);
+			});
+	
+			test('keyboard alone reaches and activates the deactivate confirmation', async ({
+				page
+			}) => {
+				await gotoAdmin(page, '/admin/facilities');
+				const table = page.locator('table');
+				await expect(table.locator('tbody tr').first()).toBeVisible(SETTLE);
+	
+				// Keyboard activation, not a click: a control that only responds to a
+				// pointer is inaccessible, and this is the most destructive action in the
+				// admin surface.
+				//
+				// Targeted by the CONTROL, not by position. An inactive row has no
+				// deactivate button by design, and the deactivate test above leaves one
+				// behind, so "the first row" is not a stable choice — it depends on
+				// where this run's own disposable facility happens to sort.
+				const trigger = table.getByRole('button', { name: 'Nonaktifkan' }).first();
+				await expect(trigger).toBeVisible(SETTLE);
+				await trigger.focus();
+				await page.keyboard.press('Enter');
+	
+				const modal = dialog(page);
+				await expect(modal).toBeVisible(SETTLE);
+				await expect(modal).toContainText('tidak lagi muncul untuk warga');
+	
+				// Dismissed, not confirmed — this test is about reaching the dialog and
+				// leaving it, and confirming would deactivate the demo facility for the
+				// rest of the run.
+				await page.keyboard.press('Escape');
+				await expect(modal).toHaveCount(0, SETTLE);
+			});
+	
+			test('uses no window.confirm anywhere on the facilities page', async ({ page }) => {
+				const native: string[] = [];
+				page.on('dialog', (browserDialog) => {
+					native.push(browserDialog.type());
+					void browserDialog.dismiss();
+				});
+	
+				await gotoAdmin(page, '/admin/facilities');
+				await expect(page.locator('table tbody tr').first()).toBeVisible(SETTLE);
+	
+				const row = page.locator('table tbody tr').first();
+				await row.getByRole('button', { name: 'Ubah' }).click();
+				await expect(dialog(page)).toBeVisible(SETTLE);
+				await dialog(page).getByRole('button', { name: 'Batal', exact: true }).click();
+	
+				expect(native, 'native dialogs are not accessible and must not be used').toEqual([]);
+			});
 	});
 });
