@@ -107,8 +107,31 @@ param(
     # Defaults to the authorized schedule actor (facility_admin at the demo
     # facility, so it genuinely holds schedule.manage THERE). Pass
     # `e2e-schedule-mixed` to run the mixed-provenance case, where
-    # schedule.read@A and schedule.manage@B must yield B only.
-    [string]$LocalActor = 'e2e-schedule-manager'
+    # schedule.read@A and schedule.manage@B must yield B only, or
+    # `local-global-super-admin` for the facility-create case, which
+    # AdminHandler.CreateFacility restricts to an unscoped super_admin.
+    [string]$LocalActor = 'e2e-schedule-manager',
+    # Phase 3B5 T-3B5-04. Which actors to run the browser suite as, in order.
+    #
+    # TWO ACTORS ARE REQUIRED, and the reason is a real authorization property
+    # rather than a desire for extra coverage. Facility CREATE answers 404 unless
+    # the actor's facility scope is Unrestricted, while facility UPDATE and
+    # DEACTIVATE are authorized per-facility. One subject therefore cannot cover
+    # both halves of T-3B5-04:
+    #
+    #   - `e2e-schedule-manager` is facility_admin at the demo facility: it can
+    #     update and deactivate there, and it is the actor whose refusal to
+    #     create a facility is worth asserting, because a fully rendered,
+    #     submittable create form is refused anyway.
+    #   - `local-global-super-admin` holds super_admin with a NULL facility, so
+    #     it is the only seeded subject that can create a facility. That matters
+    #     because deactivation is ONE-WAY: the deactivation test needs a
+    #     disposable facility, and the demo facility is load-bearing for the
+    #     queue, appointment, and schedule suites.
+    #
+    # Each spec skips the halves its actor cannot perform, so running the matrix
+    # is additive rather than a way of making one green actor cover both.
+    [string[]]$ActorMatrix = @('e2e-schedule-manager', 'local-global-super-admin')
 )
 
 Set-StrictMode -Version Latest
@@ -773,33 +796,141 @@ regardless of facility), so the stack is not exercising the gRPC hop it claims t
     }
     Write-Host "    walk-in verified end to end" -ForegroundColor DarkGray
 
-    # --- 10. Playwright -----------------------------------------------------------
-    Write-Step "Running Playwright against the local seeded stack"
-    $env:SIGAP_E2E_BASE_URL = "http://127.0.0.1:$WebPort"
-    # Playwright writes progress to stderr, so it goes through Invoke-Native for
-    # the same reason as every other native child: an unbuffered pipe would stall
-    # the run with no visible output.
+    # --- 10. Playwright, once per actor -------------------------------------------
     #
-    # Pre-seeded because Invoke-Native THROWS on a non-zero exit, and under
-    # Set-StrictMode reading an unset variable is itself a terminating error. The
-    # catch block below prints `$_.Exception.Message`, which already carries the
-    # reporter's stdout and stderr; without this seed a failing suite would
-    # replace its own failure report with "variable cannot be retrieved".
-    $playwrightOut = ''
-    try {
-        $playwrightOut = Invoke-Native -FilePath $pwshExe -Label 'Playwright' -TimeoutSeconds 900 `
-            -WorkingDirectory (Join-Path $RepoRoot 'apps\web') `
-            -Arguments @('-NoProfile', '-Command', 'pnpm exec playwright test --reporter=line; exit $LASTEXITCODE')
-        $e2eExit = 0
-    } catch {
-        Write-Host $_.Exception.Message -ForegroundColor Red
-        $e2eExit = 1
-    }
-    if ($playwrightOut) { Write-Host $playwrightOut }
+    # WHY THE MATRIX EXISTS. Facility create is authorized globally (unrestricted
+    # scope) while facility update and deactivate are authorized per-facility, so
+    # no single seeded subject can exercise both halves of T-3B5-04. The suite is
+    # therefore run once per actor, and each spec skips the halves its actor
+    # genuinely cannot perform. See -ActorMatrix.
+    #
+    # ONLY THE WEB TIER IS RESTARTED. The Go API resolves the subject from the
+    # request header on every call, so it is already actor-agnostic; the web tier
+    # is the side that pins the subject at process start (localE2eActorHeader
+    # reads process.env), which is precisely the property that stops a browser
+    # from choosing its own identity. Re-spawning it per actor keeps that
+    # property intact instead of weakening it to make a matrix convenient.
+    $env:SIGAP_E2E_BASE_URL = "http://127.0.0.1:$WebPort"
 
-    if ($e2eExit -ne 0) {
+    $actorFailures = @()
+    foreach ($actor in $ActorMatrix) {
+        Write-Step "Running Playwright as actor: $actor"
+
+        if ($actor -ne $LocalActor) {
+            # Re-pin the web tier. The preview is stopped first so the new
+            # process is the only listener, rather than racing the old one for
+            # the port with --strictPort.
+            Stop-OwnedTree $webProcess 'web preview (previous actor)'
+            $env:SIGAP_LOCAL_E2E_ACTOR = $actor
+            $webProcess = Start-Process -FilePath $viteCmd `
+                -ArgumentList @('preview', '--host', '127.0.0.1', '--port', "$WebPort", '--strictPort') `
+                -WorkingDirectory $WebDir `
+                -PassThru -WindowStyle Hidden
+
+            $actorReady = $false
+            for ($i = 0; $i -lt 60; $i++) {
+                Start-Sleep -Milliseconds 500
+                try {
+                    $probe = Invoke-WebRequest "http://127.0.0.1:$WebPort/" -UseBasicParsing -TimeoutSec 2
+                    if ($probe.StatusCode -eq 200) { $actorReady = $true; break }
+                } catch { }
+            }
+            if (-not $actorReady) {
+                Write-Fail "Web preview did not come back up for actor '$actor'."
+            }
+            Write-Host "    web re-pinned to $actor" -ForegroundColor DarkGray
+        }
+
+        # Re-prove the identity chain per actor rather than trusting the first
+        # actor's result. The whole point of the matrix is that each actor
+        # resolves differently, so asserting it once would assert nothing about
+        # the second.
+        $actorOptions = Invoke-WebRequest "http://127.0.0.1:$WebPort/api/v1/admin/schedules/options" `
+            -UseBasicParsing -TimeoutSec 15
+        $actorFacilities = ($actorOptions.Content | ConvertFrom-Json).data.facilities
+        $actorNames = ($actorFacilities | ForEach-Object { $_.name }) -join ', '
+        Write-Host "    manageable facilities: $actorNames" -ForegroundColor DarkGray
+
+        $actorForged = Invoke-WebRequest "http://127.0.0.1:$WebPort/api/v1/admin/schedules/options" `
+            -Headers @{ 'X-Sigap-Local-Test-Subject' = 'e2e-schedule-mixed' } `
+            -UseBasicParsing -TimeoutSec 15
+        $actorForgedNames = (($actorForged.Content | ConvertFrom-Json).data.facilities |
+            ForEach-Object { $_.name }) -join ', '
+        if ($actorForgedNames -ne $actorNames) {
+            Write-Fail @"
+A browser-supplied X-Sigap-Local-Test-Subject header CHANGED the resolved identity for actor '$actor'.
+
+  configured actor: $actor -> $actorNames
+  forged header:    e2e-schedule-mixed -> $actorForgedNames
+
+The proxy must reconstruct upstream headers from proxyHeaders() and never forward
+caller-supplied X-Sigap-* headers. If this fired, identity is browser-controllable.
+"@
+        }
+        Write-Host "    browser-supplied X-Sigap-* header correctly ignored" -ForegroundColor DarkGray
+
+        # SIGAP_E2E_ACTOR lets a spec know WHICH subject it is running as, so it
+        # can assert the half it is authorized for and skip the half it is not.
+        # It is the same value the web tier is already pinned to; passing it
+        # here keeps the test process and the server from ever disagreeing.
+        $env:SIGAP_E2E_ACTOR = $actor
+
+        # Playwright writes progress to stderr, so it goes through Invoke-Native
+        # for the same reason as every other native child: an unbuffered pipe
+        # would stall the run with no visible output.
+        #
+        # Pre-seeded because Invoke-Native THROWS on a non-zero exit, and under
+        # Set-StrictMode reading an unset variable is itself a terminating error.
+        # The catch block below prints $_.Exception.Message, which already
+        # carries the reporter's stdout and stderr; without this seed a failing
+        # suite would replace its own failure report with "variable cannot be
+        # retrieved".
+        $playwrightOut = ''
+        $e2eExit = 0
+        try {
+            $playwrightOut = Invoke-Native -FilePath $pwshExe -Label "Playwright ($actor)" -TimeoutSeconds 1800 `
+                -WorkingDirectory (Join-Path $RepoRoot 'apps\web') `
+                -Arguments @('-NoProfile', '-Command', 'pnpm exec playwright test --reporter=line; exit $LASTEXITCODE')
+        } catch {
+            Write-Host $_.Exception.Message -ForegroundColor Red
+            $e2eExit = 1
+        }
+        if ($playwrightOut) { Write-Host $playwrightOut }
+
+        if ($e2eExit -ne 0) {
+            # Recorded rather than fatal, so one actor's failure does not hide
+            # the other's result. The run still fails at the end, and it fails
+            # with BOTH actors named.
+            $actorFailures += $actor
+        }
+    }
+
+    # Leave the web tier pinned to the actor the caller asked for, so a
+    # -KeepRunning stack is the one they expect to poke at by hand.
+    if ($ActorMatrix[-1] -ne $LocalActor) {
+        Stop-OwnedTree $webProcess 'web preview (actor matrix)'
+        $env:SIGAP_LOCAL_E2E_ACTOR = $LocalActor
+        $webProcess = Start-Process -FilePath $viteCmd `
+            -ArgumentList @('preview', '--host', '127.0.0.1', '--port', "$WebPort", '--strictPort') `
+            -WorkingDirectory $WebDir `
+            -PassThru -WindowStyle Hidden
+        for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Milliseconds 500
+            try {
+                $probe = Invoke-WebRequest "http://127.0.0.1:$WebPort/" -UseBasicParsing -TimeoutSec 2
+                if ($probe.StatusCode -eq 200) { break }
+            } catch { }
+        }
+    }
+
+    if ($actorFailures.Count -ne 0) {
         Write-Host ""
-        Write-Fail "Playwright reported failures. The local seeded stack was verified live before the run."
+        Write-Fail @"
+Playwright reported failures for: $($actorFailures -join ', ')
+
+The local seeded stack was verified live before the run, and each actor's identity
+chain was re-proven immediately before its suite.
+"@
     }
 
     Write-Host ""
