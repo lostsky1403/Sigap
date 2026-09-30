@@ -63,6 +63,30 @@ const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const MANAGED_FACILITY = 'Sigap Demo Facility';
 
 /**
+ * The actor this Playwright process is running against.
+ *
+ * Set by Start-LocalE2E.ps1 per actor in the matrix, from the same value the web
+ * tier is pinned to, so the test process and the server can never disagree about
+ * who is acting.
+ */
+const ACTOR = (process.env.SIGAP_E2E_ACTOR ?? '').trim();
+
+/**
+ * True when the configured actor is scoped to nothing at all.
+ *
+ * Every mutation here needs something to mutate. A walk-in is booked against a
+ * facility, a schedule is created on one, and a facility is updated in place —
+ * so a zero-scope actor has no first step, and the backend will (correctly)
+ * refuse each attempt.
+ *
+ * This is not a gap in the matrix. The zero-scope actor's real obligation is the
+ * opposite claim: that it is refused, quietly, without leaking anything. That is
+ * asserted positively in admin-read.spec.ts, and it is the stronger statement,
+ * because these specs would only show that a mutation was attempted.
+ */
+const HOLDS_NO_DATA = ACTOR === 'local-zero-scope-admin';
+
+/**
  * A monotonic counter mixed into every generated phone.
  *
  * `Date.now()` alone is not unique enough here: two bookings issued inside the
@@ -188,6 +212,11 @@ test.describe.configure({ mode: 'serial' });
 
 test.describe('T-3B5-01 queue status mutation', () => {
 	test.use({ viewport: DESKTOP });
+
+	// Every spec in this file starts by creating or locating something to mutate.
+	// A zero-scope actor has no facility to book against, so there is no first
+	// step — the backend refuses before any assertion of ours could run.
+	test.skip(HOLDS_NO_DATA, 'this actor holds nothing to mutate; its refusal is asserted in admin-read.spec.ts');
 
 	test('advances a real ticket waiting -> called and persists it', async ({ page }) => {
 		// CREATED HERE, not seeded: the seed ships zero tickets, so this is also
@@ -318,6 +347,8 @@ test.describe('T-3B5-01 queue status mutation', () => {
 
 test.describe('T-3B5-02 appointment status mutation', () => {
 	test.use({ viewport: DESKTOP });
+
+	test.skip(HOLDS_NO_DATA, 'this actor holds nothing to mutate; its refusal is asserted in admin-read.spec.ts');
 
 	/**
 	 * Reads this actor's appointments.
@@ -701,6 +732,8 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 test.describe('T-3B5-03 schedule create and update', () => {
 	test.use({ viewport: DESKTOP });
 
+	test.skip(HOLDS_NO_DATA, 'this actor holds nothing to mutate; its refusal is asserted in admin-read.spec.ts');
+
 	/**
 	 * A schedule date that no other row in this run can already hold.
 	 *
@@ -1062,6 +1095,8 @@ test.describe('T-3B5-03 schedule create and update', () => {
 
 test.describe('T-3B5-05 notification actions', () => {
 	test.use({ viewport: DESKTOP });
+
+	test.skip(HOLDS_NO_DATA, 'this actor holds nothing to act on; its refusal is asserted in admin-read.spec.ts');
 
 	test('shows action buttons strictly from can_retry and can_cancel', async ({ page }) => {
 		const listed = await page.request.get('/api/v1/admin/notifications');

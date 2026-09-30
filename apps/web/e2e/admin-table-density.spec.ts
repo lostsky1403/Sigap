@@ -36,6 +36,21 @@ const SETTLE = { timeout: 15_000 };
 const ROW_MIN = 36;
 const ROW_MAX = 40;
 
+/**
+ * The subject this run is pinned to, as exported by Start-LocalE2E.ps1.
+ *
+ * A zero-scope actor holds no rows, so its pages render the fail-closed empty
+ * state with no table. There is then no row whose height could be wrong, and
+ * this spec has nothing to measure — it is skipped rather than reinterpreted,
+ * because a "0 rows satisfies the density contract" assertion would pass on a
+ * table that failed to render at all.
+ *
+ * The empty-state obligation itself is asserted in admin-read.spec.ts, where it
+ * is a positive claim (no table, no leaked identifier) rather than an absence of
+ * measurement.
+ */
+const HOLDS_NO_DATA = (process.env.SIGAP_E2E_ACTOR ?? '').trim() === 'local-zero-scope-admin';
+
 /** The four representative read destinations required by T-3B4.1. */
 const TABLES = [
 	{ path: '/admin/appointments', label: 'appointments' },
@@ -51,6 +66,15 @@ async function gotoAdmin(page: Page, path: string) {
 
 test.describe('T-3B4-02: admin table density, measured in a real browser', () => {
 	test.use({ viewport: DESKTOP });
+
+	// The whole describe measures rendered rows. An actor that holds none has no
+	// rows, and "no rows fell outside the band" is not a density result — it is
+	// what a table that failed to render would also produce. Skipping is the
+	// honest reading; asserting zero offenders here would be the vacuous one.
+	test.skip(
+		HOLDS_NO_DATA,
+		'this actor holds no rows, so there is no density to measure (asserted in admin-read.spec.ts)'
+	);
 
 	for (const target of TABLES) {
 		test(`${target.label} renders every data row between ${ROW_MIN}px and ${ROW_MAX}px`, async ({
