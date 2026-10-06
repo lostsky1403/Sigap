@@ -1,4 +1,5 @@
-import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
+import type { Locator, Page, Route } from '@playwright/test';
+import { expect, test } from './support/test';
 import { formatDate } from '../src/lib/domain/format';
 
 /**
@@ -1382,37 +1383,87 @@ test.describe('T-3B5-05 notification actions', () => {
 	test.skip(HOLDS_NO_DATA, 'this actor holds nothing to act on; its refusal is asserted in admin-read.spec.ts');
 
 	test('shows action buttons strictly from can_retry and can_cancel', async ({ page }) => {
-		const listed = await page.request.get('/api/v1/admin/notifications');
-		expect(listed.ok()).toBe(true);
-		const rows = (await listed.json()).data as Array<{
-			subject: string;
-			status: string;
-			can_retry: boolean;
-			can_cancel: boolean;
-		}>;
-		expect(rows.length, 'the seed must contain notifications').toBeGreaterThan(0);
+		/**
+		 * Reads the server's own per-row affordance tallies.
+		 *
+		 * Read as a function because it is read TWICE around the page load, and
+		 * the two reads are what make the comparison below exact.
+		 */
+		async function serverTallies() {
+			const listed = await page.request.get('/api/v1/admin/notifications');
+			expect(listed.ok()).toBe(true);
+			const rows = (await listed.json()).data as Array<{
+				can_retry: boolean;
+				can_cancel: boolean;
+			}>;
+			return {
+				total: rows.length,
+				retry: rows.filter((row) => row.can_retry).length,
+				cancel: rows.filter((row) => row.can_cancel).length
+			};
+		}
+
+		const table = page.locator('table');
+
+		/*
+		 * THE OUTBOX IS APPENDED TO BY OTHER SUITES WHILE THIS ONE RUNS.
+		 *
+		 * Booking an appointment and checking one in both enqueue a confirmation
+		 * notification, and `citizen-transactions.spec.ts` does both — in a
+		 * different file, on a different worker, against the same seeded
+		 * database. So a tally read before the page loads can be one row short
+		 * of what the page then renders, which is exactly how this test flaked:
+		 * "expected 9, received 10".
+		 *
+		 * The fix is to compare against a tally that is STABLE ACROSS THE PAGE
+		 * LOAD rather than merely recent. Read, load, re-read; only assert when
+		 * the two reads agree, which proves nothing was inserted in the window
+		 * that contains the page's own fetch. If they disagree the page is
+		 * reloaded and the pair re-read.
+		 *
+		 * This is NOT a retry that hides a failure, and the distinction matters.
+		 * Rows are only ever INSERTED, so the page's set is always a subset of
+		 * the later read; a genuine defect — a client drawing a button the
+		 * server withheld — makes the DOM count permanently disagree with any
+		 * stable tally, and the loop then exhausts and fails. It only ever
+		 * absorbs a concurrent append, which is a property of the shared
+		 * fixture rather than of the code under test.
+		 */
+		let tallies = await serverTallies();
+		expect(tallies.total, 'the seed must contain notifications').toBeGreaterThan(0);
 
 		await gotoAdmin(page, '/admin/notifications');
-		const table = page.locator('table');
 		await expect(table).toBeVisible(SETTLE);
+
+		for (let attempt = 0; attempt < 8; attempt += 1) {
+			const afterLoad = await serverTallies();
+			if (
+				afterLoad.total === tallies.total &&
+				afterLoad.retry === tallies.retry &&
+				afterLoad.cancel === tallies.cancel
+			) {
+				tallies = afterLoad;
+				break;
+			}
+			// An append landed in the window. Re-take the page against the newer
+			// tally so both describe the same set. `reload` is already gated on
+			// hydration by the shared fixture, so no explicit wait is needed.
+			tallies = afterLoad;
+			await page.reload();
+			await expect(table).toBeVisible(SETTLE);
+		}
 
 		// Counted across the WHOLE table, and compared to the server's own tallies.
 		// This is the §12 assertion: the visible button set is the server's two
 		// booleans and nothing else. A client-side rule keyed on status, role,
 		// facility, or an email-shaped heuristic would produce a different count
 		// here, which is exactly the class of bug this phase forbids.
-		const expectedRetry = rows.filter((row) => row.can_retry).length;
-		const expectedCancel = rows.filter((row) => row.can_cancel).length;
-		await expect(table.getByRole('button', { name: 'Kirim ulang' })).toHaveCount(
-			expectedRetry
-		);
-		await expect(table.getByRole('button', { name: 'Batalkan' })).toHaveCount(
-			expectedCancel
-		);
+		await expect(table.getByRole('button', { name: 'Kirim ulang' })).toHaveCount(tallies.retry);
+		await expect(table.getByRole('button', { name: 'Batalkan' })).toHaveCount(tallies.cancel);
 
 		// A row the server marked unactionable says so in words rather than
 		// showing an empty cell an operator would read as a failed load.
-		if (expectedRetry === 0 || expectedCancel === 0) {
+		if (tallies.retry === 0 || tallies.cancel === 0) {
 			await expect(table).toContainText('Tidak ada aksi');
 		}
 

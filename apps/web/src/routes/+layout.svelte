@@ -1,10 +1,36 @@
 <script lang="ts">
 	import '../app.css';
+	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import CitizenHeader from '$lib/citizen/CitizenHeader.svelte';
 	import type { LayoutData } from './$types';
 
 	export let data: LayoutData;
+
+	/**
+	 * Hydration marker.
+	 *
+	 * The page is interactive only after SvelteKit has hydrated it, and the
+	 * window between "the server HTML is painted" and "the client took over" is
+	 * the one an automated browser can fall into: a `fill()` lands before the
+	 * component has attached its binding, the input event is lost, and the
+	 * value the test typed never reaches the app. Under parallel load that
+	 * window widens from milliseconds to seconds, which is what made two
+	 * citizen specs flake intermittently.
+	 *
+	 * This is the ROOT layout, and Svelte runs a child's `onMount` before its
+	 * parent's. So by the time this fires, every page component below it has
+	 * already mounted and run its own `onMount` — which is exactly the
+	 * guarantee the E2E fixture needs: the marker appearing means the whole
+	 * tree is interactive, including a page that reads its deep-link query in
+	 * `onMount`.
+	 *
+	 * The attribute is inert in production. It exists so a browser test can
+	 * wait for a fact rather than guess a duration.
+	 */
+	onMount(() => {
+		document.documentElement.dataset.sigapHydrated = 'true';
+	});
 
 	/**
 	 * The citizen shell.

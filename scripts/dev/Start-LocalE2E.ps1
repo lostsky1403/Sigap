@@ -155,6 +155,48 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# --- Actor-matrix binding guard -------------------------------------------------
+#
+# WHY THIS EXISTS. `-ActorMatrix @()` is a legitimate way to ask for "boot the
+# stack and run the suite once, as -LocalActor". But when it is passed through a
+# PowerShell `-File` invocation the array is not always bound as an array: the
+# literal text `@()` can arrive as a SINGLE STRING, and the script then treats
+# "@()" as the subject name. That value reaches the DB actor resolver, resolves
+# to nobody, and the run dies several steps later with a bare
+#
+#     [FAIL] Response status code does not indicate success: 403 (Forbidden).
+#
+# which names neither the parameter nor the cause. It also leaves the web tier
+# re-pinned to the bogus subject, so a subsequent manual run is wrong too.
+#
+# The fix is to refuse the malformed binding at the top, where the message can
+# name it, rather than let it travel to the resolver. Every legitimate subject is
+# a seeded slug (letters, digits and hyphens), so anything else is a binding
+# mistake rather than a name worth trying.
+$invalidActors = @($ActorMatrix | Where-Object { $_ -notmatch '^[A-Za-z0-9._-]+$' })
+if ($invalidActors.Count -gt 0) {
+    Write-Host "[FAIL] -ActorMatrix contains values that are not valid subject names:" -ForegroundColor Red
+    foreach ($bad in $invalidActors) {
+        Write-Host "         '$bad'" -ForegroundColor Red
+    }
+    Write-Host @"
+
+A value like '@()' means the empty array was bound as a STRING rather than as an
+array, which happens with some `pwsh -File` invocations. The script would then
+try to authenticate as a subject literally named '@()' and fail with a 403 that
+names nothing.
+
+To run the suite once as the default actor, OMIT -ActorMatrix entirely — the
+committed default matrix already includes it. To run a custom set, bind a real
+array and confirm it resolved, e.g.:
+
+    `$m = @('e2e-schedule-manager'); Write-Host "count=`$(`$m.Count)"; `
+        .\scripts\dev\Start-LocalE2E.ps1 -ActorMatrix `$m
+
+"@ -ForegroundColor Yellow
+    exit 1
+}
+
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..' '..')).Path
 $WorkDir = Join-Path $RepoRoot '.local-e2e'
 $DataDir = Join-Path $WorkDir 'pgdata'

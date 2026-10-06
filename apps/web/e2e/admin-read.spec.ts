@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './support/test';
 
 /**
  * Phase 3B4: the six admin READ destinations, end to end.
@@ -516,7 +517,12 @@ test.describe('admin reads are real and scoped', () => {
 				forbidden
 			);
 		}
-		expect(page.locator('input[type="text"]')).toHaveCount(0);
+		// AWAITED. This assertion previously dropped its promise, which broke it
+		// in both directions: it never failed the test, so a stray text input
+		// would have gone unnoticed, and under load the in-flight query raced
+		// the page teardown and surfaced as "Protocol error: session closed"
+		// rather than as the assertion it was.
+		await expect(page.locator('input[type="text"]')).toHaveCount(0);
 	});
 
 	test('Notifikasi masks the recipient and never shows a raw contact or hash', async ({ page }) => {

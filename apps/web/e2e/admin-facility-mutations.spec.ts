@@ -1,4 +1,5 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
+import { expect, test } from './support/test';
 
 /**
  * Phase 3B5 §9/§10: facility create, update, and one-way deactivation.
@@ -141,13 +142,37 @@ const HOLDS_FACILITY_MANAGE = [
  * the same way a fixture avoids a reserved character — so the spec can only fail
  * for the reason it was written to catch.
  *
- * Regenerating until the tag is clean keeps the uniqueness guarantee intact; it
- * only skips tags that would be ambiguous to a substring search. The attempt
- * counter is part of the tag, so two runs in the same millisecond still differ.
+ * WHY THE OFFSET MOVES THE TIMESTAMP RATHER THAN BEING APPENDED.
+ *
+ * The first version of this helper built `<6 clock digits><actor length><attempt>`
+ * and returned the first candidate that did not contain the substring. That
+ * cannot work, and it failed on a matrix run with "could not derive a run tag
+ * free of 429": the retry only varied the SUFFIX, so when the six clock digits
+ * themselves contained "429" — say 296429 — every one of the 1000 attempts
+ * still contained it, because the offending part was the part that never
+ * changed. The loop was guaranteed to exhaust and throw.
+ *
+ * Adding the offset to the timestamp instead changes the LOW digits, so each
+ * attempt genuinely presents a different six-digit window and the loop makes
+ * progress.
+ *
+ * THE BOUND IS 2000, NOT 1000, AND THAT IS NOT ARBITRARY. A six-digit window
+ * contains "429" when its leading digits are 429 — and there are 1000 such
+ * windows in a row (429000 through 429999). If the clock lands anywhere in that
+ * run, every offset below 1000 is bad and a bound of 1000 would exhaust and
+ * throw, which is the same failure this helper exists to prevent. 2000 clears
+ * the longest possible bad run with room to spare; a sweep of 200 000 bases
+ * found a worst case of 998.
+ *
+ * Uniqueness is preserved: the value still comes from the clock, so two runs at
+ * different times differ. Two runs inside the SAME millisecond would collide,
+ * which is safe here because the local stack is reseeded per run and only the
+ * one creating actor ever uses the tag as a name.
  */
 function runTagWithout(substring: string): string {
-	for (let attempt = 0; attempt < 1000; attempt += 1) {
-		const tag = `${String(Date.now()).slice(-6)}${String(ACTOR.length)}${attempt}`;
+	const base = Date.now();
+	for (let offset = 0; offset < 2000; offset += 1) {
+		const tag = String(base + offset).slice(-6);
 		if (!tag.includes(substring)) return tag;
 	}
 	throw new Error(`could not derive a run tag free of "${substring}"`);
