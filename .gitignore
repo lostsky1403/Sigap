@@ -43,6 +43,7 @@ npm-debug.log*
 .kimchi/
 .byNara/
 .omc/
+.omp/
 .trae/
 
 # Design working area: specs are version-controlled; only generated/tmp artifacts are ignored
