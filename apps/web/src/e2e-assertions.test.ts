@@ -46,6 +46,13 @@ const e2eDir = join(here, '..', 'e2e');
  * would go quiet exactly when someone reached for a new matcher — and
  * `toHaveURL` in particular is already used at five sites, so omitting it
  * would leave the same silent-failure hole the guard was written to close.
+ *
+ * The names are checked against `playwright@1.63.0`'s own
+ * `types/test.d.ts` (`LocatorAssertions` + `PageAssertions`), so the list can be
+ * re-derived rather than trusted. Three were missing until that check was run:
+ * `toHaveRole`, `toContainClass` and `toHaveAccessibleErrorMessage`. None is
+ * used in the suite yet, which is exactly why they had to be added — the guard's
+ * value is that it covers the matcher someone reaches for NEXT.
  */
 const RETRYING_ASSERTIONS = [
 	'toBeAttached',
@@ -59,8 +66,10 @@ const RETRYING_ASSERTIONS = [
 	'toBeInViewport',
 	'toBeOK',
 	'toBeVisible',
+	'toContainClass',
 	'toContainText',
 	'toHaveAccessibleDescription',
+	'toHaveAccessibleErrorMessage',
 	'toHaveAccessibleName',
 	'toHaveAttribute',
 	'toHaveClass',
@@ -68,6 +77,7 @@ const RETRYING_ASSERTIONS = [
 	'toHaveCSS',
 	'toHaveId',
 	'toHaveJSProperty',
+	'toHaveRole',
 	'toHaveScreenshot',
 	'toHaveText',
 	'toHaveTitle',
@@ -90,21 +100,41 @@ function specFiles(dir: string = e2eDir): string[] {
 }
 
 /**
- * Finds every retrying assertion whose owning `expect(` is not awaited.
+ * Finds every retrying assertion whose owning `expect` is not awaited.
  *
- * Works by locating the assertion method and then walking back to the `expect(`
+ * Works by locating the assertion method and then walking back to the `expect`
  * that owns it, rather than by scanning line by line: the chains are frequently
  * wrapped across several lines, so a line-oriented check would miss the
  * multi-line form and flag the single-line one for the wrong reason.
+ *
+ * WHY THE OWNER PATTERN IS NOT THE LITERAL `expect(`.
+ *
+ * Playwright's `expect` is also callable in qualified forms — `expect.soft(...)`,
+ * `expect.poll(...)` and `expect.configure(...)`. Searching for the literal
+ * `expect(` finds none of them, so a dropped `expect.soft(locator).toHaveCount(0)`
+ * would be invisible to this guard while being exactly the defect it exists to
+ * catch: a soft assertion that never runs never fails the test either.
+ *
+ * So the owner is matched as `expect` plus an optional `.soft`/`.poll`/`.configure`
+ * qualifier before the `(`. The qualified forms are matched here even though the
+ * suite does not use them today, for the same reason the matcher list is
+ * complete: the guard has to cover the construct someone writes next, not only
+ * the ones already present.
  */
 function unawaitedAssertions(source: string): string[] {
 	const offenders: string[] = [];
 	const pattern = new RegExp(`\\.(${RETRYING_ASSERTIONS.join('|')})\\(`, 'g');
+	const owner = /expect(?:\.(?:soft|poll|configure))?\(/g;
 
 	for (const match of source.matchAll(pattern)) {
-		const expectStart = source.lastIndexOf('expect(', match.index);
+		// The nearest preceding owner of any accepted form.
+		let expectStart = -1;
+		for (const candidate of source.slice(0, match.index).matchAll(owner)) {
+			expectStart = candidate.index;
+		}
 		if (expectStart === -1) continue;
-		// The 40 characters before `expect(` tell us whether it was awaited.
+
+		// The 40 characters before the owner tell us whether it was awaited.
 		const before = source.slice(Math.max(0, expectStart - 40), expectStart);
 		if (/await\s*$/.test(before)) continue;
 
@@ -143,5 +173,25 @@ describe('Playwright specs await their web-first assertions', () => {
 		const found = unawaitedAssertions(sample);
 		expect(found).toHaveLength(1);
 		expect(found[0]).toContain('toHaveCount');
+	});
+
+	it('detects a dropped qualified assertion (soft/poll/configure forms)', () => {
+		// The literal-`expect(` detector missed all three qualified forms, so
+		// each is proven here against a sample rather than assumed covered.
+		const sample = [
+			'\t\tawait expect.soft(page.locator("a")).toBeVisible();',
+			'\t\texpect.soft(page.locator("b")).toHaveCount(0);',
+			'\t\texpect.poll(() => page.locator("c").count()).toBeHidden();',
+			'\t\tawait expect.configure({ timeout: 1000 })(',
+			'\t\t\tpage.locator("d")',
+			'\t\t).toBeEnabled();'
+		].join('\n');
+
+		const found = unawaitedAssertions(sample);
+		expect(found).toHaveLength(2);
+		expect(found.map((f) => f.replace(/^\d+: /, ''))).toEqual([
+			'expect.soft(page.locator("b")).toHaveCount(',
+			'expect.poll(() => page.locator("c").count()).toBeHidden('
+		]);
 	});
 });
