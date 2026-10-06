@@ -65,6 +65,34 @@ export default defineConfig({
 	forbidOnly: !!process.env.CI,
 	retries: process.env.CI ? 1 : 0,
 	reporter: process.env.CI ? 'list' : [['list']],
+	/*
+	 * Bounded worker concurrency, and it is not a performance knob.
+	 *
+	 * Playwright defaults to half the logical cores — 6 on a 12-core host — and
+	 * on this host that produced an intermittent
+	 * `net::ERR_NO_BUFFER_SPACE at http://127.0.0.1:4173/` at `page.goto`. That
+	 * is an operating-system socket-buffer exhaustion error, not an application
+	 * one: the connection never reached the preview server, which is why it hit
+	 * a different page on each occurrence and why the page under test was never
+	 * the thing that was wrong.
+	 *
+	 * The pressure comes from the whole stack sharing the machine — Postgres,
+	 * the Rust engine, the Go API, the Vite preview, and six Chromium workers
+	 * each holding a page and its subresource connections. Four workers keeps
+	 * the suite well inside the host's socket budget while still running the
+	 * file-parallel groups concurrently, so nothing about what the tests ASSERT
+	 * changes: the same tests run, in the same order, against the same stack.
+	 *
+	 * Deliberately NOT solved by raising `retries`. The gate for this phase is
+	 * zero failures and zero flakes, and a retry would convert a real signal
+	 * into a green tick. It is also not solved by widening timeouts, which
+	 * would not help: the error is a refusal to open a socket, not a slow
+	 * response.
+	 *
+	 * Overridable for a host with a larger socket budget:
+	 *   SIGAP_E2E_WORKERS=8 pnpm exec playwright test
+	 */
+	workers: Number(process.env.SIGAP_E2E_WORKERS ?? 4),
 	use: {
 		baseURL: resolveBaseURL(),
 		trace: 'retain-on-failure',

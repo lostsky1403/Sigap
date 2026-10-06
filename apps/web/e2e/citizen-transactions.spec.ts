@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './support/test';
 
 /**
  * Phase 3B3 browser coverage: the four citizen transactions, end to end.
@@ -529,14 +530,36 @@ test.describe('D. walk-in', () => {
 	test.use({ viewport: DESKTOP });
 
 	test('registers a ticket for someone who arrived without a booking', async ({ page }) => {
+		/*
+		 * The facility list is the real public catalog, not a hardcoded list,
+		 * and this is asserted EXACTLY — every catalog id offered, and nothing
+		 * else.
+		 *
+		 * The comparison is taken against a snapshot that is stable across the
+		 * page load. `admin-facility-mutations.spec.ts` CREATES and DEACTIVATES
+		 * facilities, in another file on another worker against the same seeded
+		 * database, so a catalog read taken after the page loaded can describe a
+		 * different set than the page rendered. Reading before and after, and
+		 * reloading until the two agree, is what makes the exact assertion
+		 * honest rather than occasionally off by one.
+		 */
+		const catalogIds = async () => (await readFacilities(page)).map((f) => f.id).sort();
+
+		let expected = await catalogIds();
 		await page.goto('/queues/new');
 
-		// The facility list is the real public catalog, not a hardcoded list.
 		const facilitySelect = page.locator('#sigap-walkin-facilityId');
-		await expect(facilitySelect.locator('option')).toHaveCount(
-			(await readFacilities(page)).length + 1,
-			SETTLE
-		);
+		for (let attempt = 0; attempt < 8; attempt += 1) {
+			const afterLoad = await catalogIds();
+			if (afterLoad.join(',') === expected.join(',')) break;
+			// A create or deactivate landed in the window. Re-take the page
+			// against the newer catalog so both describe the same set. `reload`
+			// is already gated on hydration by the shared fixture.
+			expected = afterLoad;
+			await page.reload();
+		}
+
+		await expect(facilitySelect.locator('option')).toHaveCount(expected.length + 1, SETTLE);
 
 		// Read the option values rather than trusting the shared `journey`
 		// state. Two reasons: this is a self-contained transaction that does
@@ -550,6 +573,15 @@ test.describe('D. walk-in', () => {
 				.evaluateAll((nodes) => nodes.map((node) => (node as HTMLOptionElement).value))
 		).filter((value) => value !== '');
 		expect(optionValues.length, 'the walk-in facility list must be populated').toBeGreaterThan(0);
+
+		// The count alone would also be satisfied by a list that swapped one
+		// real facility for another. The ids are what prove the select is
+		// rendering the catalog rather than something that merely has its
+		// cardinality.
+		expect(
+			[...optionValues].sort(),
+			'the walk-in select must offer exactly the public catalog'
+		).toEqual(expected);
 
 		// Prefer the facility the booking used, since that is the one this
 		// journey has already proven is real, and fall back to the first.

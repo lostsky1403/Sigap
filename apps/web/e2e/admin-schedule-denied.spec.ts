@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './support/test';
 
 /**
  * Phase 3B5.1 — T-3B5-03's capability refusal, end to end.
