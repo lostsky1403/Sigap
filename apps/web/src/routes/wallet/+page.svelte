@@ -28,7 +28,7 @@
 
 	// auto load demo on mount
 	import { onMount } from 'svelte';
-	import type { MedicalRecord } from '$lib/types';
+	import type { MedicalRecord } from '$lib/api/types/api';
 	onMount(() => {
 		loadWallet();
 	});
