@@ -58,6 +58,24 @@ export function resolveBaseURL(): string {
 	return assertLocalTarget(configured && configured.length > 0 ? configured : 'http://127.0.0.1:4173').origin;
 }
 
+/**
+ * Resolves the worker count, validating the override.
+ *
+ * `Number('abc')` is NaN, and Playwright's own guard against a bad count
+ * (`workers <= 0` / `workers < 1`) is FALSE for NaN — so an unvalidated parse
+ * sizes the worker pool to zero slots and NOTHING can be dispatched. A typo in
+ * `SIGAP_E2E_WORKERS` would therefore hang the gate instead of failing it,
+ * which is the worst of the two outcomes. Anything that is not a positive
+ * integer falls back to the default rather than reaching the runner.
+ */
+export function resolveWorkers(): number {
+	const DEFAULT_WORKERS = 4;
+	const raw = process.env.SIGAP_E2E_WORKERS?.trim();
+	if (!raw) return DEFAULT_WORKERS;
+	const parsed = Number(raw);
+	return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_WORKERS;
+}
+
 export default defineConfig({
 	testDir: './e2e',
 	// Production must be rejected, not retried against.
@@ -91,8 +109,12 @@ export default defineConfig({
 	 *
 	 * Overridable for a host with a larger socket budget:
 	 *   SIGAP_E2E_WORKERS=8 pnpm exec playwright test
+	 *
+	 * The override is validated by `resolveWorkers()`; a non-numeric value falls
+	 * back to 4 rather than parsing to NaN, which Playwright would accept and
+	 * then dispatch nothing with.
 	 */
-	workers: Number(process.env.SIGAP_E2E_WORKERS ?? 4),
+	workers: resolveWorkers(),
 	use: {
 		baseURL: resolveBaseURL(),
 		trace: 'retain-on-failure',

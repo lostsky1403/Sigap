@@ -969,6 +969,16 @@ regardless of facility), so the stack is not exercising the gRPC hop it claims t
     # property intact instead of weakening it to make a matrix convenient.
     $env:SIGAP_E2E_BASE_URL = "http://127.0.0.1:$WebPort"
 
+    # An EMPTY matrix is not "run once as -LocalActor": the loop below would run
+    # zero times, $actorFailures would stay empty, and the green PASS banner
+    # further down would print and exit 0 — a green gate verdict with no test
+    # executed. The validation above only rejects MALFORMED names; a genuinely
+    # empty [string[]] binds fine (the in-process `-ActorMatrix @()` form), so it
+    # reaches here intact. Fail closed: a gate that ran nothing is not a pass.
+    if ($ActorMatrix.Count -eq 0) {
+        Write-Fail "No actors to run. Omit -ActorMatrix to use the default matrix, or pass a non-empty array."
+    }
+
     $actorFailures = @()
     foreach ($actor in $ActorMatrix) {
         Write-Step "Running Playwright as actor: $actor"

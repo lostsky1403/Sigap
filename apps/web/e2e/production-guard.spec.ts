@@ -33,7 +33,21 @@ test.describe('production E2E target guard', () => {
 			'http://staging.internal:8080',
 			'http://10.0.0.5:4173',
 			'http://192.168.1.20:3000',
-			'http://localhost.evil.test:4173'
+			'http://localhost.evil.test:4173',
+			// The forms below all rely on the SAME thing the guard does: the
+			// WHATWG URL parser's host normalisation. Each is a way a host can
+			// LOOK local without being it, so each pins a class of bypass rather
+			// than a single string.
+			'https://sigap.chaerulchalik.web.id.', // trailing dot: a distinct host
+			'http://localhost.:4173', // trailing dot keeps the dot in the host
+			'http://localhost%2Eevil.test:4173', // %2E decodes to a dot
+			'http://localhost@evil.test:4173', // userinfo, host is evil.test
+			'http://evil.test@sigap.chaerulchalik.web.id', // userinfo, host is prod
+			'http://[::ffff:127.0.0.1]:4173', // IPv4-mapped IPv6 is not the allow-list form
+			'http://127.0.0.1.evil.test', // local prefix, evil suffix
+			'//evil.test', // protocol-relative
+			'http://local\nhost.evil.test:4173', // LF stripped by the parser
+			'http://localhost\t.evil.test:4173' // TAB stripped by the parser
 		]) {
 			expect(() => assertLocalTarget(target), `${target} must be rejected`).toThrow(ProductionTargetError);
 		}
@@ -50,7 +64,18 @@ test.describe('production E2E target guard', () => {
 			'http://localhost:4173',
 			'http://127.0.0.1:4173',
 			'http://127.0.0.1:3000/admin/queues',
-			'localhost:4173'
+			'localhost:4173',
+			// Alternate spellings of loopback. These are accepted because the
+			// check and the connection use the same normalised hostname, so each
+			// resolves to 127.0.0.1/::1 and stays on the machine. Pinned so a
+			// future "tighten the allow-list" change is a deliberate decision
+			// rather than a silent break of a legitimate local target.
+			'http://127.1:4173',
+			'http://2130706433:4173',
+			'http://0x7f.0.0.1:4173',
+			'http://LOCALHOST:4173',
+			'http://[0:0:0:0:0:0:0:1]:4173',
+			'http://user:pass@127.0.0.1:4173'
 		]) {
 			expect(() => assertLocalTarget(target), `${target} must be accepted`).not.toThrow();
 		}

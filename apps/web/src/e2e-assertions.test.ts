@@ -147,10 +147,22 @@ function unawaitedAssertions(source: string): string[] {
 
 describe('Playwright specs await their web-first assertions', () => {
 	it('has no un-awaited retrying assertion', () => {
+		// The WALK is proven non-vacuous, not just the detector. `toEqual([])` is
+		// also satisfied by finding no files at all, so a broken `e2eDir` join or
+		// an emptied `e2e/` would let this test pass while checking nothing.
+		const files = specFiles();
+		expect(
+			files.length,
+			'the guard must find the spec files it claims to check'
+		).toBeGreaterThan(0);
+
 		const offenders: string[] = [];
-		for (const file of specFiles()) {
-			// The support module only re-exports; it asserts nothing itself.
-			if (file.endsWith(join('support', 'test.ts'))) continue;
+		for (const file of files) {
+			// NOTE: support/test.ts is deliberately INCLUDED rather than exempted.
+			// It is not a mere re-export — `waitForHydration` holds the
+			// `toHaveAttribute` that every spec's hydration gate depends on, so a
+			// dropped `await` there would silently turn the whole fixture into a
+			// no-op, which is exactly the failure this guard exists to catch.
 			const source = readFileSync(file, 'utf8');
 			for (const offender of unawaitedAssertions(source)) {
 				offenders.push(`${file.slice(e2eDir.length + 1)}:${offender}`);
