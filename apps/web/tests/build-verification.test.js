@@ -9,23 +9,86 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
 
-const typesPath = path.join(root, 'src/lib/types.ts');
+/**
+ * Type reconciliation (Phase 3B6, T-3B6-02).
+ *
+ * These assertions used to read `src/lib/types.ts`, the flat grab-bag that
+ * mixed wire shapes with demo-only domain types. That file is gone: the wire
+ * shapes now live in `src/lib/api/types/api.ts`, and the demo-only ones
+ * (`Facility` with bed counts, `QueueTicket`, `QueueApiResponse`,
+ * `NearbyApiResponse`) were deleted along with the demo dashboard that was
+ * their only consumer.
+ *
+ * The assertions are REPOINTED, not dropped. Removing them would leave the
+ * canonical module unguarded, and the failure they guard against is unchanged:
+ * a wire type silently disappearing from the module every endpoint imports
+ * from.
+ */
+const typesPath = path.join(root, 'src/lib/api/types/api.ts');
 const typesContent = fs.readFileSync(typesPath, 'utf-8');
 
-assert(typesContent.includes('export type Facility'), 'Facility type should be exported');
-assert(typesContent.includes('export type QueueApiResponse'), 'QueueApiResponse type should be exported');
-assert(typesContent.includes('export type NearbyApiResponse'), 'NearbyApiResponse type should be exported');
-assert(typesContent.includes('export type MedicalRecord'), 'MedicalRecord type should be exported');
+for (const typeName of [
+	'PublicFacility',
+	'PublicServiceUnit',
+	'PatientStatus',
+	'BookAppointmentResult',
+	'CheckInResult',
+	'QueueGenerateResult',
+	'AdminFacility',
+	'AdminQueueTicket',
+	'AdminServiceUnit',
+	'AdminSchedule',
+	'AdminAppointment',
+	'NotificationOutboxRow',
+	'NotificationSummary',
+	'MedicalRecord'
+]) {
+	assert(
+		new RegExp(`export (interface|type) ${typeName}\\b`).test(typesContent),
+		`${typeName} should be exported from lib/api/types/api.ts`
+	);
+}
 
-// Verify no 'any' types leak into key source files
-const dashboardPath = path.join(root, 'src/lib/components/dashboard/BedAvailabilityDashboard.svelte');
-const dashboardContent = fs.readFileSync(dashboardPath, 'utf-8');
-assert(!dashboardContent.includes(': any'), 'Dashboard should not contain untyped any');
-assert(!dashboardContent.includes('@ts-ignore'), 'Dashboard should not contain @ts-ignore');
+// A second types module is how two competing shapes for the same endpoint
+// start drifting apart, so the legacy one must not come back.
+assert(
+	!fs.existsSync(path.join(root, 'src/lib/types.ts')),
+	'src/lib/types.ts was reconciled into lib/api/types/api.ts and must not return'
+);
 
-const mapPath = path.join(root, 'src/lib/components/ReferralMap.svelte');
-const mapContent = fs.readFileSync(mapPath, 'utf-8');
-assert(!mapContent.includes(': any'), 'ReferralMap should not contain untyped any');
+/**
+ * The legacy demo components stay deleted (T-3B6-02).
+ *
+ * Asserted as absence rather than by reading the files, because the files are
+ * the point: `BedAvailabilityDashboard.svelte` shipped invented facilities with
+ * bed counts, a simulated availability feed and a "chaos mode" load generator,
+ * and `ReferralMap.svelte` was a mock map that only it imported. Re-adding
+ * either would put fabricated civic data back within reach of a route.
+ */
+for (const legacy of [
+	'src/lib/components/dashboard/BedAvailabilityDashboard.svelte',
+	'src/lib/components/ReferralMap.svelte'
+]) {
+	assert(
+		!fs.existsSync(path.join(root, legacy)),
+		`${legacy} is dead demo code and must stay deleted`
+	);
+}
+
+// maplibre-gl existed only to draw that mock map. A dependency nothing imports
+// is bundle weight and unused attack surface.
+//
+// BOTH dependency maps are checked. Asserting only `dependencies` would pass if
+// the package were moved to `devDependencies`, which still installs it, still
+// keeps it in the lockfile, and still ships it to anything that installs the
+// workspace — so the guard would report a removal that had not happened.
+const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8'));
+for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+	assert(
+		!pkg[section]?.['maplibre-gl'],
+		`maplibre-gl was only used by the removed ReferralMap and must not be in ${section}`
+	);
+}
 
 const walletPath = path.join(root, 'src/routes/wallet/+page.svelte');
 const walletContent = fs.readFileSync(walletPath, 'utf-8');

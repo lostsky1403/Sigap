@@ -422,3 +422,30 @@ export interface ReadyStatus extends HealthStatus {
 	audit?: string;
 	detail?: string;
 }
+
+/* ------------------------------------------------------------------ *
+ * Legacy: the medical-record wallet
+ * ------------------------------------------------------------------ */
+
+/**
+ * One row of the immutable visit history, as the Rust engine writes it.
+ *
+ * RETAINED, NOT LIVE. The `medical_records` table and the SHA-256 signature
+ * are real (the queue engine inserts a row on every ticket), but there is no
+ * `/api/v1/medical-records` route — neither a Go handler nor a SvelteKit
+ * proxy — so nothing in the product can currently read this shape. It is here
+ * because `routes/wallet/+page.svelte` still declares it and that page is
+ * deliberately kept until the wallet is removed as a whole.
+ *
+ * It moved here from the retired `lib/types.ts`, which mixed these wire shapes
+ * with demo-only domain types. Keeping a wire shape in the wire-types module
+ * is the point: when the wallet is deleted, this interface goes with it, and
+ * there is no second types file left to clean up.
+ */
+export interface MedicalRecord {
+	facility_name: string;
+	formatted_number: string;
+	visit_time: string;
+	signature: string;
+	[key: string]: unknown;
+}

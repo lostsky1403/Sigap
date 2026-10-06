@@ -91,8 +91,10 @@ flowchart TD
 │   │       ├── main.rs
 │   │       └── engine/queue.rs         # Logika transaksi kritis
 │   └── web/                            # SvelteKit
-│       └── src/lib/components/dashboard/
-│           └── BedAvailabilityDashboard.svelte   # Komponen utama yang diminta
+│       └── src/
+│           ├── lib/ui/                 # Primitif desain bersama (satu merek, dua kepadatan)
+│           ├── lib/citizen/            # Shell & alur warga
+│           └── routes/                 # Halaman warga dan admin
 └── README.md
 ```
 

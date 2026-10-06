@@ -82,7 +82,7 @@ describe('icon foundation', () => {
 			if (/from\s+['"](?:@?sveltejs\/)?(?:iconify|heroicons|feather-icons)/.test(source)) {
 				offenders.push(`${file}: alternative icon package`);
 			}
-			if (/<svg[\s>]/i.test(source) && !file.endsWith('ReferralMap.svelte')) {
+			if (/<svg[\s>]/i.test(source)) {
 				offenders.push(`${file}: inline <svg>`);
 			}
 		}
