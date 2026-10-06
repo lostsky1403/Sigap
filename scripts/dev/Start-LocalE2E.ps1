@@ -155,7 +155,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# --- Actor-matrix binding guard -------------------------------------------------
+# --- Actor-name validation ------------------------------------------------------
 #
 # WHY THIS EXISTS. `-ActorMatrix @()` is a legitimate way to ask for "boot the
 # stack and run the suite once, as -LocalActor". But when it is passed through a
@@ -169,13 +169,33 @@ $ErrorActionPreference = 'Stop'
 # which names neither the parameter nor the cause. It also leaves the web tier
 # re-pinned to the bogus subject, so a subsequent manual run is wrong too.
 #
-# The fix is to refuse the malformed binding at the top, where the message can
-# name it, rather than let it travel to the resolver. Every legitimate subject is
-# a seeded slug (letters, digits and hyphens), so anything else is a binding
-# mistake rather than a name worth trying.
-$invalidActors = @($ActorMatrix | Where-Object { $_ -notmatch '^[A-Za-z0-9._-]+$' })
+# WHY BOTH PARAMETERS, AND WHY `\A...\z`.
+#
+# The name is not inert: it becomes `$env:SIGAP_LOCAL_E2E_ACTOR` for both the API
+# and the web process, and the web tier turns it into the `X-Sigap-Local-Test-Subject`
+# request header (apps/web/src/lib/server/auth.ts). So this is a value that ends up
+# in a header, and the validation has to be strict enough for that.
+#
+# Two things a first attempt got wrong, both worth keeping fixed:
+#
+#   - `-LocalActor` reaches the SAME env var and the SAME header, and it is the
+#     parameter the failure message below recommends using. Validating only
+#     `-ActorMatrix` would leave the documented default route unguarded.
+#   - PowerShell's `$` is not an absolute end anchor: like .NET's, it also matches
+#     immediately BEFORE a single trailing newline, so `'e2e-schedule-manager' + "`n"`
+#     satisfied `^[A-Za-z0-9._-]+$`. `\A` and `\z` are absolute, and the character
+#     class already excludes every control character, so `\z` alone closes it.
+#
+# Every legitimate subject is a seeded slug (letters, digits, dot, underscore,
+# hyphen). Anything else is a binding mistake rather than a name worth trying.
+$subjectNamePattern = '\A[A-Za-z0-9._-]+\z'
+
+$invalidActors = @()
+$invalidActors += @($ActorMatrix | Where-Object { $_ -notmatch $subjectNamePattern })
+if ($LocalActor -notmatch $subjectNamePattern) { $invalidActors += $LocalActor }
+
 if ($invalidActors.Count -gt 0) {
-    Write-Host "[FAIL] -ActorMatrix contains values that are not valid subject names:" -ForegroundColor Red
+    Write-Host "[FAIL] These actor names are not valid subject names:" -ForegroundColor Red
     foreach ($bad in $invalidActors) {
         Write-Host "         '$bad'" -ForegroundColor Red
     }
@@ -185,6 +205,10 @@ A value like '@()' means the empty array was bound as a STRING rather than as an
 array, which happens with some `pwsh -File` invocations. The script would then
 try to authenticate as a subject literally named '@()' and fail with a 403 that
 names nothing.
+
+An actor name must match $subjectNamePattern — a seeded slug. It is written to
+SIGAP_LOCAL_E2E_ACTOR and forwarded as the X-Sigap-Local-Test-Subject header, so
+whitespace, quotes and control characters are refused rather than passed on.
 
 To run the suite once as the default actor, OMIT -ActorMatrix entirely — the
 committed default matrix already includes it. To run a custom set, bind a real
