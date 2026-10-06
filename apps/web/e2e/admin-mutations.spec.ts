@@ -1523,30 +1523,62 @@ test.describe('T-3B5-05 notification actions', () => {
 		const listed = await page.request.get('/api/v1/admin/notifications');
 		const rows = (await listed.json()).data as Array<{ id: string; status: string }>;
 
-		// `delivered` is the one status the cancel SQL excludes, so cancelling a
-		// delivered row is a real 409 from the real endpoint. The seed ships
-		// none, so this reads the current state and skips rather than inventing
-		// a status — §16 allows skipping where the seed does not permit a
-		// deterministic outcome, and forbids faking one.
-		const delivered = rows.find((row) => row.status === 'delivered');
-		test.skip(!delivered, 'no delivered notification in the seed to provoke a 409');
+		/*
+		 * A REAL 409, FROM A STATE THIS FIXTURE CAN ACTUALLY REACH.
+		 *
+		 * The original version of this test asked for a `delivered` row and
+		 * skipped when it could not find one. It could never find one: the local
+		 * stack seeds only `pending` rows and resets them on every rerun, the
+		 * notification worker is not part of the E2E stack, and no admin route
+		 * can create or deliver a row. So the scenario was skipped by EVERY actor
+		 * in the matrix — by capability for the read-only actor, and by missing
+		 * data for the three that hold `notification.manage`. A test that never
+		 * runs is not coverage.
+		 *
+		 * `cancelled` is reachable, and it is refused just as firmly. `Retry`
+		 * accepts only `failed` and `pending`, so retrying a cancelled row is a
+		 * genuine 409 from the genuine endpoint — the same class of refusal the
+		 * `delivered` version was reaching for, and the sentence the UI must show
+		 * verbatim.
+		 *
+		 * Producing it uses only real API calls: reuse a row some earlier test
+		 * already cancelled, or cancel a pending one. Nothing is faked, and no
+		 * status is invented — which is the rule the old skip existed to respect.
+		 */
+		const cancelled =
+			rows.find((row) => row.status === 'cancelled') ??
+			(await (async () => {
+				const pending = rows.find((row) => row.status === 'pending');
+				expect(pending, 'the outbox must hold a row to cancel').toBeTruthy();
+				const cancelledResponse = await page.request.post(
+					`/api/v1/admin/notifications/${pending!.id}/cancel`
+				);
+				expect(cancelledResponse.status(), 'cancelling a pending row must succeed').toBe(200);
+				return { id: pending!.id, status: 'cancelled' };
+			})());
 
-		const target = delivered!;
-		const probe = await page.request.post(`/api/v1/admin/notifications/${target.id}/cancel`);
-		expect(probe.status(), 'cancelling a delivered row must conflict').toBe(409);
+		const target = cancelled!;
+		const probe = await page.request.post(`/api/v1/admin/notifications/${target.id}/retry`);
+		expect(probe.status(), 'retrying a cancelled row must conflict').toBe(409);
 		const refused = await probe.json();
 		// Same envelope as every other admin error: the sentence lives under
 		// `error`, and that is the field the client treats as server-described.
 		const sentence = refused.error as string;
 		expect(sentence, 'the 409 must carry a sentence from the server').toBeTruthy();
 
-		// Route interception delivers this REAL 409 to the REAL page handler. It
-		// is needed because the UI will not offer Cancel on a delivered row — the
-		// affordance is doing its job — so the only way to observe the refusal
-		// path is to hand the page the server's own answer. No success path
-		// anywhere in this file is faked.
+		/*
+		 * Route interception delivers this REAL 409 to the REAL page handler.
+		 *
+		 * It is needed because the UI will not offer Retry on a cancelled row —
+		 * the affordance is doing its job — so the only way to observe the
+		 * refusal path is to hand the page the server's own answer. The pattern
+		 * matches whichever row the page actually calls, rather than one
+		 * hardcoded id, so the assertion does not depend on which row happens to
+		 * carry the first Retry button. No success path anywhere in this file is
+		 * faked.
+		 */
 		await page.route(
-			(url) => url.pathname.endsWith(`/notifications/${target.id}/retry`),
+			(url) => url.pathname.endsWith('/retry'),
 			async (route) => {
 				await route.fulfill({
 					status: 409,
