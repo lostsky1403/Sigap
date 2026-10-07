@@ -137,6 +137,8 @@ recorded verbatim so the claim is auditable.
 | H6 | API boot printed no dev-flag guard error | `docker compose logs api \| grep -i 'dev-only capabilities'` → no match | **OPERATOR** |
 | H7 | Operator production config verification completed | runbook §11 O1–O9 | **OPERATOR** |
 | H8 | Production deployment separately authorized | change ticket / approval | **OPERATOR** |
+| H9 | Business-data presence recorded (separate from health) | `curl -fsS https://<host>/api/v1/public/facilities` → count active facilities; record the number and the product-owner acknowledgement | **OPERATOR** |
+| H10 | Release identity changed for every rebuilt service | `/_app/version.json` (web) + `docker compose images api web` digests | **OPERATOR** |
 
 ## I. Standing constraints
 
