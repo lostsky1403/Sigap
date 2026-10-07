@@ -10,6 +10,7 @@
       4. sigap-demo-smoke.ps1          (8-step booking/check-in flow)
       5. sigap-notification-smoke.ps1  (9-step notification pipeline)
       6. sigap-patient-portal-smoke.ps1 (5-step public status lookup)
+      7. sigap-production-readiness-smoke.ps1 (new routes + the two P0 proofs)
 
     Fails fast on any error. The API must already be running at
     $env:SIGAP_API_BASE (default http://127.0.0.1:8080).
@@ -79,6 +80,7 @@ if (-not $SkipSeed) {
 Invoke-Phase -Label 'SMOKE: demo' -Block { pwsh -NoProfile -File (Join-Path $PSScriptRoot 'sigap-demo-smoke.ps1') }
 Invoke-Phase -Label 'SMOKE: notification' -Block { pwsh -NoProfile -File (Join-Path $PSScriptRoot 'sigap-notification-smoke.ps1') }
 Invoke-Phase -Label 'SMOKE: patient portal' -Block { pwsh -NoProfile -File (Join-Path $PSScriptRoot 'sigap-patient-portal-smoke.ps1') }
+Invoke-Phase -Label 'SMOKE: production readiness' -Block { pwsh -NoProfile -File (Join-Path $PSScriptRoot 'sigap-production-readiness-smoke.ps1') }
 
 # --- Summary ---
 Write-Host ""
