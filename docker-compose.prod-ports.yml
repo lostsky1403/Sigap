@@ -16,3 +16,13 @@ services:
   api:
     ports: !override
       - "127.0.0.1:18080:8080"
+    # Fail closed: the base file defaults SIGAP_ENV to "local" for development.
+    # The production overlay REQUIRES an explicit value instead. Compose refuses
+    # to interpolate (before any container starts) when it is unset or empty.
+    # A value of "local" is rejected separately by scripts/ops/preflight-production-env.sh.
+    environment:
+      SIGAP_ENV: ${SIGAP_ENV:?SIGAP_ENV must be set explicitly for the production overlay (e.g. SIGAP_ENV=staging); refusing to default to "local"}
+  web:
+    # Same fail-closed requirement as api (base defaults this to "local").
+    environment:
+      SIGAP_ENV: ${SIGAP_ENV:?SIGAP_ENV must be set explicitly for the production overlay (e.g. SIGAP_ENV=staging); refusing to default to "local"}
