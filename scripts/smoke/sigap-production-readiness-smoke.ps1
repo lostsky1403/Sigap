@@ -376,12 +376,19 @@ try {
     Invoke-Step -Name 'precondition.selector_armed' -Body {
         $probe = Invoke-ApiJson -Method GET -Path '/api/v1/admin/notifications/summary' -Headers @{ 'X-Sigap-Local-Test-Subject' = $ZeroScopeSubject }
         if (-not $probe.CallOk -or -not $probe.NetworkOk) { $script:selectorArmed = $false; Add-Result -Name 'precondition.selector_armed' -Pass $false -Detail "transport error: $($probe.Error)"; return }
-        if ($probe.StatusCode -eq 401) {
-            $script:selectorArmed = $false
-            Add-Result -Name 'precondition.selector_armed' -Pass $false -Detail "subject '$ZeroScopeSubject' was not resolved (401); the local test identity selector is not armed"
+        # Contract (apps/api/internal/auth/local_test_identity_provider.go): every failure
+        # path returns a ZERO actor -> the request falls through to the deny-by-default
+        # handler, which answers 403 "Akses ditolak: autentikasi diperlukan."
+        # (internal/identity/authz.go). A usable armed selector resolves the subject from
+        # the real DB RBAC and answers 200. So 200 = armed+resolvable; anything else,
+        # including 403, means the selector is NOT usable here. 401 is only the
+        # unrecognised-route fallback and is not this endpoint's contract.
+        if ($probe.StatusCode -eq 200) {
+            Add-Result -Name 'precondition.selector_armed' -Pass $true -Detail "subject '$ZeroScopeSubject' resolved (HTTP 200)"
             return
         }
-        Add-Result -Name 'precondition.selector_armed' -Pass $true -Detail "subject '$ZeroScopeSubject' resolved (HTTP $($probe.StatusCode))"
+        $script:selectorArmed = $false
+        Add-Result -Name 'precondition.selector_armed' -Pass $false -Detail "subject '$ZeroScopeSubject' was not resolved (HTTP $($probe.StatusCode), expected 200); the local test identity selector is not armed"
     }
 
     if (-not $selectorArmed) {

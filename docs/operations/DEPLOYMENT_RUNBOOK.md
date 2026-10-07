@@ -42,10 +42,12 @@ Rules that must hold at every step:
 | 2.3 | Working tree clean | `git status --porcelain` | Empty |
 | 2.4 | Migration diff empty | `git diff --stat <pre-3B-anchor>..HEAD -- packages/db/migrations` | Empty (anchor: `6d7f940`) |
 | 2.5 | Gate 6 evidence accepted | `RELEASE_CHECKLIST.md` §B | Full E2E + Go + Rust + web gates green |
-| 2.6 | Build prerequisites present | `go version`, `cargo --version`, `protoc --version`, `node --version`, `pnpm --version` | All resolve |
+| 2.6 | Build prerequisites present | `go version`, `cargo --version`, `protoc --version`, `node --version`, `pnpm --version`, **`docker compose version`** | All resolve; **Compose ≥ 2.24.4** (the overlays use `!override`, which older Compose cannot parse) |
 | 2.7 | Production builds produce | `make build` (Go + Rust release + web) | All succeed |
-| 2.8 | Environment configured | §5 matrix, every variable set | No missing required variable |
-| 2.9 | Backup/rollback assumption | §6 | Previous images still pullable |
+| 2.8 | Environment configured | §5 matrix, every variable set + `sh scripts/ops/preflight-production-env.sh` | Script exits 0; no missing required variable. `SIGAP_ENV` must be explicit — the production overlay refuses unset/empty, and the script rejects `local` (any case) |
+| 2.9 | Rollback target captured (OPERATOR) | §6 contract: record `CURRENT_PRODUCTION_VERSION` (commit or `/_app/version.json`), image digest/tag per service, and `SIGAP_DEPLOY_DIR` | All three recorded; **none is "unknown" and none equals the release commit**. If unavailable: **ABORT** — never treat the historical anchor `6d7f940` as current production |
+| 2.10 | Deployment directory proven | `cd "$SIGAP_DEPLOY_DIR"` then `git rev-parse --show-toplevel` + `git status --porcelain` | Inside the compose repo, clean tree, expected branch/commit |
+| 2.11 | Backup/rollback assumption | §6 | Previous images identified in 2.9 (not merely "pullable") |
 
 **Backup assumption.** Because no migration ships, the rollback path is image-only. The
 existing Postgres backup job (`deploy/systemd/sigap-postgres-backup.*`,
@@ -67,12 +69,12 @@ single cutover. Deploy in this order, verifying between phases:
 | # | Phase | Deploy | Gate before proceeding |
 |---|---|---|---|
 | 1 | **3B0** | Deploy 3B0 **alone first** — it is the independent security release (backend authorization + proxies). Redeploy both API and web images. | Smoke-check admin reads and the citizen flows. This phase closes a P0 privilege-escalation path; deploy it on its own so a regression is attributable. |
-| 2 | **3B1** | Additive only, no user-visible change. May be bundled with 3B2 or deployed alone. | Web gate green. |
-| 3 | **3B2** | Citizen surface (Beranda, `/faskes` catalog). | `/` and `/faskes` render. |
-| 4 | **3B3** | Citizen transactional surfaces (booking, check-in, `/queues/new`, patient status). Deploy **after** 3B2. | Citizen transactions pass against the seeded stack. |
-| 5 | **3B4** | Admin shell and read surfaces. Deploy **after** 3B3. | `/admin` renders; the six read destinations load. |
-| 6 | **3B5** | Admin mutation surfaces (queue/appointment status, facility create/deactivate, notification retry/cancel). Deploy **after** 3B4. | Admin mutations pass the actor-matrix E2E. |
-| 7 | **3B6** | Dead-code removal. Deploy **only after the E2E suite is green in production-equivalent staging.** | Full E2E green on the staging stack. |
+| 2 | **3B1** | Additive only (web: 58 files; no `apps/api` change). May be bundled with 3B2 or deployed alone; **rebuild web only**. | Web gate green. |
+| 3 | **3B2** | Citizen surface (Beranda, `/faskes` catalog). `apps/api` changes (catalog handler) → **rebuild api + web**. | `/` and `/faskes` render. |
+| 4 | **3B3** | Citizen transactional surfaces (booking, check-in, `/queues/new`, patient status). Web-only (no `apps/api` change) → **rebuild web only**. Deploy **after** 3B2. | Citizen transactions pass against the seeded stack. |
+| 5 | **3B4** | Admin shell and read surfaces (`apps/api`: 15 files — router, config guard, handlers) → **rebuild api + web**. Deploy **after** 3B3. | `/admin` renders; the six read destinations load. |
+| 6 | **3B5** | Admin mutation surfaces (`apps/api`: 4 files — `cmd/server/main.go`, handlers) → **rebuild api + web**. Deploy **after** 3B4. | Admin mutations pass the actor-matrix E2E. |
+| 7 | **3B6** | Dead-code removal. Web-only → **rebuild web only**. Deploy **only after the E2E suite is green in production-equivalent staging.** | Full E2E green on the staging stack. |
 | 8 | **3B7** | **Documents the above; it adds no deployment.** | — |
 
 **Prefer bundling the pairs** (3B1+3B2, and within a phase 3B2→3B3, 3B4→3B5) only when the
@@ -105,18 +107,29 @@ edge / reverse proxy (Traefik labels on the web service; enabled by ENABLE_EDGE_
 
 | Step | Service | Action | Verify |
 |---|---|---|---|
+| 3.0 | release identity (pre-deploy) | Record the current production version identifier now: `curl -fsS https://<host>/_app/version.json` (and `docker compose images api web` digests, once host access exists). This is the no-op/deploy detector for 3.8. | Value recorded; §2.9 captured |
 | 3.1 | database / migrations | **Nothing to run.** No migration exists. If the target database has never been initialised, apply `packages/db/migrations/*.sql` in filename order once, as a separate, one-off operator action — **not** as part of this cutover. | `git diff` empty; existing DB already at `0010` |
-| 3.2 | postgres | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d postgres` (waits on `pg-cert-init`) | `pg_isready -h 127.0.0.1 -p 5433 -U sigap -d sigap` |
-| 3.3 | queue engine | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d rust-engine` | `nc -z localhost 50051` |
-| 3.4 | API | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d api` | `GET /health` → 200; `GET /readyz` → ready |
-| 3.5 | web | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d web` | `GET /` → 200 |
-| 3.6 | reverse proxy / edge | Attach the edge network and enable routing: `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml -f docker-compose.prod-edge.yml up -d web` with `ENABLE_EDGE_ROUTING=true`, `EDGE_NETWORK`, `SIGAP_PUBLIC_HOST`, `EDGE_CERT_RESOLVER` set. | Traefik router `sigap-web` + `sigap-web-secure` registered; certificate issued |
-| 3.7 | post-deploy smoke | §4 | All checks pass |
+| 3.2 | build images | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml build api web` (**`--build` is mandatory** — a bare `up -d` reuses the previously built images and deploys nothing, while still passing health checks) | build exits 0 for both services |
+| 3.3 | postgres | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d postgres` (waits on `pg-cert-init`) | `pg_isready -h 127.0.0.1 -p 5433 -U sigap -d sigap` |
+| 3.4 | queue engine | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d --build rust-engine` (rebuild only if the release diff touches `apps/queue-engine`; this stream never does) | `nc -z localhost 50051` |
+| 3.5 | API | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d api` (image built in 3.2) | `GET /health` → 200; `GET /readyz` → ready |
+| 3.6 | web | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml -f docker-compose.prod-edge.yml up -d web` (image built in 3.2) with `ENABLE_EDGE_ROUTING=true`, `EDGE_NETWORK`, `SIGAP_PUBLIC_HOST`, `EDGE_CERT_RESOLVER` set. **The edge overlay is required here**, not only in 3.6-old: without it, web republishes on plaintext `0.0.0.0:3005` and detaches from Traefik. | `GET /` → 200; Traefik router `sigap-web` + `sigap-web-secure` registered; certificate issued |
+| 3.7 | reverse proxy / edge | No separate step — the edge network join happens in 3.6 via the overlay. Confirm routing and certificate per 3.6. | same as 3.6 |
+| 3.8 | release identity (post-deploy) | `curl -fsS https://<host>/_app/version.json` must differ from the 3.0 value and match the deployed release; `docker compose images api web` digests must match the just-built images. **If the version is unchanged, the deploy was a no-op: STOP and investigate (§9).** | version changed to the expected release |
+| 3.9 | post-deploy smoke | §4 | All checks pass |
 
-> **Always pass BOTH overlays.** Without `docker-compose.prod-ports.yml`, steps 3.2–3.5 publish
+> **Always pass BOTH overlays (steps 3.2–3.7).** Without `docker-compose.prod-ports.yml`, steps 3.3–3.5 publish
 > Postgres, the engine and the API on every interface (5433, 50051, 8080) instead of loopback —
-> the exact exposure that overlay exists to prevent. The overlay's own header mandates it, and
-> `8080` is commonly taken by unrelated apps on this host.
+> the exact exposure that overlay exists to prevent. Without `docker-compose.prod-edge.yml`,
+> step 3.6 republishes web on plaintext `0.0.0.0:3005` and detaches it from the Traefik network.
+> Rollback (§7) uses the **same file set** — never a subset. `8080` is commonly taken by
+> unrelated apps on this host.
+
+> **Rebuild every service the release diff touches.** Compute from the diff, not the phase label:
+> `git diff --name-only <rollback-target>..HEAD -- apps/api apps/web apps/queue-engine` — any path
+> with changes means that service's image must be built in 3.2 (or in §7 for rollback).
+> For this stream: 3B1/3B3/3B6 are web-only; 3B2/3B4/3B5 are api+web; the engine never changes
+> (`0` `apps/queue-engine` files in every phase range). Never rebuild Postgres for a code change.
 
 For a bare-metal / non-compose deployment, the same **logical** order applies: database →
 engine → API → web → proxy. The API must not be started before the engine is listening
@@ -213,6 +226,14 @@ The API refuses to start if any dev-only flag is set to its dangerous value whil
 `SIGAP_ENV` is not `local` (`GuardDevCapabilities`). The web tier refuses to inject a dev
 header under the same condition.
 
+> **Safety today rests on variable ABSENCE, not on the guard firing.** No compose file
+> (`docker-compose.yml`, `.prod-ports`, `.prod-edge`) forwards `SIGAP_DEV_IDENTITY`,
+> `SIGAP_LOCAL_RBAC_TEST_IDENTITY`, `SIGAP_LOCAL_E2E_ACTOR` or `SIGAP_ENGINE_FALLBACK` into
+> any container, so in the compose topology these guards cannot even see a value. If a future
+> change adds a pass-through line (e.g. `SIGAP_DEV_IDENTITY: ${SIGAP_DEV_IDENTITY:-}`), the
+> guard becomes the only control — and `SIGAP_ENV` must be non-local for it to hold. The
+> production overlay now forces an explicit `SIGAP_ENV` (§2.8) so that control stays live.
+
 ### 5.4 Optional / operational
 
 | Variable | Purpose | Expected production state |
@@ -240,16 +261,24 @@ nothing was squashed.
 the shared edge (#83)"*. Verified as `git merge-base HEAD origin/main`; it is the last
 known-good commit before any 3B work.
 
-| Phase | Ends at | What changed | Safe rollback to | Expected behaviour after rollback | DB restore? |
+| Phase | Phase end commit | What changed | Rollback target (commit BEFORE the phase) | Expected behaviour after rollback | DB restore? |
 |---|---|---|---|---|---|
-| 3B0 | `6c80ba5` (GATE 1) | backend authorization (facility-scoped read/mutation provenance), proxy repairs, local seed identities | `6d7f940` | previous API **and** web images; P0 privilege-escalation path reopens — **prefer a forward fix** | **No** |
-| 3B1 | `b1303aa` (GATE 2) | shared UI primitives + test tooling; additive | `16268de` | previous web image; no user-visible change | **No** |
-| 3B2 | `80e285d` | citizen shell, Beranda, `/faskes` catalog, facility-type filter | `5b25e2c` | previous web image; `/faskes` disappears; Beranda reverts to the demo dashboard | **No** |
-| 3B3 | `0f98da9` | citizen transactional surfaces: booking, check-in, `/queues/new`, patient status | `80e285d` | previous web image; `/queues/new` becomes 404; transactional surfaces revert | **No** |
-| 3B4 | `e566dcb` | admin shell + the six read destinations (no mutation affordances) | `0f98da9` | previous web image; `/admin` disappears | **No** |
-| 3B5 | `0270bbd` (GATE 5) | admin mutation surfaces (queue/appointment status, facility create/deactivate, notification retry/cancel) | `e566dcb` | previous web image; mutation affordances revert | **No** |
-| 3B6 | `c19c0a6` | dead-code removal (legacy demo components, `maplibre-gl`), E2E stabilization, guards | `0270bbd` | previous web image; deleted components return from git history | **No** |
-| 3B7 | `903df5c` | **documentation + smoke only** — this phase adds no deployable artefact | `c19c0a6` | nothing to roll back; reverting the docs has no runtime effect | **No** |
+| 3B0 | `6c80ba5` (GATE 1 record) | backend authorization (facility-scoped read/mutation provenance), proxy repairs, local seed identities | `6d7f940` | previous API **and** web images; P0 privilege-escalation path reopens — **prefer a forward fix** | **No** |
+| 3B0.2 | `16268de` | read-authorization closure (docs + follow-up fixes) | `6c80ba5` | as 3B0 | **No** |
+| 3B1 | `5b25e2c` | shared UI primitives + test tooling; additive, **web-only** | `16268de` | previous web image; no user-visible change | **No** |
+| 3B2 | `80e285d` | citizen shell, Beranda, `/faskes` catalog, facility-type filter (`apps/api` touched → rebuild api **and** web) | `5b25e2c` | api **and** web images; `/faskes` disappears; Beranda reverts to the demo dashboard | **No** |
+| 3B3 | `0f98da9` | citizen transactional surfaces: booking, check-in, `/queues/new`, patient status (web-only) | `80e285d` | previous web image; `/queues/new` becomes 404; transactional surfaces revert | **No** |
+| 3B4 | `e566dcb` | admin shell + six read destinations (`apps/api` 15 files → rebuild api + web) | `0f98da9` | previous api **and** web images; `/admin` disappears | **No** |
+| 3B5 | `0270bbd` (GATE 5) | admin mutation surfaces (`apps/api` 4 files → rebuild api + web) | `e566dcb` | previous api **and** web images; mutation affordances revert | **No** |
+| 3B6 | `c19c0a6` | dead-code removal (legacy demo components, `maplibre-gl`), E2E stabilization, guards (web-only) | `0270bbd` | previous web image; deleted components return from git history | **No** |
+| 3B7 | `8568a8d` | **documentation + smoke + ops guards** — no deployable artefact | `c19c0a6` | nothing to roll back; reverting the docs has no runtime effect | **No** |
+
+> **"Phase end commit" ≠ "rollback target".** The **end** column names the commit at which the
+> phase was *recorded complete* (often a docs commit). The **rollback** column names the commit
+> *before* that phase's deployable work — verified with
+> `git merge-base --is-ancestor <end> <next-phase-rollback-target>`; e.g. `5b25e2c` is the true
+> 3B1 tip (one commit after the GATE-2 record `b1303aa`), and `16268de` is the 3B0.2 tip. When in
+> doubt, the rollback target is always the parent of the phase's first deployable commit.
 
 **Canonical rule, verified:** because the redesign introduced **no** database migration,
 **no rollback in this stream requires a database restore.** Verification:
@@ -273,28 +302,75 @@ that is a regression in the fix and must be corrected **forward**.
 
 ## 7. Rollback commands
 
-Assumes the compose deployment. Replace `<PREVIOUS_TAG_OR_COMMIT>` with the image tag for
-the phase's rollback commit in §6.
+**Rollback target contract (BLOCKING).** Before deploying, the operator must have recorded:
+
+| Required value | Source | Reject if |
+|---|---|---|
+| `CURRENT_PRODUCTION_VERSION` | `curl -fsS https://<host>/_app/version.json`, or the deployed commit if repo-based | unset / "unknown" / equal to the release being deployed |
+| `CURRENT_IMAGE_DIGEST` (api + web, and engine if it ever changes) | `docker compose images api web` on the host, or `docker inspect --format '{{.Image}}' <container>` | unavailable |
+| `SIGAP_DEPLOY_DIR` | operator-selected compose directory (see §7a) | unset / not a compose repo |
+
+If **any** of the three is unavailable: **ABORT before `build`/`up`.** The historical anchor
+`6d7f940` is **not** the current production version — the deployed bundle predates it
+(2026-09-08 web build vs the 2026-09-12 anchor). Never substitute the anchor for the real
+rollback target.
+
+### 7a. Directory + environment proof (before any build or up)
 
 ```bash
-# 1. Code rollback — redeploy the previous images (no git history change required).
+cd "$SIGAP_DEPLOY_DIR" || { echo "SIGAP_DEPLOY_DIR not set"; exit 1; }
+git rev-parse --show-toplevel            # must be the compose repo
+git rev-parse --abbrev-ref HEAD          # expected branch
+git rev-parse HEAD                       # expected release commit
+git status --porcelain                   # must be empty
+docker compose version                   # >= 2.24.4 (the overlays use !override)
+sh scripts/ops/preflight-production-env.sh   # exit 0 required
+```
+
+### 7b. Rollback commands
+
+Same overlay set as deploy — **`docker-compose.yml` + `docker-compose.prod-ports.yml` +
+`docker-compose.prod-edge.yml`**, never a subset. Omitting the edge overlay detaches `web`
+from the Traefik network (public HTTPS routing loses its server) while republishing it on
+plaintext `0.0.0.0:3005`.
+
+```bash
+# 1. Code rollback — check out the §6 rollback target (or pin image tags if a registry exists).
 git fetch --all --tags
-git checkout <PREVIOUS_TAG_OR_COMMIT>      # or pin image tags in your registry
+git checkout <PHASE_ROLLBACK_TARGET_FROM_SECTION_6>
 
-# 2. Rebuild + restart only what changed (web-only for 3B1..3B6; api+web for 3B0).
-docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml build web
-docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d web
-# For a 3B0 rollback, also rebuild/restart the API:
-# docker compose ... build api && docker compose ... up -d api
+# 2. Rebuild + restart exactly the services the rollback diff touches
+#    (git diff --name-only <rollback-target>..HEAD -- apps/api apps/web apps/queue-engine).
+#    Same overlay set as deployment - BOTH overlays, edge included.
+docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml -f docker-compose.prod-edge.yml \
+  build api web
+docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml -f docker-compose.prod-edge.yml \
+  up -d postgres rust-engine api web
 
-# 3. Health verification
+# 2b. Service rebuild scope by phase (mirror of §3a; never Postgres):
+#   web-only: 3B1, 3B3, 3B6            -> build web
+#   api+web: 3B0, 3B2, 3B4, 3B5        -> build api web
+#   queue engine: never in this stream -> nothing to rebuild
+
+# 3. Edge sanity — a rollback must NOT detach web from Traefik or expose plaintext 3005.
+docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml -f docker-compose.prod-edge.yml \
+  config | grep -E 'published: "3005"|host_ip: 127.0.0.1'   # web must be 127.0.0.1:3005 only
+curl -fsS https://<SIGAP_PUBLIC_HOST>/ > /dev/null         # edge routing still serves web
+
+# 4. Health verification
 curl -fsS http://127.0.0.1:18080/health     # API
 curl -fsS http://127.0.0.1:18080/readyz     # API readiness (engine reachable)
-curl -fsS http://127.0.0.1:3005/            # web
+curl -fsS http://127.0.0.1:3005/            # web (loopback)
+# AND through the edge (a loopback-only check would miss a broken Traefik route):
+curl -fsS https://<host>/                   # public web
+curl -fsS https://<host>/api/v1/public/facilities   # through the proxy
 
-# 4. Smoke verification — REHEARSAL stack only (the readiness script refuses
-#    non-loopback targets and writes probe rows; see §4a). On a compose
-#    deployment the web port is 3005; on the bare-metal E2E stack it is 4173.
+# 5. Release identity — /_app/version.json must now equal the ROLLBACK target's build.
+curl -fsS https://<host>/_app/version.json   # must differ from the deployed release you rolled back FROM
+
+# 6. Rehearsal smoke - REHEARSAL stack ONLY (the readiness script refuses non-loopback
+#    targets and writes probe rows; see 4a). On a compose deployment the web port is 3005;
+#    on the bare-metal E2E stack it is 4173. Requires the local selector (SIGAP_ENV=local).
 $env:SIGAP_API_BASE = 'http://127.0.0.1:18080'
 $env:SIGAP_WEB_BASE = 'http://127.0.0.1:3005'
 $env:DATABASE_URL  = 'postgresql://sigap:<password>@127.0.0.1:5433/sigap?sslmode=require'
@@ -322,26 +398,77 @@ transport failure / `2` parameter or precondition failure. Target via `-ApiBase`
 admin mutations, and the two P0 proofs. Its assertions are proven non-vacuous by the negative
 controls recorded in `RELEASE_CHECKLIST.md` §G (not §9 — §9 is the abort list).
 
+### 8a. Read-only preflight policy (no side effects)
+
+A read-only preflight must NOT issue any request that can write. Classify every operation:
+
+| Class | Examples | May run in a read-only preflight? |
+|---|---|---|
+| **Pure observation** | `docker ps`/`inspect`, `docker compose config`/`images`, env presence, process health, image digest/tag, read-only config/log reads, `curl` of a **public, unauthenticated** route (`/`, `/api/v1/public/facilities`) | **Yes** |
+| **Application request with a side effect via audit** | any **RBAC-denied protected-route probe** — e.g. `GET /api/v1/admin/facilities`, `/api/v1/admin/notifications/summary` — the Go API writes an `audit_events` row through `logAuthzDenied` (`internal/identity/authz.go` → `audit.Service.LogEvent`) even though the request is refused | **NO — never during read-only preflight** |
+| **Mutating** | deploy, restart, migrate, seed, any POST/PATCH/DELETE | **No** |
+
+Consequence: during a read-only preflight, inspect the API's identity safety from the
+**environment and config** (class 1), not by probing admin routes (class 2). Probing those
+routes writes append-only audit rows to production — the failure this policy exists to prevent.
+Identity safety is instead established by reading the deployed env (via the operator evidence
+bundle, §11a) and by the structural fact that no compose file forwards any dev-only flag.
+
+**Business-data presence is a separate axis from service health.** The public catalog
+returning zero facilities is a data-presence observation, not a health failure (see §9).
+
+### 8b. P0 post-deploy smoke — side-effect policy
+
+The two P0 proofs are **post-deploy controlled smoke tests**, not read-only preflight:
+
+| Aspect | Policy |
+|---|---|
+| Setup | Runs on the **production-equivalent local/staging** stack (§4a) with `SIGAP_ENV=local` + `SIGAP_LOCAL_RBAC_TEST_IDENTITY=true`; it creates two `notification_outbox` probe rows, one probe facility, and one walk-in ticket |
+| Expected side effects | Disposable probe rows/facility (removed in the script's `finally` block); `audit_events` rows for the denied-retry attempts (append-only, **expected**) |
+| Cleanup policy | The script removes its own probe fixtures. **Never delete append-only `audit_events` evidence** to make a test look clean — audit rows are the record, not residue |
+| Audit-event expectation | Denied retries legitimately produce audit rows; their presence is correct behaviour |
+| Abort conditions | Any assertion failure (404 not returned, row changed, summary non-zero for a zero-assignment actor, or the positive control failing) |
+| Where it may run | **Only** the rehearsal stack, and only after explicit deployment authorization for the production smoke variant |
+
 ---
 
 ## 9. Failure / abort conditions
 
-Abort the deployment (do not proceed; roll back if already partially applied) if **any**:
+**Pre-deploy aborts (must hold BEFORE any `build` or `up`):**
 
+- `SIGAP_DEPLOY_DIR` unset, or the working directory is not the compose repo (§7a);
 - the release commit is not the intended one, or the tree is dirty;
+- `docker compose version` < 2.24.4 (the overlays use `!override`);
+- the rollback target (§7 contract) is unknown, unset, or equals the release being deployed;
 - a required environment variable (§5.1–5.2) is missing;
-- `SIGAP_ENV=local` in the target environment (including any case-variant — the guard matches `local` case-insensitively);
+- `SIGAP_ENV` unset/empty, or `local` in the target environment (any case-variant — the guard matches `local` case-insensitively); the production overlay itself refuses unset/empty;
+- `SIGAP_AUTH_MODE` is missing, `dev`, `disabled`, or any unknown value (canonical modes from `apps/api/internal/auth/config.go`: `dev`, `jwt`, `disabled`; production requires `jwt`. `disabled` boots but makes every admin route 403 — a dead deployment, indistinguishable from a broken one);
 - `SIGAP_DEV_IDENTITY` is enabled, or `SIGAP_LOCAL_RBAC_TEST_IDENTITY` / `SIGAP_LOCAL_E2E_ACTOR` is set;
 - the local identity selector is active (`SIGAP_ENV=local` + a subject);
 - `make db-seed` would **not** refuse (the demo-seed guard is bypassed);
 - a migration appears in the diff (the premise is broken);
+- the required compose overlay set differs from the runbook's (both `prod-ports` AND `prod-edge` for an edge-fronted deploy);
+- the Compose version is below the required minimum;
+- the expected compose files are missing from the host deployment directory;
+- the rollback target / image digest / deploy directory (§7 contract) is not recorded.
+
+**Post-deploy rollback triggers (evaluate only after the cutover):**
+
 - any production build fails;
+- the release identity (`/_app/version.json`) did not change after the deploy (a no-op deploy) or does not match the release;
 - any smoke check fails;
 - an out-of-scope notification retry **writes** (row changed) instead of returning 404;
 - a zero-assignment actor's notification summary leaks non-zero counts;
-- a critical route is unavailable;
-- the smoke target cannot be distinguished from production;
-- the rollback commit for the phase is unavailable.
+- a critical route is unavailable (`/`, `/faskes`, `/queues/new`, `/admin`);
+- a 5xx-rate increase attributable to the phase;
+- web is reachable on plaintext `0.0.0.0:3005` or the Traefik router is unregistered (edge overlay missing);
+- the smoke target cannot be distinguished from production.
+
+**Data presence is NOT a service-health abort.** An empty public catalog
+(`/api/v1/public/facilities` → `data: []`/`null`) means the deployment is *serving* correctly
+with no seeded business data. It is a **business-data presence** finding, recorded and raised
+with the product owner — not a rollback trigger. Service health (routes 200, no 5xx spike,
+authz failing closed) and data presence are verified separately; only service health aborts.
 
 ---
 
@@ -375,3 +502,26 @@ record the result in `docs/operations/RELEASE_CHECKLIST.md`.
 | O7 | API boot did not print a dev-flag guard error | `docker compose logs api \| grep -i 'dev-only capabilities'` | no match |
 | O8 | Edge certificate issued | Traefik dashboard / `openssl s_client` | valid cert for the public host |
 | O9 | Smoke target is non-production | Confirm `SIGAP_API_BASE`/`SIGAP_WEB_BASE` during rehearsal | loopback only |
+| O10 | Compose version on the host | `docker compose version` | ≥ 2.24.4 |
+| O11 | Deployed release identity | `curl -fsS https://<host>/_app/version.json` (pre-deploy) | recorded as `CURRENT_PRODUCTION_VERSION`; not "unknown" |
+| O12 | Deployment directory | `pwd` inside `$SIGAP_DEPLOY_DIR` | recorded; a compose repo |
+
+### 11a. Operator evidence bundle (read-only host access)
+
+The next preflight requires **one** safe read-only access path to the host. Either is
+acceptable — do not build new remote-management tooling:
+
+1. **SSH** (interactive or one-shot), or
+2. **A documented operator-generated read-only dump**: the operator runs
+   `docs/operations/OPERATOR_EVIDENCE_BUNDLE.md` on the host and returns the output.
+
+The bundle must establish, without leaking secrets: deployment directory, compose version,
+compose files in use, container status, image IDs/digests, `SIGAP_ENV` (exact non-secret
+value), `SIGAP_DEV_IDENTITY` (safe boolean), `SIGAP_AUTH_MODE` (non-secret mode), relevant
+port bindings, network membership, reverse-proxy labels, and the release identifier. Secret
+variables are reported as PRESENT/ABSENT only.
+
+> **Why this is required:** SSH from the prior workstation TCP-connected but never sent a
+> banner, and the local Docker engine was down, so no host fact could be read. Production was
+> observable only over HTTPS — which cannot read env, containers, image digests, or the
+> deployment directory, and cannot probe admin routes without writing audit rows (§8a).
