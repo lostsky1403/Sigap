@@ -13,9 +13,9 @@ the live environment.
 
 | | Item | Evidence | Status |
 |---|---|---|---|
-| A1 | Correct release commit selected | `git rev-parse HEAD` = `c19c0a6` (the 3B7 base; a new commit will carry the 3B7 docs/scripts) | `[x]` |
+| A1 | Correct release commit selected | `git rev-parse HEAD` → the branch tip. The **deployable release commit is `c19c0a6`** (3B6 — the last commit carrying a deployable artefact); everything after it (3B7 and any follow-up) is documentation and smoke only, so the deployable artefact set is unchanged by later doc commits. | `[x]` |
 | A2 | Branch is `design/ui-ux-overhaul` | `git rev-parse --abbrev-ref HEAD` | `[x]` |
-| A3 | Working tree clean at the release commit | `git status --porcelain` → empty **at the release commit** (verified clean at the 3B7 base `c19c0a6`; the 3B7 docs/scripts land in their own commit — re-verify after it, per A1) | `[x]` |
+| A3 | Working tree clean at the release commit | `git status --porcelain` → empty at HEAD, verified after the 3B7 docs/scripts landed | `[x]` |
 | A4 | Migration diff empty | `git diff --stat 6d7f940..HEAD -- packages/db/migrations` → empty | `[x]` |
 | A5 | Seed changes reviewed (seeds are **not** empty — they were extended for local test identities) | `git diff --stat 6d7f940..HEAD -- packages/db/seed` → `dev.sql`, `demo.sql` (synthetic local identities/fixtures only; seeds are never applied in production — `postgres` mounts `packages/db/migrations`, not `packages/db/seed`) | `[x]` |
 

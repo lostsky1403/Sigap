@@ -37,7 +37,7 @@ Rules that must hold at every step:
 
 | # | Check | How | Required result |
 |---|---|---|---|
-| 2.1 | Release commit selected | `git rev-parse HEAD` | The intended commit (currently `c19c0a6`) |
+| 2.1 | Release commit selected | `git rev-parse HEAD` | `git rev-parse HEAD` is the branch tip; the **deployable release commit is `c19c0a6`** (3B6, the last commit carrying a deployable artefact — 3B7 and later doc commits add docs/smoke only) |
 | 2.2 | Branch | `git rev-parse --abbrev-ref HEAD` | `design/ui-ux-overhaul` |
 | 2.3 | Working tree clean | `git status --porcelain` | Empty |
 | 2.4 | Migration diff empty | `git diff --stat <pre-3B-anchor>..HEAD -- packages/db/migrations` | Empty (anchor: `6d7f940`) |
@@ -56,8 +56,33 @@ a prerequisite of this cutover, and it must not be treated as one.
 
 ## 3. Deploy order
 
-The order is dictated by `docker-compose.yml`'s `depends_on` + healthcheck graph. It is a
-strict DAG; do not reorder.
+Two distinct orders matter, and both are recorded here: the **phase** order (which redesign
+phase may be deployed, and when) and the **service** order (the compose DAG within one deploy).
+
+### 3a. Phase deployment sequence (plan §15.6)
+
+The redesign was delivered as seven phases on one branch. They are **not** deployed as a
+single cutover. Deploy in this order, verifying between phases:
+
+| # | Phase | Deploy | Gate before proceeding |
+|---|---|---|---|
+| 1 | **3B0** | Deploy 3B0 **alone first** — it is the independent security release (backend authorization + proxies). Redeploy both API and web images. | Smoke-check admin reads and the citizen flows. This phase closes a P0 privilege-escalation path; deploy it on its own so a regression is attributable. |
+| 2 | **3B1** | Additive only, no user-visible change. May be bundled with 3B2 or deployed alone. | Web gate green. |
+| 3 | **3B2** | Citizen surface (Beranda, `/faskes` catalog). | `/` and `/faskes` render. |
+| 4 | **3B3** | Citizen transactional surfaces (booking, check-in, `/queues/new`, patient status). Deploy **after** 3B2. | Citizen transactions pass against the seeded stack. |
+| 5 | **3B4** | Admin shell and read surfaces. Deploy **after** 3B3. | `/admin` renders; the six read destinations load. |
+| 6 | **3B5** | Admin mutation surfaces (queue/appointment status, facility create/deactivate, notification retry/cancel). Deploy **after** 3B4. | Admin mutations pass the actor-matrix E2E. |
+| 7 | **3B6** | Dead-code removal. Deploy **only after the E2E suite is green in production-equivalent staging.** | Full E2E green on the staging stack. |
+| 8 | **3B7** | **Documents the above; it adds no deployment.** | — |
+
+**Prefer bundling the pairs** (3B1+3B2, and within a phase 3B2→3B3, 3B4→3B5) only when the
+earlier phase's gate has already passed on the same commit range; never skip a phase's gate
+to save a deploy. Each phase's rollback point is in §6.
+
+### 3b. Service deploy order (the compose DAG)
+
+Within any single deploy, the order is dictated by `docker-compose.yml`'s `depends_on` +
+healthcheck graph. It is a strict DAG; do not reorder.
 
 ```
 pg-cert-init  (one-shot, restart:"no")
@@ -166,8 +191,8 @@ whether a variable is live.
 |---|---|---|---|
 | `SIGAP_ENV` | environment marker for web guards | **NOT `local`** | `apps/web/src/lib/server/auth.ts:93,96,167` |
 | `SIGAP_API_INTERNAL` | server-side proxy target | `http://api:8080` | `apps/web/src/lib/server/auth.ts:182` + 5 proxy routes |
-| `PUBLIC_SUPABASE_URL` | Supabase project URL (publishable) | set | `lib/server/auth.ts:27`, `lib/server/supabase/server.ts:26` |
-| `PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key (publishable) | set | `lib/server/auth.ts:27`, `lib/server/supabase/server.ts:27` |
+| `PUBLIC_SUPABASE_URL` | Supabase project URL (publishable) | set | `lib/server/auth.ts:27`, `lib/supabase/server.ts:26` |
+| `PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key (publishable) | set | `lib/server/auth.ts:27`, `lib/supabase/server.ts:27` |
 | `SIGAP_TLS_TERMINATED` | no web-tier consumer; HSTS is emitted from the request protocol (`hooks.server.ts:49-51`), not this flag | set for consistency; the edge must terminate TLS for HSTS to apply | compose env |
 | `ORIGIN` | public origin (CSRF/absolute URLs) | the real public origin | adapter-node runtime |
 
@@ -219,9 +244,12 @@ known-good commit before any 3B work.
 |---|---|---|---|---|---|
 | 3B0 | `6c80ba5` (GATE 1) | backend authorization (facility-scoped read/mutation provenance), proxy repairs, local seed identities | `6d7f940` | previous API **and** web images; P0 privilege-escalation path reopens — **prefer a forward fix** | **No** |
 | 3B1 | `b1303aa` (GATE 2) | shared UI primitives + test tooling; additive | `16268de` | previous web image; no user-visible change | **No** |
-| 3B2 + 3B3 | `0f98da9` | citizen shell, `/faskes`, `/queues/new`, transactional citizen surfaces | `5b25e2c` | previous web image; `/faskes` and `/queues/new` disappear; Beranda reverts | **No** |
-| 3B4 + 3B5 | `0270bbd` (GATE 5) | admin shell + read/mutation surfaces | `0f98da9` | previous web image; `/admin` disappears | **No** |
-| 3B6 | `c19c0a6` (this phase) | dead-code removal (legacy demo components, `maplibre-gl`), E2E stabilization, guards | `0270bbd` | previous web image; deleted components return from git history | **No** |
+| 3B2 | `80e285d` | citizen shell, Beranda, `/faskes` catalog, facility-type filter | `5b25e2c` | previous web image; `/faskes` disappears; Beranda reverts to the demo dashboard | **No** |
+| 3B3 | `0f98da9` | citizen transactional surfaces: booking, check-in, `/queues/new`, patient status | `80e285d` | previous web image; `/queues/new` becomes 404; transactional surfaces revert | **No** |
+| 3B4 | `e566dcb` | admin shell + the six read destinations (no mutation affordances) | `0f98da9` | previous web image; `/admin` disappears | **No** |
+| 3B5 | `0270bbd` (GATE 5) | admin mutation surfaces (queue/appointment status, facility create/deactivate, notification retry/cancel) | `e566dcb` | previous web image; mutation affordances revert | **No** |
+| 3B6 | `c19c0a6` | dead-code removal (legacy demo components, `maplibre-gl`), E2E stabilization, guards | `0270bbd` | previous web image; deleted components return from git history | **No** |
+| 3B7 | `903df5c` | **documentation + smoke only** — this phase adds no deployable artefact | `c19c0a6` | nothing to roll back; reverting the docs has no runtime effect | **No** |
 
 **Canonical rule, verified:** because the redesign introduced **no** database migration,
 **no rollback in this stream requires a database restore.** Verification:
