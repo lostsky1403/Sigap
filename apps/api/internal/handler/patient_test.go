@@ -158,7 +158,16 @@ func TestPatientStatusLookup_SuccessByCheckinCode(t *testing.T) {
 	}
 }
 
-func TestPatientStatusLookup_SuccessByFormattedNumber(t *testing.T) {
+// TestPatientStatusLookup_FormattedNumberIsRefused pins the fix for vuln-0003
+// (upstream main, commit 96c2570): the public status endpoint must NOT resolve
+// a patient by queue_tickets.formatted_number, because those numbers are
+// sequential and therefore enumerable (PATPORTAL-0001, -0002, …).
+//
+// This test previously asserted the OPPOSITE — 200 with found_by
+// "formatted_number" — and was left stale when main removed the lookup. It is
+// corrected here to assert the security contract, which is the behaviour main
+// shipped; the endpoint must answer exactly as it does for any unknown code.
+func TestPatientStatusLookup_FormattedNumberIsRefused(t *testing.T) {
 	pool, h := setupPatientTest(t)
 	ctx := context.Background()
 
@@ -177,30 +186,12 @@ func TestPatientStatusLookup_SuccessByFormattedNumber(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.PatientStatusLookup(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for an enumerable formatted_number, got %d: %s", rec.Code, rec.Body.String())
 	}
-
-	var body map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
-
-	success, ok := body["success"].(bool)
-	if !ok || !success {
-		t.Fatalf("expected success=true, got %v", body["success"])
-	}
-
-	data, ok := body["data"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected data object, got %T", body["data"])
-	}
-
-	if data["facility_name"] != "Faskes Test" {
-		t.Errorf("expected facility_name 'Faskes Test', got %v", data["facility_name"])
-	}
-	if data["found_by"] != "formatted_number" {
-		t.Errorf("expected found_by 'formatted_number', got %v", data["found_by"])
+	// The refusal must not disclose anything about the row it matched.
+	if strings.Contains(rec.Body.String(), "Faskes Test") || strings.Contains(rec.Body.String(), testFormattedNum) {
+		t.Fatalf("refusal leaked patient data: %s", rec.Body.String())
 	}
 }
 
