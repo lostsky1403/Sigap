@@ -46,6 +46,10 @@ the live environment.
 | C12 | Local identity path inactive | `SIGAP_LOCAL_E2E_ACTOR` and `SIGAP_LOCAL_RBAC_TEST_IDENTITY` **unset** | **OPERATOR** |
 | C13 | `SIGAP_AUTO_MIGRATE` | unset/`false` (no migration ships) | **OPERATOR** |
 | C14 | `make db-seed` would refuse | `make db-seed` with a non-`local` `SIGAP_ENV` exits 1: "Refusing to run demo seeds unless SIGAP_ENV=local" (`Makefile` `db-seed`). Verified against the guard predicate: non-local → refuse, `local` → proceed. | `[x]` |
+| C15 | Production overlay refuses an unset/empty `SIGAP_ENV` | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml config` with `SIGAP_ENV` unset → interpolation error **before** any container starts (G10/G11) | `[x]` |
+| C16 | Production env gate passes a clean env | `SIGAP_ENV=staging SIGAP_AUTH_MODE=jwt sh scripts/ops/preflight-production-env.sh` → exit 0 (G15) | `[x]` |
+| C17 | Compose version ≥ 2.24.4 | `docker compose version` (the overlays use `!override`) | **OPERATOR** |
+| C18 | Rollback target captured | `CURRENT_PRODUCTION_VERSION` + `CURRENT_IMAGE_DIGEST` + `SIGAP_DEPLOY_DIR` recorded (runbook §7 contract) | **OPERATOR** |
 
 ## D. Build artifacts
 
@@ -88,7 +92,9 @@ Rehearsal only; see `DEPLOYMENT_RUNBOOK.md` §4a. All checks are in
 | F1 | Rollback commit identified per phase | `docs/operations/DEPLOYMENT_RUNBOOK.md` §6 | `[x]` |
 | F2 | Rollback commands documented | runbook §7 | `[x]` |
 | F3 | DB restore **not** required | runbook §6, verified empty migration diff | `[x]` |
-| F4 | Previous images still pullable | registry check | **OPERATOR** |
+| F4 | Rollback target recorded (version + digests + directory) | runbook §7 contract; captured from the operator evidence bundle | **OPERATOR** |
+| F5 | Rollback uses the SAME overlay set as deploy (base + prod-ports + prod-edge) | runbook §7b | `[x]` |
+| F6 | Edge sanity check in the rollback path (web loopback-only + serves through the edge) | runbook §7b step 3 | `[x]` |
 
 ## G. Negative controls (non-vacuity of the new smoke assertions)
 

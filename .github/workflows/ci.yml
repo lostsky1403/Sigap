@@ -135,6 +135,21 @@ jobs:
       - name: SvelteKit check
         run: pnpm --filter sigap-web run check
 
+  ops-guards:
+    name: Deployment Safety Guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Host-free: no Docker daemon, no container, no production contact.
+      # Proves the production env fails closed (missing/local SIGAP_ENV, bad
+      # auth mode, dev-only flags) and that the deploy/rollback contract is
+      # present. The compose-interpolation cases SKIP cleanly without a daemon.
+      - name: Deployment safety guards
+        run: |
+          sh scripts/ops/test-preflight-production-env.sh
+          sh scripts/ops/test-production-deploy-guards.sh
+
   security-go:
     name: Go Vulnerability Scan
     runs-on: ubuntu-latest
