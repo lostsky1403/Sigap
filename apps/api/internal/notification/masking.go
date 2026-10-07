@@ -151,7 +151,26 @@ func minInt(a, b int) int {
 	return b
 }
 
-// digitRunRegex matches a sequence of 8 or more ASCII digits. Used by
-// the denylist check to catch accidental phone leaks in subject /
-// body_template. Compiled once at package init.
-var digitRunRegex = regexp.MustCompile(`[0-9]{8,}`)
+// digitRunRegex matches sequences that look like a raw phone number.
+// It has two alternatives:
+//
+//  1. [0-9]{8,} — 8 or more CONSECUTIVE ASCII digits. This catches
+//     raw phone numbers like "081234567890" with no formatting.
+//
+//  2. A formatted-phone detector for numbers like "0812-3456-7890" or
+//     "+62 812 3456 7890". Unlike alternative 1, this catches phone
+//     numbers that have been split by hyphens, dots, spaces, or
+//     parentheses so that no single run reaches 8 digits.
+//
+//     The pattern matches: a digit run of 3-4, followed by a separator
+//     and another digit group of 3-4, followed by a separator and
+//     another digit group of 2-4. This requires at least 8 digits
+//     spread across groups — a layout typical of phone numbers but
+//     not of dates (which use a 4-2-2 pattern with short tails).
+//
+//     Example matches: "0812-3456-7890", "+62 812 345 6789",
+//     "(021) 555-1234"
+//
+//     Non-matches: "2026-06-22" (only 2 digit groups after the first),
+//     "09:00" (too few digits), "Order #1234567" (single run of 7).
+var digitRunRegex = regexp.MustCompile(`[0-9]{8,}|[0-9]{3,4}[-._() ][0-9]{3,4}[-._() ][0-9]{2,4}`)

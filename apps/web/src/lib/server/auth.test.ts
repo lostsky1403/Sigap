@@ -46,14 +46,20 @@ describe('proxyHeaders — the credential boundary', () => {
 		expect(proxyHeaders()).toEqual({});
 	});
 
-	it('injects the fixed dev identity under SIGAP_ENV=local', () => {
+	/**
+	 * SECURITY (upstream main, vuln-0002 follow-up): the browser NEVER emits
+	 * X-Sigap-Dev-User-ID, not even under SIGAP_ENV=local with dev identity
+	 * enabled. A client-set header must carry no authentication meaning, so the
+	 * web tier does not produce one at all.
+	 */
+	it('never injects a dev identity, even under SIGAP_ENV=local with it enabled', () => {
 		setEnv({ SIGAP_ENV: 'local', SIGAP_DEV_IDENTITY: 'true' });
-		expect(proxyHeaders()).toEqual({ 'X-Sigap-Dev-User-ID': 'admin-ui' });
+		expect(proxyHeaders()).toEqual({});
 	});
 
-	it('refuses to run outside local rather than injecting a dev identity', () => {
+	it('never injects a dev identity outside local either', () => {
 		setEnv({ SIGAP_ENV: 'staging', SIGAP_DEV_IDENTITY: 'true' });
-		expect(() => proxyHeaders()).toThrow(/SIGAP_ENV=local/);
+		expect(proxyHeaders()).toEqual({});
 	});
 
 	/**
@@ -75,15 +81,16 @@ describe('proxyHeaders — the credential boundary', () => {
 	});
 
 	/**
-	 * The dev identity is FIXED. A browser cannot become a different identity by
-	 * naming one, because the value is a literal, not an echo of anything.
+	 * The dev identity is NEVER emitted. A browser cannot become an identity by
+	 * naming one, and it cannot fall back to a fixed one either.
 	 */
-	it('always injects the same literal subject, never one derived from a request', () => {
+	it('always injects nothing, regardless of how many times it is called', () => {
 		setEnv({ SIGAP_ENV: 'local', SIGAP_DEV_IDENTITY: 'true' });
 		const first = proxyHeaders();
 		const second = proxyHeaders();
-		expect(first).toEqual(second);
-		expect(first['X-Sigap-Dev-User-ID']).toBe('admin-ui');
+		expect(first).toEqual({});
+		expect(second).toEqual({});
+		expect(first).not.toHaveProperty('X-Sigap-Dev-User-ID');
 	});
 
 	/**
@@ -112,11 +119,10 @@ describe('proxyHeaders — the credential boundary', () => {
 		expect(code).not.toMatch(/event\.request\.headers/);
 		expect(code).not.toMatch(/get\(\s*['"`]x-sigap/i);
 		// The only X-Sigap-* literals in executable code may be headers the
-		// server itself produces, never ones read from a caller.
+		// server itself produces, never ones read from a caller. Since the
+		// upstream security fix, the browser emits ONLY the local actor header.
 		const emitted = [...code.matchAll(/['"`](X-Sigap-[A-Za-z-]+)['"`]/g)].map((m) => m[1]);
-		expect(new Set(emitted)).toEqual(
-			new Set(['X-Sigap-Dev-User-ID', 'X-Sigap-Local-Test-Subject'])
-		);
+		expect(new Set(emitted)).toEqual(new Set(['X-Sigap-Local-Test-Subject']));
 	});
 });
 
@@ -239,23 +245,26 @@ describe('proxyHeaders — local actor takes precedence over dev identity', () =
 		expect(headers).toHaveProperty('X-Sigap-Local-Test-Subject');
 	});
 
-	it('falls back to the dev identity when no local actor is configured', () => {
+	/**
+	 * SECURITY: with no local actor configured there is NO dev-identity
+	 * fallback. The web tier emits nothing; a dev identity is a server-side
+	 * tool only.
+	 */
+	it('does not fall back to a dev identity when no local actor is configured', () => {
 		setEnv({ SIGAP_ENV: 'local', SIGAP_DEV_IDENTITY: 'true', SIGAP_LOCAL_E2E_ACTOR: undefined });
-		expect(proxyHeaders()).toEqual({ 'X-Sigap-Dev-User-ID': 'admin-ui' });
+		expect(proxyHeaders()).toEqual({});
 	});
 
 	/**
 	 * A local actor configured OUTSIDE local must not silently fall through to
-	 * the dev identity either. It produces no header, and the production guard
-	 * still fires on the dev path — a misconfigured non-local deployment fails
-	 * loudly rather than quietly running as some actor.
+	 * anything: it produces no header, and no dev header is emitted either.
 	 */
-	it('refuses outright when a local actor is configured outside local', () => {
+	it('emits nothing when a local actor is configured outside local', () => {
 		setEnv({
 			SIGAP_ENV: 'production',
 			SIGAP_DEV_IDENTITY: 'true',
 			SIGAP_LOCAL_E2E_ACTOR: 'e2e-schedule-manager'
 		});
-		expect(() => proxyHeaders()).toThrow(/SIGAP_ENV=local/);
+		expect(proxyHeaders()).toEqual({});
 	});
 });
