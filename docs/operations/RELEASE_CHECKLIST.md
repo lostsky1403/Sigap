@@ -104,10 +104,20 @@ recorded verbatim so the claim is auditable.
 | G5 | Summary assertion fails on non-zero data | `-ZeroScopeSubject` set to a subject that HAS scope | `[FAIL] p0.summary.zero_assignment` — non-zero counts observed | `[x]` |
 | G6 | Database-target safety fails for a forbidden DB host | `-DatabaseUrl postgresql://u:p@db.prod.example.com:5432/sigap` | `[FAIL] parameters` — "DatabaseUrl must point at a LOOPBACK host"; exit 2, no DML run | `[x]` |
 | G7 | Re-run is idempotent (no false abort from the walk-in rate limit) | run the suite twice in a row | both runs `18/18`, exit 0; probe residue 0 after each | `[x]` |
+| G8 | `selector_armed` aborts on an UNARMED API (fail-closed 403) | stub API answering 403 on `/api/v1/admin/notifications/summary` (loopback, no DB) | `[FAIL] precondition.selector_armed` — "not resolved (HTTP 403, expected 200); the local test identity selector is not armed"; exit 2 **before** `fixtures.create` | `[x]` |
+| G9 | `selector_armed` passes on an ARMED API (200) | same stub answering 200 | `[PASS] precondition.selector_armed` — "resolved (HTTP 200)"; no parameter abort | `[x]` |
+| G10 | Production compose refuses an unset `SIGAP_ENV` | `docker compose … -f docker-compose.prod-ports.yml config` with `SIGAP_ENV` unset | interpolation error before any container starts | `[x]` |
+| G11 | Production compose refuses an empty `SIGAP_ENV` | same, `SIGAP_ENV=` | interpolation error | `[x]` |
+| G12 | Production env gate rejects `SIGAP_ENV=local` (and `Local`/`LOCAL`) | `scripts/ops/preflight-production-env.sh` | exit 1 | `[x]` |
+| G13 | Production env gate rejects `dev`/`disabled`/unknown auth mode | `preflight-production-env.sh` with each mode | exit 1 | `[x]` |
+| G14 | Production env gate rejects dev-only flags | `SIGAP_DEV_IDENTITY=true`, `SIGAP_LOCAL_RBAC_TEST_IDENTITY=true` | exit 1 | `[x]` |
+| G15 | Production env gate accepts a clean production env | `SIGAP_ENV=staging SIGAP_AUTH_MODE=jwt` | exit 0 | `[x]` |
 
-> G1–G7 are **rehearsal evidence** on the local production-equivalent stack, re-run against the
-> final script. G1/G2 are now also covered in-process by the scripted positive control
-> (steps 9–10), which performs the same proof and cleans up after itself.
+> G1–G9 are **rehearsal evidence** on the local production-equivalent stack (G8/G9 use a
+> loopback stub; no database). G10–G15 are the fail-closed env guards, re-run by
+> `scripts/ops/test-production-deploy-guards.sh` (11/11) and
+> `scripts/ops/test-preflight-production-env.sh` (13/13). G1/G2 are also covered in-process by
+> the scripted positive control (steps 9–10), which performs the same proof and cleans up.
 
 ## H. Post-deploy verification (during the real deployment)
 
