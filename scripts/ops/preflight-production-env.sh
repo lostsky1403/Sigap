@@ -25,8 +25,26 @@ if [ -z "$env_val" ]; then
   say "FAIL: SIGAP_ENV is unset/empty — set it explicitly (staging/production)"
   fail=1
 else
-  lowered=$(printf '%s' "$env_val" | tr '[:upper:]' '[:lower:]')
+  # Trim whitespace then lowercase: the Go guard does TrimSpace + EqualFold
+  # (envguard.go), so " local " IS local to the API. Without the trim this gate
+  # would pass a value that silently disables the API's TLS guard.
+  lowered=$(printf '%s' "$env_val" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
   check "SIGAP_ENV" "$lowered" "local"
+fi
+
+# --- SIGAP_DEPLOY_DIR: the deployment directory contract (runbook §7a) ---
+deploy_dir=${SIGAP_DEPLOY_DIR:-}
+if [ -z "$deploy_dir" ]; then
+  say "FAIL: SIGAP_DEPLOY_DIR is unset — the deploy/rollback directory must be recorded before any build or up"
+  fail=1
+elif [ ! -d "$deploy_dir" ]; then
+  say "FAIL: SIGAP_DEPLOY_DIR='$deploy_dir' is not a directory"
+  fail=1
+elif [ ! -f "$deploy_dir/docker-compose.yml" ]; then
+  say "FAIL: SIGAP_DEPLOY_DIR='$deploy_dir' has no docker-compose.yml (not the compose repo)"
+  fail=1
+else
+  say "PASS: SIGAP_DEPLOY_DIR resolves to a compose directory"
 fi
 
 # --- SIGAP_AUTH_MODE: canonical modes come from apps/api/internal/auth/config.go ---

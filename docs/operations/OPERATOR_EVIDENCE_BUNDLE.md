@@ -54,15 +54,19 @@ Print **variable names and safe values only**. Never echo credentials.
 docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' $(docker ps -q --filter "name=sigap-api") \
   | grep -E '^SIGAP_ENV=|^SIGAP_AUTH_MODE=|^SIGAP_TLS_TERMINATED=|^SIGAP_TRUSTED_PROXIES='
 
-# Presence-only (NEVER print the value):
-for v in SIGAP_DEV_IDENTITY SIGAP_LOCAL_RBAC_TEST_IDENTITY SIGAP_LOCAL_E2E_ACTOR \
-         SIGAP_ENGINE_FALLBACK PUBLIC_SUPABASE_URL PUBLIC_SUPABASE_ANON_KEY \
-         SIGAP_API_INTERNAL SIGAP_AUTH_ISSUER SIGAP_AUTH_AUDIENCE SIGAP_AUTH_JWKS_URL \
-         SIGAP_DATABASE_URL POSTGRES_PASSWORD; do
-  if docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
-       $(docker ps -q --filter "name=sigap-api") $(docker ps -q --filter "name=sigap-web") 2>/dev/null \
-       | grep -q "^${v}="; then echo "${v}=PRESENT"; else echo "${v}=ABSENT"; fi
-done
+# Presence-only (NEVER print the value).
+IDS=$(docker ps -q --filter "name=sigap-api")$(docker ps -q --filter "name=sigap-web")
+if [ -z "$IDS" ]; then
+  echo "NO SIGAP CONTAINERS RUNNING - presence check is UNKNOWN, not ABSENT"
+else
+  for v in SIGAP_DEV_IDENTITY SIGAP_LOCAL_RBAC_TEST_IDENTITY SIGAP_LOCAL_E2E_ACTOR \
+           SIGAP_ENGINE_FALLBACK PUBLIC_SUPABASE_URL PUBLIC_SUPABASE_ANON_KEY \
+           SIGAP_API_INTERNAL SIGAP_AUTH_ISSUER SIGAP_AUTH_AUDIENCE SIGAP_AUTH_JWKS_URL \
+           SIGAP_DATABASE_URL POSTGRES_PASSWORD; do
+    if docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' $IDS 2>/dev/null \
+         | grep -q "^${v}="; then echo "${v}=PRESENT"; else echo "${v}=ABSENT"; fi
+  done
+fi
 ```
 
 Report back, as literal values:
@@ -82,13 +86,19 @@ docker ps --filter "name=sigap" --format '{{.Names}}' \
 Expected: postgres/engine/api bound to `127.0.0.1` only; web bound to `127.0.0.1:3005`; web
 also attached to the shared edge network.
 
-## 7. Reverse proxy metadata (labels only — do not change anything)
+## 7. Reverse proxy metadata (keys only — do not change anything, do not dump values)
 
 ```sh
-docker inspect --format '{{range $k,$v := .Config.Labels}}{{println $k}}={{$v}}{{end}}' \
-  $(docker ps -q --filter "name=sigap-web") | grep -i traefik
+# Keys only: Traefik middleware labels (e.g. *.basicauth.users) can hold
+# credential material, so never print label VALUES verbatim.
+docker inspect --format '{{range $k,$v := .Config.Labels}}{{println $k}}{{end}}' \
+  $(docker ps -q --filter "name=sigap-web") | grep -i traefik | sort
 docker network ls | grep -i traefik
 ```
+
+If a specific routing value is needed, read the single key you need
+(`traefik.http.routers.sigap-web.rule`, `…entrypoints`, `…tls.certresolver`) — never the
+whole label set.
 
 ## 8. Release identity
 

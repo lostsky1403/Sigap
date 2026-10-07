@@ -36,6 +36,15 @@ services:
     networks:
       - default
       - edge
+    # Fail closed, same as docker-compose.prod-ports.yml. This overlay is
+    # meaningless without the port override, but a partial deploy
+    # (`-f docker-compose.yml -f docker-compose.prod-edge.yml`) would
+    # otherwise inherit the base file's SIGAP_ENV=local default.
+    environment:
+      SIGAP_ENV: ${SIGAP_ENV:?SIGAP_ENV must be set explicitly for the production overlay (e.g. SIGAP_ENV=staging); refusing to default to "local"}
+  api:
+    environment:
+      SIGAP_ENV: ${SIGAP_ENV:?SIGAP_ENV must be set explicitly for the production overlay (e.g. SIGAP_ENV=staging); refusing to default to "local"}
 
 networks:
   edge:
