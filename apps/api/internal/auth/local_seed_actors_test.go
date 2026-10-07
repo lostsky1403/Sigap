@@ -236,10 +236,12 @@ func TestLocalSeed_MixedActorDivergesByFacility(t *testing.T) {
 	}
 }
 
-// TestLocalSeed_DevIdentityStillLacksScheduleManage is the §11 guard that the
-// obvious shortcut was NOT taken. The dev identity keeps its exact permission
-// set, and schedule.manage is still absent from it.
-func TestLocalSeed_DevIdentityStillLacksScheduleManage(t *testing.T) {
+// TestLocalSeed_DevIdentityIsReadOnlyNonPHI is the §11 guard that the obvious
+// shortcut was NOT taken. The dev identity keeps a read-only, non-PHI
+// permission set: schedule.manage is absent (Phase 3B5.0 requires a separate
+// DB-backed actor instead), and — since the upstream main security fix
+// (vuln-0002) — every write-level permission is absent too.
+func TestLocalSeed_DevIdentityIsReadOnlyNonPHI(t *testing.T) {
 	t.Setenv("SIGAP_DEV_IDENTITY", "true")
 	p := NewDevIdentityProvider()
 	if !p.enabled {
@@ -247,13 +249,30 @@ func TestLocalSeed_DevIdentityStillLacksScheduleManage(t *testing.T) {
 	}
 
 	actor := permissionsOfDevActor(t, p)
-	if actor.HasPermission("schedule.manage") {
-		t.Error("schedule.manage must NOT have been added to the dev identity; " +
-			"Phase 3B5.0 requires a separate DB-backed actor instead")
+
+	// No write-level permission may be granted by a client-supplied header.
+	for _, perm := range []string{
+		"schedule.manage",
+		"facility.manage",
+		"appointment.manage",
+		"notification.manage",
+		"queue.manage",
+		"queue.generate",
+	} {
+		if actor.HasPermission(perm) {
+			t.Errorf("dev identity must NOT grant write permission %q (vuln-0002)", perm)
+		}
 	}
-	// Spot-check that the dev set is otherwise unchanged, so this test would
-	// notice if someone "fixed" it by rewriting the list.
-	for _, perm := range []string{"queue.read", "facility.read", "schedule.read", "notification.manage"} {
+	// No unrestricted facility grant may exist either — that would satisfy the
+	// facility-scoped mutation checks the permission list above is meant to fail.
+	for _, g := range actor.FacilityGrants {
+		if g.Unrestricted {
+			t.Errorf("dev identity must not carry an unrestricted facility grant (key %q)", g.Key)
+		}
+	}
+	// Spot-check that the read-only set is intact, so this test would notice if
+	// someone "fixed" it by rewriting the list.
+	for _, perm := range []string{"queue.read", "facility.read", "schedule.read", "notification.read", "appointment.read", "audit.read"} {
 		if !actor.HasPermission(perm) {
 			t.Errorf("dev identity unexpectedly lost %q", perm)
 		}

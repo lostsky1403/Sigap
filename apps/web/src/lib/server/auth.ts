@@ -44,61 +44,26 @@ export function authHeaders(event: RequestEvent): Record<string, string> {
 	return { Authorization: `Bearer ${token}` };
 }
 
-const isDevIdentityEnabled = (): boolean => {
-	return process.env.SIGAP_DEV_IDENTITY === 'true';
-};
-
 /**
  * Returns headers to attach to upstream API requests.
  *
- * THE ORDER HERE IS A SECURITY DECISION, not a style choice.
+ * SECURITY: This function NEVER injects the X-Sigap-Dev-User-ID header.
+ * The client is always untrusted — any header it sets is fully
+ * client-controlled and must never carry authentication meaning
+ * (upstream main, vuln-0002 follow-up).
  *
- * The Go API selects ONE provider at startup: when
- * `SIGAP_LOCAL_RBAC_TEST_IDENTITY=true` and the pool is present, the local
- * DB-backed selector REPLACES the dev identity provider entirely
- * (`cmd/server/main.go`). So while that flag is armed:
+ * The ONE header it may emit is `X-Sigap-Local-Test-Subject`, and only when
+ * the process is provably local: `localE2eActorHeader()` returns `{}` unless
+ * `SIGAP_ENV=local` AND `SIGAP_LOCAL_E2E_ACTOR` is a non-empty subject. The Go
+ * API additionally refuses to arm that selector outside `SIGAP_ENV=local`, so
+ * the two tiers agree.
  *
- *   - `X-Sigap-Dev-User-ID` is IGNORED. The local provider never reads it.
- *   - `X-Sigap-Local-Test-Subject` is what actually selects the actor.
- *   - Sending only the dev header would produce a ZERO actor, because the
- *     armed provider finds no subject and returns `identity.Actor{}` — which
- *     surfaces as a 401 on every admin read, not as a readable auth error.
- *
- * So the local actor header REPLACES the dev header rather than accompanying
- * it. This mirrors the Go-side precedence exactly, and it is the reason the
- * local actor is expressed here at all: the browser picks nothing, the process
- * does, and the two tiers agree on which one wins.
- *
- * - When a local E2E actor is configured: injects only
+ * - When a local E2E actor is configured (and only then): injects
  *   `X-Sigap-Local-Test-Subject`.
- * - When `SIGAP_DEV_IDENTITY=true` and no local actor is configured: injects
- *   `X-Sigap-Dev-User-ID: admin-ui`.
- * - When `SIGAP_ENV` is not `local` and dev identity is enabled:
- *   throws at startup to prevent accidental production use.
  * - Otherwise: returns empty headers.
  */
 export function proxyHeaders(): Record<string, string> {
-	// Checked FIRST so the local actor wins over dev identity, matching the
-	// Go-side provider precedence described above.
-	const localActor = localE2eActorHeader();
-	if (Object.keys(localActor).length > 0) {
-		return localActor;
-	}
-
-	if (!isDevIdentityEnabled()) {
-		return {};
-	}
-
-	// Production guard: fail fast if dev identity is enabled outside local.
-	const env = (process.env.SIGAP_ENV || '').toLowerCase();
-	if (env && env !== 'local') {
-		throw new Error(
-			`SIGAP_DEV_IDENTITY=true is not allowed when SIGAP_ENV=${process.env.SIGAP_ENV}. ` +
-			`Set SIGAP_ENV=local for development or disable dev identity.`
-		);
-	}
-
-	return { 'X-Sigap-Dev-User-ID': 'admin-ui' };
+	return localE2eActorHeader();
 }
 
 /**

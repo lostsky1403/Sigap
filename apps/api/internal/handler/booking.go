@@ -219,7 +219,7 @@ func (h *BookingHandler) BookAppointment(w http.ResponseWriter, r *http.Request)
 	// booking-id and the patient contact to the enqueue helper; the
 	// helper consumes the contact transiently, computes mask + hash,
 	// and discards the raw value before any persistence or return.
-	h.fireBookingConfirmation(id, req.PatientDisplayName, phone, req.FacilityID)
+	h.fireBookingConfirmation(id, code, req.PatientDisplayName, phone, req.FacilityID)
 }
 
 // validateBookAppointment performs structural validation.
@@ -307,7 +307,7 @@ func (h *BookingHandler) WithNotificationService(s *notification.Service) *Booki
 // raw value. patientName is NOT passed to the notification service
 // (templates use {appointment_id} / {facility_name} placeholders
 // only — never raw PII placeholders).
-func (h *BookingHandler) fireBookingConfirmation(appointmentID, patientName, patientPhone, facilityID string) {
+func (h *BookingHandler) fireBookingConfirmation(appointmentID, checkinCode, patientName, patientPhone, facilityID string) {
 	if h.notify == nil {
 		return
 	}
@@ -341,6 +341,7 @@ func (h *BookingHandler) fireBookingConfirmation(appointmentID, patientName, pat
 			TemplateKey:         "appointment.booked.confirmation",
 			Subject:             "Konfirmasi Janji Temu Sigap",
 			BodyTemplate:        "Janji temu Anda berhasil dicatat. Kode check-in: {checkin_code}.",
+			TemplateVars:        map[string]string{"checkin_code": checkinCode},
 			RecipientType:       notification.RecipientPatient,
 			RecipientContact:    patientPhone,
 			RelatedResourceType: "appointment",
@@ -389,7 +390,8 @@ func (h *BookingHandler) fireCheckInConfirmation(appointmentID, patientPhone, fa
 			Channel:             notification.ChannelDev,
 			TemplateKey:         "appointment.checked_in.confirmation",
 			Subject:             "Status Check-in Sigap",
-			BodyTemplate:        "Check-in Anda berhasil. Nomor antrean: " + queueNumber + ".",
+			BodyTemplate:        "Check-in Anda berhasil. Nomor antrean: {queue_number}.",
+			TemplateVars:        map[string]string{"queue_number": queueNumber},
 			RecipientType:       notification.RecipientPatient,
 			RecipientContact:    patientPhone,
 			RelatedResourceType: "appointment",

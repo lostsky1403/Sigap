@@ -55,9 +55,19 @@ func (s *Service) Enqueue(ctx context.Context, in EnqueueInput) (OutboxRow, erro
 	if ContainsRawPhoneDigits(in.Subject) {
 		return OutboxRow{}, ErrSubjectLeakPhone
 	}
-	if ContainsRawPhoneDigits(in.BodyTemplate) {
+	// Render the body template through RenderTemplate so that any
+	// {placeholder} tokens are substituted via the closed allow-list
+	// (AllowedNames) and the digit-denial check runs on the final
+	// rendered output. This replaces the previous pattern where
+	// callers concatenated dynamic values directly into BodyTemplate.
+	rendered, err := RenderTemplate(in.BodyTemplate, in.TemplateVars)
+	if err != nil {
+		return OutboxRow{}, err
+	}
+	if ContainsRawPhoneDigits(rendered) {
 		return OutboxRow{}, ErrBodyLeakPhone
 	}
+	in.BodyTemplate = rendered
 
 	var mask string
 	switch in.RecipientType {
@@ -84,7 +94,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',0,$9,$10,$11,$12,$13)
 RETURNING id, created_at, updated_at`
 
 	var out OutboxRow
-	err := s.pool.QueryRow(ctx, insertSQL,
+	err = s.pool.QueryRow(ctx, insertSQL,
 		nullableUUID(facilityUUID),
 		string(in.Channel),
 		in.TemplateKey,
