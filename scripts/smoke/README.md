@@ -88,6 +88,10 @@ The script fails fast: any non-zero exit code stops the run immediately.
 > test identity selector resolves the P0 subjects; `Start-LocalE2E.ps1` arms both), and
 > `DATABASE_URL` (for the disposable probe rows and the row snapshots). If the selector is
 > not armed the suite exits **2** with a clear message rather than reporting false failures.
+>
+> The precondition requires HTTP **200** on the probe. An unarmed API fails closed with
+> **403** (`authz.go` deny-by-default) because the provider returns a zero actor on every
+> failure path; 403 therefore means "not armed" and aborts before any fixture is created.
 
 ### Exit codes
 
@@ -486,7 +490,7 @@ endpoint would look identical to a 404 from a *denied* scope.
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | `[FAIL] parameters` — "must be a LOOPBACK host" | Target pointed at a non-loopback host | Use `127.0.0.1`/`localhost`; this script never runs against production |
-| exit `2` — "local test identity selector is not armed" | API not started with `SIGAP_ENV=local` + `SIGAP_LOCAL_RBAC_TEST_IDENTITY=true` | Start via `Start-LocalE2E.ps1`, or set both and restart the API |
+| exit `2` — "local test identity selector is not armed" | API not started with `SIGAP_ENV=local` + `SIGAP_LOCAL_RBAC_TEST_IDENTITY=true`, **or** the subject is unresolvable. The probe answers 403 (fail-closed), not 401 | Start via `Start-LocalE2E.ps1`, or set both and restart the API |
 | `[FAIL] fixtures.create` | `DATABASE_URL` wrong, or the schema is not migrated | Check the DSN; apply `packages/db/migrations` |
 | `[FAIL] p0.retry.in_scope.status` | the seeded demo facility or the scoped subject is missing | Load `packages/db/seed/dev.sql` + `demo.sql` |
 | all `web.route.*` `[FAIL]` | no web preview on `-WebBase` | Start the preview (`Start-LocalE2E.ps1`) or set `SIGAP_WEB_BASE` |
