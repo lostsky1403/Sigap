@@ -9,12 +9,20 @@ PASS/FAIL assertions.
 - `sigap-demo-smoke.ps1` — main script; runs the documented happy path.
 - `sigap-notification-smoke.ps1` — notification pipeline smoke; verifies outbox, worker dry-run, and delivery.
 - `sigap-patient-portal-smoke.ps1` — patient portal smoke; validates public status lookup API.
-- `sigap-full-local-demo.ps1` — orchestrates seed + smoke in one command; runs all three seeds then all three smoke suites.
+- `sigap-production-readiness-smoke.ps1` — post-deploy readiness (Phase 3B7): the web routes (`/`, `/faskes`, `/queues/new`, `/admin`, `/appointments/new`, `/appointments/check-in`, `/patient/status`), the public catalog, and the two P0 proofs (out-of-scope notification retry → 404 **and** no row write; zero-assignment actor → all-zero summary, with the global super_admin contrast). Requires a loopback API + web target and the local test identity selector armed.
+- `sigap-full-local-demo.ps1` — orchestrates seed + smoke in one command; runs all three seeds then all four smoke suites.
+
+> **Every smoke target is loopback-only.** `sigap-production-readiness-smoke.ps1`
+> refuses any non-loopback `-ApiBase`/`-WebBase` **and** a non-loopback `-DatabaseUrl`
+> before making a request or running any DML (the same allow-list as
+> `apps/web/playwright.config.ts`). Override the database check only for an explicitly
+> authorized staging rehearsal, with `-AllowNonLocalDatabase`. Smoke runs never target
+> production.
 
 ## Full local demo — one command
 
 `sigap-full-local-demo.ps1` runs the complete local demo readiness suite:
-seeds the database (dev, rbac, demo) then runs all three smoke suites.
+seeds the database (dev, rbac, demo) then runs all four smoke suites.
 
 ### When to use
 
@@ -34,6 +42,8 @@ seeds the database (dev, rbac, demo) then runs all three smoke suites.
 | `SIGAP_DEV_IDENTITY` | yes | Set to `true` to enable `X-Sigap-Dev-User-ID` header |
 | `SIGAP_ENGINE_FALLBACK` | Mode A only | Set to `dev` to skip the Rust queue engine |
 | `SIGAP_API_BASE` | no | API base URL (default `http://127.0.0.1:8080`) |
+| `SIGAP_WEB_BASE` | prod-readiness suite | Web origin (default `http://127.0.0.1:4173`) |
+| `SIGAP_LOCAL_RBAC_TEST_IDENTITY` | prod-readiness suite | Set to `true` (with `SIGAP_ENV=local`) to arm the local test identity selector the P0 proofs need |
 
 > **Restart-safe**: Env vars are shell-scoped. After a terminal restart or
 > new shell, re-export them. If `psql` prompts for a user/password,
@@ -68,8 +78,16 @@ pwsh -NoProfile -File scripts/smoke/sigap-full-local-demo.ps1 -SkipSeed
 | Smoke | `sigap-demo-smoke.ps1` | 8-step booking / check-in / queue flow |
 | Smoke | `sigap-notification-smoke.ps1` | 9-step notification pipeline |
 | Smoke | `sigap-patient-portal-smoke.ps1` | 5-step public status lookup |
+| Smoke | `sigap-production-readiness-smoke.ps1` | web routes + admin mutations + the two P0 proofs (16 checks) |
 
 The script fails fast: any non-zero exit code stops the run immediately.
+
+> **The production-readiness suite needs more than the API.** It additionally requires:
+> a **web preview** on `127.0.0.1:4173` (or `-WebBase` / `$env:SIGAP_WEB_BASE`), the API
+> started with **`SIGAP_ENV=local` + `SIGAP_LOCAL_RBAC_TEST_IDENTITY=true`** (so the local
+> test identity selector resolves the P0 subjects; `Start-LocalE2E.ps1` arms both), and
+> `DATABASE_URL` (for the disposable probe rows and the row snapshots). If the selector is
+> not armed the suite exits **2** with a clear message rather than reporting false failures.
 
 ### Exit codes
 
@@ -392,3 +410,89 @@ pwsh -File scripts/smoke/sigap-patient-portal-smoke.ps1 `
 - This script never prints patient data, phone numbers, or any PII.
 - Only HTTP status codes, boolean flags, and field-name presence
   checks are displayed.
+
+## Production readiness smoke
+
+Post-deploy / pre-production verification for Phase 3B7 (T-3B7-02). Covers the web routes,
+the public catalog, the two admin mutations, and the two P0 security proofs.
+
+> **Rehearsal only.** It refuses any non-loopback `-ApiBase`/`-WebBase` (exit 2, before a
+> request) and it creates/removes disposable probe rows and a disposable facility. It is for
+> a production-equivalent **local/staging** stack, never a live production deployment. See
+> `docs/operations/DEPLOYMENT_RUNBOOK.md` §4a/§4b.
+
+### Prerequisites
+
+- A running production-equivalent local stack: real Go API, real Postgres, real web preview,
+  real Rust engine.
+- The API started with `SIGAP_ENV=local` **and** `SIGAP_LOCAL_RBAC_TEST_IDENTITY=true`, so the
+  local test identity selector resolves the P0 subjects. `scripts/dev/Start-LocalE2E.ps1`
+  arms both.
+- `DATABASE_URL` set (probe fixtures + whole-row snapshots).
+- The seed loaded (`dev.sql`, `rbac.sql`, `demo.sql`) so the seeded subjects and the demo
+  facility exist.
+
+### Quickstart
+
+```powershell
+# Bring up the stack (arms SIGAP_ENV=local + the local selector).
+pwsh -NoProfile -File scripts/dev/Start-LocalE2E.ps1 -SkipEngineBuild -KeepRunning
+
+$env:SIGAP_API_BASE = 'http://127.0.0.1:18080'
+$env:SIGAP_WEB_BASE = 'http://127.0.0.1:4173'
+$env:DATABASE_URL   = 'postgresql://sigap:sigap@127.0.0.1:55433/sigap_e2e?sslmode=disable'
+
+pwsh -NoProfile -File scripts/smoke/sigap-production-readiness-smoke.ps1
+```
+
+### What it covers
+
+| Group | Checks |
+|-------|--------|
+| Web routes | `/`, `/faskes`, `/queues/new`, `/admin`, `/appointments/new`, `/appointments/check-in`, `/patient/status` → 200 + a stable SSR marker |
+| Public catalog | `GET /api/v1/public/facilities` → 200 with a non-empty `data` array |
+| P0-1 (positive control) | in-scope retry → 200 **and** the row mutates |
+| P0-1 (denial) | cross-facility retry → 404 **and** the whole row is unchanged |
+| P0-3 | zero-assignment non-super_admin → all five declared status keys present and zero |
+| §4.5 contrast | DB-resolved active global super_admin → non-zero global counts |
+| Admin mutations | queue `waiting → called` persists; disposable facility deactivate sets `is_active=false` |
+
+The positive control is what makes the 404 meaningful: without it, a 404 from a *missing*
+endpoint would look identical to a 404 from a *denied* scope.
+
+### Parameters
+
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| `-ApiBase` | `$env:SIGAP_API_BASE` or `http://127.0.0.1:8080` | API root (loopback only) |
+| `-WebBase` | `$env:SIGAP_WEB_BASE` or `http://127.0.0.1:4173` | Web origin (loopback only) |
+| `-DatabaseUrl` | `$env:DATABASE_URL` | psql connection for probe fixtures + snapshots |
+| `-ZeroScopeSubject` | `local-zero-scope-admin` | Zero-assignment actor (P0-3) |
+| `-GlobalSuperAdminSubject` | `local-global-super-admin` | Global super_admin (§4.5 contrast) |
+| `-ScopedSubject` | `local-facility-admin` | Facility-scoped actor (P0-1 + admin mutations) |
+| `-ScopedFacilityId` | `…d000` | Facility the scoped subject manages |
+| `-OtherFacilityId` | `…e000` | A different facility (the cross-facility target) |
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | All checks passed |
+| `1` | At least one assertion failed |
+| `2` | Parameter/precondition failure: non-loopback target, missing `DATABASE_URL`, or the local identity selector is not armed |
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `[FAIL] parameters` — "must be a LOOPBACK host" | Target pointed at a non-loopback host | Use `127.0.0.1`/`localhost`; this script never runs against production |
+| exit `2` — "local test identity selector is not armed" | API not started with `SIGAP_ENV=local` + `SIGAP_LOCAL_RBAC_TEST_IDENTITY=true` | Start via `Start-LocalE2E.ps1`, or set both and restart the API |
+| `[FAIL] fixtures.create` | `DATABASE_URL` wrong, or the schema is not migrated | Check the DSN; apply `packages/db/migrations` |
+| `[FAIL] p0.retry.in_scope.status` | the seeded demo facility or the scoped subject is missing | Load `packages/db/seed/dev.sql` + `demo.sql` |
+| all `web.route.*` `[FAIL]` | no web preview on `-WebBase` | Start the preview (`Start-LocalE2E.ps1`) or set `SIGAP_WEB_BASE` |
+
+### Privacy
+
+- Never prints recipient contacts or hashes; probe rows use a fixed masked placeholder.
+- Probe rows and the disposable facility are removed in a `finally` block, and the script
+  reports how many remain (expected: 0).
