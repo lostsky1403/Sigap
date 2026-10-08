@@ -1684,14 +1684,14 @@ test.describe('admin mutations never invent a rate-limit state', () => {
 		]) {
 			await gotoAdmin(page, path);
 			const text = ((await page.locator('body').textContent()) ?? '').toLowerCase();
-			for (const forbidden of [
-				'terlalu banyak permintaan',
-				'rate limit',
-				'429',
-				'coba lagi nanti'
-			]) {
+			for (const forbidden of ['terlalu banyak permintaan', 'rate limit', 'coba lagi nanti']) {
 				expect(text, `${path} must not claim ${forbidden}`).not.toContain(forbidden);
 			}
+			// A 429 is a status code, so match it as a standalone token. A bare
+			// substring check is a false positive: the page renders seeded rows
+			// whose ids embed an epoch-millisecond value, and a run of digits
+			// such as "…124298…" contains "429" without being a status code.
+			expect(text, `${path} must not claim a 429`).not.toMatch(/\b429\b/);
 		}
 	});
 });
