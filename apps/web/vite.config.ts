@@ -20,27 +20,34 @@ import { defineConfig, type Plugin } from 'vite';
  * THE MECHANISM
  *
  * On loopback the client and the server draw their ephemeral ports from the
- * SAME pool (49152-65535 here, minus ~2,000 ports this host reserves for
- * Hyper-V/Docker — `netsh int ipv4 show excludedportrange protocol=tcp`). A
- * closed TCP connection parks its local port in TIME_WAIT for 240s, and on
- * Windows the side that sends FIN first keeps the TIME_WAIT entry. Chromium
- * opens a connection per subresource burst and closes it when Playwright tears
- * the per-test browser context down, so each navigation leaves several
- * ephemeral ports parked in TIME_WAIT on the CLIENT side. Measured across the
- * suite, that is ~5 per navigation, and they accumulate until the next
- * `connect()` has no free port and the kernel refuses the bind with
- * `EADDRINUSE` — `ERR_ADDRESS_IN_USE` in Chromium.
+ * SAME pool (49152-65535 here; this host reserves ~1,400 of those 16,384 for
+ * Hyper-V/WinNAT, measured by binding every port in the range — see
+ * `netsh int ipv4 show excludedportrange protocol=tcp`). A closed TCP
+ * connection parks its local port in TIME_WAIT, and on Windows the side that
+ * sends FIN first keeps the TIME_WAIT entry; on this host the entry lingers
+ * for about two minutes. Chromium opens a connection per subresource burst and
+ * closes it when Playwright tears the per-test browser context down, so each
+ * navigation leaves several ephemeral ports parked in TIME_WAIT on the CLIENT
+ * side. They accumulate, and once the pool is full the next `connect()` has no
+ * free port and the kernel refuses the bind with `EADDRINUSE` —
+ * `ERR_ADDRESS_IN_USE` in Chromium.
  *
  * THE FIX
  *
- * Maximise connection reuse. Node's default `keepAliveTimeout` is 5s; a
- * connection idle for longer is reaped and the next request opens a fresh one,
- * with a fresh ephemeral port. Holding connections open for the length of a
- * run means Chromium reuses the sockets it already has instead of drawing new
- * ports from the pool, which is what keeps the pool from filling.
+ * Maximise connection reuse, which is what reduces how many ports are drawn.
+ * Measured on this host with the same driver (40 page loads, fresh browser
+ * context each): Node's default `keepAliveTimeout` of 5s left 5.28 client
+ * TIME_WAIT entries per navigation, because a connection idle for longer than
+ * that is reaped and the next request opens a fresh one with a fresh port. At
+ * 120s the same driver left 1.05 per navigation — the sockets stay warm and
+ * Chromium reuses them. Fewer ports drawn is what keeps the pool from filling.
  *
  * `headersTimeout` must exceed `keepAliveTimeout`, otherwise Node closes a
  * connection while the peer still considers it reusable.
+ *
+ * Scope: this reduces the churn, it does not make the pool infinite. A suite
+ * that drives enough concurrent browser contexts can still exhaust it, so this
+ * is a mitigation for the observed load, not a proof against every load.
  *
  * This is deliberately NOT a retry, a widened assertion timeout, or a reduced
  * worker count: nothing about what the suite asserts changes, and the same
