@@ -117,6 +117,22 @@ classify() {
   printf '%s' "${c:-UNKNOWN}"
 }
 
+# Same, but with standard_conforming_strings OFF. pg_get_constraintdef then
+# renders the regex backslash DOUBLED, so a classifier that compares against a
+# backslash LITERAL (instead of stripping the escape with chr(92)) stops
+# matching and misreports a genuinely strengthened schema as UNEXPECTED_DRIFT.
+# This is the only assertion that covers the chr(92) fix.
+classify_scsoff() {
+  out=$(PGOPTIONS='-c standard_conforming_strings=off' \
+        "$PSQL" -h 127.0.0.1 -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -q -P pager=off -A -t \
+        -d "$1" -f "$SUT" 2>/dev/null)
+  rc=$?
+  if [ "$rc" -ne 0 ]; then printf 'UNKNOWN'; return; fi
+  c=$(printf '%s\n' "$out" | tr -d '\r' \
+      | grep -xE 'MATCHES_CURRENT_SECURITY_CONSTRAINTS|OLDER_WEAKER_CONSTRAINTS|MISSING_CONSTRAINTS|UNEXPECTED_DRIFT' | tail -1)
+  printf '%s' "${c:-UNKNOWN}"
+}
+
 tracking() {
 px -d "$1" >/dev/null 2>&1 <<'SQL'
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -176,6 +192,11 @@ check() { # db expected label
   if [ "$got" = "$2" ]; then pass=$((pass+1)); printf 'ok   %-16s %-36s %s\n' "$3" "$got" "$1"
   else failed=$((failed+1)); printf 'FAIL %-16s got=%-36s want=%s (%s)\n' "$3" "$got" "$2" "$1"; fi
 }
+check_scsoff() { # db expected label — classifier run with standard_conforming_strings=off
+  got=$(classify_scsoff "$1"); [ -z "$got" ] && got=UNKNOWN
+  if [ "$got" = "$2" ]; then pass=$((pass+1)); printf 'ok   %-16s %-36s %s (scs=off)\n' "$3" "$got" "$1"
+  else failed=$((failed+1)); printf 'FAIL %-16s got=%-36s want=%s (%s, scs=off)\n' "$3" "$got" "$2" "$1"; fi
+}
 
 # A — actual release schema: apply the real migrations in order.
 mk ca
@@ -184,6 +205,12 @@ for f in "$MIG_DIR"/000*.sql; do
 done
 tracking ca
 check ca MATCHES_CURRENT_SECURITY_CONSTRAINTS A-release-schema
+
+# N — the SAME release schema with standard_conforming_strings OFF must classify
+#     identically. pg_get_constraintdef then doubles the regex backslash; the
+#     classifier strips it with chr(92), so the comparison is unaffected. A
+#     classifier comparing against a backslash LITERAL fails only here.
+check_scsoff ca MATCHES_CURRENT_SECURITY_CONSTRAINTS N-scs-off
 
 # B — genuine older (weak) constraints.
 mk cb; tracking cb; release_table cb "$WEAK_S" "$WEAK_B"
