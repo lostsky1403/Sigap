@@ -1545,9 +1545,15 @@ forward, never by reverting the security fix or re-introducing empty-set-unrestr
 
 ### 18.5 Preserved rollback anchors
 
+> **Superseded for production.** The anchors below are **development-history pointers only**.
+> `6d7f940` is an ancestor of `origin/main` but **5 commits behind** it, and checking it out
+> **loses four security fixes** (`6f567f8`, `9d4e68e`, `96c2570`, `87f218e`). It is **NOT a
+> production rollback target**. Production rollback means restoring the **preserved running
+> image** — see `docs/operations/DEPLOYMENT_RUNBOOK.md` §6a and §7c/§7d.
+
 | Anchor | Value |
 |---|---|
-| Last known-good commit before any 3B work | `6d7f940` (current HEAD) |
+| Development-history pointer before any 3B work (**not** a production rollback target) | `6d7f940` |
 | Branch | `design/ui-ux-overhaul` |
 | Pre-existing uncommitted state | `M .gitignore`, `?? design/` (must be committed or explicitly retained before 3B0 begins) |
 | Migrations to restore | None. Migrations `0001`-`0010` remain untouched by this plan. |
