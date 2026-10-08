@@ -40,9 +40,15 @@ docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml -f docker-
 
 ```sh
 docker ps --filter "name=sigap" --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
-docker inspect --format '{{.Name}} image={{.Image}} restart={{.RestartCount}} started={{.State.StartedAt}}' \
-  $(docker ps -q --filter "name=sigap") 2>/dev/null
 docker images --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.CreatedAt}}' | grep -i sigap
+# Authoritative per-container identity. Inspected by EXACT NAME, one at a time:
+# `--filter name=` is a substring match and can select an unrelated container
+# (e.g. "sigap-api-old"), and a single combined invocation hides which container
+# failed. A failure here must be visible, never swallowed.
+for c in sigap-postgres sigap-rust-engine sigap-api sigap-web; do
+  docker inspect --format '{{.Name}} image={{.Image}} restart={{.RestartCount}} started={{.State.StartedAt}}' "$c" 2>&1 \
+    || printf '%s=INSPECT_FAILED_OR_MISSING\n' "$c"
+done
 ```
 
 ## 5. Environment — safe values only
@@ -50,24 +56,19 @@ docker images --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.CreatedAt}}' | grep 
 Print **variable names and safe values only**. Never echo credentials.
 
 ```sh
-# Non-secret values (safe to return):
-docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' $(docker ps -q --filter "name=sigap-api") \
-  | grep -E '^SIGAP_ENV=|^SIGAP_AUTH_MODE=|^SIGAP_TLS_TERMINATED=|^SIGAP_TRUSTED_PROXIES='
-
-# Presence-only (NEVER print the value).
-IDS=$(docker ps -q --filter "name=sigap-api")$(docker ps -q --filter "name=sigap-web")
-if [ -z "$IDS" ]; then
-  echo "NO SIGAP CONTAINERS RUNNING - presence check is UNKNOWN, not ABSENT"
-else
-  for v in SIGAP_DEV_IDENTITY SIGAP_LOCAL_RBAC_TEST_IDENTITY SIGAP_LOCAL_E2E_ACTOR \
-           SIGAP_ENGINE_FALLBACK PUBLIC_SUPABASE_URL PUBLIC_SUPABASE_ANON_KEY \
-           SIGAP_API_INTERNAL SIGAP_AUTH_ISSUER SIGAP_AUTH_AUDIENCE SIGAP_AUTH_JWKS_URL \
-           SIGAP_DATABASE_URL POSTGRES_PASSWORD; do
-    if docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' $IDS 2>/dev/null \
-         | grep -q "^${v}="; then echo "${v}=PRESENT"; else echo "${v}=ABSENT"; fi
-  done
-fi
+# Use the committed helper. It inspects each container by EXACT NAME and reports
+# a THREE-STATE result: PRESENT / ABSENT / UNKNOWN. It exits non-zero if any
+# container is missing or its inspect fails, so a failed check can never be
+# recorded as "the variable is unset".
+sh scripts/ops/evidence-env-presence.sh sigap-api sigap-web
 ```
+
+Do **not** hand-roll this as a single combined `docker inspect $(...) $(...)`
+invocation. That form concatenates the two command substitutions into one
+over-long token, `docker inspect` fails with "no such object", and — if the
+error is swallowed — every variable is reported ABSENT, including
+`SIGAP_DEV_IDENTITY`. A false ABSENT is a false PASS. The regression controls
+for this live in `scripts/ops/test-operator-evidence-bundle.sh`.
 
 Report back, as literal values:
 
@@ -89,10 +90,15 @@ also attached to the shared edge network.
 ## 7. Reverse proxy metadata (keys only — do not change anything, do not dump values)
 
 ```sh
-# Keys only: Traefik middleware labels (e.g. *.basicauth.users) can hold
+# KEYS ONLY. Traefik middleware labels (e.g. *.basicauth.users) can hold
 # credential material, so never print label VALUES verbatim.
-docker inspect --format '{{range $k,$v := .Config.Labels}}{{println $k}}{{end}}' \
-  $(docker ps -q --filter "name=sigap-web") | grep -i traefik | sort
+#
+# Do NOT substitute `--format '{{json .Config.Labels}}'` or `docker inspect
+# <name>` without a format: both emit every label VALUE. A prior collection
+# deviated this way; no credential label exists today, but the guarantee is
+# only real if the command is.
+docker inspect --format '{{range $k,$v := .Config.Labels}}{{$k}}{{println}}{{end}}' \
+  sigap-web | grep -i traefik | sort
 docker network ls | grep -i traefik
 ```
 
@@ -136,7 +142,7 @@ curl -fsS http://127.0.0.1:18080/readyz || echo "unreachable"
 | Compose files in use | 2, 3 |
 | Container status | 4 |
 | Image IDs / digests / tags | 4 |
-| Environment presence + safe booleans | 5 |
+| Environment presence + safe booleans | 5 (`evidence-env-presence.sh`) |
 | `SIGAP_ENV` exact non-secret value | 5 |
 | `SIGAP_DEV_IDENTITY` safe state | 5 |
 | `SIGAP_AUTH_MODE` non-secret mode | 5 |
@@ -150,6 +156,19 @@ curl -fsS http://127.0.0.1:18080/readyz || echo "unreachable"
 
 - Never paste secret values. `POSTGRES_PASSWORD`, `SIGAP_DATABASE_URL`, `SIGAP_AUTH_*` tokens
   and any key are reported PRESENT/ABSENT only.
+- Presence is **three-state**: PRESENT, ABSENT, or UNKNOWN. A missing container or a failed
+  `docker inspect` yields UNKNOWN and a non-zero exit from `evidence-env-presence.sh` — never
+  ABSENT. Recording UNKNOWN as ABSENT is a false PASS on the dev-only-flag control.
 - Nothing here mutates state. If a command in this document is not in your environment, skip
   it and say so rather than substituting a mutating command.
 - Return the raw output; the preflight will read it, not re-derive it.
+- Container identity is read by **exact name** and by **image ID**, never by the mutable
+  `latest` tag and never inferred from image creation time or the host Git checkout.
+
+### Regression controls
+
+`scripts/ops/test-operator-evidence-bundle.sh` proves, locally and with no Docker daemon,
+that: the concatenated-id form cannot resolve a container; a missing container is reported
+MISSING rather than ABSENT; an inspect failure is never converted to ABSENT; no secret value
+is printed; and a decoy container (`sigap-api-old`) is not selected by exact-name inspection.
+Run it whenever this document's commands change.
