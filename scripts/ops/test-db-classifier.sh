@@ -199,10 +199,18 @@ check_scsoff() { # db expected label — classifier run with standard_conforming
 }
 
 # A — actual release schema: apply the real migrations in order.
+#     The glob must be four-digit so that 0010+ are included: `000*.sql` matches
+#     only 0001-0009 and would silently test a stale schema while still claiming
+#     full-migration coverage.
 mk ca
-for f in "$MIG_DIR"/000*.sql; do
-  "$PSQL" -h 127.0.0.1 -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -q -P pager=off -d ca -f "$f" >/dev/null 2>&1 || true
+mig_count=0
+for f in "$MIG_DIR"/[0-9][0-9][0-9][0-9]_*.sql; do
+  [ -f "$f" ] || continue
+  "$PSQL" -h 127.0.0.1 -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -q -P pager=off -d ca -f "$f" >/dev/null 2>&1 \
+    || die "migration failed to apply: $(basename "$f")"
+  mig_count=$((mig_count+1))
 done
+[ "$mig_count" -gt 0 ] || die "no migration files matched under $MIG_DIR"
 tracking ca
 check ca MATCHES_CURRENT_SECURITY_CONSTRAINTS A-release-schema
 
@@ -387,6 +395,11 @@ mig_constraints=$(grep -oE 'CONSTRAINT notification_outbox_[a-z_]+' "$MIG_DIR/00
 mig_columns=$(sed -n '/CREATE TABLE IF NOT EXISTS notification_outbox/,/^);/p' "$MIG_DIR/0006_notifications.sql" \
   | grep -E '^[[:space:]]+[a-z_]+[[:space:]]' | awk '{print $1}' | grep -v '^CONSTRAINT$' | sort -u)
 mig_versions=$(ls "$MIG_DIR" | grep -oE '^[0-9]{4}' | sed 's/^0*//' | sort -n -u | tr '\n' ' ')
+# Count of files matching the four-digit pattern variant A actually applies.
+# If a migration is ever named outside that pattern, variant A would silently
+# test a stale schema; this makes that a failure instead.
+mig_files_globbed=$(ls "$MIG_DIR"/[0-9][0-9][0-9][0-9]_*.sql 2>/dev/null | wc -l)
+mig_files_total=$(ls "$MIG_DIR"/*.sql 2>/dev/null | wc -l)
 
 m_ok=0
 # Anti-vacuity: an extraction that produced nothing must never be compared,
@@ -411,6 +424,14 @@ fi
 if [ "$(printf '%s' "$mig_versions" | tr -s ' ')" != "$(printf '%s' "$sql_versions" | tr -s ' ')" ]; then
   m_ok=1; printf 'FAIL %-16s version inventory differs from the migrations directory\n' M-inventory
   printf '  migrations: [%s]\n  sql       : [%s]\n' "$mig_versions" "$sql_versions"
+fi
+# Variant A must apply EVERY migration file. A name outside the four-digit
+# pattern would be silently skipped, so the A variant would validate a stale
+# schema while the docs still claim full-migration coverage.
+if [ "$mig_files_globbed" -ne "$mig_files_total" ]; then
+  m_ok=1; printf 'FAIL %-16s variant A glob covers %s of %s migration files\n' M-inventory \
+    "$mig_files_globbed" "$mig_files_total"
+  printf '  unmatched files: %s\n' "$(ls "$MIG_DIR"/*.sql 2>/dev/null | grep -vE '/[0-9]{4}_' | tr '\n' ' ')"
 fi
 if [ "$m_ok" -eq 0 ]; then
   pass=$((pass+1))
