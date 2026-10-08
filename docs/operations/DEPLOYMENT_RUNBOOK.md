@@ -861,7 +861,7 @@ strengthened form exactly, the full constraint inventory, the full column invent
 applied-version set.
 
 Non-vacuity is proven by `scripts/ops/test-db-classifier.sh`, which builds a **disposable
-local** cluster and asserts 25 checks over 24 schema variants — the **real release schema**
+local** cluster and asserts 26 checks over 24 schema variants — the **real release schema**
 (migrations `0001`–`0010` applied in order), the genuine pre-hardening weak form, the
 fragment-spoof case, the `{10,}`-conjunct-only case (a predicate that looks strengthened but
 is weaker), both mixed strong/weak columns, a `NOT VALID` phone constraint (present but not
@@ -869,9 +869,10 @@ validated against existing rows), a missing subject/body constraint, both phone
 constraints absent with the rest of the contract intact and with an extra constraint added,
 the mis-bound-column case, an extra constraint, three logically altered predicates, absent
 migration history, five kinds of unexpected metadata, a missing table, an
-explicitly-correct hardened schema, and a static consistency check between the SQL's
-expected inventories and `packages/db/migrations`.
-The observed result is **25 pass / 0 fail**; only a genuinely strengthened schema reports
+explicitly-correct hardened schema, a run of the release variant with
+`standard_conforming_strings=off` (the backslash-independence check), and a static
+consistency check between the SQL's expected inventories and `packages/db/migrations`.
+The observed result is **26 pass / 0 fail**; only a genuinely strengthened schema reports
 `MATCHES_CURRENT_SECURITY_CONSTRAINTS`. Each assertion was confirmed to be non-vacuous by
 mutating the classifier and observing the suite fail.
 
