@@ -729,24 +729,154 @@ indefinitely. Nothing in the repository can reveal which definition is live.
 `statement_timeout` set, `pg_catalog`/`schema_migrations` metadata only. It never reads
 application data rows, never writes, and never runs DDL.
 
+### 12a. Exact authorized command (prepared — do not run without authorization)
+
+Run this **on the production host**, from `$SIGAP_DEPLOY_DIR` (the compose repo that holds
+`scripts/ops/`), only after the authorization is recorded in `RELEASE_CHECKLIST.md` J1. It
+contains no credential: `docker exec` enters the container as the Postgres superuser already
+running there, and the script itself is piped in on stdin so nothing is written into the
+container.
+
+```bash
+# 0. Prove WHICH script you are about to run (content, CRLF-normalised).
+#    Expected: 7baa70c5e1fce884e638bede6050cea703e07e7de044e2c9dbe834d467da3afd
+#    The deploy tree must hold the reviewed revision; a stale copy fails here by design.
+tr -d '\r' < scripts/ops/db-metadata-inspection.sql | sha256sum
+
+# 1. Run the read-only inspection. Capture BOTH streams and the exit code.
+#    --no-psqlrc stops the CONTAINER's psqlrc (and any PSQLRC it points at) from
+#    injecting statements into the session. The script's own BEGIN READ ONLY /
+#    ROLLBACK bracket the whole run; output is small and bounded (10 versions +
+#    10 constraint definitions + 17 columns + 4 counts).
+#    The capture goes OUTSIDE the deploy tree — an untracked file inside it
+#    trips the §2a tree gate (see J2).
+OUT="/root/sigap-evidence/sigap-db-metadata-$(date -u +%Y%m%dT%H%M%SZ).txt"
+install -d -m 700 "$(dirname "$OUT")"
+docker exec -i sigap-postgres \
+  psql -U sigap -d sigap -v ON_ERROR_STOP=1 --no-psqlrc -P pager=off -f - \
+  < scripts/ops/db-metadata-inspection.sql > "$OUT" 2>&1
+RC=$?
+echo "psql exit=$RC  output=$OUT"
+
+# 2. Record the classification (the single value from query 4b).
+#    psql's default aligned format pads the value with leading spaces, so the
+#    pattern must tolerate surrounding whitespace. Exactly ONE line must match,
+#    and the run must have reached its final ROLLBACK tag.
+#    Do NOT add `exit`/`set -e` here: this block is pasted into an interactive
+#    shell, and the operator must read the verdict, not lose the session.
+n=$(grep -cE '^[[:space:]]*(MATCHES_CURRENT_SECURITY_CONSTRAINTS|OLDER_WEAKER_CONSTRAINTS|MISSING_CONSTRAINTS|UNEXPECTED_DRIFT)[[:space:]]*$' "$OUT")
+rb=$(grep -cx 'ROLLBACK' "$OUT")
+if [ "$RC" -eq 0 ] && [ "$n" -eq 1 ] && [ "$rb" -eq 1 ]; then
+  echo "CLASSIFICATION OK: $(grep -oE 'MATCHES_CURRENT_SECURITY_CONSTRAINTS|OLDER_WEAKER_CONSTRAINTS|MISSING_CONSTRAINTS|UNEXPECTED_DRIFT' "$OUT")"
+else
+  echo "CLASSIFICATION NOT OK (rc=$RC matching_lines=$n rollback_tags=$rb) -> RECORD: UNKNOWN"
+fi
+
+# 3. Confirm the run landed on the intended database, and record its identity
+#    next to the class in J3. A correct class for the wrong database is void.
+grep -E '^[[:space:]]*(sigap|[a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\|' "$OUT" | tail -1
+```
+
+Rules for the operator:
+
+| Rule | Reason |
+|---|---|
+| **Do not** run this without J1 recorded. | It is a production read; the mission requires explicit authorization. |
+| **Do not** add `-c`/`--command` flags, `\i`, or any write statement. | The script is the whole inspection. |
+| **Do not** remove `--no-psqlrc`. | The container's `psqlrc` (or a `PSQLRC` it points at) could inject statements. |
+| **Do not** redirect into the deploy tree or any Git-tracked path. | An untracked path there is a hard abort (§2a). |
+| Record the class **only** if step 2 prints `CLASSIFICATION OK: <class>`. Anything else — a non-zero `psql` exit, zero or several matching lines, no `ROLLBACK` tag — is `UNKNOWN`. | Partial or uninterpretable output is not evidence. |
+| Wrapping this in a **non-interactive** script? Do not rely on the block's exit status: it is written for an interactive shell and deliberately does not `exit` on failure. Test the guard's output instead (`... | grep -q '^CLASSIFICATION OK: '`). | An `exit` inside the pasted block would close the operator's session; a wrapper must assert the verdict itself. |
+| Record the class verbatim in `RELEASE_CHECKLIST.md` J3, **with** the database name and `server_version` from step 3. | Exactly one of the five values; a class for the wrong database is void. |
+| `UNKNOWN` and `UNEXPECTED_DRIFT` are **blocking**. | §12 classification table. |
+| **No password appears in any argument.** | `docker exec` uses the container's own superuser; no `-W`/`PGPASSWORD` is needed or permitted. |
+| The container's environment is trusted. | `psql` honours the container's `PGOPTIONS`/`PGHOST`/`PGSERVICE`; if that environment is not trusted, scrub it with `docker exec -e PGOPTIONS= …`. |
+
+Expected hash of the prepared script (LF-normalised):
+`7baa70c5e1fce884e638bede6050cea703e07e7de044e2c9dbe834d467da3afd`
+(git blob `4e63ac716edddf8dcbbad0bb3f54028f392057ac`). Recompute it before running; if it
+differs, stop and re-read this section.
+
 **What it establishes:**
 1. every recorded `schema_migrations` version (and `0006`'s stored checksum, diagnostic only);
 2. the **full** `pg_get_constraintdef` text of every CHECK on `notification_outbox`
    (authoritative);
-3. a single-boolean strengthened-vs-weak classifier (searches for the `{10,}` fragment that
-   only the strengthened predicate contains);
-4. column inventory + expected constraint names;
-5. context identifiers (database, schema, server version).
+3. a single-row **classification** (`4b`) derived from a predicate-bound residue test **plus**
+   a full contract comparison — see the classifier note below;
+4. the supporting counts behind that classification (`4`);
+5. column inventory + expected constraint names;
+6. context identifiers (database, schema, server version).
+
+**The classifier binds predicates to columns and compares the whole contract. Four simpler
+designs were rejected, because each can report a false PASS:**
+
+| Rejected design | Why it is unsafe |
+|---|---|
+| Bare fragment test `LIKE '%{10,}%'` | A **drifted** predicate such as `subject !~ '[0-9]{10,}'` also contains `{10,}`, so it is counted as "strengthened" and classified `MATCHES` — a false PASS in the class that authorises **no action**. |
+| Residue test that strips the column identifiers | It cannot tell that `..._subject_chk` guards `body_template`, so a copy-paste error that leaves `subject` **unguarded** still classifies `MATCHES` — a false PASS with a live raw-phone insert path. |
+| Matching only the two phone constraints | A dropped structural constraint, an unexpected constraint, a changed column, or a diverged applied-version set would all still report `MATCHES`. |
+| Residue test where "residue empty + contains `{10,}`" counts as strengthened | The `{10,}` conjunct **alone** also strips to an empty residue, yet it is strictly *weaker* than the release definition: it admits an 8-digit raw run that the release's `!~ '[0-9]{8,}'` conjunct rejects. This was a real false PASS in an earlier revision of this classifier; variant `H-strong-clause-only` now covers it. |
+
+The shipped classifier therefore does **both** of the following, and any deviation forces
+`UNEXPECTED_DRIFT`:
+
+1. **Predicate-bound residue.** For `..._subject_chk` it removes `subject !~ '[0-9]{8,}'` and
+   `subject !~ '[0-9][0-9\-._() ]{10,}[0-9]'`, and likewise for `..._body_chk` with
+   `body_template`. Both known forms reduce to an empty residue; anything else — a mis-bound
+   column, an `OR`, a widened quantifier, an extra term — leaves a non-empty residue.
+   The `{10,}` conjunct **alone** is not accepted: it strips to an empty residue yet is
+   strictly *weaker* than the release definition (it admits an 8-digit raw run that
+   `!~ '[0-9]{8,}'` rejects), so the strengthened form requires **both** conjuncts.
+2. **Full contract comparison.** The 10 expected CHECK names, the 17 expected columns and the
+   applied-version set `1..10` are each compared against what the database actually has, in
+   both directions (unexpected *and* missing). The two phone constraints are judged by (1),
+   not by the name inventory, so a merely absent denylist is still reported as
+   `MISSING_CONSTRAINTS` while an *extra* constraint is reported as drift.
+
+Precedence: any contract deviation — unexpected/missing structural constraint, column or
+version, or a phone predicate that is neither known form — is `UNEXPECTED_DRIFT`; an intact
+contract with fewer than two phone constraints is `MISSING_CONSTRAINTS`; only then are the
+strengthened and weak forms considered. `MATCHES_CURRENT_SECURITY_CONSTRAINTS` therefore
+requires **all** of: both phone predicates bound to their own columns and matching the
+strengthened form exactly, the full constraint inventory, the full column inventory, and the
+applied-version set.
+
+Non-vacuity is proven by `scripts/ops/test-db-classifier.sh`, which builds a **disposable
+local** cluster and asserts 24 checks over 23 schema variants — the **real release schema**
+(migrations `0001`–`0010` applied in order), the genuine pre-hardening weak form, the
+fragment-spoof case, the `{10,}`-conjunct-only case (a predicate that looks strengthened but
+is weaker), both mixed strong/weak columns, a missing subject/body constraint, both phone
+constraints absent with the rest of the contract intact and with an extra constraint added,
+the mis-bound-column case, an extra constraint, three logically altered predicates, absent
+migration history, five kinds of unexpected metadata, a missing table, an
+explicitly-correct hardened schema, and a static consistency check between the SQL's
+expected inventories and `packages/db/migrations`.
+The observed result is **24 pass / 0 fail**; only a genuinely strengthened schema reports
+`MATCHES_CURRENT_SECURITY_CONSTRAINTS`. Each assertion was confirmed to be non-vacuous by
+mutating the classifier and observing the suite fail.
+
+A non-zero `psql` exit (a missing table, a missing tracking table, a timeout, partial output)
+yields no classification row and must be recorded as `UNKNOWN`. `UNKNOWN` and
+`UNEXPECTED_DRIFT` are both blocking.
+
+> **Maintenance:** the expected constraint names, column names and version list in queries
+> 4/4b are transcribed from `packages/db/migrations/`. **Adding a migration, a column or a
+> constraint requires updating them**, or every subsequent inspection will report
+> `UNEXPECTED_DRIFT`. The test's `M-inventory` check exists to catch exactly that drift.
+> The suite needs local PostgreSQL binaries (`initdb`, `pg_ctl`, `psql`) and exits **2** when
+> they are absent; it is not yet wired into `.github/workflows/ci.yml`, so run it manually —
+> or add it to the `ops-guards` job as
+> `sh scripts/ops/test-db-classifier.sh; rc=$?; [ "$rc" -eq 2 ] || exit "$rc"`.
 
 **Classification — record exactly one:**
 
 | Class | Meaning | Action |
 |---|---|---|
-| `MATCHES_CURRENT_SECURITY_CONSTRAINTS` | Strengthened checks present; versions consistent | None |
-| `OLDER_WEAKER_CONSTRAINTS` | Phone constraints present but pre-`9d4e68e` definitions | Operator decides: **accept** (record compensating control) or **remediate forward** via a **new** migration |
-| `MISSING_CONSTRAINTS` | No phone-denylist CHECK at all | Security finding — do not deploy until remediated or explicitly accepted in writing |
-| `UNEXPECTED_DRIFT` | Unknown version, unknown constraint form, type/NOT-NULL change | **STOP.** Do not classify, do not deploy. Escalate. |
-| `UNKNOWN` | Inspection not completed (no authorization, failure, timeout, partial output) | **Default and BLOCKING.** Never a PASS. |
+| `MATCHES_CURRENT_SECURITY_CONSTRAINTS` | Both phone predicates carry **both** conjuncts, bound to their own columns; the full 10-constraint and 17-column inventories match the release; the applied-version set is exactly `1..10` | None |
+| `OLDER_WEAKER_CONSTRAINTS` | Both phone constraints present and matching the pre-`9d4e68e` weak form (`<col> !~ '[0-9]{8,}'` only); everything else matches | Operator decides: **accept** (record compensating control) or **remediate forward** via a **new** migration |
+| `MISSING_CONSTRAINTS` | Fewer than two phone-denylist CHECKs exist, with the rest of the contract intact | Security finding — do not deploy until remediated or explicitly accepted in writing |
+| `UNEXPECTED_DRIFT` | Any other deviation: unexpected/missing structural constraint, unexpected/missing column, unexpected/missing applied version, or a phone predicate that is neither known form (`{10,}` conjunct only, mis-bound column, `OR`, altered quantifier, extra term, or the two columns in different forms) | **STOP.** Do not classify, do not deploy. Escalate. |
+| `UNKNOWN` | Inspection not completed (no authorization, failure, timeout, partial output, non-zero `psql` exit, or step 2 not printing `CLASSIFICATION OK`) | **Default and BLOCKING.** Never a PASS. |
 
 **Remediation is forward-only.** If the class is `OLDER_WEAKER_CONSTRAINTS` or
 `MISSING_CONSTRAINTS` and remediation is chosen, ship a **new** migration that `DROP`s and
