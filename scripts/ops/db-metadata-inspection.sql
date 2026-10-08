@@ -26,7 +26,7 @@
 -- PROPOSED INVOCATION (NOT AUTHORIZED, NOT RUN): see runbook §12a.
 --
 -- CLASSIFIER DESIGN (why it is written this way)
---   Three earlier designs were rejected because each can report a false PASS:
+--   Four earlier designs were rejected because each can report a false PASS:
 --     (a) a bare fragment test `LIKE '%{10,}%'` counts a DRIFTED predicate such
 --         as `subject !~ '[0-9]{10,}'` as "strengthened" => false MATCHES;
 --     (b) a residue test that strips the column identifiers cannot tell that
@@ -34,7 +34,13 @@
 --         while still reporting MATCHES => false PASS on a copy-paste error;
 --     (c) matching on the two phone constraints alone ignores the rest of the
 --         table contract, so a dropped structural constraint or an unexpected
---         column/constraint would still report MATCHES.
+--         column/constraint would still report MATCHES;
+--     (d) counting "residue empty AND contains {10,}" as strengthened. The
+--         `{10,}` conjunct ALONE also strips to an empty residue, yet it is
+--         strictly WEAKER than the release predicate: it admits an 8-digit raw
+--         run that `!~ '[0-9]{8,}'` rejects => false MATCHES on a live
+--         raw-phone insert path. This is why n_strong below requires BOTH
+--         conjuncts, not merely the `{10,}` one.
 --   This version (1) binds each expected predicate to ITS OWN column, and
 --   (2) compares the FULL constraint inventory, the FULL column inventory and
 --   the FULL applied-version set against the release's own definitions. Any

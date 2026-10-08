@@ -738,10 +738,13 @@ running there, and the script itself is piped in on stdin so nothing is written 
 container.
 
 ```bash
-# 0. Prove WHICH script you are about to run (content, CRLF-normalised).
-#    Expected: 7baa70c5e1fce884e638bede6050cea703e07e7de044e2c9dbe834d467da3afd
-#    The deploy tree must hold the reviewed revision; a stale copy fails here by design.
-tr -d '\r' < scripts/ops/db-metadata-inspection.sql | sha256sum
+# 0. Declare the expected artifact and the expected target. Everything below is
+#    COMPARED against these, not merely printed.
+#    The deploy tree must hold the reviewed revision; a stale copy fails the
+#    verdict at the end of this block.
+EXPECT_SHA=657eb6754f2e00b824a3e47db67787e066b0d153daa30d0291544382a1174a6c
+EXPECT_DB=sigap
+EXPECT_SCHEMA=public
 
 # 1. Run the read-only inspection. Capture BOTH streams and the exit code.
 #    --no-psqlrc stops the CONTAINER's psqlrc (and any PSQLRC it points at) from
@@ -758,23 +761,37 @@ docker exec -i sigap-postgres \
 RC=$?
 echo "psql exit=$RC  output=$OUT"
 
-# 2. Record the classification (the single value from query 4b).
-#    psql's default aligned format pads the value with leading spaces, so the
-#    pattern must tolerate surrounding whitespace. Exactly ONE line must match,
-#    and the run must have reached its final ROLLBACK tag.
-#    Do NOT add `exit`/`set -e` here: this block is pasted into an interactive
-#    shell, and the operator must read the verdict, not lose the session.
-n=$(grep -cE '^[[:space:]]*(MATCHES_CURRENT_SECURITY_CONSTRAINTS|OLDER_WEAKER_CONSTRAINTS|MISSING_CONSTRAINTS|UNEXPECTED_DRIFT)[[:space:]]*$' "$OUT")
+# 2. Verify the artifact, the target, and the completeness of the capture.
+#    - The class is taken from the ANCHORED match ONLY. Query 3 emits
+#      pg_get_constraintdef text, which is attacker-influenced; an unanchored
+#      grep could pick a class token out of a constraint definition and report
+#      the wrong class.
+#    - psql's aligned format pads the value, so the pattern tolerates whitespace.
+#    - Exactly ONE class line, exactly ONE ROLLBACK tag, exactly ONE context row.
+PAT='^[[:space:]]*(MATCHES_CURRENT_SECURITY_CONSTRAINTS|OLDER_WEAKER_CONSTRAINTS|MISSING_CONSTRAINTS|UNEXPECTED_DRIFT)[[:space:]]*$'
+SHA=$(tr -d '\r' < scripts/ops/db-metadata-inspection.sql | sha256sum | cut -d' ' -f1)
+CLASS=$(grep -oE "$PAT" "$OUT" | tr -d '[:space:]')
+n=$(grep -cE "$PAT" "$OUT")
 rb=$(grep -cx 'ROLLBACK' "$OUT")
-if [ "$RC" -eq 0 ] && [ "$n" -eq 1 ] && [ "$rb" -eq 1 ]; then
-  echo "CLASSIFICATION OK: $(grep -oE 'MATCHES_CURRENT_SECURITY_CONSTRAINTS|OLDER_WEAKER_CONSTRAINTS|MISSING_CONSTRAINTS|UNEXPECTED_DRIFT' "$OUT")"
-else
-  echo "CLASSIFICATION NOT OK (rc=$RC matching_lines=$n rollback_tags=$rb) -> RECORD: UNKNOWN"
-fi
+ctx=$(grep -cE "^[[:space:]]*${EXPECT_DB}[[:space:]]*\|[[:space:]]*${EXPECT_SCHEMA}[[:space:]]*\|" "$OUT")
+sha_ok=0; [ "$SHA" = "$EXPECT_SHA" ] && sha_ok=1
+echo "sha_ok=$sha_ok rc=$RC class_lines=$n rollback_tags=$rb context_rows=$ctx"
 
-# 3. Confirm the run landed on the intended database, and record its identity
-#    next to the class in J3. A correct class for the wrong database is void.
-grep -E '^[[:space:]]*(sigap|[a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\|' "$OUT" | tail -1
+# 3. Record the target identity next to the class in J3. A correct class for the
+#    wrong database is void.
+grep -E "^[[:space:]]*${EXPECT_DB}[[:space:]]*\|" "$OUT" | tail -1
+
+# 4. Verdict. Do NOT add `exit`/`set -e`: this block is pasted into an
+#    interactive shell and must not close the session. The FINAL command is the
+#    test, so the block's own exit status is 0 only for a complete, correctly
+#    targeted, unmodified run — a wrapper can rely on it.
+ok=0
+if [ "$sha_ok" -eq 1 ] && [ "$RC" -eq 0 ] && [ "$n" -eq 1 ] && [ "$rb" -eq 1 ] && [ "$ctx" -eq 1 ]; then
+  ok=1; echo "CLASSIFICATION OK: $CLASS"
+else
+  echo "CLASSIFICATION NOT OK (sha_ok=$sha_ok rc=$RC class_lines=$n rollback_tags=$rb context_rows=$ctx) -> RECORD: UNKNOWN"
+fi
+[ "$ok" -eq 1 ]
 ```
 
 Rules for the operator:
@@ -785,17 +802,19 @@ Rules for the operator:
 | **Do not** add `-c`/`--command` flags, `\i`, or any write statement. | The script is the whole inspection. |
 | **Do not** remove `--no-psqlrc`. | The container's `psqlrc` (or a `PSQLRC` it points at) could inject statements. |
 | **Do not** redirect into the deploy tree or any Git-tracked path. | An untracked path there is a hard abort (§2a). |
-| Record the class **only** if step 2 prints `CLASSIFICATION OK: <class>`. Anything else — a non-zero `psql` exit, zero or several matching lines, no `ROLLBACK` tag — is `UNKNOWN`. | Partial or uninterpretable output is not evidence. |
-| Wrapping this in a **non-interactive** script? Do not rely on the block's exit status: it is written for an interactive shell and deliberately does not `exit` on failure. Test the guard's output instead (`... | grep -q '^CLASSIFICATION OK: '`). | An `exit` inside the pasted block would close the operator's session; a wrapper must assert the verdict itself. |
+| Set `EXPECT_DB`/`EXPECT_SCHEMA` to the target **before** running. | The verdict requires exactly one context row matching them; a class taken from the wrong database is void. |
+| Record the class **only** if step 4 prints `CLASSIFICATION OK: <class>`. Anything else — a non-zero `psql` exit, a hash mismatch, zero or several class lines, no `ROLLBACK` tag, no matching context row — is `UNKNOWN`. | Partial, tampered or mis-targeted output is not evidence. |
 | Record the class verbatim in `RELEASE_CHECKLIST.md` J3, **with** the database name and `server_version` from step 3. | Exactly one of the five values; a class for the wrong database is void. |
 | `UNKNOWN` and `UNEXPECTED_DRIFT` are **blocking**. | §12 classification table. |
 | **No password appears in any argument.** | `docker exec` uses the container's own superuser; no `-W`/`PGPASSWORD` is needed or permitted. |
-| The container's environment is trusted. | `psql` honours the container's `PGOPTIONS`/`PGHOST`/`PGSERVICE`; if that environment is not trusted, scrub it with `docker exec -e PGOPTIONS= …`. |
+| The container's environment is trusted. | `psql` honours the container's `PGOPTIONS`/`PGHOST`/`PGSERVICE`; a `search_path` override could point the inspection at a shadow schema. If that environment is not trusted, scrub it with `docker exec -e PGOPTIONS= … -e PGHOST= …`. |
 
 Expected hash of the prepared script (LF-normalised):
-`7baa70c5e1fce884e638bede6050cea703e07e7de044e2c9dbe834d467da3afd`
-(git blob `4e63ac716edddf8dcbbad0bb3f54028f392057ac`). Recompute it before running; if it
-differs, stop and re-read this section.
+`657eb6754f2e00b824a3e47db67787e066b0d153daa30d0291544382a1174a6c`
+(git blob `36959d81370f772a0b6c4b0b345a325cbc693343`). §12a step 0 sets `EXPECT_SHA` to this
+value and step 4 **compares** it, so a stale or doctored copy in the deploy tree fails the
+verdict rather than merely printing a different number. If the value above and the committed
+blob ever disagree, stop and re-read this section.
 
 **What it establishes:**
 1. every recorded `schema_migrations` version (and `0006`'s stored checksum, diagnostic only);
@@ -842,16 +861,17 @@ strengthened form exactly, the full constraint inventory, the full column invent
 applied-version set.
 
 Non-vacuity is proven by `scripts/ops/test-db-classifier.sh`, which builds a **disposable
-local** cluster and asserts 24 checks over 23 schema variants — the **real release schema**
+local** cluster and asserts 25 checks over 24 schema variants — the **real release schema**
 (migrations `0001`–`0010` applied in order), the genuine pre-hardening weak form, the
 fragment-spoof case, the `{10,}`-conjunct-only case (a predicate that looks strengthened but
-is weaker), both mixed strong/weak columns, a missing subject/body constraint, both phone
+is weaker), both mixed strong/weak columns, a `NOT VALID` phone constraint (present but not
+validated against existing rows), a missing subject/body constraint, both phone
 constraints absent with the rest of the contract intact and with an extra constraint added,
 the mis-bound-column case, an extra constraint, three logically altered predicates, absent
 migration history, five kinds of unexpected metadata, a missing table, an
 explicitly-correct hardened schema, and a static consistency check between the SQL's
 expected inventories and `packages/db/migrations`.
-The observed result is **24 pass / 0 fail**; only a genuinely strengthened schema reports
+The observed result is **25 pass / 0 fail**; only a genuinely strengthened schema reports
 `MATCHES_CURRENT_SECURITY_CONSTRAINTS`. Each assertion was confirmed to be non-vacuous by
 mutating the classifier and observing the suite fail.
 
