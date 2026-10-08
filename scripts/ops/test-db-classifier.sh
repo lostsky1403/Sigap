@@ -42,6 +42,11 @@ POSIX_PATH=""
 for d in /usr/bin /bin; do
   [ -d "$d" ] && POSIX_PATH="${POSIX_PATH:+$POSIX_PATH:}$d"
 done
+# set -f: without it, the unquoted $PATH expansion below would undergo pathname
+# expansion, and a PATH entry containing * or ? would be globbed and could be
+# mistaken for a duplicate of an unrelated directory. Field splitting on IFS is
+# unaffected, so the colon-separated walk still works.
+set -f
 _old_ifs=$IFS; IFS=:
 _clean=$POSIX_PATH
 for _p in $PATH; do
@@ -51,6 +56,7 @@ for _p in $PATH; do
   esac
 done
 IFS=$_old_ifs
+set +f
 PATH=$_clean
 export PATH
 unset _clean _old_ifs _p POSIX_PATH
@@ -254,6 +260,40 @@ check ch5 UNEXPECTED_DRIFT H-mixed-strong-and-weak
 mk ch6; tracking ch6; release_table ch6 \
   "subject !~ '[0-9][0-9\\-._() ]{10,}[0-9]'" "$WEAK_B"
 check ch6 UNEXPECTED_DRIFT H-mixed-spoof-and-weak
+
+# H7 — NOT VALID phone constraints. `ALTER TABLE ... ADD CONSTRAINT ... NOT VALID`
+#      is the only supported way to create them, and pg_get_constraintdef appends
+#      " NOT VALID", which must NOT be read as a strengthened predicate: the
+#      constraint is not validated against existing rows, so the table may already
+#      hold raw phone values. (Note: an inline `NOT VALID` in CREATE TABLE is
+#      silently ignored by PostgreSQL, so this must go through ALTER TABLE.)
+mk ch7; tracking ch7
+px -d ch7 >/dev/null 2>&1 <<SQL
+CREATE TABLE notification_outbox (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), facility_id UUID, channel TEXT NOT NULL,
+    template_key TEXT NOT NULL, subject TEXT NOT NULL, body_template TEXT NOT NULL,
+    recipient_type TEXT NOT NULL, recipient_contact_masked TEXT NOT NULL,
+    recipient_contact_hash BYTEA NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+    attempt_count INTEGER NOT NULL DEFAULT 0, next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_error_code TEXT, related_resource_type TEXT, related_resource_id UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT notification_outbox_channel_chk CHECK (channel IN ('dev','sms','whatsapp','email')),
+    CONSTRAINT notification_outbox_recipient_type_chk CHECK (recipient_type IN ('patient','staff','facility_admin')),
+    CONSTRAINT notification_outbox_status_chk CHECK (status IN ('pending','processing','delivered','failed','cancelled')),
+    CONSTRAINT notification_outbox_attempt_count_chk CHECK (attempt_count >= 0),
+    CONSTRAINT notification_outbox_hash_len_chk CHECK (octet_length(recipient_contact_hash) = 32),
+    CONSTRAINT notification_outbox_subject_chk CHECK (octet_length(subject) BETWEEN 1 AND 200),
+    CONSTRAINT notification_outbox_body_chk CHECK (octet_length(body_template) BETWEEN 1 AND 4000),
+    CONSTRAINT notification_outbox_masked_chk CHECK (octet_length(recipient_contact_masked) BETWEEN 3 AND 200));
+ALTER TABLE notification_outbox ADD CONSTRAINT notification_outbox_no_raw_phone_in_subject_chk
+  CHECK ($STRONG_S) NOT VALID;
+ALTER TABLE notification_outbox ADD CONSTRAINT notification_outbox_no_raw_phone_in_body_chk
+  CHECK ($STRONG_B) NOT VALID;
+SQL
+[ $? -eq 0 ] || die "variant H7 setup"
+[ "$(px -d ch7 -A -t -c "SELECT bool_and(NOT convalidated) FROM pg_constraint WHERE conname LIKE '%no_raw_phone%'")" = "t" ] \
+  || die "variant H7 precondition: both phone constraints should be NOT VALID"
+check ch7 UNEXPECTED_DRIFT H-not-valid
 
 # I — absent migration history (no schema_migrations table). Assert the
 #     pre-condition, so this cannot pass because the DATABASE was missing.

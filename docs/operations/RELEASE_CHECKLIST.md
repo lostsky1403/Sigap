@@ -169,8 +169,8 @@ recorded. "Unknown" is never a PASS.
 |---|---|---|---|
 | J1 | **DB metadata inspection authorized** | explicit operator approval for read-only DB access (runbook §12/§12a) | **OPERATOR** |
 | J2 | **DB metadata inspection completed** | `scripts/ops/db-metadata-inspection.sql` executed via runbook §12a; capture written to `/root/sigap-evidence/sigap-db-metadata-<utc>.txt` — **outside** the deploy tree | **OPERATOR** |
-| J2b | **Classifier proven non-vacuous (in-repo)** | `sh scripts/ops/test-db-classifier.sh` → **24 pass / 0 fail** on a disposable local cluster, over 23 schema variants including the **real release schema** (migrations `0001`–`0010`), the `{10,}`-conjunct-only loophole, the `{10,}` fragment-spoof, the mis-bound-column case, mixed strong/weak columns, missing subject/body constraints, both phone constraints absent with and without an extra constraint, three altered predicates, unexpected column/version/constraint metadata, and a static inventory check against `packages/db/migrations`. Only a genuinely strengthened schema reports `MATCHES_CURRENT_SECURITY_CONSTRAINTS`. Mutating the classifier makes the suite fail. | `[x]` |
-| J3 | **DB schema classification recorded** | §12a step 2 must print `CLASSIFICATION OK: <class>`; record exactly one of `MATCHES_CURRENT_SECURITY_CONSTRAINTS` / `OLDER_WEAKER_CONSTRAINTS` / `MISSING_CONSTRAINTS` / `UNEXPECTED_DRIFT` / `UNKNOWN` (runbook §12), **together with** the `db` name and `server_version` from §12a step 3. Anything other than `CLASSIFICATION OK` ⇒ `UNKNOWN`. **`UNKNOWN` blocks the deploy.** | **OPERATOR** |
+| J2b | **Classifier proven non-vacuous (in-repo)** | `sh scripts/ops/test-db-classifier.sh` → **25 pass / 0 fail** on a disposable local cluster, over 24 schema variants including the **real release schema** (migrations `0001`–`0010`), the `{10,}`-conjunct-only loophole, the `{10,}` fragment-spoof, the mis-bound-column case, mixed strong/weak columns, a `NOT VALID` phone constraint, missing subject/body constraints, both phone constraints absent with and without an extra constraint, three altered predicates, unexpected column/version/constraint metadata, and a static inventory check against `packages/db/migrations`. Only a genuinely strengthened schema reports `MATCHES_CURRENT_SECURITY_CONSTRAINTS`. Mutating the classifier makes the suite fail. | `[x]` |
+| J3 | **DB schema classification recorded** | §12a step 4 must print `CLASSIFICATION OK: <class>`, which requires the script hash to match, `psql` exit 0, exactly one anchored class line, one `ROLLBACK` tag, and one context row matching `EXPECT_DB`/`EXPECT_SCHEMA`. Record exactly one of `MATCHES_CURRENT_SECURITY_CONSTRAINTS` / `OLDER_WEAKER_CONSTRAINTS` / `MISSING_CONSTRAINTS` / `UNEXPECTED_DRIFT` / `UNKNOWN` (runbook §12), **together with** the `db` name and `server_version` from §12a step 3. Anything other than `CLASSIFICATION OK` ⇒ `UNKNOWN`. **`UNKNOWN` blocks the deploy.** | **OPERATOR** |
 | J4 | **Drift disposition recorded** | if the class is not `MATCHES_CURRENT_SECURITY_CONSTRAINTS`: explicit operator decision (accept with a recorded compensating control, or remediate forward with a **new** migration) | **OPERATOR** |
 | J5 | **Disk capacity gate passed** | runbook §13a — rollback archives present **and verified**; build peak evaluated; ≥10% margin after both; **no** `prune`/`rmi` before preservation | **OPERATOR** |
 | J6 | **Untracked-file disposition recorded** | runbook §2a — every untracked path classified; `.env.bak-phase5` retained in place with owner/mode/size/mtime; **no** `git clean` | **OPERATOR** |
@@ -195,7 +195,10 @@ echo "$SIGAP_API_BASE" "$SIGAP_WEB_BASE"
 
 # J1–J4 — DB metadata inspection. READ-ONLY, METADATA ONLY.
 # *** NOT AUTHORIZED. Requires explicit operator approval before running. ***
-# Runs against the running postgres container; selects only pg_catalog/schema_migrations.
+# *** This is a REFERENCE ONLY. Run the FULL §12a block (runbook
+#     DEPLOYMENT_RUNBOOK.md §12a), which also captures the output, applies the
+#     CLASSIFICATION OK guard, and records the database identity. This bare
+#     invocation alone does NOT satisfy J2 or J3. ***
 docker exec -i sigap-postgres psql -U sigap -d sigap \
   -v ON_ERROR_STOP=1 --no-psqlrc -P pager=off -f - < scripts/ops/db-metadata-inspection.sql
 
