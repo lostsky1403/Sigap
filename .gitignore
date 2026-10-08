@@ -15,6 +15,14 @@ target/
 .env.local
 *.pem
 
+# Secret backups / rotation artifacts (never commit).
+# NARROW on purpose: these must NOT match the tracked template `.env.example`.
+#   matched:     .env.bak-phase5, .env.production.bak, api.env.bak
+#   NOT matched: .env.example, .env.sample, .env.template
+.env.bak*
+.env.*.bak
+*.env.bak
+
 # IDE / OS
 .idea/
 .vscode/
