@@ -49,8 +49,15 @@
     Useful when iterating on the smoke tests by hand.
 
 .PARAMETER DatabasePort
-    Loopback port for the disposable cluster. Defaults to the first free port at
-    or above 55433.
+    Loopback port for the disposable cluster. Defaults to the first bindable port
+    at or above 5433.
+
+    Deliberately BELOW the Windows dynamic port range (49152-65535). Hyper-V and
+    WinNAT reserve blocks inside that range, the reservations move between runs,
+    and a reserved port fails to bind with EACCES rather than a listener
+    conflict — which previously broke startup when 55433 fell inside a reserved
+    block. A fixed port under 49152 is outside both the dynamic range and every
+    observed reservation, so it stays bindable across runs.
 
 .PARAMETER ApiPort
     Port for the Go API. Defaults to 18080, matching Start-LocalDev.ps1.
@@ -97,7 +104,7 @@
 param(
     [switch]$KeepRunning,
     [switch]$SkipEngineBuild,
-    [int]$DatabasePort = 55433,
+    [int]$DatabasePort = 5433,
     [int]$ApiPort = 18080,
     [int]$WebPort = 4173,
     [int]$EnginePort = 50051,
@@ -339,10 +346,48 @@ if (-not $pwshExe) {
 }
 
 # --- Port selection -------------------------------------------------------------
+
+# True when a loopback listener can actually be created on the port. Distinguishes
+# "bindable" from "listener present" AND from "reserved by Hyper-V/WinNAT", which
+# is what a plain listener check misses.
+function Test-PortBindable([int]$Port) {
+    $listener = $null
+    try {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
+        $listener.Start()
+        $listener.Stop()
+        return $true
+    } catch {
+        if ($listener) { try { $listener.Stop() } catch { } }
+        return $false
+    }
+}
+
 function Get-FreePort([int]$Preferred) {
+    # Probe by actually BINDING, not by listing listeners.
+    #
+    # WHY. `Get-NetTCPConnection -State Listen` only sees sockets someone is
+    # already listening on. It cannot see a port Windows has RESERVED for
+    # Hyper-V/WinNAT (see `netsh int ipv4 show excludedportrange protocol=tcp`),
+    # and binding a reserved port fails with EACCES ("Permission denied"), not
+    # with a listener conflict. On this host those reservations are dynamic and
+    # have grown to cover the previous default (55433 landed inside 55341-55440),
+    # so the listener-only check happily returned a port that pg_ctl then could
+    # not bind. A real bind is the only unambiguous test, and it covers both the
+    # in-use and the reserved case.
     $port = $Preferred
-    while (Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue) { $port++ }
-    return $port
+    while ($true) {
+        $listener = $null
+        try {
+            $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
+            $listener.Start()
+            $listener.Stop()
+            return $port
+        } catch {
+            if ($listener) { try { $listener.Stop() } catch { } }
+            $port++
+        }
+    }
 }
 
 <#
@@ -406,6 +451,16 @@ if ((Test-Path $PortFile) -and (Test-Path (Join-Path $DataDir 'PG_VERSION'))) {
 } else {
     $DbPort = Get-FreePort $DatabasePort
 }
+
+# The recorded port can stop being bindable between runs: Hyper-V/WinNAT reserve
+# blocks dynamically, and a port inside a newly-reserved block fails with EACCES.
+# That is not "another postmaster is running", so re-probe rather than failing
+# startup on a port this host has since taken away.
+if (-not (Test-PortBindable $DbPort)) {
+    Write-Host "    recorded database port $DbPort is no longer bindable; re-probing" -ForegroundColor DarkGray
+    $DbPort = Get-FreePort $DatabasePort
+}
+
 $WebPort = Get-FreePort $WebPort
 $ApiPort = Get-FreePort $ApiPort
 
