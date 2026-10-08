@@ -454,11 +454,27 @@ if ((Test-Path $PortFile) -and (Test-Path (Join-Path $DataDir 'PG_VERSION'))) {
 
 # The recorded port can stop being bindable between runs: Hyper-V/WinNAT reserve
 # blocks dynamically, and a port inside a newly-reserved block fails with EACCES.
-# That is not "another postmaster is running", so re-probe rather than failing
-# startup on a port this host has since taken away.
+#
+# Re-probe ONLY when nothing is listening. A bind also fails when our own
+# postmaster from a previous `-KeepRunning` run still holds the port, and that
+# case must keep the recorded port: re-probing would abandon a healthy cluster,
+# and the later connect-probe on the NEW port would find nothing, clear the LIVE
+# postmaster.pid, and start a second postmaster against the same data directory.
+# A successful connect means a server is already there — reuse it, exactly as the
+# pre-existing path below expects.
 if (-not (Test-PortBindable $DbPort)) {
-    Write-Host "    recorded database port $DbPort is no longer bindable; re-probing" -ForegroundColor DarkGray
-    $DbPort = Get-FreePort $DatabasePort
+    $alreadyServing = $false
+    try {
+        $probe = [System.Net.Sockets.TcpClient]::new()
+        $probe.Connect('127.0.0.1', $DbPort)
+        $alreadyServing = $probe.Connected
+        $probe.Close()
+    } catch { $alreadyServing = $false }
+
+    if (-not $alreadyServing) {
+        Write-Host "    recorded database port $DbPort is no longer bindable; re-probing" -ForegroundColor DarkGray
+        $DbPort = Get-FreePort $DatabasePort
+    }
 }
 
 $WebPort = Get-FreePort $WebPort
