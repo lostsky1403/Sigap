@@ -1215,12 +1215,14 @@ yields no classification row and must be recorded as `UNKNOWN`. `UNKNOWN` and
 > constraint requires updating them**, or every subsequent inspection will report
 > `UNEXPECTED_DRIFT`. The test's `M-inventory` check exists to catch exactly that drift.
 > The suite needs local PostgreSQL binaries (`initdb`, `pg_ctl`, `psql`) and exits **2** when
-> they are absent; it is not yet wired into `.github/workflows/ci.yml`, so run it manually.
+> they are absent. It **is** wired into the `ops-guards` job in `.github/workflows/ci.yml`
+> (alongside the migration and contract suites), which installs those binaries itself.
 >
-> **When you do wire it, do NOT use `sh suite; rc=$?; [ "$rc" -eq 2 ] || exit "$rc"`.** GitHub
-> Actions runs `run:` blocks under `bash -e`, so the suite's exit 2 terminates the step before
-> the guard executes — the guard is dead code and a clean skip becomes a hard failure. Use the
-> `if` form, which captures the status without tripping `set -e`:
+> **When running it in CI, do NOT use `sh suite; rc=$?; [ "$rc" -eq 2 ] || exit "$rc"`.**
+> GitHub Actions runs `run:` blocks under `bash -e`, so the suite's exit 2 terminates the step
+> before the guard executes — the guard is dead code and a clean skip becomes a hard failure.
+> Use the `if` form, which captures the status without tripping `set -e` (this is what the
+> `ops-guards` job uses):
 >
 > ```sh
 > if sh scripts/ops/test-db-classifier.sh; then
