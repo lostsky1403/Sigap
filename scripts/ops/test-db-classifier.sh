@@ -133,13 +133,21 @@ classify_scsoff() {
   printf '%s' "${c:-UNKNOWN}"
 }
 
+# Seed the tracking table. $2 is the highest applied version and defaults to 10,
+# because a database that applied the real migrations WITHOUT the Go runner
+# records only 1..10 — and that is the actual production shape. Variant A passes
+# 11 explicitly, since it simulates the runner having applied 0011 too. Passing
+# 11 everywhere (as this fixture used to) made the "pre-0011" variants test a
+# state that cannot exist before 0011 runs, which is exactly the bug the
+# classifier's required_version set exists to avoid.
 tracking() {
-px -d "$1" >/dev/null 2>&1 <<'SQL'
+maxv=${2:-10}
+px -d "$1" >/dev/null 2>&1 <<SQL
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY, checksum BYTEA NOT NULL,
   applied_at TIMESTAMPTZ NOT NULL DEFAULT now());
 INSERT INTO schema_migrations (version, checksum)
-  SELECT g, '\x01'::bytea FROM generate_series(1,10) g ON CONFLICT DO NOTHING;
+  SELECT g, '\x01'::bytea FROM generate_series(1,$maxv) g ON CONFLICT DO NOTHING;
 SQL
 [ $? -eq 0 ] || die "tracking table for $1"
 }
@@ -211,7 +219,7 @@ for f in "$MIG_DIR"/[0-9][0-9][0-9][0-9]_*.sql; do
   mig_count=$((mig_count+1))
 done
 [ "$mig_count" -gt 0 ] || die "no migration files matched under $MIG_DIR"
-tracking ca
+tracking ca 11
 check ca MATCHES_CURRENT_SECURITY_CONSTRAINTS A-release-schema
 
 # N — the SAME release schema with standard_conforming_strings OFF must classify
@@ -383,6 +391,52 @@ check cg3 MISSING_CONSTRAINTS G3-both-phones-missing
 # L — explicit correct hardened schema (built by hand, not from migrations).
 mk cl; tracking cl; release_table cl "$STRONG_S" "$STRONG_B"
 check cl MATCHES_CURRENT_SECURITY_CONSTRAINTS L-hardened
+
+# P — the pre-0011 drifted state, then migration 0011 applied. Proves the
+#     classifier reports the SAME readiness class before and after remediation,
+#     and that 0011 converges the weak form onto the release predicate. Without
+#     this variant the suite would only ever see 0011 run against a schema that
+#     already satisfied it (variant A), where 0011 is a no-op.
+#
+#     tracking defaults to 10 here, which is the point: this is the REAL
+#     production shape (versions 1..10, weak constraints), and applying 0011
+#     with `psql -f` does NOT add a version row — only the Go runner does. Both
+#     the pre state (1..10 + weak) and the post state (1..10 + strong) are
+#     legitimate and must classify as OLDER_WEAKER_CONSTRAINTS and
+#     MATCHES_CURRENT_SECURITY_CONSTRAINTS respectively.
+mk cp; tracking cp; release_table cp "$WEAK_S" "$WEAK_B"
+check cp OLDER_WEAKER_CONSTRAINTS P-pre-0011-weak
+"$PSQL" -h 127.0.0.1 -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -q -P pager=off \
+  -d cp -f "$MIG_DIR/0011_notification_outbox_phone_constraints.sql" >/dev/null 2>&1 \
+  || die "variant P: 0011 failed to apply to the weak schema"
+check cp MATCHES_CURRENT_SECURITY_CONSTRAINTS P-post-0011
+
+# Q — denylist entirely absent, then 0011 applied: 0011 must ADD both
+#     constraints, taking MISSING_CONSTRAINTS to MATCHES.
+mk cq; tracking cq; release_table cq "$STRONG_S" "$STRONG_B"
+px -d cq -c "ALTER TABLE notification_outbox DROP CONSTRAINT notification_outbox_no_raw_phone_in_subject_chk" \
+           -c "ALTER TABLE notification_outbox DROP CONSTRAINT notification_outbox_no_raw_phone_in_body_chk" >/dev/null 2>&1
+check cq MISSING_CONSTRAINTS Q-pre-0011-absent
+"$PSQL" -h 127.0.0.1 -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -q -P pager=off \
+  -d cq -f "$MIG_DIR/0011_notification_outbox_phone_constraints.sql" >/dev/null 2>&1 \
+  || die "variant Q: 0011 failed to apply to the absent-denylist schema"
+check cq MATCHES_CURRENT_SECURITY_CONSTRAINTS Q-post-0011
+
+# R — version 11 RECORDED but the constraints still weak. Reachable if the runner
+#     recorded 11 and a later manual edit reverted the constraints, or if the
+#     version row was inserted out of band. Must still be OLDER_WEAKER (a
+#     security finding), never MATCHES — the version row is bookkeeping, the
+#     predicate is the control.
+mk cr; tracking cr 11; release_table cr "$WEAK_S" "$WEAK_B"
+check cr OLDER_WEAKER_CONSTRAINTS R-v11-recorded-but-weak
+
+# S — the mirror: versions 1..10 (0011 NOT recorded) with the constraints already
+#     strengthened. This is what `psql -f 0011_...sql` actually produces, so it
+#     must be MATCHES, not UNEXPECTED_DRIFT. Before the required_version fix this
+#     was misreported as drift, which would have made J10's own acceptance
+#     criterion unreachable.
+mk cs; tracking cs; release_table cs "$STRONG_S" "$STRONG_B"
+check cs MATCHES_CURRENT_SECURITY_CONSTRAINTS S-hardened-without-v11
 
 # M — static inventory consistency between the SQL and the release migrations.
 #     Only the FIRST expected_constraint/column/version block is inspected

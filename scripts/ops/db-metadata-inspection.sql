@@ -1,8 +1,19 @@
 -- SIGAP — production DB metadata inspection (READ-ONLY, METADATA ONLY)
 -- =====================================================================
--- STATUS: PROPOSED. NOT AUTHORIZED. NOT EXECUTED.
---   Running this requires an explicit operator authorization for read-only
---   database access (see docs/operations/DEPLOYMENT_RUNBOOK.md §12/§12a).
+-- STATUS: EXECUTED. Read-only, once, on 2026-10-09 against fikriserver/sigap
+--   (PostgreSQL 16.15), with explicit operator authorization. Result:
+--   OLDER_WEAKER_CONSTRAINTS. The hash of the revision that ran was
+--   657eb6754f2e00b824a3e47db67787e066b0d153daa30d0291544382a1174a6c
+--   (blob 36959d81370f772a0b6c4b0b345a325cbc693343, 17052 bytes), verified on
+--   the host before execution. THIS revision differs from that one: the
+--   applied-version inventory was split into a known set (1..11) and a
+--   mandatory set (1..10), so a database that has had 0011 applied is no longer
+--   reported as drift. The recorded classification is unaffected. Re-run per
+--   docs/operations/DEPLOYMENT_RUNBOOK.md §12a before the cutover so the
+--   recorded hash and the shipped artifact agree.
+--
+--   Re-running requires read-only production access and its own authorization
+--   (see docs/operations/DEPLOYMENT_RUNBOOK.md §12/§12a).
 --
 -- PURPOSE
 --   Determine whether the deployed schema carries main's STRENGTHENED 0006
@@ -57,13 +68,27 @@
 --   raw run that `!~ '[0-9]{8,}'` rejects), so residue-empty + `{10,}` is not
 --   sufficient — the `[0-9]{8,}` conjunct is required as well.
 --
--- EXPECTED VALUES FOR COMPARISON (release source at HEAD 129ba6d)
+-- EXPECTED VALUES FOR COMPARISON (release source at HEAD e8c7096)
 --   0006 sha256 (LF bytes, as committed) = 1389698344dff1f868c3ccea16f2f3c3fb6807a033699670994b03d2bf627119
 --   pre-9d4e68e 0006 sha256 (LF bytes)  = d9be0f160952a0f9913638327e7bc617b24f50dc6e582e85b26e3b0e6375b51a
 --
+-- 0011_notification_outbox_phone_constraints.sql converges the two phone
+-- constraints onto the release predicate on databases that applied 0006 before
+-- 9d4e68e. It PRESERVES both constraint names, so the expected constraint
+-- inventory below is unchanged; only the applied-version set moves to 1..11.
+--
+-- READINESS, BEFORE AND AFTER
+--   OLDER_WEAKER_CONSTRAINTS  the pre-0011 state: run 0011 to converge.
+--   MATCHES_CURRENT_SECURITY_CONSTRAINTS
+--                             the post-0011 state, and also the state of a
+--                             database built from HEAD. Both mean "schema
+--                             ready"; the applied-version set distinguishes
+--                             them, so this classifier does not assert which
+--                             one produced it.
+--
 -- MAINTENANCE: the expected inventories below are transcribed from
 --   packages/db/migrations/0006_notifications.sql (constraints, columns) and
---   the set of migration files 0001..0010 (versions). Adding a migration, a
+--   the set of migration files 0001..0011 (versions). Adding a migration, a
 --   column or a constraint REQUIRES updating them, or every later inspection
 --   will report UNEXPECTED_DRIFT.
 
@@ -116,6 +141,16 @@ expected_column(name) AS (
          ('related_resource_id'), ('created_at'), ('updated_at')
 ),
 expected_version(version) AS (
+  VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11)
+),
+-- Versions that MUST be present. This is 1..10, not 1..11, and the difference is
+-- load-bearing: 0011 converges a drifted database, and whether version 11 is
+-- *recorded* depends on HOW it was applied. The runner inserts the row; a plain
+-- `psql -f 0011_...sql` does not. Both outcomes are legitimate end states, so
+-- requiring 11 would report a correctly-remediated database as drift. Version 11
+-- remains in expected_version above, which still catches a version OUTSIDE the
+-- known set and still catches a missing version <= 10.
+required_version(version) AS (
   VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)
 ),
 phone AS (
@@ -167,7 +202,7 @@ SELECT
     WHERE NOT EXISTS (SELECT 1 FROM actual_column a WHERE a.name = e.name))       AS missing_columns,
   (SELECT count(*) FROM schema_migrations s
     WHERE NOT EXISTS (SELECT 1 FROM expected_version e WHERE e.version = s.version)) AS unexpected_versions,
-  (SELECT count(*) FROM expected_version e
+  (SELECT count(*) FROM required_version e
     WHERE NOT EXISTS (SELECT 1 FROM schema_migrations s WHERE s.version = e.version)) AS missing_versions;
 
 -- 4b. SINGLE-ROW CLASSIFICATION. Read this value.
@@ -198,6 +233,16 @@ expected_column(name) AS (
          ('related_resource_id'), ('created_at'), ('updated_at')
 ),
 expected_version(version) AS (
+  VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11)
+),
+-- Versions that MUST be present. This is 1..10, not 1..11, and the difference is
+-- load-bearing: 0011 converges a drifted database, and whether version 11 is
+-- *recorded* depends on HOW it was applied. The runner inserts the row; a plain
+-- `psql -f 0011_...sql` does not. Both outcomes are legitimate end states, so
+-- requiring 11 would report a correctly-remediated database as drift. Version 11
+-- remains in expected_version above, which still catches a version OUTSIDE the
+-- known set and still catches a missing version <= 10.
+required_version(version) AS (
   VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)
 ),
 phone AS (
@@ -265,7 +310,7 @@ counts AS (
       WHERE NOT EXISTS (SELECT 1 FROM actual_column a WHERE a.name = e.name))     AS n_columns,
     (SELECT count(*) FROM schema_migrations s
       WHERE NOT EXISTS (SELECT 1 FROM expected_version e WHERE e.version = s.version))
-      + (SELECT count(*) FROM expected_version e
+      + (SELECT count(*) FROM required_version e
       WHERE NOT EXISTS (SELECT 1 FROM schema_migrations s WHERE s.version = e.version)) AS n_versions
 )
 SELECT CASE

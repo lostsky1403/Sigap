@@ -116,16 +116,23 @@ fi
 RB=docs/operations/DEPLOYMENT_RUNBOOK.md
 CL=docs/operations/RELEASE_CHECKLIST.md
 
-# 11. A NON-EMPTY historical migration diff must NOT be treated as a blocker.
+# 11. A NON-EMPTY historical migration diff must NOT be treated as a blocker, and the
+#     release migration inventory must be EXACT.
 #     Negative control: the old runbook claimed "migration diff empty" for 6d7f940..HEAD
-#     (it is NOT empty). Assert (a) the diff really is non-empty, and (b) the runbook
-#     documents it as expected/classified rather than as an abort condition.
+#     (it is NOT empty). It also claimed origin/main..HEAD was empty; that stopped being
+#     true when the redesign shipped its own 0011, so the guard now pins the EXACT set
+#     instead of asserting emptiness — a stronger check, since an unexpected extra
+#     migration now fails rather than slipping through as "still non-empty".
+EXPECTED_MIGRATION_DIFF="packages/db/migrations/0011_notification_outbox_phone_constraints.sql"
 hist=$(git diff --stat 6d7f940..HEAD -- packages/db/migrations 2>/dev/null)
-maindiff=$(git diff --stat origin/main..HEAD -- packages/db/migrations 2>/dev/null)
-if [ -n "$maindiff" ]; then
-  bad "origin/main..HEAD migration diff is NOT empty (release source diverges from main)"
+maindiff=$(git diff --name-only origin/main..HEAD -- packages/db/migrations 2>/dev/null)
+if [ -z "$maindiff" ]; then
+  bad "origin/main..HEAD migration diff is EMPTY — expected the redesign's 0011 migration"
+elif [ "$maindiff" != "$EXPECTED_MIGRATION_DIFF" ]; then
+  bad "release migration inventory differs from the declared set"
+  printf '  got : %s\n  want: %s\n' "$(printf '%s' "$maindiff" | tr '\n' ' ')" "$EXPECTED_MIGRATION_DIFF"
 elif [ -z "$hist" ]; then
-  bad "6d7f940..HEAD migration diff is empty — expected the inherited 0006 hardening"
+  bad "6d7f940..HEAD migration diff is empty — expected the inherited 0006 hardening plus 0011"
 elif grep -q "6d7f940..HEAD" "$RB" && grep -qi "non-empty by design" "$RB"; then
   ok
 else
