@@ -15,14 +15,22 @@
 --
 -- WHAT IT DOES
 --   Converges the live definitions of the two phone constraints onto the
---   release predicate, whatever the starting point, and FAILS CLOSED on any
---   state it does not recognise.
+--   release predicate, and FAILS CLOSED on any state it does not recognise.
 --
 --     both constraints already strengthened  -> no-op
 --     both constraints in the weak form      -> DROP and re-ADD strengthened
 --     both constraints absent                -> ADD strengthened
 --     anything else (mixed, NOT VALID,
 --     unrecognised predicate)                -> RAISE, change nothing
+--
+--   The recognised starting states are exactly the three listed above. The
+--   comparison is canonical but TEXTUAL, so a SEMANTICALLY equivalent predicate
+--   written differently — e.g. the release predicate with its two conjuncts
+--   reordered, or with a redundant extra conjunct — is NOT recognised and is
+--   refused rather than converged. That is fail-closed, not fail-open: it is
+--   reachable only from a state the recorded production database is not in, and
+--   the correct response is an operator decision, not a guess. Do not describe
+--   this migration as converging "whatever the starting point".
 --
 -- DESIGN CONSTRAINTS (deliberate, do not "simplify" these away)
 --   * NO BEGIN/COMMIT in this file. The runner already wraps each migration in
