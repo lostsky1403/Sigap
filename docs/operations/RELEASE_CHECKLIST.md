@@ -135,7 +135,39 @@ recorded verbatim so the claim is auditable.
 > covered in-process by the scripted positive control (steps 9–10), which performs the same
 > proof and cleans up.
 
-## H. Post-deploy verification (during the real deployment)
+## H. Jira checkpoint status
+
+The Jira reconciliation checkpoint property `sigap.reconciliation.checkpoint` (schema v2) is
+**STALE** and must not be treated as current evidence.
+
+**Cause, isolated `[OBSERVED]` on 2026-10-10 by direct probe:** the MCP server rejects the
+app-owned namespace **client-side** with HTTP 400 before contacting Jira —
+
+| Attempt | Key | Result |
+|---|---|---|
+| `editJiraEntityProperty` | `atlassian-mcp.probe-namespace-test` | **created** — the write path works and read back correctly |
+| `editJiraEntityProperty` | `sigap.reconciliation.checkpoint` | **HTTP 400**, *"must be non-empty and namespaced under 'atlassian-mcp.'"* |
+
+Because an `atlassian-mcp.*` write succeeded against the same issue, the authenticated session
+**does** hold issue-property write access. This is therefore a **tool namespace restriction,
+not a REST permission gap and not an authorization failure**. No bypass was attempted.
+
+**Handling: preserve the existing property unchanged, mark it STALE, and record the correct
+HEAD plus gate evidence on SIGAP-1.** A second, MCP-namespaced mirror was considered and
+**rejected** — two sources of truth that can disagree is the failure mode the reconciliation
+procedure exists to prevent.
+
+**Remediation requires the owner's decision (NOT executed).** In preference order: (a) have the
+owning application write `sigap.*` through its own authenticated REST client; (b) relocate the
+single source of truth to a surface this tooling can write; (c) mirror under
+`atlassian-mcp.sigap.checkpoint` **only** with an explicit back-reference naming
+`sigap.reconciliation.checkpoint` as canonical. **Do not choose (c) unilaterally.**
+
+**No automatic synchronization is claimed, in either direction.** Gate evidence for this release
+is recorded in the SIGAP-1 comment dated 2026-10-09 (HEAD `4eb2ddd`) and extended by the
+2026-10-10 host-evidence comment (HEAD `607db3a`).
+
+## I. Post-deploy verification (during the real deployment)
 
 | | Item | Check | Status |
 |---|---|---|---|
@@ -150,7 +182,7 @@ recorded verbatim so the claim is auditable.
 | H9 | Business-data presence recorded (separate from health) | `curl -fsS https://<host>/api/v1/public/facilities` → count active facilities; record the number and the product-owner acknowledgement | **OPERATOR** |
 | H10 | Release identity changed for every rebuilt service | `/_app/version.json` (web) + `docker compose images api web` digests | **OPERATOR** |
 
-## I. Standing constraints
+## K. Standing constraints
 
 | | Item | Status |
 |---|---|---|
@@ -160,7 +192,7 @@ recorded verbatim so the claim is auditable.
 | I4 | No production deployment performed as part of a gate | `[x]` |
 | I5 | `/wallet` retained and excluded from navigation (decision D7) — an **intentional deferred route**, not an accidental orphan | `[x]` |
 
-## J. Blocking gates (all must be closed before deploy)
+## L. Blocking gates (all must be closed before deploy)
 
 Every item below is **BLOCKING** and must remain **unchecked** until its evidence is
 recorded. "Unknown" is never a PASS.
