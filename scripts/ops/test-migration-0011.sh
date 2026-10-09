@@ -70,7 +70,8 @@ PGCTL=$(find_bin pg_ctl)  || { echo "SKIP: pg_ctl not found (no local PostgreSQL
 TMP=$(mktemp -d 2>/dev/null || echo "/tmp/sigap-mig0011-$$")
 mkdir -p "$TMP"
 CL="$TMP/cluster"
-PORT=${SIGAP_TEST_PG_PORT:-55463}
+PORT_OVERRIDE=${SIGAP_TEST_PG_PORT:-}
+PORT=${PORT_OVERRIDE:-55463}
 
 cleanup() {
   "$PGCTL" -D "$CL" -m immediate stop >/dev/null 2>&1
@@ -80,8 +81,25 @@ trap cleanup EXIT INT TERM
 
 "$INITDB" -D "$CL" -U postgres --auth=trust -E UTF8 >"$TMP/initdb.log" 2>&1 \
   || { echo "FAIL: initdb failed"; tail -5 "$TMP/initdb.log"; exit 1; }
-"$PGCTL" -D "$CL" -o "-p $PORT -c listen_addresses=127.0.0.1" -l "$TMP/pg.log" -w start >"$TMP/start.log" 2>&1 \
-  || { echo "FAIL: cluster start failed"; tail -5 "$TMP/start.log"; exit 1; }
+
+# A cluster left running by a SIGKILLed earlier invocation (the trap does not
+# fire on SIGKILL) holds the default port and would make pg_ctl fail here,
+# reporting a spurious FAIL for the whole suite. Probe successive ports unless
+# one was requested explicitly.
+start_cluster() {
+  attempts=0
+  while [ "$attempts" -lt 8 ]; do
+    if "$PGCTL" -D "$CL" -o "-p $PORT -c listen_addresses=127.0.0.1" \
+         -l "$TMP/pg.log" -w start >"$TMP/start.log" 2>&1; then
+      return 0
+    fi
+    [ -n "$PORT_OVERRIDE" ] && break
+    PORT=$((PORT + 1))
+    attempts=$((attempts + 1))
+  done
+  return 1
+}
+start_cluster || { echo "FAIL: cluster start failed"; tail -5 "$TMP/start.log"; exit 1; }
 
 px() { "$PSQL" -h 127.0.0.1 -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -q -P pager=off "$@"; }
 pxa() { "$PSQL" -h 127.0.0.1 -p "$PORT" -U postgres -q -P pager=off -A -t "$@"; }
