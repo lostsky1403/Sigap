@@ -185,13 +185,24 @@ actual_column(name) AS (
 SELECT
   (SELECT count(*) FROM actual_constraint)                             AS check_constraints,
   (SELECT count(*) FROM norm)                                          AS phone_constraints,
-  -- Both conjuncts required; the `{10,}` conjunct alone is weaker, not stronger.
+  -- Both conjuncts required, AND the separator class must still carry its
+  -- backslash escape. The normalization above strips chr(92) from BOTH sides so
+  -- the comparison does not depend on standard_conforming_strings — but that
+  -- also makes the INVALID predicate '[0-9-._() ]' (an invalid character range
+  -- that raises "invalid character range" on every insert) look identical to the
+  -- valid '[0-9\-._() ]'. The raw definition is therefore checked for the
+  -- escaped class here. Without this, a functionally broken constraint is
+  -- reported as MATCHES_CURRENT_SECURITY_CONSTRAINTS.
   (SELECT count(*) FROM norm
-    WHERE residue = '' AND def LIKE '%[0-9]{8,}%' AND def LIKE '%{10,}%') AS strengthened_form,
+    WHERE residue = '' AND def LIKE '%[0-9]{8,}%' AND def LIKE '%{10,}%'
+      AND strpos(replace(def, chr(92) || chr(92), chr(92)), '[0-9' || chr(92) || '-._() ]') > 0)              AS strengthened_form,
   (SELECT count(*) FROM norm
     WHERE residue = '' AND def LIKE '%[0-9]{8,}%' AND def NOT LIKE '%{10,}%') AS weak_form,
   (SELECT count(*) FROM norm
-    WHERE NOT (residue = '' AND def LIKE '%[0-9]{8,}%'))               AS unrecognized_form,
+    WHERE NOT ((residue = '' AND def LIKE '%[0-9]{8,}%' AND def LIKE '%{10,}%'
+                AND strpos(replace(def, chr(92) || chr(92), chr(92)), '[0-9' || chr(92) || '-._() ]') > 0)
+            OR (residue = '' AND def LIKE '%[0-9]{8,}%' AND def NOT LIKE '%{10,}%')))
+                                                                       AS unrecognized_form,
   (SELECT count(*) FROM actual_constraint a
     WHERE NOT EXISTS (SELECT 1 FROM expected_constraint e WHERE e.name = a.name)) AS unexpected_constraints,
   (SELECT count(*) FROM expected_constraint e
@@ -277,21 +288,31 @@ actual_column(name) AS (
 counts AS (
   SELECT
     (SELECT count(*) FROM norm)                                                 AS n_phone,
-    -- "Strengthened" requires BOTH conjuncts. `residue = ''` alone is not
-    -- enough: a predicate carrying only the `{10,}` conjunct also strips to an
-    -- empty residue, yet it is strictly weaker than the release definition.
+    -- "Strengthened" requires BOTH conjuncts AND the escaped separator class.
+    -- `residue = ''` alone is not enough: a predicate carrying only the `{10,}`
+    -- conjunct also strips to an empty residue, yet it is strictly weaker than
+    -- the release definition. The escape check is the third requirement: after
+    -- the backslash is stripped from both sides, the INVALID predicate
+    -- '[0-9-._() ]' (an invalid character range that raises on every insert) is
+    -- textually identical to the valid '[0-9\-._() ]', so the raw definition
+    -- must be inspected for the escape.
     (SELECT count(*) FROM norm
       WHERE residue = ''
         AND def LIKE '%[0-9]{8,}%'
-        AND def LIKE '%{10,}%')                                                  AS n_strong,
+        AND def LIKE '%{10,}%'
+        AND strpos(replace(def, chr(92) || chr(92), chr(92)), '[0-9' || chr(92) || '-._() ]') > 0)                     AS n_strong,
     (SELECT count(*) FROM norm
       WHERE residue = ''
         AND def LIKE '%[0-9]{8,}%'
         AND def NOT LIKE '%{10,}%')                                              AS n_weak,
-    -- Anything that is not one of the two known forms: a non-empty residue, or
-    -- the weak conjunct missing entirely.
+    -- Anything that is neither the strengthened form nor the weak form: a
+    -- non-empty residue, a missing weak conjunct, or an unescaped (broken)
+    -- separator class.
     (SELECT count(*) FROM norm
-      WHERE NOT (residue = '' AND def LIKE '%[0-9]{8,}%'))                       AS n_badform,
+      WHERE NOT ((residue = '' AND def LIKE '%[0-9]{8,}%' AND def LIKE '%{10,}%'
+                  AND strpos(replace(def, chr(92) || chr(92), chr(92)), '[0-9' || chr(92) || '-._() ]') > 0)
+              OR (residue = '' AND def LIKE '%[0-9]{8,}%' AND def NOT LIKE '%{10,}%')))
+                                                                                 AS n_badform,
     -- Structural constraint inventory: the two phone names are excluded here and
     -- judged by n_phone/n_strong/n_weak/n_badform instead, so that a merely
     -- absent phone denylist is reported as MISSING_CONSTRAINTS rather than

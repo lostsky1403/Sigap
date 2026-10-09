@@ -82,7 +82,8 @@ PGCTL=$(find_bin pg_ctl)  || { echo "SKIP: pg_ctl not found (no local PostgreSQL
 TMP=$(mktemp -d 2>/dev/null || echo "/tmp/sigap-dbclass-$$")
 mkdir -p "$TMP"
 CL="$TMP/cluster"
-PORT=${SIGAP_TEST_PG_PORT:-55451}
+PORT_OVERRIDE=${SIGAP_TEST_PG_PORT:-}
+PORT=${PORT_OVERRIDE:-55451}
 
 cleanup() {
   "$PGCTL" -D "$CL" -m immediate stop >/dev/null 2>&1
@@ -92,8 +93,25 @@ trap cleanup EXIT INT TERM
 
 "$INITDB" -D "$CL" -U postgres --auth=trust -E UTF8 >"$TMP/initdb.log" 2>&1 \
   || { echo "FAIL: initdb failed"; tail -5 "$TMP/initdb.log"; exit 1; }
-"$PGCTL" -D "$CL" -o "-p $PORT -c listen_addresses=127.0.0.1" -l "$TMP/pg.log" -w start >"$TMP/start.log" 2>&1 \
-  || { echo "FAIL: cluster start failed"; tail -5 "$TMP/start.log"; exit 1; }
+
+# A cluster left running by a SIGKILLed earlier invocation (the trap does not
+# fire on SIGKILL) holds the default port and would make pg_ctl fail here,
+# reporting a spurious FAIL for the whole suite. Probe successive ports unless
+# one was requested explicitly.
+start_cluster() {
+  attempts=0
+  while [ "$attempts" -lt 8 ]; do
+    if "$PGCTL" -D "$CL" -o "-p $PORT -c listen_addresses=127.0.0.1" \
+         -l "$TMP/pg.log" -w start >"$TMP/start.log" 2>&1; then
+      return 0
+    fi
+    [ -n "$PORT_OVERRIDE" ] && break
+    PORT=$((PORT + 1))
+    attempts=$((attempts + 1))
+  done
+  return 1
+}
+start_cluster || { echo "FAIL: cluster start failed"; tail -5 "$TMP/start.log"; exit 1; }
 
 px() { "$PSQL" -h 127.0.0.1 -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -q -P pager=off "$@"; }
 # Setup must fail LOUDLY: a silently-failed CREATE DATABASE would make the two
@@ -337,6 +355,26 @@ SQL
 [ "$(px -d ch7 -A -t -c "SELECT bool_and(NOT convalidated) FROM pg_constraint WHERE conname LIKE '%no_raw_phone%'")" = "t" ] \
   || die "variant H7 precondition: both phone constraints should be NOT VALID"
 check ch7 UNEXPECTED_DRIFT H-not-valid
+
+# T — UNESCAPED separator class: the regex has lost its backslash, so
+#     `[0-9-._() ]` is an INVALID CHARACTER RANGE. PostgreSQL ACCEPTS this at
+#     CREATE CONSTRAINT time and only raises when the regex is evaluated, so the
+#     state is reachable and every INSERT then fails. It must classify as
+#     UNEXPECTED_DRIFT, never MATCHES: the normalized comparison strips chr(92)
+#     from both sides, which would otherwise make this textually identical to
+#     the valid escaped form.
+mk ct; tracking ct; release_table ct \
+  "subject !~ '[0-9]{8,}' AND subject !~ '[0-9][0-9-._() ]{10,}[0-9]'" \
+  "body_template !~ '[0-9]{8,}' AND body_template !~ '[0-9][0-9-._() ]{10,}[0-9]'"
+# Precondition 1: the constraint really is present (not a MISSING case).
+[ "$(px -d ct -A -t -c "SELECT count(*) FROM pg_constraint WHERE conname = 'notification_outbox_no_raw_phone_in_subject_chk'")" = "1" ] \
+  || die "variant T precondition: constraint absent"
+# Precondition 2: the constraint is FUNCTIONALLY BROKEN — an ordinary insert
+# raises. This is what makes MATCHES a false PASS rather than a cosmetic
+# mismatch.
+px -d ct -c "INSERT INTO notification_outbox (channel, template_key, subject, body_template, recipient_type, recipient_contact_masked, recipient_contact_hash) VALUES ('dev','t','halo','halo','patient','+62••••1234', decode(repeat('00',32),'hex'))" >/dev/null 2>&1 \
+  && die "variant T precondition: the unescaped constraint accepted an insert; fixture is not broken"
+check ct UNEXPECTED_DRIFT T-unescaped-separator-class
 
 # I — absent migration history (no schema_migrations table). Assert the
 #     pre-condition, so this cannot pass because the DATABASE was missing.
