@@ -43,8 +43,8 @@ Consequences that follow directly:
   and do not "fix" it by reverting the hardening.
 - **`0011` is a database change, so a rollback is no longer purely image-based.** Rolling the
   application back to a pre-`0011` image while the database carries the strengthened
-  constraints is the compatibility question in §7e — it is **UNKNOWN** and blocking until
-  answered (§7e, §12).
+  constraints is the compatibility question in §7f — it is **UNKNOWN** and blocking until
+  answered (§7f, §12).
 
 Rules that must hold at every step:
 
@@ -594,6 +594,16 @@ it, and neither is available now:
 1. the running image's actual source revision, or
 2. a static reading of that revision's outbox write path against the strengthened predicate.
 
+**A claim that this is `SAFE` was made and is WRONG — do not reinstate it.** The argument was
+that the application denylist and the database constraint were "the same predicate", so any
+image would write only values the constraint accepts. **That premise was false `[OBSERVED]`:**
+the Go denylist carried a second alternative,
+`[0-9]{3,4}[-._() ][0-9]{3,4}[-._() ][0-9]{2,4}`, which the CHECK constraint does not have. Go
+was therefore **more permissive** than the database at that revision, and an image built from
+it could write a body the strengthened constraint rejects. The two predicates agree again in
+this release — Go was aligned to the immutable database predicate — but that repair says
+nothing about the *old* image, whose revision is still unproven. `UNKNOWN` stands.
+
 **Consequence: production migration authorization is BLOCKED on this.** Do not apply `0011`
 to production until rollback safety is established or explicitly accepted.
 
@@ -731,6 +741,8 @@ authz failing closed) and data presence are verified separately; only service he
 | Explicit `SIGAP_ENV=local` still resolves through compose (only `${SIGAP_ENV:?...}` on unset/empty is enforced) | rejected by `scripts/ops/preflight-production-env.sh` (§2.8/§7a) and by abort condition §9 | compose cannot express a value blacklist; the operator-invoked gate is the control, and `.env.example` ships `local` for dev |
 | `-AllowNonLocalDatabase` can disable the smoke script's DB loopback guard (pre-existing) | retained for explicitly authorized staging rehearsals; off by default | removing it would block the sanctioned staging rehearsal path; the HTTP targets remain loopback-guarded regardless |
 | Traefik middleware labels are not printed verbatim by the evidence bundle | keys only (§7 of the bundle) | label VALUES can hold credential material (e.g. `*.basicauth.users`); no such label exists today |
+| **`facilities.short_code` has no database CHECK, and pre-existing rows are not remediated** | `validateShortCode` (§12c) enforces the contract on **create and update** only. A row written before this release — or by a seed script or any out-of-band writer — is not re-validated, and the Rust queue engine renders `{short_code}-{NNNN}` without checking it. **[INFERRED]** A facility whose stored `short_code` renders a phone-like queue number (e.g. `A1234567` → `A1234567-0300`, which the predicate rejects) would have **every** check-in notification for that facility refused by `notification_outbox_no_raw_phone_in_body_chk` and lost silently, because `Enqueue` is fire-and-forget. | Adding a `CHECK` on `short_code` needs a **new migration**, and this release deliberately ships exactly one (`0011`) and touches no other table. Prepared **read-only** scan for the operator, to be run with the §12a authorization and **not executed here**: `SELECT short_code FROM facilities WHERE short_code ~ '[0-9]{8,}' OR short_code ~ '[0-9][0-9\-._() ]{7,}[0-9]' OR short_code !~ '^[A-Za-z]' OR length(short_code) > 10;` — any row returned is a facility that must be renamed before its notifications can be delivered. |
+| The phone predicate's `[0-9]` range is collation-resolved in PostgreSQL but ASCII in Go RE2 | recorded as a **direction-safe** residual | **[OBSERVED]** on the tested cluster, `[0-9]` matched only ASCII digits (Arabic-Indic, full-width, superscript, circled, Devanagari, Bengali, Thai and Roman-numeral forms all excluded). Any divergence makes PostgreSQL **stricter** than Go, i.e. Go accepts a value the database rejects → a lost notification, never a stored phone. The exact production locale (glibc `en_US.UTF-8`) is **[UNKNOWN]** and was not testable off-host. A differential fuzz over the deployment locale would close it. |
 
 ---
 
@@ -787,8 +799,12 @@ metadata-only inspection and it was run on 2026-10-09 against the production hos
 
 - Script `scripts/ops/db-metadata-inspection.sql` — the revision that ran was
   `657eb675…a1174a6c` (blob `36959d81…c693343`, 17052 bytes), **re-verified byte-identical on
-  the host before execution**. The shipped revision is now `d705f835…b17738b2` (blob
-  `a77adc0e…a321f456`); see the note under §12a for why, and re-run before the cutover.
+  the host before execution**. The shipped revision is now `43394fa3…4bbaebc5` (blob
+  `0dde17bc…9f0161a5`, 21516 bytes) — the version-inventory fix, the STATUS header, and the
+  **false-PASS fix for the invalid unescaped separator class** (`[0-9-._() ]`, which PostgreSQL
+  accepts at `CREATE CONSTRAINT` and only rejects on evaluation). The recorded classification is
+  unaffected, but **§12a must be re-run before the cutover** so the recorded hash matches the
+  shipped artifact; `EXPECT_SHA` has been updated to the new value.
 - Target: host `fikriserver`, database `sigap`, PostgreSQL **16.15**.
 - Safety: `SELECT`-only, `BEGIN READ ONLY`, `statement_timeout = 15s`, final `ROLLBACK`.
   Metadata only. No application data row was read, no PHI, no DDL, no DML, no migration, no
@@ -832,7 +848,7 @@ container.
 #    COMPARED against these, not merely printed.
 #    The deploy tree must hold the reviewed revision; a stale copy fails the
 #    verdict at the end of this block.
-EXPECT_SHA=d705f8358cf205489c7eb1dd4448fcd56ff45def5613fadad5c1a145b17738b2
+EXPECT_SHA=43394fa3a1bf560e436a6bffa2d061ccdde4bf1c1effb673c90a33bc4bbaebc5
 EXPECT_DB=sigap
 EXPECT_SCHEMA=public
 
@@ -900,8 +916,8 @@ Rules for the operator:
 | The container's environment is trusted. | `psql` honours the container's `PGOPTIONS`/`PGHOST`/`PGSERVICE`; a `search_path` override could point the inspection at a shadow schema. If that environment is not trusted, scrub it with `docker exec -e PGOPTIONS= … -e PGHOST= …`. |
 
 Expected hash of the prepared script (LF-normalised):
-`d705f8358cf205489c7eb1dd4448fcd56ff45def5613fadad5c1a145b17738b2`
-(git blob `a77adc0e0f81aa467105b9cf2b9f5041a321f456`, 19855 bytes). §12a step 0 sets
+`43394fa3a1bf560e436a6bffa2d061ccdde4bf1c1effb673c90a33bc4bbaebc5`
+(git blob `0dde17bc4adb01735f2706527a1822829f0161a5`, 21516 bytes). §12a step 0 sets
 `EXPECT_SHA` to this value and step 4 **compares** it, so a stale or doctored copy in the
 deploy tree fails the verdict rather than merely printing a different number. If the value
 above and the committed blob ever disagree, stop and re-read this section.
@@ -916,6 +932,21 @@ above and the committed blob ever disagree, stop and re-read this section.
 > constraints, which both revisions classify as `OLDER_WEAKER_CONSTRAINTS`), and the change
 > was verified against that exact state. Re-run §12a before the cutover so the recorded hash
 > and the shipped artifact agree.
+
+> **And it changed AGAIN for a FALSE PASS, which is the more serious of the two.** The
+> classifier normalises a constraint definition by collapsing a doubled backslash before
+> matching it against the expected predicate. That normalisation made the **invalid** class
+> `[0-9-._() ]` — in which `9-.` is an invalid character range — textually identical to the
+> valid `[0-9\-._() ]`, so a constraint carrying the invalid class was certified as
+> `MATCHES_CURRENT_SECURITY_CONSTRAINTS`. **The state is reachable:** PostgreSQL accepts such
+> a predicate at `CREATE CONSTRAINT` and only raises when it is evaluated, and
+> `standard_conforming_strings=off` produces exactly that degradation from a plain
+> single-quoted literal. A false PASS here means a constraint that **raises on every insert**
+> is reported as healthy. The classifier now detects the unescaped class explicitly (via
+> `strpos`, since `LIKE` treats `\` as an escape), and `scripts/ops/test-db-classifier.sh`
+> gained variant `T-unescaped-separator-class` with two preconditions — 33/0, was 32/0. The
+> recorded production classification is unaffected: the observed state carried the **weak**
+> form, not the invalid one. Re-run §12a before the cutover.
 
 **What it establishes:**
 1. every recorded `schema_migrations` version (and `0006`'s stored checksum, diagnostic only);
@@ -962,7 +993,7 @@ strengthened form exactly, the full constraint inventory, the full column invent
 applied-version set.
 
 Non-vacuity is proven by `scripts/ops/test-db-classifier.sh`, which builds a **disposable
-local** cluster and asserts 32 checks over 31 schema variants — the **real release schema**
+local** cluster and asserts 33 checks over 32 schema variants — the **real release schema**
 (migrations `0001`–`0011` applied in order), the genuine pre-hardening weak form, the
 fragment-spoof case, the `{10,}`-conjunct-only case (a predicate that looks strengthened but
 is weaker), both mixed strong/weak columns, a `NOT VALID` phone constraint (present but not
@@ -974,9 +1005,13 @@ explicitly-correct hardened schema, a run of the release variant with
 `standard_conforming_strings=off` (the backslash-independence check), the **real pre-`0011`
 production shape (`1..10` + weak) and its post-`0011` result**, the absent-denylist state
 before and after `0011`, the **`version 11 recorded but constraints still weak`** desync, the
-**`hardened but version 11 not recorded`** case, and a static consistency check between the
-SQL's expected inventories and `packages/db/migrations`.
-The observed result is **32 pass / 0 fail**; only a genuinely strengthened schema reports
+**`hardened but version 11 not recorded`** case, the **invalid unescaped separator class
+`[0-9-._() ]`** (variant `T-unescaped-separator-class` — a predicate PostgreSQL accepts at
+`CREATE CONSTRAINT` but raises on when evaluated, and which the classifier's backslash
+normalisation previously rendered textually identical to the valid `[0-9\-._() ]`, a **false
+PASS**), and a static consistency check between the SQL's expected inventories and
+`packages/db/migrations`.
+The observed result is **33 pass / 0 fail**; only a genuinely strengthened schema reports
 `MATCHES_CURRENT_SECURITY_CONSTRAINTS`. Each assertion was confirmed to be non-vacuous by
 mutating the classifier and observing the suite fail.
 
@@ -996,9 +1031,28 @@ yields no classification row and must be recorded as `UNKNOWN`. `UNKNOWN` and
 > constraint requires updating them**, or every subsequent inspection will report
 > `UNEXPECTED_DRIFT`. The test's `M-inventory` check exists to catch exactly that drift.
 > The suite needs local PostgreSQL binaries (`initdb`, `pg_ctl`, `psql`) and exits **2** when
-> they are absent; it is not yet wired into `.github/workflows/ci.yml`, so run it manually —
-> or add it to the `ops-guards` job as
-> `sh scripts/ops/test-db-classifier.sh; rc=$?; [ "$rc" -eq 2 ] || exit "$rc"`.
+> they are absent; it is not yet wired into `.github/workflows/ci.yml`, so run it manually.
+>
+> **When you do wire it, do NOT use `sh suite; rc=$?; [ "$rc" -eq 2 ] || exit "$rc"`.** GitHub
+> Actions runs `run:` blocks under `bash -e`, so the suite's exit 2 terminates the step before
+> the guard executes — the guard is dead code and a clean skip becomes a hard failure. Use the
+> `if` form, which captures the status without tripping `set -e`:
+>
+> ```sh
+> if sh scripts/ops/test-db-classifier.sh; then
+>   :                       # 0 = PASS
+> else
+>   rc=$?
+>   [ "$rc" -eq 2 ] || exit "$rc"   # 2 = MISSING PREREQUISITE, anything else = FAIL
+> fi
+> ```
+>
+> **Exit codes are a contract: `0` PASS, `1` FAIL, `2` MISSING PREREQUISITE.** An unexpected
+> skip must FAIL where the prerequisite is expected to be present. In CI the PostgreSQL
+> binaries are installed by the job, so exit 2 there means the job is misconfigured, not that
+> the suite is inapplicable — gate the job on binary availability rather than tolerating 2.
+> Never use `sh suite || true` or `sh suite || rc=$?`: both turn a genuine exit-1 failure into
+> a silent pass.
 
 **Classification — record exactly one:**
 
@@ -1055,15 +1109,60 @@ Properties that matter for the cutover:
 - **Names are preserved.** The release inventory of 10 CHECK constraints on
   `notification_outbox` is unchanged, so the classifier's expected inventory needs no name
   change and its negative controls keep working.
-- **Lock behaviour — this is an `ACCESS EXCLUSIVE` window.** `ALTER TABLE ... DROP CONSTRAINT`
-  and `ADD CONSTRAINT` both take `ACCESS EXCLUSIVE` on `notification_outbox`. `ADD CONSTRAINT`
-  validates **every existing row** while holding it, so the window scales with the table. On a
-  large outbox this blocks all reads and writes of that table for the duration. The migration
-  sets **no `lock_timeout`**, so if the lock cannot be acquired immediately it waits behind any
-  open transaction instead of failing fast. **Measure the row count and the lock wait before
-  applying, and prefer a maintenance window.** A timeout can be imposed by the caller, e.g.
-  `PGOPTIONS='-c lock_timeout=5s'`, and the migration is safe to retry after a timeout because
-  it changes nothing on failure.
+- **Lock behaviour — this is an `ACCESS EXCLUSIVE` window, and it blocks the notification
+  worker too.** `ALTER TABLE ... DROP CONSTRAINT` and `ADD CONSTRAINT` both take
+  `ACCESS EXCLUSIVE` on `notification_outbox`. `ACCESS EXCLUSIVE` conflicts with **every**
+  other lock mode, so during the window **no reader can `SELECT` the table and no writer can
+  `INSERT`/`UPDATE` it** — which includes the notification worker's own
+  `status`/`attempt_count`/`next_attempt_at` `UPDATE` and every `Enqueue` `INSERT`. `ADD
+  CONSTRAINT` validates **every existing row** while holding the lock, so the window scales
+  with the table; on a large outbox it is a table-wide outage for its duration.
+  **[OBSERVED]** on a disposable cluster: with an open `SELECT` transaction the migration does
+  not complete until that transaction ends, and the same holds for an open `UPDATE`
+  (`apps/api/internal/notification/migration_lock_test.go`,
+  `TestMigration0011_BlocksOnConcurrentReader` / `_BlocksOnConcurrentWriter`).
+- **The runner sets neither `lock_timeout` nor `statement_timeout`, and has no retry loop.**
+  `migrate.Run` (`apps/api/internal/migrate/migrate.go`) issues the migration body directly and
+  aborts on the first error; there is no automatic re-attempt. So an unbounded lock wait is the
+  **default**, and the only bound is the caller's context. A bounded window is therefore the
+  **operator's** control, not the migration's. Impose it on the migration connection, e.g.
+  `PGOPTIONS='-c lock_timeout=5s -c statement_timeout=120s'`, or `SET LOCAL lock_timeout` /
+  `SET LOCAL statement_timeout` in the wrapping transaction.
+- **The lock queue is FIFO, so the table is unavailable from the moment the ALTER *requests*
+  the lock.** PostgreSQL grants locks in request order to prevent starvation. Once `0011`'s
+  `ACCESS EXCLUSIVE` request is queued behind an open transaction, every later `SELECT`/`INSERT`
+  on `notification_outbox` queues **behind the migration** rather than proceeding. **[OBSERVED]**:
+  a plain `SELECT count(*)` issued while the migration waited did not return. The practical
+  consequence is that the outage begins when the migration issues the `ALTER`, not when it
+  acquires the lock, and it ends only when both the blocker and the migration have drained.
+  Draining the table of long transactions **before** starting the migration is therefore the
+  control that actually bounds the window.
+- **A lock timeout fails closed and is retryable.** **[OBSERVED]**
+  (`TestMigration0011_LockTimeoutFailsClosed`): with `lock_timeout` set and a concurrent reader
+  holding `ACCESS SHARE`, the migration abandons the wait with SQLSTATE **`55P03`
+  (`lock_not_available`)** and leaves **no partial state** — the version-11 row is **not**
+  recorded and both constraint definitions are unchanged. After the blocker releases, a plain
+  re-run applies cleanly and records version 11. Retrying is a **manual operator action**; the
+  runner will not do it for you. Note that the timeout **message text is locale-dependent** —
+  the test cluster renders it in Indonesian (`pembatalan perintah karena kunci kehabisan waktu
+  tunggu`) — so gate on the SQLSTATE, never on the prose.
+- **`statement_timeout` bounds the validation scan, not the wait.** Set both: `lock_timeout`
+  stops a migration that cannot get the lock, `statement_timeout` stops one that got the lock
+  but is scanning a table far larger than expected. Choose them from the measured row count
+  below, not from a guess.
+- **Measure before applying (read-only, prepared — NOT executed).** The row count and the
+  current lock wait are **not known**. Obtain them with the §12a read-only path, which already
+  runs under `BEGIN READ ONLY` with `statement_timeout = 15s`, or with this aggregate, which
+  reads no row content:
+
+  ```sql
+  -- read-only; returns a count, never row content
+  SELECT count(*) AS outbox_rows FROM notification_outbox;
+  ```
+
+  `notification_outbox` is a queue, so its steady-state size should be small; a large count
+  means the validation scan is long and a maintenance window is mandatory. **Do not apply
+  `0011` until this number is recorded** — it is what makes the window estimable at all.
 - **No `BEGIN`/`COMMIT` in the file.** The runner already wraps each migration in its own
   transaction, so the DDL and the `schema_migrations` version row commit **atomically**. (Note
   that `0006` is the only migration carrying its own `BEGIN`/`COMMIT`, which ends the runner's
@@ -1102,6 +1201,31 @@ ordinary-content compatibility, `standard_conforming_strings=off`, the absence o
 (`pg_get_constraintdef`, `convalidated`, constraint count), not merely a zero exit code, and
 uses only synthetic data.
 
+Lock and timeout behaviour is tested separately, against the **real runner** on a
+production-shaped database (migrations `1..10` recorded, both constraints in the weak form):
+`apps/api/internal/notification/migration_lock_test.go` —
+`TestMigration0011_BlocksOnConcurrentReader` (an open `ACCESS SHARE` blocks the migration; the
+ungranted `AccessExclusiveLock` is observed in `pg_locks`; it completes once released),
+`TestMigration0011_BlocksOnConcurrentWriter` (same for an open `ROW EXCLUSIVE` `UPDATE`), and
+`TestMigration0011_LockTimeoutFailsClosed` (`lock_timeout` applied to the **runner's**
+connections → SQLSTATE `55P03`, no partial state, version 11 unrecorded, clean retry
+afterwards). The remaining branches of the state machine are covered by
+`TestMigration0011_Transition_MixedStateRefused` (mixed strong/weak → the migration's own
+`RAISE`, SQLSTATE `P0001`, nothing changed) and `TestMigration0011_Transition_AbsentConstraintsAdded`
+(both absent → added strengthened). Run as part of `sh scripts/ops/test-notification-contract.sh`,
+alongside the transition tests that reconstruct the observed production shape and prove 0011
+fails closed on violating history, and `TestPredicate_CorpusAgreesWithTheDatabase`, which drives
+the shared predicate corpus through a live constraint.
+
+**Each DB-backed test provisions its OWN isolated database** (`migPool` creates and drops one per
+test). This is required, not tidiness: the tests assert they just applied migrations `0001..0010`,
+which is false on any database that already has version 11 recorded — including the CI `api` job's
+shared database, which `ci-migrate` migrates *before* `go test ./...` runs. `DATABASE_URL` is
+therefore a connection to a **server**, not a database under test, and the role needs `CREATEDB`.
+Note also that a harness failure is now propagated: each sub-suite's status is read from the
+`go test` invocation itself, not from a pipeline's `tail` (see `test-skip-exit-codes.sh` for the
+same class of defect in shell).
+
 **Idempotent.** A second run is a no-op, whether or not the version row was recorded. No row is
 rewritten or deleted: if any existing row violates the strengthened predicate, `ADD CONSTRAINT`
 raises, the transaction aborts and the database is left exactly as it was. Whether such rows
@@ -1113,6 +1237,48 @@ authorized decision, not part of this migration.
 the deploy cutover (§3.1): production `SIGAP_AUTO_MIGRATE` is empty, so `docker compose up`
 applies no DDL. After it is applied, re-run the inspection (§12a) and record
 `MATCHES_CURRENT_SECURITY_CONSTRAINTS`.
+
+---
+
+### 12c. `facilities.short_code` — the queue-number safety contract (NO migration)
+
+**Status: application-layer control only. Not a database constraint, and not applied to existing rows.**
+
+`short_code` is interpolated verbatim into the queue number the Rust queue engine renders as
+`format!("{}-{:04}", short_code, next_number)` (`apps/queue-engine/src/engine/queue.rs`), and
+that queue number reaches `notification_outbox.body_template` through the `{queue_number}`
+template variable. A `short_code` built from digits and phone separators can therefore render a
+value indistinguishable from a phone number, and the insert is then refused by
+`notification_outbox_no_raw_phone_in_body_chk` — a silent failure, because `Enqueue` runs on a
+fire-and-forget goroutine.
+
+`validateShortCode` (`apps/api/internal/handler/admin.go`) closes this at the source, on create
+and on update. It enforces: non-empty; at most 10 characters; first character an ASCII letter;
+only letters, digits and `-`; and — the load-bearing rule — the **rendered** queue number must
+not match the phone predicate, tested with `notification.ContainsRawPhoneDigits`, the same
+function the denylist uses.
+
+**The rule is the rendered value, not a digit count.** An earlier revision capped the digits in
+`short_code` at 2. That was safe but **wrong in the other direction**: it rejected codes the
+database accepts, silently narrowing the product and breaking the E2E suite's own `E2E123456`,
+whose rendered queue number `E2E123456-0300` is 11 characters — one short of the 12 the second
+conjunct requires. Hand-deriving a numeric bound is what makes that class of rule wrong in one
+direction or the other; testing the rendered value against the actual predicate has no bound to
+get wrong.
+
+Boundary, **[OBSERVED]** against a live constraint (`TestRenderedQueueNumber_GoAndDatabaseAgree`
+inserts the rendered value directly, bypassing the Go layer):
+
+| `short_code` | rendered (`-0300`) | database verdict |
+|---|---|---|
+| `E2E123456`, `A123456` | `E2E123456-0300`, `A123456-0300` | **accepted** (6 trailing digits is the most that fits) |
+| `E2E1234567`, `A1234567` | `E2E1234567-0300`, `A1234567-0300` | **rejected** (one digit more crosses the line) |
+| `AB12345678` | `AB12345678-0300` | **rejected** (8 consecutive digits — the first conjunct) |
+
+**Residual, recorded in §10:** there is no `CHECK` on `facilities.short_code`, and rows written
+before this release are not re-validated. Adding the constraint needs a **new migration**, which
+this release deliberately does not ship. The prepared read-only scan in §10 lists any facility
+that must be renamed.
 
 ---
 
@@ -1128,10 +1294,11 @@ can leave the stack in a partially-tagged state.
 ### 13a. Capacity gate (before any `build` or `save`)
 
 1. Record free space and the image sizes (evidence bundle §4/§6).
-2. Compute the archive budget: `Σ (image size) × ~1.05` for the gzipped archives
-   (api ≈ 27 MB, web ≈ 324 MB, engine ≈ 90 MB → ≈ 440 MB, worst case ~460 MB), **plus**
-   the build peak (a rebuild can transiently hold the old image, the new layers, and the
-   build cache simultaneously).
+2. Compute the archive budget. Raw `Σ (image size)` ≈ 27 + 324 + 90 = **441 MB ≈ 0.44 GB**;
+   the gzip allowance is `× ~1.05` → **≈ 463 MB ≈ 0.46 GB**. Use the **0.46 GB** figure as the
+   budget (the raw sum is not the budget, and this document previously labelled the raw sum
+   with the `×1.05` formula's name). **Plus** the build peak (a rebuild can transiently hold
+   the old image, the new layers, and the build cache simultaneously).
 3. **Abort** if free space after the projected archive **plus a stated build-peak allowance**
    would fall below the floor in 3b. The margin is expressed as an **absolute floor**, not a
    bare percentage: the previous "10% margin" wording named no base (10% of the volume? of
@@ -1142,21 +1309,25 @@ can leave the stack in a partially-tagged state.
    which is *stricter* than the 2 GB term and is therefore the binding one. The 2 GB term exists
    only so the rule still means something on a much smaller filesystem.
 4. **The build peak is an unmeasured input and must be measured before this gate can pass.**
-   On the 2026-10-09 figures the gate **fails**: `16 GB − 0.44 GB = 15.56 GB`, which is
-   `9.85%` of the 158 GB volume — below the 10%-of-volume floor — and the build peak is
+   On the 2026-10-09 figures the gate **fails**: `16 GB − 0.46 GB = 15.54 GB`, which is
+   `9.83%` of the 158 GB volume — below the 10%-of-volume floor — and the build peak is
    still unaccounted for. Until the measurements in §13e are taken, treat this gate as
    **BLOCKED**, not as passing.
-5. To free space **before** preservation, free **non-Docker** space only (logs, old build
-   output, `$ARCHIVE_DIR` contents from a superseded release). **Do not** run
-   `docker image prune` / `docker rmi` at this point: after a build retags `:latest`, the
-   orphaned running release *is* a dangling image, so pruning here can destroy exactly the
-   artifact §7c preserves. Dangling-image pruning is permitted **only after** §7c's archives
-   exist and `sha256sum -c` passes (§13b).
+5. To free space **before** preservation, use **order-safe** reclamation: non-Docker space
+   (logs, old build output, `$ARCHIVE_DIR` contents from a superseded release) **and build
+   cache** (`docker builder prune`, §13e/S3a). **Do not** run `docker image prune`,
+   `docker system prune`, or `docker rmi` at this point: after a build retags `:latest`, the
+   orphaned running release *is* a dangling image, so image pruning here can destroy exactly
+   the artifact §7c preserves. Image pruning is permitted **only after** §7c's archives exist
+   and `sha256sum -c` passes (§13b).
 
    Note the reclaimable headroom already measured on the host: `docker system df` reported
    **Images 47.6 GB (14.18 GB reclaimable)** and **Build Cache 17.64 GB (11.65 GB
-   reclaimable)**. That is ~25.8 GB, far more than the deficit — but it is **only** reachable
-   *after* §7c preservation, and it is the operator's decision, not this runbook's.
+   reclaimable)**. That is ~25.8 GB, far more than the deficit. Split by ordering: the
+   **11.65 GB build-cache portion is order-safe before §7c** (build cache is not a runnable
+   image, so pruning it cannot destroy the release), while the **14.18 GB image portion is
+   reachable only after §7c preservation**. Both are the operator's decision, not this
+   runbook's.
 
 ### 13b. Ordering rule (non-negotiable)
 
@@ -1187,15 +1358,31 @@ After a successful deploy, confirm free space did not drop below the §13a **flo
 prune is run by this release. The disk gate is **BLOCKED** (§13a step 4) until the operator
 chooses an option below and the measurements in 13e.4 are taken.
 
-**The deficit.** ~16 GB free; the archive budget is ~0.44 GB; the build peak is unmeasured.
-The gate cannot pass until either free space rises or the peak is shown to be small.
+**The deficit is ~0.2 GB of margin against an unmeasured build peak, not a 0.44 GB archive
+problem.** This distinction decides the plan, so it is worth stating exactly. With
+`floor = max(2 GB, 10% × 158 GB) = 15.8 GB` and `free = 16 GB`, the margin is **0.2 GB**. An
+off-host archive (S1) is transient — during `docker save` free dips to `16 − 0.46 = 15.54 GB`,
+**below the floor**, and afterwards returns to 16 GB, i.e. `floor + 0.2 GB`. So **S1 does not
+clear the gate**: it removes the archive from the equation but leaves the 0.2 GB margin
+untouched, and any build peak larger than 0.2 GB still breaches the floor. The gate fails
+because free space is near the floor *before* anything is archived, not because of the archive.
 
 | # | Option | Effect | Cost / risk | Verdict |
 |---|---|---|---|---|
-| **S1** | **Off-host encrypted image archive.** `docker save` the three application images, gzip, encrypt (`age`/`gpg`) **on the host**, and move the ciphertext off-host (the existing R2 backup target already configured for `AUDIT-701` is the natural destination). | The archives no longer need to live on the production filesystem at all, so the ~0.44 GB is transient and the local copy can be deleted after the checksum is verified remotely. | Requires an off-host target, a key managed outside the host, and a transfer. The archive must be encrypted **before** it leaves the host. | **Preferred.** It is the only option that removes the artifact from the constrained filesystem instead of trading one consumer against another, and it reuses the backup path already in production. |
-| **S2** | **Dedicated backup filesystem or expanded VPS storage.** Attach a second volume, or grow the existing one, and point `$ARCHIVE_DIR` at it. | Removes the constraint permanently and makes the build peak irrelevant. | Requires a VPS resize or volume attach — an operator/provider action with its own cost, downtime, and a filesystem resize on a running production host. | Viable fallback. Slower to arrange and it touches the running host; do it only if S1's off-host target is unacceptable. |
-| **S3** | **Storage cleanup only, after preservation is verified.** Reclaim the measured `docker system df` headroom: 14.18 GB of images + 11.65 GB of build cache (~25.8 GB). | Would clear the deficit several times over. | **Ordering is load-bearing.** Pruning *before* §7c archives exist destroys the only copy of the running release (§13b). Only reachable *after* `sha256sum -c` passes. | **Not a primary plan — a supplement to S1.** It frees space but does not by itself preserve anything, and it is the option most likely to be run in the wrong order. |
-| **S4** | **Build strategies that minimise peak pressure.** Build with `--no-cache=false` and reuse the existing cache; build one service at a time (`build api`, then `build web`) instead of `build` with no target; avoid `docker buildx` multi-platform output; set `DOCKER_BUILDKIT=1` so intermediate layers are not duplicated in the legacy builder's on-disk layout. | Lowers the peak, which is the unmeasured term in the gate. | Reduces parallelism; may lengthen the window in which the stack is mid-cutover. | **Adopt alongside whichever of S1–S3 is chosen.** It reduces the unknown rather than paying for it. |
+| **S2** | **Grow the constrained filesystem** (the volume holding the Docker images and `/`), e.g. a VPS disk resize. Optionally attach a *separate* volume for `$ARCHIVE_DIR` as well. | **Growing the constrained filesystem is the mechanism that works:** it adds free space `d` while adding only `0.1·d` to the floor, so the margin grows by `0.9·d` — `(16+d) − 0.1·(158+d) = 0.2 + 0.9·d`. This is the only option that fixes the *actual* deficit (0.2 GB of margin) and makes the build peak survivable. | Requires a provider-side resize and a filesystem grow on a running production host. | **Primary recommendation.** Note the distinction carefully: a second volume used *only* for `$ARCHIVE_DIR` does **not** help the gate by itself — it moves the archive off the constrained filesystem but leaves the floor at 15.8 GB and the margin at 0.2 GB unchanged. Only growth of the **constrained** filesystem moves the margin. |
+| **S1** | **Off-host encrypted image archive.** `docker save` the three application images, gzip, encrypt (`age`/`gpg`) **on the host**, and move the ciphertext off-host (the existing R2 backup target already configured for `AUDIT-701` is the natural destination). | Keeps the ~0.46 GB artifact off the constrained filesystem, so the local copy can be deleted after the checksum is verified remotely. | Requires an off-host target, a key managed outside the host, and a transfer. The archive must be encrypted **before** it leaves the host. | **Companion to S2, not a substitute.** Necessary for a real off-host rollback artifact and for the checksum-verified deletion that makes the local copy transient — but on its own it does **not** clear the gate (see above). |
+| **S3a** | **Build-cache reclamation — order-SAFE, can run before preservation.** `docker builder prune` (not `docker system prune`, not `docker rmi`) removes **build cache only** — 11.65 GB reclaimable per `docker system df`. | Raises free space from 16 GB to ~27.6 GB, i.e. ~11.8 GB above the floor. | **None to rollback safety**: build cache is not a runnable image, so this cannot destroy the running release. The real cost is a cold rebuild: BuildKit repopulates cache layers as it builds, so a large part of the freed space is **re-consumed during the build**, which is exactly why the build peak must be measured rather than assumed away. | **Adopt, and measure the rebuild's actual cache regrowth.** This is the only order-safe reclamation available *before* §7c, so it is what makes the preservation step itself fit. |
+| **S3b** | **Image reclamation — order-CONSTRAINED, only after preservation.** The remaining 14.18 GB of reclaimable images, via `docker image prune`. | Would clear the deficit several times over. | **Ordering is load-bearing.** After a build retags `:latest`, the orphaned running release *is* a dangling image, so pruning here can destroy exactly the artifact §7c preserves (§13b). Only reachable **after** `sha256sum -c` passes on the archives. | **Not a primary plan — a supplement to S1/S2.** It frees space but preserves nothing, and it is the option most likely to be run in the wrong order. |
+| **S4** | **Build strategies that minimise peak pressure.** Reuse the existing cache where it exists; build one service at a time (`build api`, then `build web`) instead of `build` with no target; avoid `docker buildx` multi-platform output; set `DOCKER_BUILDKIT=1` so intermediate layers are not duplicated in the legacy builder's on-disk layout. | Lowers the peak, which is the unmeasured term in the gate. | Reduces parallelism; may lengthen the window in which the stack is mid-cutover. | **Adopt alongside whichever of S1–S3 is chosen.** It reduces the unknown rather than paying for it. Note it conflicts with S3a's cold-rebuild cost: prefer *reusing* cache over pruning it if the peak proves small. |
+
+**13e.5 — Why the gate is BLOCKED and not merely marginal.** Two inputs are missing, and both
+are required before any option can be chosen: the **measured build peak** (13e.4 item 4) and the
+**exact free bytes** (13e.4 item 1, since `16G` is rounded and the real value may be anywhere in
+15.0–16.5 GB). A 0.2 GB margin is smaller than the resolution of the measurement it depends on,
+so the gate cannot honestly be called passing on the current figures. **`STORAGE_READINESS` is
+therefore `BLOCKED`**, and no deploy step that builds or saves an image may proceed on this host
+until either the **constrained** filesystem is grown (S2 — a second volume for `$ARCHIVE_DIR`
+alone does not move the margin) or 13e.4 measures the peak as small enough to fit.
 
 **13e.4 — Exact measurements required before the gate can be decided.** Take these read-only,
 on the host, and record them in `RELEASE_CHECKLIST.md`:
