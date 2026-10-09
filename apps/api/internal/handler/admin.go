@@ -14,6 +14,7 @@ import (
 	"github.com/sigap/sigap/apps/api/internal/audit"
 	"github.com/sigap/sigap/apps/api/internal/auth"
 	"github.com/sigap/sigap/apps/api/internal/identity"
+	"github.com/sigap/sigap/apps/api/internal/notification"
 )
 
 // AdminHandler handles administration endpoints gated by the RBAC permission
@@ -576,6 +577,76 @@ var validFacilityTypes = map[string]bool{
 	"puskesmas":   true,
 }
 
+// shortCodeMaxLen bounds facilities.short_code.
+//
+// WHY THIS EXISTS. short_code is interpolated verbatim into the queue number
+// that the Rust queue engine renders as "{short_code}-{NNNN}"
+// (apps/queue-engine/src/engine/queue.rs), and that value reaches
+// notification_outbox.body_template through the {queue_number} template
+// variable. A short_code built from digits and phone separators can therefore
+// produce a queue number that is indistinguishable from a phone number, and the
+// notification insert is then rejected by the notification_outbox phone CHECK
+// constraint — a silent, fire-and-forget failure on a normal booking.
+//
+// THE RULE IS THE RENDERED VALUE, NOT A DIGIT COUNT. An earlier revision capped
+// the number of digits in the short_code at 2. That was safe but WRONG in the
+// other direction: it rejected codes the database accepts, silently narrowing
+// the product and breaking the E2E suite's own "E2E123456", whose rendered
+// queue number "E2E123456-0001" is 11 characters and so does NOT match the
+// second conjunct, which needs 12. Deriving a numeric bound by hand is what
+// makes this class of rule wrong in one direction or the other.
+//
+// So validateShortCode renders the queue number the facility will actually
+// produce and tests it against the SAME predicate the database enforces, via
+// notification.ContainsRawPhoneDigits. The predicate is exact by construction:
+// there is no bound to re-derive and no margin to get wrong.
+//
+// The prefix must be a letter so that a purely numeric short_code cannot exist.
+const shortCodeMaxLen = 10
+
+// queueNumberWorstCase is a worst-case counter suffix. The queue engine renders
+// the counter with {:04} and caps it at DAILY_QUEUE_LIMIT = 300, so every
+// counter is exactly four digits, and both conjuncts of the predicate depend
+// only on how many digits are present, never on their values. Any four-digit
+// counter is therefore an equally valid witness.
+const queueNumberWorstCase = "-0300"
+
+// validateShortCode enforces the facilities.short_code contract. It is applied
+// on create and on update, so a facility can never be moved into an unsafe
+// short_code after creation.
+func validateShortCode(code string) error {
+	if code == "" {
+		return fmt.Errorf("Kode singkat wajib diisi.")
+	}
+	if len(code) > shortCodeMaxLen {
+		return fmt.Errorf("Kode singkat maksimal %d karakter.", shortCodeMaxLen)
+	}
+	if !isASCILLetter(code[0]) {
+		return fmt.Errorf("Kode singkat harus diawali huruf.")
+	}
+	for i := range len(code) {
+		c := code[i]
+		if isASCILLetter(c) || (c >= '0' && c <= '9') || c == '-' {
+			continue
+		}
+		return fmt.Errorf("Kode singkat hanya boleh berisi huruf, angka, atau tanda hubung.")
+	}
+	// The safety invariant, tested on the rendered value rather than re-derived.
+	// See the block comment above: the database predicate is the contract, and
+	// ContainsRawPhoneDigits is its Go expression.
+	if notification.ContainsRawPhoneDigits(code + queueNumberWorstCase) {
+		return fmt.Errorf("Kode singkat menghasilkan nomor antrean yang tidak aman; kurangi angka pada kode.")
+	}
+	return nil
+}
+
+// isASCILLetter reports whether c is an ASCII letter. Deliberately ASCII-only:
+// a non-ASCII letter would still be safe for the digit rule, but restricting to
+// ASCII keeps the rendered queue number predictable and the contract testable.
+func isASCILLetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
 func validateCreateFacility(req CreateFacilityRequest) error {
 	if strings.TrimSpace(req.Name) == "" {
 		return fmt.Errorf("Nama fasilitas wajib diisi.")
@@ -601,8 +672,8 @@ func validateCreateFacility(req CreateFacilityRequest) error {
 	if strings.ContainsAny(req.Phone, "<>\"'&") {
 		return fmt.Errorf("Nomor telepon mengandung karakter tidak valid.")
 	}
-	if strings.TrimSpace(req.ShortCode) == "" {
-		return fmt.Errorf("Kode singkat wajib diisi.")
+	if err := validateShortCode(strings.TrimSpace(req.ShortCode)); err != nil {
+		return err
 	}
 	return nil
 }
@@ -625,6 +696,11 @@ func validateUpdateFacility(req UpdateFacilityRequest) error {
 	}
 	if req.Phone != nil && strings.ContainsAny(*req.Phone, "<>\"'&") {
 		return fmt.Errorf("Nomor telepon mengandung karakter tidak valid.")
+	}
+	if req.ShortCode != nil {
+		if err := validateShortCode(strings.TrimSpace(*req.ShortCode)); err != nil {
+			return err
+		}
 	}
 	return nil
 }

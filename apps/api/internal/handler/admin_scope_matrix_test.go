@@ -461,7 +461,15 @@ func TestFacilityScope_CreateFacility(t *testing.T) {
 	})
 	create := func(t *testing.T, h *AdminHandler, actor identity.Actor, marker string) *httptest.ResponseRecorder {
 		t.Helper()
-		body := `{"name":"` + marker + `","type":"puskesmas","address":"Jl. Regression","kecamatan":"Kecamatan","kabupaten_kota":"Kabupaten","provinsi":"Provinsi","phone":"08123456789","total_beds":1,"available_beds":1,"short_code":"` + marker + `"}`
+		// short_code carries its own value, not the name marker. It must satisfy
+		// the facilities.short_code contract enforced by validateShortCode: at
+		// most 10 characters, starting with a letter, and rendering a queue
+		// number that does not match the phone predicate. "E2E"+6 hex chars is
+		// 9 characters and 6 trailing digits, which is exactly the boundary the
+		// contract admits (7 trailing digits would be rejected). The name marker
+		// is a UUID-derived tag and is far too long to serve as a short_code.
+		shortCode := "E2E" + strings.ReplaceAll(uuid.NewString(), "-", "")[:6]
+		body := `{"name":"` + marker + `","type":"puskesmas","address":"Jl. Regression","kecamatan":"Kecamatan","kabupaten_kota":"Kabupaten","provinsi":"Provinsi","phone":"08123456789","total_beds":1,"available_beds":1,"short_code":"` + shortCode + `"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/facilities", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req = req.WithContext(identity.ContextWithActor(req.Context(), actor))
