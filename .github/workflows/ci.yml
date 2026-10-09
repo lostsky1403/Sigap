@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, design/ui-ux-overhaul ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, design/ui-ux-overhaul ]
 
 jobs:
   api:
@@ -139,7 +139,15 @@ jobs:
     name: Deployment Safety Guards
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 is REQUIRED. The migration-inventory guard diffs
+      # `origin/main..HEAD` and `6d7f940..HEAD`. At the default fetch-depth of 1
+      # on a pull_request event, actions/checkout resolves the PR merge ref and
+      # never creates refs/remotes/origin/main, so the guard's base ref is absent
+      # and it fails — red on every PR while passing locally. The guard now names
+      # the missing ref explicitly, and this step supplies the history it needs.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Host-free: no Docker daemon, no container, no production contact.
       # Proves the production env fails closed (missing/local SIGAP_ENV, bad
@@ -149,6 +157,50 @@ jobs:
         run: |
           sh scripts/ops/test-preflight-production-env.sh
           sh scripts/ops/test-production-deploy-guards.sh
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+
+      # The notification-contract, migration and classifier suites provision a
+      # DISPOSABLE local PostgreSQL cluster with initdb/pg_ctl/psql, so the
+      # server binaries must be present. They are installed here rather than
+      # assumed, because that is what makes exit 2 a misconfiguration below
+      # instead of a legitimate skip.
+      - name: Install PostgreSQL server binaries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          # initdb refuses to run as root, so the suites must run as the runner
+          # user; verify the binaries are reachable from PATH or the usual dir.
+          ls -d /usr/lib/postgresql/*/bin/initdb
+
+      # Each suite's exit codes are a contract: 0 = PASS, 1 = FAIL,
+      # 2 = MISSING PREREQUISITE. Because this job INSTALLS the prerequisites,
+      # a 2 here means the job is misconfigured and must fail rather than be
+      # read as a clean skip — which is exactly why the guard is the `if` form
+      # and not `suite; rc=$?; [ "$rc" -eq 2 ] || exit "$rc"`, whose guard is
+      # dead code under `set -e` (see test-skip-exit-codes.sh, and the runbook
+      # §12a which no longer documents the broken form).
+      - name: Notification contract, migration, classifier and skip-code suites
+        run: |
+          set -o pipefail
+          run_suite() {
+            if "$@"; then
+              echo "PASS: $*"
+            else
+              rc=$?
+              echo "FAIL: $* (exit $rc)"
+              exit "$rc"
+            fi
+          }
+          run_suite sh scripts/ops/test-skip-exit-codes.sh
+          run_suite sh scripts/ops/test-guard-shallow-clone.sh
+          run_suite sh scripts/ops/test-db-classifier.sh
+          run_suite sh scripts/ops/test-migration-0011.sh
+          run_suite sh scripts/ops/test-notification-contract.sh
 
   security-go:
     name: Go Vulnerability Scan

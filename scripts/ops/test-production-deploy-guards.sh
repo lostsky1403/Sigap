@@ -124,19 +124,45 @@ CL=docs/operations/RELEASE_CHECKLIST.md
 #     instead of asserting emptiness — a stronger check, since an unexpected extra
 #     migration now fails rather than slipping through as "still non-empty".
 EXPECTED_MIGRATION_DIFF="packages/db/migrations/0011_notification_outbox_phone_constraints.sql"
-hist=$(git diff --stat 6d7f940..HEAD -- packages/db/migrations 2>/dev/null)
-maindiff=$(git diff --name-only origin/main..HEAD -- packages/db/migrations 2>/dev/null)
-if [ -z "$maindiff" ]; then
-  bad "origin/main..HEAD migration diff is EMPTY — expected the redesign's 0011 migration"
-elif [ "$maindiff" != "$EXPECTED_MIGRATION_DIFF" ]; then
-  bad "release migration inventory differs from the declared set"
-  printf '  got : %s\n  want: %s\n' "$(printf '%s' "$maindiff" | tr '\n' ' ')" "$EXPECTED_MIGRATION_DIFF"
-elif [ -z "$hist" ]; then
-  bad "6d7f940..HEAD migration diff is empty — expected the inherited 0006 hardening plus 0011"
-elif grep -q "6d7f940..HEAD" "$RB" && grep -qi "non-empty by design" "$RB"; then
-  ok
-else
-  bad "runbook does not document the non-empty 6d7f940..HEAD diff as expected/classified"
+
+# A missing base ref and an EMPTY diff are different failures and must not be
+# reported as the same thing. At actions/checkout's default fetch-depth of 1 on a
+# pull_request event, origin/main does not exist; `git diff origin/main..HEAD`
+# then writes to stderr (discarded) and prints nothing, so the guard used to fail
+# with a misleading "diff is EMPTY" on every PR. Both refs are therefore verified
+# first, and the message names the fix.
+for ref in origin/main 6d7f940; do
+  if ! git rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1; then
+    bad "base ref '$ref' is not available in this checkout — the migration inventory cannot be verified"
+    printf '  fix: fetch full history (actions/checkout with fetch-depth: 0), or fetch the ref explicitly\n'
+    missing_base_ref=1
+  fi
+done
+
+if [ "${missing_base_ref:-0}" -eq 0 ]; then
+  # On the default branch, HEAD IS origin/main, so `origin/main..HEAD` is
+  # necessarily empty and asserting "exactly 0011" would fail on the first push
+  # after this branch merges. The inventory check only means something on a
+  # release branch, where the diff against main IS the release.
+  if [ "$(git rev-parse origin/main)" = "$(git rev-parse HEAD)" ]; then
+    printf '  on the default branch (HEAD == origin/main); no release migration inventory to verify\n'
+    ok
+  else
+    hist=$(git diff --stat 6d7f940..HEAD -- packages/db/migrations)
+    maindiff=$(git diff --name-only origin/main..HEAD -- packages/db/migrations)
+    if [ -z "$maindiff" ]; then
+      bad "origin/main..HEAD migration diff is EMPTY — expected the redesign's 0011 migration"
+    elif [ "$maindiff" != "$EXPECTED_MIGRATION_DIFF" ]; then
+      bad "release migration inventory differs from the declared set"
+      printf '  got : %s\n  want: %s\n' "$(printf '%s' "$maindiff" | tr '\n' ' ')" "$EXPECTED_MIGRATION_DIFF"
+    elif [ -z "$hist" ]; then
+      bad "6d7f940..HEAD migration diff is empty — expected the inherited 0006 hardening plus 0011"
+    elif grep -q "6d7f940..HEAD" "$RB" && grep -qi "non-empty by design" "$RB"; then
+      ok
+    else
+      bad "runbook does not document the non-empty 6d7f940..HEAD diff as expected/classified"
+    fi
+  fi
 fi
 
 # 12. An UNKNOWN DB schema can never be a PASS.
@@ -223,12 +249,24 @@ else
   bad "§7d consumes STAMP/ARCHIVE_DIR without defining or requiring them (not executable standalone)"
 fi
 
-# 18. §13a must NOT advise pruning before preservation is verified (§13b forbids it).
+# 18. §13a must NOT ADVISE pruning before preservation is verified (§13b forbids it).
 #     After a build retags :latest, the orphaned running release IS a dangling image.
+#
+#     The assertion is scoped to the SENTENCE, not the section. A section-wide
+#     "does any of 'only after'/'do not run' appear anywhere" test would keep
+#     passing after an edit that actually advised pruning first, because some
+#     unrelated sentence elsewhere in §13a contains the phrase.
+#
+#     Lines are JOINED before matching, because markdown wraps: a prohibition and
+#     the command it prohibits routinely sit on different lines, and a per-line
+#     test would flag the wrapped continuation as an unguarded mention.
 sec13a=$(sed -n '/^### 13a\./,/^### 13b\./p' "$RB")
-if printf '%s' "$sec13a" | grep -qi 'docker image prune' \
-  && ! printf '%s' "$sec13a" | grep -qi 'only after\|permitted .*only after\|do not run'; then
-  bad "§13a advises pruning without the §13b ordering constraint (can destroy the rollback image)"
+unguarded=$(printf '%s' "$sec13a" | tr '\n' ' ' \
+  | grep -oE '.{0,80}(docker image prune|docker system prune|docker rmi).{0,80}' \
+  | grep -viE 'do not|never|only after|permitted|forbid|anti-pattern|do NOT')
+if [ -n "$unguarded" ]; then
+  bad "§13a mentions pruning without an ordering constraint nearby (§13b forbids it)"
+  printf '  %s\n' "$unguarded"
 else
   ok
 fi
