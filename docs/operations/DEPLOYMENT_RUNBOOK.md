@@ -448,6 +448,14 @@ Derive the names from compose rather than hard-coding them, then tag by **image 
 # compose reads .env automatically; `config` needs POSTGRES_PASSWORD / SIGAP_AUTH_MODE set.
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml -f docker-compose.prod-edge.yml"
 
+# REDACTION RULE: NEVER run a bare `docker compose config` in a logged shell, a CI job, a
+# transcript, or a review artefact. It interpolates .env and prints POSTGRES_PASSWORD and any
+# other secret in cleartext. Query the specific field you need (`config --images`, or
+# `config --format json | jq -r .services.api.environment.SIGAP_API_PORT`), and if you must
+# dump the whole config, pipe it through a redaction filter first:
+#   $COMPOSE config | sed -E 's/(PASSWORD|SECRET|TOKEN|KEY)=.*/\1=<redacted>/'
+# The deploy-guards script follows this rule; do not weaken it to make an assertion easier.
+
 # Immutable references created FROM the running containers' image IDs (never from `latest`).
 STAMP=$(date -u +%Y%m%d)
 for svc in rust-engine api web; do
@@ -532,6 +540,46 @@ curl -fsS https://<SIGAP_PUBLIC_HOST>/ >/dev/null          # through the edge (T
 > `image:` key to these services, the retag step becomes unnecessary — set that key to the
 > preserved ref instead.
 
+#### 7d.1 Restoring from the off-host archive (§13f artifact)
+
+§13f's artifact is a **client-side-encrypted, compressed** multi-image archive
+(`sigap-pre-redesign-<STAMP>.tar.gz.age`) whose digest is recorded **out-of-band** — not the
+unencrypted `*.tar.gz` + `SHA256SUMS` pair §7d steps 1–2 consume. Restoring it on a fresh host
+requires the §13f key custody model (private key lives on the archive host, never on the
+workstation that fetched the ciphertext):
+
+```bash
+# ---- fetch: ciphertext only lands on the rollback host ----
+: "${ARCHIVE_HOST:?}" ":${ARCHIVE_DIR:?}" ":${ARCHIVE_KEY:?}" ":${STAMP:?}"
+scp "$ARCHIVE_HOST:$ARCHIVE_DIR/sigap-pre-redesign-$STAMP.tar.gz.age" ./
+
+# ---- verify the digest against the OUT-OF-BAND record, not a file beside the archive ----
+sha256sum "sigap-pre-redesign-$STAMP.tar.gz.age"
+#   compare with the digest recorded in RELEASE_CHECKLIST.md / the Jira issue at §13f step 2.
+#   Mismatch = the archive is not the one that was verified off-host. ABORT.
+
+# ---- decrypt, decompress, load (order is the inverse of §13f step 1: age -d THEN gzip -d).
+#      The rollback host's Docker daemon must be asserted non-production before loading. ----
+: "${ISOLATED_DOCKER_HOST:?set to this rollback host's DOCKER_HOST; refusing to load unguarded}"
+age -d -i "$ARCHIVE_KEY" "sigap-pre-redesign-$STAMP.tar.gz.age" | gzip -d \
+  | DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load
+
+# ---- re-tag by ID to the tags §7d expects, then assert the three IDs ----
+for id in 43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f \
+          2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c \
+          8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4; do
+  docker image inspect "sha256:$id" >/dev/null || { echo "MISSING $id — ABORT"; exit 1; }
+done
+# Re-tag each to <project>-<service>:rollback-<STAMP>-<short> per §7c, then continue with §7d
+# step 3 (retag to the computed image name), step 4 (up -d --no-deps), and step 5 (EXACT
+# identity check) exactly as written there.
+```
+
+Both restore paths converge on §7d step 3. This subsection is the **prerequisite** the §13f
+plan depends on: without it the off-host archive is not a usable rollback artifact and §13e
+cannot claim §7c's preservation requirement is satisfied.
+
+
 **Preserved identities that must NOT change during a rollback:** Compose project name
 `sigap`; the `sigap_pgdata` volume (data — never recreated); the `sigap_default` and
 `traefik` networks; loopback-only bindings for `18080`/`5433`/`50051`/`3005`.
@@ -613,6 +661,26 @@ security regression, and it re-opens the drift this migration exists to close. I
 compatibility genuinely cannot be achieved, the correct answer is to keep the constraint and
 fix the writer — not to weaken the database.
 
+**Disposition options if the old image legitimately writes a rejected value on a rolled-back
+deployment.** "Fix the writer" is not actionable for a binary that is already running — its
+code is fixed. The real options are, in order of preference:
+
+1. **Do not roll back the API; roll back only `web`.** Most redeploy triggers are
+   frontend/UX regressions. `web` writes nothing to `notification_outbox`; if the trigger is
+   web-only, keep the current (predicate-aligned) API image and revert only the web image. This
+   is the default answer and should be the first thing checked when a rollback trigger fires.
+2. **If the API itself must be rolled back while `0011` is applied:** accept **write refusal**
+   on the rejected value class as a known, temporary degradation — the insert fails, the
+   notification is lost, but no raw phone number is ever persisted. Record the refusal rate and
+   the decision in the incident record. This is the trade-off the constraint exists to force.
+3. **If write refusal is operationally unacceptable** (e.g. check-in notifications are the
+   product), the correct remediation is a **new image built from a revision whose write path
+   satisfies the strengthened predicate** — i.e. re-apply the Go-side alignment this release
+   already contains, packaged against whatever older application behaviour triggered the
+   rollback. That is a build-and-deploy action, not a rollback action, and must be scheduled as
+   such.
+4. **Never** resolve it by weakening or dropping the database constraint (see above).
+
 **Reducing the unknown, without applying anything:**
 - Recover the running image's revision: `docker image inspect` labels/`RepoDigests` on the
   host, or the deployed `/_app/version.json` (§3.0). If a revision is recovered, read its
@@ -642,18 +710,21 @@ image is a different binary and answers a different question.
 
 | Requirement | Specification |
 |---|---|
-| Network | **No production network access.** An isolated bridge network with no default route to production. |
-| Credentials | **None.** No production secrets, no production `.env`, no third-party service keys. |
+| Network | **`docker network create --internal sigap-legacy-test`.** A default bridge NATs to the internet and can reach production's public IP, so "isolated" must be a **control, not a sentence**. `--network none` is wrong here — the test still needs the disposable PostgreSQL and the preserved engine. Assert **from inside** the API container, before any operation, that production's hostname/IP and a public address are both unreachable. |
+| Credentials | **None.** No production secrets and no production `.env`. The preserved image takes **all** config from runtime env (`DATABASE_URL`, `SIGAP_AUTH_ISSUER`, `SIGAP_AUTH_AUDIENCE`, `SIGAP_AUTH_JWKS_URL`, …), so a **synthetic env file is required and must be asserted**: fail if `DATABASE_URL` does not resolve to the disposable PG, if `SIGAP_AUTH_JWKS_URL` is non-empty and not a local stub, or if any value matches a production hostname. Use `SIGAP_ENV=local` with a local identity provider. **Never reuse `/opt/sigap/.env` values** — that is the natural shortcut and it silently voids this control. |
 | Database | **Disposable local PostgreSQL 16** (matching production's major version), empty at start. |
 | Data | **Fully synthetic**: facilities, appointments, notifications, identities, roles. |
 | Architecture | `linux/amd64` — confirmed to match the captured images. |
-| Docker daemon | A **separate daemon or host** from production, so `docker load` cannot touch production images. |
+| Docker daemon | A **separate daemon or host** from production, so `docker load` cannot touch production images. Set `DOCKER_HOST` explicitly and assert it is not the production context before loading anything. |
 
 **Schema variants to run against.**
 
 - **A. pre-0011 weak schema** — apply migrations `0001`–`0010` and rewrite the two phone
   constraints to the pre-`9d4e68e` weak form. This is the **baseline**: what the image does
-  today.
+  today. **Test-cluster only:** the weak-form rewrite is a destructive schema mutation and
+  must run **only** against the disposable test cluster — assert the target `DATABASE_URL`
+  host/port is the test cluster (e.g. port ≥ 55900 or a dedicated test socket) and refuse
+  otherwise, so the weak-constraint rewrite can never reach a shared or production database.
 - **B. post-0011 hardened schema** — apply `0001`–`0011` in order (a fresh build from the
   release already carries the strengthened predicate in `0006`).
 - **C. pre-0011 → real `0011` transition** — apply `0001`–`0010`, install the weak form, then
@@ -755,7 +826,7 @@ inputs: root filesystem **82.30 GiB free**, floor **15.74 GiB**, SIGAP applicati
 | Rollback preservation | Same requirement in both: §13f's off-host archive must exist **before** any build (§13b). | Same. |
 | Database compatibility | Identical — `0011` is not applied by either path, and `SIGAP_AUTO_MIGRATE` stays unset. | Identical. |
 | Downtime risk | One host; a `build` that fills the disk could disturb **other projects** on the shared host, which raises the blast radius beyond SIGAP. | Production impact is limited to the `docker load` + `compose up -d` window. |
-| Secrets | `.env` and `.env.bak-phase5` already live on the host. No new exposure. | **Risk to manage.** The build host must not receive production secrets. Build args must be validated against `.env.example`, and the transfer must be authenticated and encrypted. |
+| Secrets | `.env` and `.env.bak-phase5` already live on the host. No new exposure. | **Risk to manage.** The build host must not receive production secrets. **Build the image from a fresh `git clone` of the release commit, never by copying the deploy tree** — copying the tree would ship `.env.bak-phase5` (and any other untracked secret) into the build context. Assert `docker build --no-cache --progress=plain` output contains no `.env` in the "transferring context" step. There are no `ARG` instructions in any Dockerfile, so build-args validation is not the control; **context contents** are. The transfer itself must be authenticated and encrypted. |
 | Network exposure | None new. | A single authenticated transfer channel (SCP/SSH) to a build host. |
 | Verification | Build output is trusted from the host that built it. | Transfer is verified by digest before the image is deployed. |
 | Runbook changes needed | **None.** This is the path the existing runbook already describes. | **Yes, minimal but real.** §3 needs an off-host build + verify + import stage, and §13's ordering rule gains a transfer step. Compose configuration itself needs **no change** — the project identity (`sigap`) and service definitions are unchanged; only the *provenance* of the images changes. |
@@ -764,9 +835,9 @@ inputs: root filesystem **82.30 GiB free**, floor **15.74 GiB**, SIGAP applicati
 Capacity is no longer the constraint — it passes with 66.4 GiB to spare — but the host runs
 `orbit-chat`, `portal-sekolah`, the ELK stack, Traefik and Grafana/Prometheus alongside SIGAP.
 A disk-hungry build on that host can degrade or break stacks that have nothing to do with this
-release, which is a blast-radius problem that no amount of free space fixes. Off-host building
-confines the risk to the short import window, and it is the only option that produces a
-digest-verified artifact.
+release, and free space does not remove that **peak-load interference** — a build can saturate
+CPU, memory and I/O long before it fills the disk. Off-host building confines that risk to the
+short import window, and it is the only option that produces a digest-verified artifact.
 
 Neither option is authorized or executed. Both remain blocked on the **rollback safety**
 (§7f/§7g) and **build-peak measurement** (§13e.4) gates.
@@ -1273,12 +1344,31 @@ Properties that matter for the cutover:
   succeeds at all is:
 
   ```sql
-  -- read-only; a single number, no row content, no identifiers, no bodies
+  -- read-only; a single number, no row content, no identifiers, no bodies.
+  -- The regex literals are DOLLAR-QUOTED deliberately — see the note below.
   SELECT count(*) AS violating_rows
     FROM notification_outbox
-   WHERE subject      ~ '[0-9]{8,}' OR subject      ~ '[0-9][0-9\-._() ]{10,}[0-9]'
-      OR body_template ~ '[0-9]{8,}' OR body_template ~ '[0-9][0-9\-._() ]{10,}[0-9]';
+   WHERE subject      ~ $re$[0-9]{8,}$re$ OR subject      ~ $re$[0-9][0-9\-._() ]{10,}[0-9]$re$
+      OR body_template ~ $re$[0-9]{8,}$re$ OR body_template ~ $re$[0-9][0-9\-._() ]{10,}[0-9]$re$;
   ```
+
+  **Why dollar-quoted and not single-quoted — verified, not assumed.** Under
+  `standard_conforming_strings=on` (the modern default) a plain `'…\-…'` literal reaches the
+  regex engine intact. Under `standard_conforming_strings=off` the **backslash is consumed by
+  the string-literal escape**, so the class becomes `[0-9-._() ]` — in which `9-.` is an
+  **invalid character range**. `[OBSERVED]` on PostgreSQL 18.4, with `scs=off`:
+
+  - a plain `'[0-9\-]'` literal and a `'[0-9-]'` literal are **equal and both length 6** — the
+    backslash is silently discarded; and
+  - writing the invalid range **literally** as `[0-9-._() ]` makes `~` raise
+    **`invalid character range`** at evaluation time.
+
+  The second conjunct's class therefore has two failure shapes: it can silently widen, or it
+  can fail to evaluate at all. **A constraint in that state is created without error** and
+  then **raises on every insert** — which is precisely the false-PASS this release's
+  classifier work closes. Dollar quoting is immune to `scs` in either direction, so it is
+  used here and in `0011` itself. `TestMigration0011_Transition_*` asserts the dollar-quoted
+  form is what `0011` installs.
 
   `TestMigration0011_Transition_ViolatingHistory` proves the consequence: any row in that set
   makes `0011` raise **`23514`**, records **no** version 11, and changes nothing — so the
@@ -1483,7 +1573,7 @@ the floor**.
    the options are re-ranked accordingly.
 6. To free space **before** preservation, use **order-safe** reclamation: non-Docker space
    (logs, old build output, `$ARCHIVE_DIR` contents from a superseded release) **and build
-   cache** (`docker builder prune`, §13e/S3a). **Do not** run `docker image prune`,
+   cache** (`docker builder prune`, §13e S3). **Do not** run `docker image prune`,
    `docker system prune`, or `docker rmi` at this point: after a build retags `:latest`, the
    orphaned running release *is* a dangling image, so image pruning here can destroy exactly
    the artifact §7c preserves. Image pruning is permitted **only after** §7c's archives exist
@@ -1493,7 +1583,7 @@ the floor**.
    host runs many unrelated stacks (33 images, 25 running containers); `docker system df`
    reports 12.56 GB of images as 100% reclaimable and 4.895 GB of container writable layers,
    but most of that belongs to `orbit-chat`, `portal-sekolah`, the ELK stack, Traefik and
-   Grafana/Prometheus. **Build cache is 0 B** on this host, so S3a has nothing to reclaim
+   Grafana/Prometheus. **Build cache is 0 B** on this host, so §13e S3 has nothing to reclaim
    here and the build-peak measurement in §13e.4 measures a cold-cache build from scratch.
    Image reclamation remains **only after §7c preservation**, and is not needed on the
    measured figures.
@@ -1607,12 +1697,39 @@ stays `UNKNOWN`.
 
 **Design: stream, do not stage.** `docker save` output is ~0.44 GB and the host has 82.3 GiB
 free, so staging locally is *feasible*; but streaming still removes the transient footprint
-and the risk of a half-written local archive, and it means the only durable copy is the
-verified one off-host.
+and the risk of a half-written local archive.
+
+**Pre-transfer secret check (mandatory, read-only).** `docker image save` embeds the image
+**config**, including its `Env` array, in addition to every layer. This repo has shipped a
+baked credential before — `docs/PRODUCTION_READINESS_AUDIT.md` records AUDIT-801, an
+`ENV DATABASE_URL=postgresql://sigap:sigap@postgres:5432/...` in the queue-engine Dockerfile,
+removed in `70f8d03` (2026-08-31). The preserved engine image was built **2026-09-14**, i.e.
+*after* that fix, but the point stands: **verify, do not assume**. Run and record:
+
+```bash
+for s in api web rust-engine; do
+  docker image inspect "sigap-$s" --format '{{.Config.Image}} {{json .Config.Env}}'
+done
+```
+
+Expected — exactly these non-secret build-time values and nothing credential-shaped:
+`api`: `SIGAP_API_PORT=8080`, `SIGAP_ENGINE_ADDR=rust-engine:50051`;
+`web`: `PORT=3000`, `HOST=0.0.0.0`; `rust-engine`: `RUST_LOG=info`.
+**Any credential-looking value (a DSN, a key, a token, `postgres:` in a URL) ⇒ STOP and
+escalate before any transfer.** Record the output in the evidence bundle.
+
+**Key custody — decided, not left open.** Two models exist and the plan must pick one. **This
+plan uses the OFF-HOST-KEY model**: the `age` private key exists **only** on the isolated
+archive host, never on the workstation that pulls the stream. The workstation therefore only
+ever holds **ciphertext**. If the owner prefers a local key instead, then
+`$LOCAL_ARCHIVE_DIR` becomes **key-equivalent** and must sit on an encrypted volume with
+restricted ACLs and must never be synced to a shared drive — but that weakens the design and is
+not the default here.
 
 **Proposed execution (NOT RUN — requires separate authorization).**
 
 ```bash
+# ---- ON THE WORKSTATION (holds ciphertext only; no private key) ----
 # 0. Identity first: re-confirm the running image IDs have not changed, and RECORD them.
 #    If any ID differs from the table above, STOP — the running images are not the ones
 #    this plan was written against.
@@ -1620,50 +1737,80 @@ for s in api web rust-engine; do
   docker inspect "sigap-$s" --format '{{.Image}}'
 done
 
-# 1. Stream the three images off-host, compressed and encrypted, in one pass.
-#    Single pass: no intermediate archive file is written on the VPS root filesystem.
-#    `--quiet` and `-J` are the key names; verify against `docker image save --help` on the
-#    host before running, since CLI spellings differ across Docker versions.
+# 1. Stream the three images off-host, compressed, ENCRYPTED TO A PUBLIC RECIPIENT, straight
+#    to the archive host. Nothing is written on the VPS root filesystem, and the workstation
+#    never sees plaintext at rest.
+#    Verify the `docker image save` flag spelling against `docker image save --help` on the
+#    host first — it differs across Docker versions.
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 ssh fikriserver "docker image save \
   sha256:43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f \
   sha256:2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c \
   sha256:8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4" \
 | gzip -1 \
-| age -r "$OFFHOST_RECIPIENT" -o - > "$LOCAL_ARCHIVE_DIR/sigap-pre-redesign-$(date -u +%Y%m%d).tar.gz.age"
+| age -r "$OFFHOST_RECIPIENT" \
+| ssh "$ARCHIVE_HOST" "cat > '$ARCHIVE_DIR/sigap-pre-redesign-$STAMP.tar.gz.age'"
 
-# 2. Record the checksum of the ENCRYPTED artifact (what actually moved).
-sha256sum "$LOCAL_ARCHIVE_DIR"/sigap-pre-redesign-*.tar.gz.age \
-  | tee "$LOCAL_ARCHIVE_DIR"/sigap-pre-redesign-*.tar.gz.age.sha256
+# 2. Digest the artifact ON THE ARCHIVE HOST, where it lives, and record the digest
+#    OUT-OF-BAND (RELEASE_CHECKLIST.md / the Jira issue), exactly as §12a does for EXPECT_SHA.
+#    A checksum stored beside the artifact is integrity-only: whoever can replace the .age can
+#    replace its .sha256. Out-of-band recording is what makes it tamper-evident.
+ssh "$ARCHIVE_HOST" "sha256sum '$ARCHIVE_DIR/sigap-pre-redesign-$STAMP.tar.gz.age'"
 
-# 3. Identity correspondence: prove the archive holds exactly the captured IDs.
-#    Decrypt and load into an ISOLATED daemon (never production), then compare IDs.
-ssh fikriserver "docker image save <ID>" | gzip -d | age -d -i "$LOCAL_PRIVKEY" \
-  | docker load --quiet     # on the ISOLATED test host/daemon
-docker images --no-trunc --format '{{.ID}}' | sort
-# Must equal the captured set exactly:
-#   43fcbcb35ed276…  2a81c86258fb…  8ce2200fabf3…
-
-# 4. Only after 3 succeeds, delete the local plaintext temporaries (never the host copy first).
+# 3. Identity correspondence: prove the ARCHIVE holds exactly the captured IDs.
+#    Decrypts with the key that exists ONLY on the archive host, and loads into an ISOLATED
+#    daemon. DOCKER_HOST is asserted first so this can never target production.
+: "${ISOLATED_DOCKER_HOST:?set to the isolated test daemon; refusing to load unguarded}"
+[ "$ISOLATED_DOCKER_HOST" != "$(docker context inspect -f '{{.Endpoints.docker.Host}}')" ] \
+  || { echo "ISOLATED_DOCKER_HOST equals the active context — refusing"; exit 1; }
+ssh "$ARCHIVE_HOST" "age -d -i '$ARCHIVE_KEY' '$ARCHIVE_DIR/sigap-pre-redesign-$STAMP.tar.gz.age' | gzip -d" \
+  | DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load --quiet
+# Scope the assertion to the THREE IDs. A daemon-wide listing would fail spuriously on any
+# daemon that already holds a base image, and would prove nothing about the archive.
+for id in 43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f \
+          2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c \
+          8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4; do
+  DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker image inspect "sha256:$id" >/dev/null \
+    || { echo "MISSING $id — the archive is NOT a faithful copy; STOP"; exit 1; }
+done
+echo "identity correspondence VERIFIED for all three images"
 ```
 
+Note the decoder order in step 3 is the exact inverse of step 1 — `age -d` **then**
+`gzip -d`, in that order. Getting it backwards is a silent no-op on a `docker save` tar.
+
 **Destination.** The on-host `/opt/sigap/backups/sigap` directory exists but is **empty (4 KiB)
-and on the same root filesystem** — it is not a real off-host target. A genuine off-host
-destination must supply: **capacity** ≥ ~0.5 GB per retained release, **encryption at rest**,
-and **access control** separate from the VPS. The existing R2 backup target configured for
-`AUDIT-701` is the natural candidate; its credentials and reachability were **not** verified in
-this read-only inspection, so destination feasibility is **[UNKNOWN]** and must be confirmed
-before execution.
+and on the same root filesystem** — it is not an off-host target. Two **separate** properties
+must be recorded, because the obvious candidate satisfies only one:
 
-**Interruption/retry.** A single streaming pipeline has no partial artifact to clean up — it
-either completes or leaves one truncated file in `$LOCAL_ARCHIVE_DIR` that step 2 will not
-checksum-match. Delete the truncated file and re-run; the host images are read-only inputs and
-are never modified, so re-running is always safe and idempotent.
+| Property | Why | R2 (`AUDIT-701`) candidate |
+|---|---|---|
+| **Not readable from the VPS** | A credential on the VPS makes "off-host" nominal | **NO** — its write credential lives on the VPS at `/etc/sigap/backup.env` (mode 640) |
+| **Client-side encrypted** | Provider SSE does not protect against the provider | **YES, if** the `age` layer is applied — note `BACKUP_RESTORE.md` §5 says the DB-dump store is **SSE-only**, with client-side encryption not pre-implemented |
 
-**Confidentiality.** The application images contain production **binaries and configuration**,
-and may embed secrets at build time. `age`/`gpg` encryption is required **before** transfer;
-never place plaintext image archives on shared or world-readable storage, and never print image
-**environment variables** — this inspection read only IDs, sizes, timestamps and statuses, and
-no secret values were read or recorded.
+Capacity ≥ ~0.5 GB per retained release. Credentials and reachability of any candidate were
+**not** verified in this read-only inspection, so destination feasibility is **[UNKNOWN]** and
+must be confirmed before execution.
+
+**Restore path — required, currently missing.** §7d is the only restore procedure and it
+verifies `sha256sum -c SHA256SUMS` and loads `"$ARCHIVE_DIR"/*.tar.gz`; the §13f artifact is a
+`.tar.gz.age` with no `SHA256SUMS`, so **§7d cannot consume it**. Until §7d gains an explicit
+"restore from the off-host archive" subsection — fetch, verify the out-of-band digest,
+`age -d | gzip -d | docker load`, re-tag to `<project>-<service>`, assert the three IDs — the
+off-host archive is **not** a usable rollback artifact and §13e's claim that it satisfies §7c's
+requirement is **unsupported**. That subsection is a prerequisite for authorizing §13f.
+
+**Interruption/retry.** A failed run leaves a **truncated** file at the destination; step 2's
+digest will not match a completed archive, so the failure is detectable rather than silent.
+Delete the truncated file and re-run. The host images are read-only inputs and are never
+modified, so re-running is safe and idempotent. Because a re-run produces a new `$STAMP`,
+digests never collide and no manifest is overwritten.
+
+**Confidentiality.** The application images contain production **binaries and configuration**.
+Encryption is applied **before** the bytes leave the host, and the private key never exists on
+the streaming workstation. Never place plaintext image archives on shared or world-readable
+storage, and never print image **environment values** — this inspection read only IDs, sizes,
+timestamps and statuses, and no secret values were read or recorded.
 
 ---
 

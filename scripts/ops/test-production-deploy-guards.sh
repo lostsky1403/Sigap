@@ -2,6 +2,11 @@
 # test-production-deploy-guards.sh — negative controls for the production deploy guards.
 # Verifies the fail-closed mechanisms WITHOUT touching any host or container:
 # only `docker compose config` (pure interpolation) and the preflight script are run.
+# REDACTION RULE: this script runs `docker compose config` ONLY as an exit-status oracle
+# (`>/dev/null 2>&1`) or with `--format json` piped to a targeted field probe — a bare
+# `docker compose config` prints POSTGRES_PASSWORD in cleartext and is never used here,
+# and its output must never be captured into a log or transcript. See the runbook §7c
+# redaction rule.
 # Exit 0 iff every guard fails in the bad case and passes in the good case.
 pass=0; failed=0
 ok()   { pass=$((pass + 1)); }
