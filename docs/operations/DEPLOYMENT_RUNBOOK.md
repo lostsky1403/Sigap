@@ -620,6 +620,78 @@ fix the writer — not to weaken the database.
 - Note that the application-layer masking ships with the release and, once deployed, rejects
   the same class of value before it reaches the database. That makes the constraint a
   **backstop** for the new image — but it says nothing about the *old* image's behaviour.
+- **Image IDs alone do not close this.** `[OBSERVED]` on 2026-10-09: the running api image is
+  `sha256:43fcbcb3…`, which matches the recorded historical ID, and `RepoDigests` is empty, so
+  the image carries no source-commit identity at all. **The correct instrument is an empirical
+  test of the preserved binary**, described in §7g — not a source-code argument.
+
+---
+
+### 7g. Legacy API image compatibility test (PLAN ONLY — not executed)
+
+**Purpose.** Answer §7f empirically: *does the image that is actually running in production
+today write values that the strengthened (post-0011) predicate rejects?* Image boot success is
+**not** evidence and must not be reported as such.
+
+**Precondition — HARD GATE.** The test **requires the preserved image artifact** from §13f and
+the owner's explicit authorization. `docker image save`/`load` and any transfer of image data
+are **forbidden until then**. Do **not** substitute an image rebuilt from source: a rebuilt
+image is a different binary and answers a different question.
+
+**Environment (isolated, disposable).**
+
+| Requirement | Specification |
+|---|---|
+| Network | **No production network access.** An isolated bridge network with no default route to production. |
+| Credentials | **None.** No production secrets, no production `.env`, no third-party service keys. |
+| Database | **Disposable local PostgreSQL 16** (matching production's major version), empty at start. |
+| Data | **Fully synthetic**: facilities, appointments, notifications, identities, roles. |
+| Architecture | `linux/amd64` — confirmed to match the captured images. |
+| Docker daemon | A **separate daemon or host** from production, so `docker load` cannot touch production images. |
+
+**Schema variants to run against.**
+
+- **A. pre-0011 weak schema** — apply migrations `0001`–`0010` and rewrite the two phone
+  constraints to the pre-`9d4e68e` weak form. This is the **baseline**: what the image does
+  today.
+- **B. post-0011 hardened schema** — apply `0001`–`0011` in order (a fresh build from the
+  release already carries the strengthened predicate in `0006`).
+- **C. pre-0011 → real `0011` transition** — apply `0001`–`0010`, install the weak form, then
+  run migration `0011` **through the real runner**. This is the state a production rollback
+  would actually encounter.
+
+**Operations to exercise, in each variant.**
+
+1. `notification` **Enqueue** — direct service calls, including the **fire-and-forget path the
+   booking handler actually uses**, since a rejected insert there is logged and swallowed.
+2. **Appointment-booking notification path** — the booking handler's confirmation enqueue.
+3. **Check-in notification path** — the check-in handler's confirmation enqueue.
+4. **Queue-number rendering** — the real `format!("{}-{:04}", short_code, n)` for
+   `n ∈ {1, 9, 10, 99, 100, 300}` across the boundary `short_code` set:
+   `RSK`, `DEMO-GIGI`, `f1`, `AB12CD`, `FSK-0001`, **`E2E123456`** (accepted boundary),
+   **`E2E1234567`** (rejected boundary), `AB12345678` (8-digit run).
+5. **Timestamps** — both the localized form (`9 Oktober 2026 pukul 14.30`) and the bare ISO
+   form (`2026-10-09 14:30`), since the constraint's second conjunct rejects the latter.
+6. **Legitimate identifiers** — appointment codes, check-in codes, facility names.
+7. **Unsafe phone-like content** — must be **rejected in every variant**, never silently
+   accepted in one and rejected in another.
+
+**Comparison and reporting.** For every operation, record `RESULT BEFORE 0011` vs
+`RESULT AFTER 0011`, and flag **any legitimate write that succeeds in A or C but fails in B or
+C**. Report the **exact** failing value, the SQLSTATE, and the constraint name — this is the
+signal that distinguishes "rollback breaks a legitimate flow" (an operator decision) from
+"rollback breaks a security control" (never acceptable).
+
+**Testable without production exposure.** The API's notification enqueue and booking/check-in
+paths are reachable through its own HTTP API with a **locally minted identity** and synthetic
+data, so no production endpoint or secret is needed. Anything requiring a live third-party
+service (SMS/email gateways, SatuSehat) must be **excluded and disclosed as not covered** —
+an untested dependency keeps that aspect `UNKNOWN` rather than `PASS`.
+
+**Acceptance (§8).** `ROLLBACK_COMPATIBILITY` may move off `UNKNOWN` only when **all** of:
+artifact preserved and identity-verified; restored in isolation; the full operation matrix run
+in **A, B and C**; no legitimate write lost; no safety control relaxed; and every
+production-specific dependency either covered or explicitly disclosed as a limitation.
 
 ---
 
@@ -666,6 +738,38 @@ The two P0 proofs are **post-deploy controlled smoke tests**, not read-only pref
 | Audit-event expectation | Denied retries legitimately produce audit rows; their presence is correct behaviour |
 | Abort conditions | Any assertion failure (404 not returned, row changed, summary non-zero for a zero-assignment actor, or the positive control failing) |
 | Where it may run | **Only** the rehearsal stack, and only after explicit deployment authorization for the production smoke variant |
+
+---
+
+### 8c. Deployment strategy comparison (PLAN ONLY — neither is executed)
+
+Two candidate paths, evaluated against **measured 2026-10-09 host evidence**. The decisive
+inputs: root filesystem **82.30 GiB free**, floor **15.74 GiB**, SIGAP application images
+**420 MiB total**, build cache **0 B**, and the host is **shared with many other projects**.
+
+| Axis | **Option 1** — preserve, expand, build and deploy on host | **Option 2** — preserve, build off-host, verify, import, deploy |
+|---|---|---|
+| Storage peak | A cold build of api + web on the host competes for the same 82.3 GiB the other projects' stacks use. Peak **unmeasured**, but headroom above the floor is 66.4 GiB, so it fits unless the build is enormous. | **Negligible on the production host.** Only the ~0.44 GB `docker load` transfer touches it. |
+| Operational complexity | Lower — one machine, the existing compose files, no transfer step. | Higher — a build host, a transfer, an import, and a checksum verification hop. |
+| Artifact identity | The registry-free `:latest` tag is re-pointed by the build; **provenance rests on the build host's state at build time**, and a build retag makes the running release a dangling image. | **Strongest.** Immutable digests are recorded before and after transfer, so what is deployed is provably what was reviewed. |
+| Rollback preservation | Same requirement in both: §13f's off-host archive must exist **before** any build (§13b). | Same. |
+| Database compatibility | Identical — `0011` is not applied by either path, and `SIGAP_AUTO_MIGRATE` stays unset. | Identical. |
+| Downtime risk | One host; a `build` that fills the disk could disturb **other projects** on the shared host, which raises the blast radius beyond SIGAP. | Production impact is limited to the `docker load` + `compose up -d` window. |
+| Secrets | `.env` and `.env.bak-phase5` already live on the host. No new exposure. | **Risk to manage.** The build host must not receive production secrets. Build args must be validated against `.env.example`, and the transfer must be authenticated and encrypted. |
+| Network exposure | None new. | A single authenticated transfer channel (SCP/SSH) to a build host. |
+| Verification | Build output is trusted from the host that built it. | Transfer is verified by digest before the image is deployed. |
+| Runbook changes needed | **None.** This is the path the existing runbook already describes. | **Yes, minimal but real.** §3 needs an off-host build + verify + import stage, and §13's ordering rule gains a transfer step. Compose configuration itself needs **no change** — the project identity (`sigap`) and service definitions are unchanged; only the *provenance* of the images changes. |
+
+**Recommendation.** **Option 2**, on the shared-host criterion rather than the capacity one.
+Capacity is no longer the constraint — it passes with 66.4 GiB to spare — but the host runs
+`orbit-chat`, `portal-sekolah`, the ELK stack, Traefik and Grafana/Prometheus alongside SIGAP.
+A disk-hungry build on that host can degrade or break stacks that have nothing to do with this
+release, which is a blast-radius problem that no amount of free space fixes. Off-host building
+confines the risk to the short import window, and it is the only option that produces a
+digest-verified artifact.
+
+Neither option is authorized or executed. Both remain blocked on the **rollback safety**
+(§7f/§7g) and **build-peak measurement** (§13e.4) gates.
 
 ---
 
@@ -1284,36 +1388,76 @@ that must be renamed.
 
 ## 13. Disk capacity and backup/build safety
 
-**Why this is blocking.** The application images are built locally and have **no registry
-backing** (`RepoDigests` empty), so `latest` is their only reference and a `build` retags it.
-The host was measured at **90% used / 16 GB free of a 158 GB filesystem** (2026-10-09; the
-previous day's read was 17 GB free, so free space is shrinking). A `docker save` of the three
-application images plus a rebuild peak can exhaust that headroom, and an out-of-space build
-can leave the stack in a partially-tagged state.
+**Why this needs care.** The application images have **no registry backing**
+(`RepoDigests` empty), so `latest` is their only reference and a `build` retags it — the
+orphaned running release *becomes* a dangling image, which is why preservation must precede
+any build (§13b).
+
+**Status: GATE PASSES — measured 2026-10-09.** An authorized read-only SSH inspection of
+`fikriserver` recorded the host's actual figures, and they are **materially better** than the
+estimate this section previously carried:
+
+| Measurement | Value |
+|---|---|
+| Filesystem | `/dev/sda2`, `ext4`, 160 GB disk (single partition, no separate volume) |
+| Total | `168,971,526,144` bytes = **157.37 GiB** |
+| Used | `73,607,806,976` bytes = 68.55 GiB |
+| **Available** | **`88,368,025,600` bytes = 82.30 GiB (52.3%)** |
+| `/var/lib/docker` | **same filesystem** (`/dev/sda2`) — confirmed with `findmnt -T` |
+| Docker images | 33 images, 12.56 GB total, **100% reclaimable** |
+| Docker build cache | **0 B** |
+| Containers | 34 (25 running), 4.895 GB |
+| Local volumes | 38, 5.4 GB (731.6 MB reclaimable) |
+| `sigap_pgdata` | 66,449,216 bytes = **63.4 MiB** |
+
+Against the floor in §13a.3b: `max(2 GB, 10% × 168,971,526,144 B) = 16,897,152,614 B`
+= **15.74 GiB**. Headroom above the floor is **82.30 − 15.74 = 66.56 GiB**, and the three
+SIGAP application images total `420,801,639` bytes = **420.4 MiB** — about 3.5% of all Docker
+image storage. Archiving them locally drops free space to ≈ 82.12 GiB, still **66.4 GiB above
+the floor**.
+
+> **The earlier blocker no longer applies, and it was never a storage problem — it was a
+> measurement problem.** §13 previously recorded *"16 GB free of a 158 GB filesystem"* with a
+> *"90% used"* reading and concluded the gate failed with ~0.2 GB of margin. The **actual**
+> measured state is **82.3 GiB free at 46% used**. No decision in this document was based on
+> the wrong reading — it was recorded as `BLOCKED` — but the recorded numbers were wrong, and
+> they are now corrected. The capacity gate **PASSES on measured evidence**.
+>
+> **One caveat that still gates a `build`.** Free space is not the only binding input: the
+> **build peak is still unmeasured** (§13e.4), and the host is **shared** with many other
+> projects (`orbit-chat`, `portal-sekolah`, the ELK stack, Traefik, Grafana/Prometheus and
+> more — 33 images, 25 running containers). A build is still gated on the measured peak, and
+> reclaiming the host's other images is **not** this release's decision to make.
 
 ### 13a. Capacity gate (before any `build` or `save`)
 
 1. Record free space and the image sizes (evidence bundle §4/§6).
-2. Compute the archive budget. Raw `Σ (image size)` ≈ 27 + 324 + 90 = **441 MB ≈ 0.44 GB**;
-   the gzip allowance is `× ~1.05` → **≈ 463 MB ≈ 0.46 GB**. Use the **0.46 GB** figure as the
-   budget (the raw sum is not the budget, and this document previously labelled the raw sum
-   with the `×1.05` formula's name). **Plus** the build peak (a rebuild can transiently hold
-   the old image, the new layers, and the build cache simultaneously).
+2. Compute the archive budget. Raw `Σ (image size)` = 26,911,970 + 323,542,368 + 90,347,301 =
+   **440,801,639 bytes ≈ 420.4 MiB**; the gzip allowance is `× ~1.05` → **≈ 463 MB ≈ 0.46 GB**.
+   Use the **0.46 GB** figure as the budget (the raw sum is not the budget, and this document
+   previously labelled the raw sum with the `×1.05` formula's name). **Plus** the build peak
+   (a rebuild can transiently hold the old image, the new layers, and the build cache
+   simultaneously).
 3. **Abort** if free space after the projected archive **plus a stated build-peak allowance**
    would fall below the floor in 3b. The margin is expressed as an **absolute floor**, not a
    bare percentage: the previous "10% margin" wording named no base (10% of the volume? of
    free space? of the archive?) and was therefore undecidable.
 
    **3b. The floor is `max(2 GB, 10% of the filesystem size)` free after archive + build peak.**
-   Naming the base is the fix; it is not a relaxation. On this host 10% of 158 GB is **15.8 GB**,
-   which is *stricter* than the 2 GB term and is therefore the binding one. The 2 GB term exists
-   only so the rule still means something on a much smaller filesystem.
-4. **The build peak is an unmeasured input and must be measured before this gate can pass.**
-   On the 2026-10-09 figures the gate **fails**: `16 GB − 0.46 GB = 15.54 GB`, which is
-   `9.83%` of the 158 GB volume — below the 10%-of-volume floor — and the build peak is
-   still unaccounted for. Until the measurements in §13e are taken, treat this gate as
-   **BLOCKED**, not as passing.
-5. To free space **before** preservation, use **order-safe** reclamation: non-Docker space
+   Naming the base is the fix; it is not a relaxation. On this host the 10%-of-volume term is
+   **15.74 GiB**, which is *stricter* than the 2 GB term and is therefore the binding one. The
+   2 GB term exists only so the rule still means something on a much smaller filesystem.
+4. **The build peak is an unmeasured input and must be measured before a `build` may run.**
+   On the **measured 2026-10-09 figures** the capacity portion of the gate **passes** with a
+   wide margin: `82.30 GiB − 0.46 GB ≈ 82.12 GiB` free after the archive, against a floor of
+   **15.74 GiB** — i.e. **66.4 GiB of headroom**, so an unmeasured build peak of up to
+   ~66 GiB would still fit. That is far more than any plausible peak for 420 MiB of
+   application images. The build peak nonetheless remains **UNMEASURED**, so this gate is
+   `PASS (capacity) / BLOCKED (peak unmeasured)` and a `build` still waits on §13e.4.
+5. Storage expansion is **not required** for this release on measured evidence. See §13e —
+   the earlier `BLOCKED` verdict rested on an estimate that was wrong by roughly 66 GiB, and
+   the options are re-ranked accordingly.
+6. To free space **before** preservation, use **order-safe** reclamation: non-Docker space
    (logs, old build output, `$ARCHIVE_DIR` contents from a superseded release) **and build
    cache** (`docker builder prune`, §13e/S3a). **Do not** run `docker image prune`,
    `docker system prune`, or `docker rmi` at this point: after a build retags `:latest`, the
@@ -1321,13 +1465,14 @@ can leave the stack in a partially-tagged state.
    the artifact §7c preserves. Image pruning is permitted **only after** §7c's archives exist
    and `sha256sum -c` passes (§13b).
 
-   Note the reclaimable headroom already measured on the host: `docker system df` reported
-   **Images 47.6 GB (14.18 GB reclaimable)** and **Build Cache 17.64 GB (11.65 GB
-   reclaimable)**. That is ~25.8 GB, far more than the deficit. Split by ordering: the
-   **11.65 GB build-cache portion is order-safe before §7c** (build cache is not a runnable
-   image, so pruning it cannot destroy the release), while the **14.18 GB image portion is
-   reachable only after §7c preservation**. Both are the operator's decision, not this
-   runbook's.
+   Note: reclaiming the host's **other** projects' images is not this release's decision. The
+   host runs many unrelated stacks (33 images, 25 running containers); `docker system df`
+   reports 12.56 GB of images as 100% reclaimable and 4.895 GB of container writable layers,
+   but most of that belongs to `orbit-chat`, `portal-sekolah`, the ELK stack, Traefik and
+   Grafana/Prometheus. **Build cache is 0 B** on this host, so S3a has nothing to reclaim
+   here and the build-peak measurement in §13e.4 measures a cold-cache build from scratch.
+   Image reclamation remains **only after §7c preservation**, and is not needed on the
+   measured figures.
 
 ### 13b. Ordering rule (non-negotiable)
 
@@ -1355,52 +1500,146 @@ After a successful deploy, confirm free space did not drop below the §13a **flo
 ### 13e. Storage remediation options (plan only — nothing here is executed)
 
 **Status: PLAN ONLY.** No archive is created, no image is removed, no volume is changed, no
-prune is run by this release. The disk gate is **BLOCKED** (§13a step 4) until the operator
-chooses an option below and the measurements in 13e.4 are taken.
+prune is run by this release.
 
-**The deficit is ~0.2 GB of margin against an unmeasured build peak, not a 0.44 GB archive
-problem.** This distinction decides the plan, so it is worth stating exactly. With
-`floor = max(2 GB, 10% × 158 GB) = 15.8 GB` and `free = 16 GB`, the margin is **0.2 GB**. An
-off-host archive (S1) is transient — during `docker save` free dips to `16 − 0.46 = 15.54 GB`,
-**below the floor**, and afterwards returns to 16 GB, i.e. `floor + 0.2 GB`. So **S1 does not
-clear the gate**: it removes the archive from the equation but leaves the 0.2 GB margin
-untouched, and any build peak larger than 0.2 GB still breaches the floor. The gate fails
-because free space is near the floor *before* anything is archived, not because of the archive.
+**MEASURED 2026-10-09 (read-only SSH, `fikriserver`).** `floor = 15.74 GiB`, `available =
+82.30 GiB`. Headroom above the floor is **66.56 GiB**, archiving the three application images
+costs **0.46 GB**, so after preservation `82.12 GiB` remains — **66.4 GiB above the floor**.
+**Storage expansion is not required for this release, and an off-host archive is no longer
+needed to make the gate pass.** It remains valuable for a different reason: it is the only
+mechanism that produces an **immutable, identity-verified rollback artifact** (§7c), which is
+a rollback requirement, not a capacity one.
+
+**What previously read as a ~0.2 GB deficit was a measurement error, not a storage
+constraint.** The earlier figures (`16 GB free`, `90% used`) were an estimate; the host is
+actually **82.3 GiB free at 46% used**. The arithmetic that followed from the wrong input
+(`16 − 0.46 = 15.54 GB < 15.8 GB floor`, and the conclusion that an off-host archive could
+not clear the gate) was correct **for the input it was given** — but the input was wrong, so
+the conclusion does not hold. The gate passes on measured evidence.
 
 | # | Option | Effect | Cost / risk | Verdict |
 |---|---|---|---|---|
-| **S2** | **Grow the constrained filesystem** (the volume holding the Docker images and `/`), e.g. a VPS disk resize. Optionally attach a *separate* volume for `$ARCHIVE_DIR` as well. | **Growing the constrained filesystem is the mechanism that works:** it adds free space `d` while adding only `0.1·d` to the floor, so the margin grows by `0.9·d` — `(16+d) − 0.1·(158+d) = 0.2 + 0.9·d`. This is the only option that fixes the *actual* deficit (0.2 GB of margin) and makes the build peak survivable. | Requires a provider-side resize and a filesystem grow on a running production host. | **Primary recommendation.** Note the distinction carefully: a second volume used *only* for `$ARCHIVE_DIR` does **not** help the gate by itself — it moves the archive off the constrained filesystem but leaves the floor at 15.8 GB and the margin at 0.2 GB unchanged. Only growth of the **constrained** filesystem moves the margin. |
-| **S1** | **Off-host encrypted image archive.** `docker save` the three application images, gzip, encrypt (`age`/`gpg`) **on the host**, and move the ciphertext off-host (the existing R2 backup target already configured for `AUDIT-701` is the natural destination). | Keeps the ~0.46 GB artifact off the constrained filesystem, so the local copy can be deleted after the checksum is verified remotely. | Requires an off-host target, a key managed outside the host, and a transfer. The archive must be encrypted **before** it leaves the host. | **Companion to S2, not a substitute.** Necessary for a real off-host rollback artifact and for the checksum-verified deletion that makes the local copy transient — but on its own it does **not** clear the gate (see above). |
-| **S3a** | **Build-cache reclamation — order-SAFE, can run before preservation.** `docker builder prune` (not `docker system prune`, not `docker rmi`) removes **build cache only** — 11.65 GB reclaimable per `docker system df`. | Raises free space from 16 GB to ~27.6 GB, i.e. ~11.8 GB above the floor. | **None to rollback safety**: build cache is not a runnable image, so this cannot destroy the running release. The real cost is a cold rebuild: BuildKit repopulates cache layers as it builds, so a large part of the freed space is **re-consumed during the build**, which is exactly why the build peak must be measured rather than assumed away. | **Adopt, and measure the rebuild's actual cache regrowth.** This is the only order-safe reclamation available *before* §7c, so it is what makes the preservation step itself fit. |
-| **S3b** | **Image reclamation — order-CONSTRAINED, only after preservation.** The remaining 14.18 GB of reclaimable images, via `docker image prune`. | Would clear the deficit several times over. | **Ordering is load-bearing.** After a build retags `:latest`, the orphaned running release *is* a dangling image, so pruning here can destroy exactly the artifact §7c preserves (§13b). Only reachable **after** `sha256sum -c` passes on the archives. | **Not a primary plan — a supplement to S1/S2.** It frees space but preserves nothing, and it is the option most likely to be run in the wrong order. |
-| **S4** | **Build strategies that minimise peak pressure.** Reuse the existing cache where it exists; build one service at a time (`build api`, then `build web`) instead of `build` with no target; avoid `docker buildx` multi-platform output; set `DOCKER_BUILDKIT=1` so intermediate layers are not duplicated in the legacy builder's on-disk layout. | Lowers the peak, which is the unmeasured term in the gate. | Reduces parallelism; may lengthen the window in which the stack is mid-cutover. | **Adopt alongside whichever of S1–S3 is chosen.** It reduces the unknown rather than paying for it. Note it conflicts with S3a's cold-rebuild cost: prefer *reusing* cache over pruning it if the peak proves small. |
+| **S1** | **Off-host encrypted image archive.** `docker save` the three images **by immutable ID**, gzip, encrypt (`age`/`gpg`), move ciphertext off-host. | Produces the **immutable, checksum-verified rollback artifact** the runbook's ordering rule requires before any build. Removes even the transient 0.46 GB local peak if streamed (see §13f). | Requires an off-host destination, a key held off-host, and a transfer. Encrypt **before** it leaves the host. | **Recommended, for rollback — not for capacity.** |
+| **S2** | **Grow the constrained filesystem**, e.g. a VPS disk resize. | Adds free space `d` while adding only `0.1·d` to the floor, so the margin grows by `0.9·d`. | Provider-side resize + filesystem grow on a running production host. **The whole host is shared with many other projects, so a resize benefits all of them and is not solely a SIGAP decision.** A second volume used *only* for `$ARCHIVE_DIR` does **not** move the root filesystem's margin at all. | **NOT required** on measured figures. |
+| **S3** | **Reclamation** — build cache, then images after preservation. | Build cache is **0 B** on this host, so `docker builder prune` has nothing to reclaim. The 12.56 GB of images is 100% reclaimable but **mostly belongs to other projects** (`orbit-chat`, `portal-sekolah`, ELK, Traefik, Grafana/Prometheus) — only ~420 MiB is SIGAP's. | `docker image prune` is order-constrained: after a build retags `:latest` the orphaned running release *is* a dangling image. | **NOT required**, and **not recommended** — it would delete other projects' artifacts and buys nothing SIGAP needs. |
+| **S4** | **Build strategies that minimise peak pressure.** Build one service at a time (`build api`, then `build web`), avoid `docker buildx` multi-platform output, `DOCKER_BUILDKIT=1`. | Lowers the peak, which is the one unmeasured term. | Slightly longer cutover window. | **Adopt.** Build cache is empty here, so the build is cold regardless; S4 is the cheapest way to keep the peak small. |
 
-**13e.5 — Why the gate is BLOCKED and not merely marginal.** Two inputs are missing, and both
-are required before any option can be chosen: the **measured build peak** (13e.4 item 4) and the
-**exact free bytes** (13e.4 item 1, since `16G` is rounded and the real value may be anywhere in
-15.0–16.5 GB). A 0.2 GB margin is smaller than the resolution of the measurement it depends on,
-so the gate cannot honestly be called passing on the current figures. **`STORAGE_READINESS` is
-therefore `BLOCKED`**, and no deploy step that builds or saves an image may proceed on this host
-until either the **constrained** filesystem is grown (S2 — a second volume for `$ARCHIVE_DIR`
-alone does not move the margin) or 13e.4 measures the peak as small enough to fit.
+**13e.5 — The gate now passes on capacity; one input is still missing.** `STORAGE_READINESS`
+is **`READY_FOR_AUTHORIZATION`** rather than `BLOCKED`: the capacity arithmetic passes with
+66.4 GiB to spare, and the **only** remaining input is the **measured build peak** (§13e.4
+item 4). Two caveats keep this from being an unqualified PASS:
 
-**13e.4 — Exact measurements required before the gate can be decided.** Take these read-only,
-on the host, and record them in `RELEASE_CHECKLIST.md`:
+1. The build peak is unmeasured, so a `build` is still gated. It is now gated on a
+   measurement, not on a shortfall.
+2. The host is **shared**, so a SIGAP build's peak competes with other projects' activity.
+   Sample free space during a maintenance window, not during someone else's build.
 
-1. `df -h /` and `df -B1 /` — free bytes, not just the rounded `16G`.
-2. `docker system df -v` — image and build-cache sizes with reclaimable split out.
-3. `docker image inspect --format '{{.Size}}' <api|web|engine>` — exact per-image bytes, to
-   replace the ≈27/324/90 MB estimates with measurements.
-4. **A measured build peak**: one full `build` of `api` and `web` on the host with
-   `df -B1 /` sampled immediately before and immediately after, plus the maximum observed
-   during the build (`while :; do df -B1 /; sleep 1; done` in a second session). This is the
-   single input the gate is currently missing. **Do not** run it on the release commit; run it
-   on a throwaway tag so it cannot be mistaken for a deploy.
-5. `du -sh $ARCHIVE_DIR` and the target off-host capacity, for S1.
+**13e.4 — Measurements now taken, and the one still outstanding.**
+
+| Input | Status | Value |
+|---|---|---|
+| 1. Exact free bytes (`df -B1 /`) | **DONE** | `88,368,025,600` bytes = 82.30 GiB |
+| 2. `docker system df -v` | **DONE** | Images 12.56 GB (100% reclaimable); Containers 4.895 GB; Volumes 5.4 GB (731.6 MB reclaimable); **Build Cache 0 B** |
+| 3. Exact per-image bytes | **DONE** | api `26,911,970`; web `323,542,368`; engine `90,347,301`; postgres `294,282,098` |
+| 4. **Measured build peak** | **OUTSTANDING** | one `build` of `api` and `web`, `df -B1 /` sampled throughout (`while :; do df -B1 /; sleep 1; done` in a second session). Use a throwaway tag, never the release commit. |
+| 5. `du -sh $ARCHIVE_DIR` and off-host capacity | **OUTSTANDING** | `/opt/sigap/backups/sigap` is currently **empty** (4 KiB) and on the **same** root filesystem; the off-host destination is unconfirmed. See §13f. |
 
 **Do not weaken this gate to permit a deploy.** A deploy that fills the disk mid-build leaves
 a partially-tagged stack with no preserved rollback image — the exact failure §7c exists to
 prevent.
+
+---
+
+### 13f. Off-host image preservation (PLAN ONLY — not executed)
+
+**Purpose.** Produce an **immutable, identity-verified** copy of the three running application
+images so that (a) a `build` can retag `:latest` without destroying the only copy of the
+running release (§13b), and (b) the legacy-API rollback test (§7g) can run an actual binary
+image rather than a source guess.
+
+**Immutable IDs captured read-only on 2026-10-09** (`docker inspect` / `docker image inspect`),
+with layer digests recorded for restore-identity verification:
+
+| Service | Image ID | Size (bytes) | Created | Layers |
+|---|---|---|---|---|
+| api | `sha256:43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f` | 26,911,970 | 2026-09-14T08:13:56Z | 4 |
+| web | `sha256:2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c` | 323,542,368 | 2026-09-08T17:21:29Z | 10 |
+| rust-engine | `sha256:8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4` | 90,347,301 | 2026-09-14T08:18:24Z | 4 |
+
+Container IDs: api `40bf694b849d`, web `4f316e3cdca7`, rust-engine `793ba3a38496`,
+postgres `03df9148a857`. Architecture `amd64`, OS `linux` for all; `RepoDigests` empty.
+**Not to be preserved by this release**: `postgres:16-alpine`
+(`sha256:75f5a96988cdf694a215073c3e9c001b706b371e2f94df3967f2efdec2787f6b`, a public image
+recoverable from any registry) — the SIGAP **data volume** is the irreplaceable asset and is
+handled by §6c/§13c, not by image preservation.
+
+**The api image ID matches the historical value exactly**
+(`43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f`), and so do the web
+(`2a81c862…`) and engine (`8ce2200f…`) IDs. **`[OBSERVED]` — the historical IDs are CURRENT**,
+not stale. The remaining caution is the one §7f already records: an image ID does not disclose
+its source revision, so the running api/web/engine images still have **no proven source
+commit**. That is precisely what §7g's isolated test exists to settle, and why `ROLLBACK_SAFETY`
+stays `UNKNOWN`.
+
+**Design: stream, do not stage.** `docker save` output is ~0.44 GB and the host has 82.3 GiB
+free, so staging locally is *feasible*; but streaming still removes the transient footprint
+and the risk of a half-written local archive, and it means the only durable copy is the
+verified one off-host.
+
+**Proposed execution (NOT RUN — requires separate authorization).**
+
+```bash
+# 0. Identity first: re-confirm the running image IDs have not changed, and RECORD them.
+#    If any ID differs from the table above, STOP — the running images are not the ones
+#    this plan was written against.
+for s in api web rust-engine; do
+  docker inspect "sigap-$s" --format '{{.Image}}'
+done
+
+# 1. Stream the three images off-host, compressed and encrypted, in one pass.
+#    Single pass: no intermediate archive file is written on the VPS root filesystem.
+#    `--quiet` and `-J` are the key names; verify against `docker image save --help` on the
+#    host before running, since CLI spellings differ across Docker versions.
+ssh fikriserver "docker image save \
+  sha256:43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f \
+  sha256:2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c \
+  sha256:8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4" \
+| gzip -1 \
+| age -r "$OFFHOST_RECIPIENT" -o - > "$LOCAL_ARCHIVE_DIR/sigap-pre-redesign-$(date -u +%Y%m%d).tar.gz.age"
+
+# 2. Record the checksum of the ENCRYPTED artifact (what actually moved).
+sha256sum "$LOCAL_ARCHIVE_DIR"/sigap-pre-redesign-*.tar.gz.age \
+  | tee "$LOCAL_ARCHIVE_DIR"/sigap-pre-redesign-*.tar.gz.age.sha256
+
+# 3. Identity correspondence: prove the archive holds exactly the captured IDs.
+#    Decrypt and load into an ISOLATED daemon (never production), then compare IDs.
+ssh fikriserver "docker image save <ID>" | gzip -d | age -d -i "$LOCAL_PRIVKEY" \
+  | docker load --quiet     # on the ISOLATED test host/daemon
+docker images --no-trunc --format '{{.ID}}' | sort
+# Must equal the captured set exactly:
+#   43fcbcb35ed276…  2a81c86258fb…  8ce2200fabf3…
+
+# 4. Only after 3 succeeds, delete the local plaintext temporaries (never the host copy first).
+```
+
+**Destination.** The on-host `/opt/sigap/backups/sigap` directory exists but is **empty (4 KiB)
+and on the same root filesystem** — it is not a real off-host target. A genuine off-host
+destination must supply: **capacity** ≥ ~0.5 GB per retained release, **encryption at rest**,
+and **access control** separate from the VPS. The existing R2 backup target configured for
+`AUDIT-701` is the natural candidate; its credentials and reachability were **not** verified in
+this read-only inspection, so destination feasibility is **[UNKNOWN]** and must be confirmed
+before execution.
+
+**Interruption/retry.** A single streaming pipeline has no partial artifact to clean up — it
+either completes or leaves one truncated file in `$LOCAL_ARCHIVE_DIR` that step 2 will not
+checksum-match. Delete the truncated file and re-run; the host images are read-only inputs and
+are never modified, so re-running is always safe and idempotent.
+
+**Confidentiality.** The application images contain production **binaries and configuration**,
+and may embed secrets at build time. `age`/`gpg` encryption is required **before** transfer;
+never place plaintext image archives on shared or world-readable storage, and never print image
+**environment variables** — this inspection read only IDs, sizes, timestamps and statuses, and
+no secret values were read or recorded.
 
 ---
 
