@@ -1267,6 +1267,30 @@ Properties that matter for the cutover:
   `notification_outbox` is a queue, so its steady-state size should be small; a large count
   means the validation scan is long and a maintenance window is mandatory. **Do not apply
   `0011` until this number is recorded** — it is what makes the window estimable at all.
+
+  **Separately prepared, NOT executed — the violating-row aggregate.** `count(*)` answers the
+  window question but not the *will it apply* question. The count that decides whether `0011`
+  succeeds at all is:
+
+  ```sql
+  -- read-only; a single number, no row content, no identifiers, no bodies
+  SELECT count(*) AS violating_rows
+    FROM notification_outbox
+   WHERE subject      ~ '[0-9]{8,}' OR subject      ~ '[0-9][0-9\-._() ]{10,}[0-9]'
+      OR body_template ~ '[0-9]{8,}' OR body_template ~ '[0-9][0-9\-._() ]{10,}[0-9]';
+  ```
+
+  `TestMigration0011_Transition_ViolatingHistory` proves the consequence: any row in that set
+  makes `0011` raise **`23514`**, records **no** version 11, and changes nothing — so the
+  migration **cannot** be applied until such rows are remediated by a separate, explicitly
+  authorized decision. **This query has been deliberately NOT run** under the current
+  authorization, which covers metadata only. It is prepared here so the operator can run it in
+  the same read-only bracket as §12a if and when they choose. `0` rows means `0011` applies;
+  a non-zero count means **STOP** — that is an operator remediation decision, not a migration
+  change.
+
+  **`[UNKNOWN]` as of this session:** neither count is known. The 2026-10-09 inspection read
+  `pg_catalog` and `schema_migrations` only, and no aggregate over application rows was taken.
 - **No `BEGIN`/`COMMIT` in the file.** The runner already wraps each migration in its own
   transaction, so the DDL and the `schema_migrations` version row commit **atomically**. (Note
   that `0006` is the only migration carrying its own `BEGIN`/`COMMIT`, which ends the runner's
