@@ -16,7 +16,7 @@ the live environment.
 | A1 | Correct release commit selected | `git rev-parse HEAD` → the branch tip, recorded as `RELEASE_CANDIDATE_HEAD`. The deployable artefact set is defined by the **commit actually built**, not by a hard-coded historical hash; record the exact value at build time. | `[ ]` |
 | A2 | Branch is `design/ui-ux-overhaul` | `git rev-parse --abbrev-ref HEAD` | `[x]` |
 | A3 | **Tracked** paths clean at the release commit | `git status --porcelain --untracked-files=no` → empty. Untracked paths are **classified, not ignored** (runbook §2a): an unexpected untracked path is a hard abort; the known sensitive artifact is recorded with an explicit disposition. **The host tree is reported as *not fully clean* until that disposition is resolved — do not fabricate a clean-tree PASS.** | `[ ]` |
-| A4 | Migration provenance classified (A–F) | `git diff --stat origin/main..HEAD -- packages/db/migrations` → **empty** (source agrees with main). `git diff --stat 6d7f940..HEAD -- packages/db/migrations` → `0006_notifications.sql \| 4 ++--`, **non-empty by design** (inherited upstream hardening `9d4e68e`, runbook §1 **C**). **Neither diff proves the deployed schema** — `DATABASE_SCHEMA_COMPATIBILITY` stays UNKNOWN until §12 runs. **No migration PASS may be claimed from these diffs.** | `[x]` (diffs recorded) |
+| A4 | Migration provenance classified (A–F) | `git diff --name-only origin/main..HEAD -- packages/db/migrations` → **exactly** `0011_notification_outbox_phone_constraints.sql` (runbook §1 **A**). `git diff --stat 6d7f940..HEAD -- packages/db/migrations` → `0006_notifications.sql \| 4 ++--` **plus** `0011`, **non-empty by design** (inherited upstream hardening `9d4e68e` + the redesign's own `0011`, runbook §1 **C**). **Neither diff proves the deployed schema** — that is §12, whose result is `OLDER_WEAKER_CONSTRAINTS`. **No migration PASS may be claimed from these diffs.** | `[x]` (diffs recorded) |
 | A5 | Seed changes reviewed (seeds are **not** empty — they were extended for local test identities) | `git diff --stat 6d7f940..HEAD -- packages/db/seed` → `dev.sql`, `demo.sql` (synthetic local identities/fixtures only; seeds are never applied in production — `postgres` mounts `packages/db/migrations`, not `packages/db/seed`) | `[x]` |
 | A6 | `.env` backup artifact preserved, not staged | `/opt/sigap/.env.bak-phase5` present (mode `600`), **never** staged/moved/deleted, never `git clean`; `.gitignore` now matches it (`git check-ignore -v .env.bak-phase5`) while `.env.example` stays trackable | **OPERATOR** |
 
@@ -45,7 +45,7 @@ the live environment.
 | C10 | `SIGAP_TLS_TERMINATED` | `true` behind TLS | **OPERATOR** |
 | C11 | `SIGAP_TRUSTED_PROXIES` | `2` (edge + SvelteKit proxy) | **OPERATOR** |
 | C12 | Local identity path inactive | `SIGAP_LOCAL_E2E_ACTOR` and `SIGAP_LOCAL_RBAC_TEST_IDENTITY` **unset** | **OPERATOR** |
-| C13 | `SIGAP_AUTO_MIGRATE` | unset/`false` (no migration ships) | **OPERATOR** |
+| C13 | `SIGAP_AUTO_MIGRATE` | unset/`false`. **Leave unset**: `0011` is applied only as a separate, explicitly authorized operator action (J10), never by container startup. | **OPERATOR** |
 | C14 | `make db-seed` would refuse | `make db-seed` with a non-`local` `SIGAP_ENV` exits 1: "Refusing to run demo seeds unless SIGAP_ENV=local" (`Makefile` `db-seed`). Verified against the guard predicate: non-local → refuse, `local` → proceed. | `[x]` |
 | C15 | Production overlay refuses an unset/empty `SIGAP_ENV` | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml config` with `SIGAP_ENV` unset → interpolation error **before** any container starts (G10/G11) | `[x]` |
 | C16 | Production env gate passes a clean env | `SIGAP_DEPLOY_DIR=. SIGAP_ENV=staging SIGAP_AUTH_MODE=jwt sh scripts/ops/preflight-production-env.sh` → exit 0. **`SIGAP_DEPLOY_DIR` is required by the gate** (runbook §7a); without it the gate correctly exits 1 | `[x]` |
@@ -167,16 +167,19 @@ recorded. "Unknown" is never a PASS.
 
 | | Item | Evidence | Status |
 |---|---|---|---|
-| J1 | **DB metadata inspection authorized** | explicit operator approval for read-only DB access (runbook §12/§12a) | **OPERATOR** |
-| J2 | **DB metadata inspection completed** | `scripts/ops/db-metadata-inspection.sql` executed via runbook §12a; capture written to `/root/sigap-evidence/sigap-db-metadata-<utc>.txt` — **outside** the deploy tree | **OPERATOR** |
-| J2b | **Classifier proven non-vacuous (in-repo)** | `sh scripts/ops/test-db-classifier.sh` → **26 pass / 0 fail** on a disposable local cluster, over 24 schema variants including the **real release schema** (migrations `0001`–`0010`), the `{10,}`-conjunct-only loophole, the `{10,}` fragment-spoof, the mis-bound-column case, mixed strong/weak columns, a `NOT VALID` phone constraint, the release schema re-run with `standard_conforming_strings=off`, missing subject/body constraints, both phone constraints absent with and without an extra constraint, three altered predicates, unexpected column/version/constraint metadata, and a static inventory check against `packages/db/migrations`. Only a genuinely strengthened schema reports `MATCHES_CURRENT_SECURITY_CONSTRAINTS`. Mutating the classifier makes the suite fail. | `[x]` |
-| J3 | **DB schema classification recorded** | §12a step 4 must print `CLASSIFICATION OK: <class>`, which requires the script hash to match, `psql` exit 0, exactly one anchored class line, one `ROLLBACK` tag, and one context row matching `EXPECT_DB`/`EXPECT_SCHEMA`. Record exactly one of `MATCHES_CURRENT_SECURITY_CONSTRAINTS` / `OLDER_WEAKER_CONSTRAINTS` / `MISSING_CONSTRAINTS` / `UNEXPECTED_DRIFT` / `UNKNOWN` (runbook §12), **together with** the `db` name and `server_version` from §12a step 3. Anything other than `CLASSIFICATION OK` ⇒ `UNKNOWN`. **`UNKNOWN` blocks the deploy.** | **OPERATOR** |
-| J4 | **Drift disposition recorded** | if the class is not `MATCHES_CURRENT_SECURITY_CONSTRAINTS`: explicit operator decision (accept with a recorded compensating control, or remediate forward with a **new** migration) | **OPERATOR** |
-| J5 | **Disk capacity gate passed** | runbook §13a — rollback archives present **and verified**; build peak evaluated; ≥10% margin after both; **no** `prune`/`rmi` before preservation | **OPERATOR** |
+| J1 | **DB metadata inspection authorized** | explicit operator approval for read-only DB access (runbook §12/§12a) | `[x]` (granted 2026-10-09) |
+| J2 | **DB metadata inspection completed** | `scripts/ops/db-metadata-inspection.sql` executed once, read-only, on 2026-10-09 against `fikriserver` / `sigap` (PostgreSQL 16.15). The revision that ran was `657eb675…a1174a6c` (blob `36959d81…c693343`), re-verified **on the host** before execution; `BEGIN READ ONLY` + `ROLLBACK`; exit 0. The shipped revision is now `d705f835…b17738b2` (blob `a77adc0e…a321f456`) — the version-inventory fix plus the STATUS header; the recorded classification is unaffected, but §12a must be re-run before the cutover so the recorded hash matches the shipped artifact. Sanitized evidence on Jira `SIGAP-60`. | `[x]` (re-run pending) |
+| J2b | **Classifier proven non-vacuous (in-repo)** | `sh scripts/ops/test-db-classifier.sh` → **32 pass / 0 fail** on a disposable local cluster, over 31 schema variants including the **real release schema** (migrations `0001`–`0011`), the `{10,}`-conjunct-only loophole, the fragment-spoof, the mis-bound-column case, mixed strong/weak columns, a `NOT VALID` phone constraint, the release schema re-run with `standard_conforming_strings=off`, missing subject/body constraints, both phone constraints absent with and without an extra constraint, three altered predicates, unexpected column/version/constraint metadata, the **real pre-`0011` production shape (`1..10` + weak) and its post-`0011` result**, the absent-denylist state before and after `0011`, the **`version 11 recorded but weak`** desync, the **`hardened but version 11 not recorded`** case, and a static inventory check. Only a genuinely strengthened schema reports `MATCHES_CURRENT_SECURITY_CONSTRAINTS`. | `[x]` (32/0 observed) |
+| J2c | **`0011` migration proven on a disposable cluster** | `sh scripts/ops/test-migration-0011.sh` → **20 pass / 0 fail**. Covers fresh all-migrations, the weak state (**the production state**), the already-hardened state, the absent state, mixed/spoofed/`NOT VALID` drift (all **refused**, schema unchanged), pre-existing violating rows (**refused**, rows preserved), transaction rollback, reapplication/version tracking, real enforcement on `subject` and on `body_template`, column binding, ordinary-content compatibility, `standard_conforming_strings=off`, absence of a top-level `BEGIN`/`COMMIT`, and the definitions of all eight structural constraints. Asserts the **actual resulting schema**, not a zero exit code. Synthetic data only. | `[x]` (20/0 observed) |
+| J3 | **DB schema classification recorded** | **Recorded: `OLDER_WEAKER_CONSTRAINTS`**, with `db = sigap` and `pg_version = 16.15`. The script hash matched, `psql` exited 0, and exactly one anchored class line was emitted. A database built from HEAD (or one that has had `0011` applied) reports `MATCHES_CURRENT_SECURITY_CONSTRAINTS` instead. | `[x]` |
+| J4 | **Drift disposition recorded** | Class is not `MATCHES_CURRENT_SECURITY_CONSTRAINTS`, so a disposition was required. **Decision: remediate forward** with the new migration `0011` (§12b) — prepared, tested (J2c), and **not yet applied**. Applying it is J10. | `[x]` (remediate forward; J10 outstanding) |
+| J5 | **Disk capacity gate passed** | runbook §13a — rollback archives present **and verified**; **build peak measured** (§13e.4); free space after both ≥ the floor **`max(2 GB, 10% of the filesystem size)`** (on this host 15.8 GB, which is the binding term); **no** `prune`/`rmi` before preservation. **Currently BLOCKED**: the build peak is unmeasured and 16 GB free is ~9.85% of the 158 GB volume. | **OPERATOR** |
 | J6 | **Untracked-file disposition recorded** | runbook §2a — every untracked path classified; `.env.bak-phase5` retained in place with owner/mode/size/mtime; **no** `git clean` | **OPERATOR** |
 | J7 | **Release identity validated post-deploy** | `/_app/version.json` changed for every rebuilt service; `docker compose images api web` digests recorded (runbook §3.0/§3.8) | **OPERATOR** |
 | J8 | **Protected smoke requires SEPARATE authorization** | any probe of a protected route writes an `audit_events` row (runbook §8a). A protected-route smoke against production is **NOT** covered by this checklist and needs its own explicit approval. | **OPERATOR** |
 | J9 | **Production env gate passes on the host** | C18 — `preflight-production-env.sh` exit 0 against the real environment | **OPERATOR** |
+| J10 | **`0011` applied to production** | separate, explicitly authorized operator action (runbook §12b). Apply it **through the migrator** so the `schema_migrations` version-11 row is recorded — a bare `psql -f` runs the DDL but never records the version, leaving the database remediated yet un-recorded (harmless to the constraint, but it means the runner would try to re-apply on the next start). Then **re-run §12a** and confirm the class is `MATCHES_CURRENT_SECURITY_CONSTRAINTS`. **NOT applied. Requires its own authorization** — not covered by the deploy approval. | **OPERATOR** |
+| J11 | **Rollback safety established** | runbook §7f — the previously running image's source revision recovered and its outbox write path shown to satisfy the strengthened predicate. **Currently `UNKNOWN`, which BLOCKS J10 and the deploy.** Do **not** resolve this by weakening the constraint. | **OPERATOR** |
 
 ---
 
@@ -193,14 +196,33 @@ docker compose logs api | grep -i 'dev-only capabilities' && echo 'ABORT: dev fl
 # E1 — confirm the smoke target is loopback during rehearsal
 echo "$SIGAP_API_BASE" "$SIGAP_WEB_BASE"
 
-# J1–J4 — DB metadata inspection. READ-ONLY, METADATA ONLY.
-# *** NOT AUTHORIZED. Requires explicit operator approval before running. ***
-# *** This is a REFERENCE ONLY. Run the FULL §12a block (runbook
-#     DEPLOYMENT_RUNBOOK.md §12a), which also captures the output, applies the
-#     CLASSIFICATION OK guard, and records the database identity. This bare
-#     invocation alone does NOT satisfy J2 or J3. ***
+# J1–J3 — DB metadata inspection. READ-ONLY, METADATA ONLY.
+# *** J1–J3 ARE COMPLETE. The inspection ran once on 2026-10-09 (see J2/J3). ***
+# *** Do NOT re-run this without a fresh explicit authorization. The reference
+#     below is retained only for the post-0011 re-classification required by J10. ***
+# *** Run the FULL §12a block (runbook DEPLOYMENT_RUNBOOK.md §12a), which also
+#     captures the output, applies the CLASSIFICATION OK guard, and records the
+#     database identity. This bare invocation alone does NOT satisfy J2 or J3. ***
 docker exec -i sigap-postgres psql -U sigap -d sigap \
   -v ON_ERROR_STOP=1 --no-psqlrc -P pager=off -f - < scripts/ops/db-metadata-inspection.sql
+
+# J10 — apply the corrective migration. *** NOT AUTHORIZED. Requires its own
+#     explicit operator approval, separate from the deploy approval. ***
+#     Apply it THROUGH THE MIGRATOR so the schema_migrations version-11 row is
+#     recorded. A bare `psql -f` runs the DDL but never records the version, so
+#     the database would be remediated yet un-recorded. The migrator is
+#     version-only, so a one-shot run with SIGAP_AUTO_MIGRATE=true for THIS
+#     invocation only is the supported path — set it in the command
+#     environment, never in the persisted production env file (C13).
+#     Run from $SIGAP_DEPLOY_DIR at the release commit, then re-run the §12a
+#     block above and confirm the class is MATCHES_CURRENT_SECURITY_CONSTRAINTS.
+SIGAP_AUTO_MIGRATE=true docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml \
+  run --rm -e SIGAP_AUTO_MIGRATE=true api
+# Fallback if a one-shot runner invocation is unavailable: apply the DDL and
+# record the version row in ONE transaction, so the two cannot diverge.
+#   { cat packages/db/migrations/0011_notification_outbox_phone_constraints.sql
+#     echo "INSERT INTO schema_migrations (version, checksum) VALUES (11, decode('58913737a490aa53b050f6808f3a1323b1708b4191336d7965758c3535d9882a','hex')) ON CONFLICT DO NOTHING;"
+#   } | docker exec -i sigap-postgres psql -U sigap -d sigap --single-transaction -v ON_ERROR_STOP=1 -f -
 
 # J5 — disk capacity gate (runbook §13a). Record before/after free space.
 df -h /var/lib/docker

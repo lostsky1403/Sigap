@@ -2,7 +2,13 @@
 
 **Phase:** 3B7 (production migration and deployment readiness)
 **Applies to:** the Sigap redesign stream on branch `design/ui-ux-overhaul`
-**Status:** readiness documentation only. **This runbook has not been executed. No deployment, merge, or production access has occurred.**
+**Status:** readiness documentation only. **This runbook has not been executed. No deployment and no merge has occurred.**
+
+Production *has* been accessed, read-only, exactly once: a metadata-only PostgreSQL schema
+inspection on 2026-10-09 (`scripts/ops/db-metadata-inspection.sql`, §12). It ran inside a
+read-only transaction, wrote nothing, and returned the classification recorded in §12. It is
+the only production interaction to date; no DDL, DML, migration, seed, restart, image change
+or deployment has been performed.
 
 This runbook is the canonical cutover procedure for the redesign. It is written against
 the repository as it actually is, not against a hypothetical platform. Where a fact lives
@@ -13,32 +19,32 @@ only outside the repository (a secret, a DNS record, a platform toggle), it is m
 
 ## 1. Scope and non-negotiable rules
 
-The redesign is a **code-only** change *relative to its own work*. Migration provenance is
-subtler than "no migration", and the six statements below must not be collapsed into one:
+The redesign ships **one** migration of its own, and the six statements below must not be
+collapsed into one:
 
 | # | Statement | How to verify |
 |---|---|---|
-| **A** | The redesign **created no migration** of its own. | No `packages/db/migrations/*` file was added or edited by a redesign commit. |
-| **B** | The release's migration directory is **byte-identical to current `origin/main`**. | `git diff --stat origin/main..HEAD -- packages/db/migrations` → **empty**. |
-| **C** | The diff against the **historical anchor `6d7f940` is NON-EMPTY**. | `git diff --stat 6d7f940..HEAD -- packages/db/migrations` → `0006_notifications.sql \| 4 ++--`. `origin/main` commit `9d4e68e` **hardened** an already-shipped migration (added a formatted-phone predicate to two `notification_outbox` CHECK constraints). It reached this branch through the `origin/main` merge (`6c0ac82`), **not** through redesign work. |
-| **D** | **Production DB constraints may not match the hardened source migration.** | Requires DB metadata inspection (§12). Not derivable from the repository. |
+| **A** | The redesign adds **exactly one** migration, `0011_notification_outbox_phone_constraints.sql`, and edits **no** historical migration. | `git diff --name-only origin/main..HEAD -- packages/db/migrations` → exactly `packages/db/migrations/0011_notification_outbox_phone_constraints.sql`. |
+| **B** | The release's migration directory therefore **differs from current `origin/main`** by that one added file. | `git diff --stat origin/main..HEAD -- packages/db/migrations` → `0011_notification_outbox_phone_constraints.sql \| N ++++`, **non-empty by design**. |
+| **C** | The diff against the **historical anchor `6d7f940` is NON-EMPTY**. | `git diff --stat 6d7f940..HEAD -- packages/db/migrations` → `0006_notifications.sql \| 4 ++--` plus `0011_notification_outbox_phone_constraints.sql`. `origin/main` commit `9d4e68e` **hardened** an already-shipped migration (added a formatted-phone predicate to two `notification_outbox` CHECK constraints). It reached this branch through the `origin/main` merge (`6c0ac82`), **not** through redesign work. |
+| **D** | **Production DB constraints DO NOT match the hardened source migration.** | **CONFIRMED** by the 2026-10-09 inspection (§12): classification `OLDER_WEAKER_CONSTRAINTS`. Production applied `0006` before `9d4e68e` and keeps the weak predicate. |
 | **E** | The migrator is **version-only**: it does **not** reapply a modified, already-applied migration. | `apps/api/internal/migrate/migrate.go` selects pending work by version number and never re-reads the stored checksum; production `SIGAP_AUTO_MIGRATE` is empty. |
-| **F** | **Production DB schema compatibility is UNKNOWN** until §12 completes. | — |
+| **F** | Production DB schema compatibility is **`OLDER_WEAKER_CONSTRAINTS`**, remediated forward by `0011` (§12). | The inspection result, and `scripts/ops/test-migration-0011.sh`. |
 
 Consequences that follow directly:
 
-- **Never claim migration status PASS from repository diff evidence alone.** A clean
-  `origin/main..HEAD` diff (**B**) says the *source* agrees with main; it says nothing about
-  the *database* (**D**/**F**).
-- **Do not edit `0006` again.** It is shipped. If a correction is needed it is a **new,
-  forward-only** migration (§12).
+- **Never claim migration status PASS from repository diff evidence alone.** A non-empty
+  `origin/main..HEAD` diff (**B**) says the *source* adds a migration; it says nothing about
+  whether that migration has been *applied* to the database (**D**/**F**).
+- **Do not edit `0006` again.** It is shipped. The correction is the **new, forward-only**
+  migration `0011` (§12).
 - A **non-empty** `6d7f940..HEAD` diff (**C**) is *expected and classified*: an inherited
-  upstream security hardening, not redesign drift. Record it; do not abort on it, and do not
-  "fix" it by reverting the hardening.
-
-A **rollback** in this stream does not require a database restore — nothing in the redesign
-adds schema. That is a statement about the *rollback path*; it does **not** prove production
-schema compatibility (**D**/**F**, §12).
+  upstream security hardening plus the redesign's own `0011`. Record it; do not abort on it,
+  and do not "fix" it by reverting the hardening.
+- **`0011` is a database change, so a rollback is no longer purely image-based.** Rolling the
+  application back to a pre-`0011` image while the database carries the strengthened
+  constraints is the compatibility question in §7e — it is **UNKNOWN** and blocking until
+  answered (§7e, §12).
 
 Rules that must hold at every step:
 
@@ -48,6 +54,8 @@ Rules that must hold at every step:
    explicitly authorized.
 4. Roll back by restoring the **preserved, currently running image** (§6/§7) — never by
    checking out an old design-phase commit, and never by editing an applied migration.
+5. `0011` is applied **only** by an authorized operator action (§12), never automatically:
+   production `SIGAP_AUTO_MIGRATE` stays unset.
 
 ---
 
@@ -58,7 +66,7 @@ Rules that must hold at every step:
 | 2.1 | Release commit selected | `git rev-parse HEAD` | The branch tip. Record it as `RELEASE_CANDIDATE_HEAD` (§6). |
 | 2.2 | Branch | `git rev-parse --abbrev-ref HEAD` | `design/ui-ux-overhaul` |
 | 2.3 | Working-tree policy | `git status --porcelain` | **Tracked** paths clean. Untracked paths are classified per §2a — an expected sensitive local artifact does **not** fail the gate, but it must be recorded with an explicit disposition. **Never run `git clean`.** |
-| 2.4 | Migration provenance classified | §1 (**A**–**F**) | **B** empty; **C** recorded as inherited upstream hardening. A migration PASS may **not** be claimed from these diffs alone — **F** stays UNKNOWN until §12. |
+| 2.4 | Migration provenance classified | §1 (**A**–**F**) | **A**/**B**: exactly one added migration, `0011`. **C** recorded as inherited upstream hardening plus `0011`. A migration PASS may **not** be claimed from these diffs alone — **D**/**F** are answered by §12, and `0011` must be **applied** (§12a) before the database matches the source. |
 | 2.5 | Gate 6 evidence accepted | `RELEASE_CHECKLIST.md` §B | Full E2E + Go + Rust + web gates green |
 | 2.6 | Build prerequisites present | `go version`, `cargo --version`, `protoc --version`, `node --version`, `pnpm --version`, **`docker compose version`** | All resolve; **Compose ≥ 2.24.4** (the overlays use `!override`) |
 | 2.7 | Production builds produce | `make build` (Go + Rust release + web) | All succeed |
@@ -151,7 +159,7 @@ edge / reverse proxy (Traefik labels on the web service; enabled by ENABLE_EDGE_
 | Step | Service | Action | Verify |
 |---|---|---|---|
 | 3.0 | release identity (pre-deploy) | Record the current production version identifier now: `curl -fsS https://<host>/_app/version.json` (and `docker compose images api web` digests, once host access exists). This is the no-op/deploy detector for 3.8. | Value recorded; §2.9 captured |
-| 3.1 | database / migrations | **Nothing to RUN — but the schema is not thereby verified.** No *new* migration ships (§1 **A**/**B**) and production `SIGAP_AUTO_MIGRATE` is empty, so this cutover applies no DDL. The inherited hardening of `0006` (§1 **C**) **will not** be reapplied by the version-only migrator (§1 **E**), so live constraints must be checked per **§12** before any compatibility claim. If the database has never been initialised, apply `packages/db/migrations/*.sql` in filename order once as a separate one-off action — **not** part of this cutover. | `git diff origin/main..HEAD -- packages/db/migrations` empty; **§12 result recorded** |
+| 3.1 | database / migrations | **One migration must be RUN, deliberately, by the operator — not by this cutover.** `0011_notification_outbox_phone_constraints.sql` (§12a) converges the two `notification_outbox` phone constraints onto the release predicate. Production `SIGAP_AUTO_MIGRATE` is empty, so `docker compose up` applies **no** DDL: the cutover itself changes no schema, and the migration is a separate, explicitly authorized one-off. The inherited hardening of `0006` (§1 **C**) **will not** be reapplied by the version-only migrator (§1 **E**), which is exactly why `0011` exists. | `git diff --name-only origin/main..HEAD -- packages/db/migrations` = `0011_...` only; **§12 result recorded**; `0011` applied and re-classified `MATCHES_CURRENT_SECURITY_CONSTRAINTS` |
 | 3.2 | build images | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml build api web` (**`--build` is mandatory** — a bare `up -d` reuses the previously built images and deploys nothing, while still passing health checks) | build exits 0 for both services |
 | 3.3 | postgres | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d postgres` (waits on `pg-cert-init`) | `pg_isready -h 127.0.0.1 -p 5433 -U sigap -d sigap` |
 | 3.4 | queue engine | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d rust-engine` — rebuild **only** if `git diff --name-only <release-base>..RELEASE_CANDIDATE_HEAD -- apps/queue-engine` is non-empty (never in this stream). `<release-base>` is the commit the **currently deployed** images were built from — the value recorded in 3.0, not a historical design-phase pointer (§6a). | `nc -z localhost 50051` |
@@ -283,7 +291,7 @@ header under the same condition.
 | Variable | Purpose | Expected production state |
 |---|---|---|
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | compose database credentials | set; password strong, never committed |
-| `SIGAP_AUTO_MIGRATE` | run tracked migrations on startup | `false` (no migration ships); leave unset |
+| `SIGAP_AUTO_MIGRATE` | run tracked migrations on startup | `false`; **leave unset**. `0011` is applied as a separate, explicitly authorized operator action (§12b), never by container startup. |
 | `SIGAP_PUBLIC_HOST` | edge hostname (Traefik label only) | the real hostname |
 | `ENABLE_EDGE_ROUTING`, `EDGE_NETWORK`, `EDGE_ENTRYPOINT_WEB`, `EDGE_ENTRYPOINT_SECURE`, `EDGE_CERT_RESOLVER` | edge routing | set for edge deployments |
 | `SIGAP_BACKUP_*` | backup job | per `docs/operations/BACKUP_RESTORE.md` |
@@ -359,18 +367,27 @@ are security fixes. That is why it is not a production rollback target.
 
 ### 6c. Database-restore rule
 
-No rollback in this stream requires a **database restore**, because the redesign adds no
-schema: the only migration change in range is an **inherited upstream constraint hardening**
-(§1 **C**). That does **not** mean the migration diff is empty for the historical anchor:
+No rollback in this stream requires a **database restore** — but the redesign now **does**
+add schema, so this is a narrower statement than it used to be. The release carries:
+
+- an **inherited upstream constraint hardening** (`0006`, §1 **C**), and
+- the redesign's own **`0011`** (§12b), which converges the production constraints onto that
+  hardened predicate.
+
+`0011` is **additive and forward-only**: it replaces two CHECK constraints and touches no
+column, no row, and no other table. It is therefore **not** reversible by a database restore
+and **not** undone by an image rollback — the constraint lives in the database. See §7f for
+the resulting rollback-compatibility question, which is **BLOCKING and UNKNOWN**.
 
 ```
-git diff --stat origin/main..HEAD -- packages/db/migrations   # EMPTY  (release source == main)
-git diff --stat 6d7f940..HEAD     -- packages/db/migrations   # 0006_notifications.sql | 4 ++--
+git diff --name-only origin/main..HEAD -- packages/db/migrations  # 0011_...sql  (one added file)
+git diff --stat origin/main..HEAD     -- packages/db/migrations  # non-empty by design (§1 B)
+git diff --stat 6d7f940..HEAD         -- packages/db/migrations  # 0006 (4 ++--) + 0011
 ```
 
-The second command is **non-empty by design** and is expected; see §1 (**C**). Neither
-command proves anything about the **deployed database** — that is §12, and until it runs,
-`DATABASE_SCHEMA_COMPATIBILITY = UNKNOWN`.
+Neither diff proves anything about the **deployed database** — that is §12. The inspection has
+since run and returned `OLDER_WEAKER_CONSTRAINTS`; the database reaches
+`MATCHES_CURRENT_SECURITY_CONSTRAINTS` only once `0011` is applied.
 
 Rollback **triggers** (restore the preserved image): a 5xx-rate increase attributable to the
 release; a broken citizen critical path; an uncovered admin read/mutation regression; an
@@ -555,6 +572,45 @@ docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml -f docker-
 ```
 </details>
 
+### 7f. Rollback compatibility with the strengthened constraints (BLOCKING — UNKNOWN)
+
+**The problem.** `0011` (§12b) strengthens two database CHECK constraints. An application
+rollback restores a *previously running image* (§7c) — and **that image's source revision is
+not proven**. The runbook already records that the checked-out tree is not evidence of what
+the running containers were built from. So it cannot be assumed that the old API's write path
+satisfies the strengthened predicate.
+
+**Why this is a real risk, not a theoretical one.** The strengthened predicate rejects values
+the weak predicate accepted — specifically a **separated** phone run with no 8-digit
+consecutive run (e.g. `0812-3456-789`). If the old API ever writes such a value into
+`subject` or `body_template`, then after `0011` is applied those inserts **fail at the
+database**, and rolling the API back does not restore them: the constraint is in the database,
+not in the image.
+
+**Assessment: `ROLLBACK_SAFETY = UNKNOWN`.** It cannot be established from the repository,
+because the running production image has no proven source revision. Two things would settle
+it, and neither is available now:
+
+1. the running image's actual source revision, or
+2. a static reading of that revision's outbox write path against the strengthened predicate.
+
+**Consequence: production migration authorization is BLOCKED on this.** Do not apply `0011`
+to production until rollback safety is established or explicitly accepted.
+
+**Never** treat "drop the strengthened constraint again" as the rollback strategy. Reversing a
+security constraint to make a rollback work converts a deployment problem into a permanent
+security regression, and it re-opens the drift this migration exists to close. If rollback
+compatibility genuinely cannot be achieved, the correct answer is to keep the constraint and
+fix the writer — not to weaken the database.
+
+**Reducing the unknown, without applying anything:**
+- Recover the running image's revision: `docker image inspect` labels/`RepoDigests` on the
+  host, or the deployed `/_app/version.json` (§3.0). If a revision is recovered, read its
+  outbox insert path against the strengthened predicate.
+- Note that the application-layer masking ships with the release and, once deployed, rejects
+  the same class of value before it reaches the database. That makes the constraint a
+  **backstop** for the new image — but it says nothing about the *old* image's behaviour.
+
 ---
 
 ## 8. Smoke checks
@@ -619,12 +675,23 @@ The two P0 proofs are **post-deploy controlled smoke tests**, not read-only pref
 - `SIGAP_DEV_IDENTITY` is enabled, or `SIGAP_LOCAL_RBAC_TEST_IDENTITY` / `SIGAP_LOCAL_E2E_ACTOR` is set;
 - the local identity selector is active (`SIGAP_ENV=local` + a subject);
 - `make db-seed` would **not** refuse (the demo-seed guard is bypassed);
-- a **redesign** commit added or edited a migration. **A non-empty `6d7f940..HEAD` migration
-  diff does NOT abort** — it is the expected inherited upstream hardening (§1 **C**). The
-  abort is for a migration introduced by this stream;
+- the migration inventory differs from the declared release set: `git diff --name-only
+  origin/main..HEAD -- packages/db/migrations` must be **exactly**
+  `packages/db/migrations/0011_notification_outbox_phone_constraints.sql` (§1 **A**). Any
+  *other* added or edited migration aborts. **A non-empty `6d7f940..HEAD` migration diff does
+  NOT abort** — it is the expected inherited upstream hardening (§1 **C**) plus `0011`. The
+  abort is for a migration outside the declared inventory;
 - the DB schema inspection has not run, or classified `UNKNOWN` / `UNEXPECTED_DRIFT` (§12);
+- the database is still `OLDER_WEAKER_CONSTRAINTS` and `0011` has not been applied — the
+  schema does not yet match the release source (§12b). Applying `0011` is a separate
+  authorized operator action, not part of the cutover (§3.1);
+- **rollback safety is not established** (§7f): the previously running image's source
+  revision is unknown, so it cannot be shown that the old write path satisfies the
+  strengthened predicate. `ROLLBACK_SAFETY = UNKNOWN` is **BLOCKING**;
 - rollback images are not preserved, or their archives fail `sha256sum -c` (§7c/§13);
-- disk headroom after the projected archive + build peak would fall below the 10% margin (§13a);
+- disk headroom after the projected archive + build peak would fall below the §13a **floor**
+  (`max(2 GB, 10% of the filesystem size)`), or the build peak has not been measured
+  (§13a step 4, §13e.4);
 - the required compose overlay set differs from the runbook's (both `prod-ports` AND `prod-edge` for an edge-fronted deploy);
 - the Compose version is below the required minimum;
 - the expected compose files are missing from the host deployment directory;
@@ -703,27 +770,50 @@ port bindings, network membership, reverse-proxy labels, and the release identif
 variables are reported as PRESENT/ABSENT only.
 
 > **Why this is required:** SSH from the prior workstation TCP-connected but never sent a
-> banner, and the local Docker engine was down, so no host fact could be read. Production was
-> observable only over HTTPS — which cannot read env, containers, image digests, or the
-> deployment directory, and cannot probe admin routes without writing audit rows (§8a).
+> banner, and the local Docker engine was down, so no host fact could be read *at that time*.
+> That has since changed: read-only SSH to `fikriserver` as `fikri` is available and was used
+> on 2026-10-09 for the database metadata inspection (§12), and earlier for the recorded host
+> evidence (`/tmp/3b7-host-evidence.md`, host refresh 2026-10-08). Production HTTPS alone
+> still cannot read env, containers, image digests or the deployment directory, and cannot
+> probe admin routes without writing audit rows (§8a) — so the bundle remains the right
+> instrument for the remaining preflight facts.
 
 ---
 
-## 12. Database metadata inspection (PLANNED — requires separate authorization)
+## 12. Database metadata inspection (EXECUTED 2026-10-09 — result recorded)
 
-**Status: NOT AUTHORIZED, NOT EXECUTED.** This section defines the inspection; it does not
-authorize it. Running it requires an explicit operator decision recorded in
-`RELEASE_CHECKLIST.md`. Until it runs, `DATABASE_SCHEMA_COMPATIBILITY = UNKNOWN` and
-**no schema-compatibility claim may be made** (§1 **F**, §2.4, §2.9c).
+**Status: AUTHORIZED AND EXECUTED, read-only, once.** The operator authorized one
+metadata-only inspection and it was run on 2026-10-09 against the production host.
 
-**Why it is needed.** The redesign introduces no migration of its own (§1 **A**/**B**), but
-the release *does* carry an inherited edit to an already-shipped migration:
+- Script `scripts/ops/db-metadata-inspection.sql` — the revision that ran was
+  `657eb675…a1174a6c` (blob `36959d81…c693343`, 17052 bytes), **re-verified byte-identical on
+  the host before execution**. The shipped revision is now `d705f835…b17738b2` (blob
+  `a77adc0e…a321f456`); see the note under §12a for why, and re-run before the cutover.
+- Target: host `fikriserver`, database `sigap`, PostgreSQL **16.15**.
+- Safety: `SELECT`-only, `BEGIN READ ONLY`, `statement_timeout = 15s`, final `ROLLBACK`.
+  Metadata only. No application data row was read, no PHI, no DDL, no DML, no migration, no
+  seed, no secret logged. Exit status 0.
+- **Result: `OLDER_WEAKER_CONSTRAINTS`.** Migrations `0001`–`0010` applied, the expected 17
+  columns and 10 CHECK constraints present, and **both phone constraints in the older weak
+  form**:
+
+  ```
+  production : subject !~ '[0-9]{8,}'
+  repo HEAD  : subject !~ '[0-9]{8,}' AND subject !~ '[0-9][0-9\-._() ]{10,}[0-9]'
+  ```
+
+  Column set, constraint count and the applied-version set all match the release exactly; the
+  **only** divergence is the two phone predicates. Sanitized evidence is recorded on Jira
+  `SIGAP-60` (comment plus the `sigap.db.inspection` issue property).
+
+**Why it was needed.** The release carries an inherited edit to an already-shipped migration:
 `9d4e68e` strengthened the `notification_outbox` phone-denylist CHECK constraints inside
 `0006_notifications.sql`. The migration runner
 (`apps/api/internal/migrate/migrate.go` → `Run()`) skips any version already recorded as
 applied (`if applied[m.Version] { continue }`) and **never re-reads the stored checksum**, so
 a database that applied `0006` before `9d4e68e` retains the **weaker** constraints
-indefinitely. Nothing in the repository can reveal which definition is live.
+indefinitely. Nothing in the repository could reveal which definition was live; the
+inspection did, and the answer was the weak form.
 
 **The package:** `scripts/ops/db-metadata-inspection.sql` — SELECT-only, `BEGIN READ ONLY`,
 `statement_timeout` set, `pg_catalog`/`schema_migrations` metadata only. It never reads
@@ -742,7 +832,7 @@ container.
 #    COMPARED against these, not merely printed.
 #    The deploy tree must hold the reviewed revision; a stale copy fails the
 #    verdict at the end of this block.
-EXPECT_SHA=657eb6754f2e00b824a3e47db67787e066b0d153daa30d0291544382a1174a6c
+EXPECT_SHA=d705f8358cf205489c7eb1dd4448fcd56ff45def5613fadad5c1a145b17738b2
 EXPECT_DB=sigap
 EXPECT_SCHEMA=public
 
@@ -810,11 +900,22 @@ Rules for the operator:
 | The container's environment is trusted. | `psql` honours the container's `PGOPTIONS`/`PGHOST`/`PGSERVICE`; a `search_path` override could point the inspection at a shadow schema. If that environment is not trusted, scrub it with `docker exec -e PGOPTIONS= … -e PGHOST= …`. |
 
 Expected hash of the prepared script (LF-normalised):
-`657eb6754f2e00b824a3e47db67787e066b0d153daa30d0291544382a1174a6c`
-(git blob `36959d81370f772a0b6c4b0b345a325cbc693343`). §12a step 0 sets `EXPECT_SHA` to this
-value and step 4 **compares** it, so a stale or doctored copy in the deploy tree fails the
-verdict rather than merely printing a different number. If the value above and the committed
-blob ever disagree, stop and re-read this section.
+`d705f8358cf205489c7eb1dd4448fcd56ff45def5613fadad5c1a145b17738b2`
+(git blob `a77adc0e0f81aa467105b9cf2b9f5041a321f456`, 19855 bytes). §12a step 0 sets
+`EXPECT_SHA` to this value and step 4 **compares** it, so a stale or doctored copy in the
+deploy tree fails the verdict rather than merely printing a different number. If the value
+above and the committed blob ever disagree, stop and re-read this section.
+
+> **This hash CHANGED in the drift-remediation round.** The inspection that produced the
+> recorded 2026-10-09 result ran the *previous* revision
+> (`657eb675…a1174a6c`, blob `36959d81…c693343`, 17052 bytes), which pinned the applied-version
+> inventory at `1..10`. That inventory is wrong for the post-remediation world — a database
+> that has had `0011` applied must not be reported as drift — so the script gained a
+> `required_version` set (`1..10`) distinct from the known-version set (`1..11`). The
+> **recorded classification is unaffected** (the observed production state was `1..10` + weak
+> constraints, which both revisions classify as `OLDER_WEAKER_CONSTRAINTS`), and the change
+> was verified against that exact state. Re-run §12a before the cutover so the recorded hash
+> and the shipped artifact agree.
 
 **What it establishes:**
 1. every recorded `schema_migrations` version (and `0006`'s stored checksum, diagnostic only);
@@ -861,8 +962,8 @@ strengthened form exactly, the full constraint inventory, the full column invent
 applied-version set.
 
 Non-vacuity is proven by `scripts/ops/test-db-classifier.sh`, which builds a **disposable
-local** cluster and asserts 26 checks over 24 schema variants — the **real release schema**
-(migrations `0001`–`0010` applied in order), the genuine pre-hardening weak form, the
+local** cluster and asserts 32 checks over 31 schema variants — the **real release schema**
+(migrations `0001`–`0011` applied in order), the genuine pre-hardening weak form, the
 fragment-spoof case, the `{10,}`-conjunct-only case (a predicate that looks strengthened but
 is weaker), both mixed strong/weak columns, a `NOT VALID` phone constraint (present but not
 validated against existing rows), a missing subject/body constraint, both phone
@@ -870,9 +971,12 @@ constraints absent with the rest of the contract intact and with an extra constr
 the mis-bound-column case, an extra constraint, three logically altered predicates, absent
 migration history, five kinds of unexpected metadata, a missing table, an
 explicitly-correct hardened schema, a run of the release variant with
-`standard_conforming_strings=off` (the backslash-independence check), and a static
-consistency check between the SQL's expected inventories and `packages/db/migrations`.
-The observed result is **26 pass / 0 fail**; only a genuinely strengthened schema reports
+`standard_conforming_strings=off` (the backslash-independence check), the **real pre-`0011`
+production shape (`1..10` + weak) and its post-`0011` result**, the absent-denylist state
+before and after `0011`, the **`version 11 recorded but constraints still weak`** desync, the
+**`hardened but version 11 not recorded`** case, and a static consistency check between the
+SQL's expected inventories and `packages/db/migrations`.
+The observed result is **32 pass / 0 fail**; only a genuinely strengthened schema reports
 `MATCHES_CURRENT_SECURITY_CONSTRAINTS`. Each assertion was confirmed to be non-vacuous by
 mutating the classifier and observing the suite fail.
 
@@ -880,7 +984,14 @@ A non-zero `psql` exit (a missing table, a missing tracking table, a timeout, pa
 yields no classification row and must be recorded as `UNKNOWN`. `UNKNOWN` and
 `UNEXPECTED_DRIFT` are both blocking.
 
-> **Maintenance:** the expected constraint names, column names and version list in queries
+> **Two version sets, deliberately.** `expected_version` is the KNOWN set `1..11` and catches a
+> version outside it. `required_version` is the MANDATORY set `1..10` and catches a missing
+> version. They differ because version 11 is optional in a legitimate sense: the Go runner
+> records it, a plain `psql -f 0011_...sql` does not, and both leave the constraints
+> converged. Requiring 11 would report a correctly-remediated database as `UNEXPECTED_DRIFT` —
+> a false STOP on the exact state `0011` exists to produce.
+
+> **Maintenance:** the expected constraint names, column names and version lists in queries
 > 4/4b are transcribed from `packages/db/migrations/`. **Adding a migration, a column or a
 > constraint requires updating them**, or every subsequent inspection will report
 > `UNEXPECTED_DRIFT`. The test's `M-inventory` check exists to catch exactly that drift.
@@ -893,20 +1004,115 @@ yields no classification row and must be recorded as `UNKNOWN`. `UNKNOWN` and
 
 | Class | Meaning | Action |
 |---|---|---|
-| `MATCHES_CURRENT_SECURITY_CONSTRAINTS` | Both phone predicates carry **both** conjuncts, bound to their own columns; the full 10-constraint and 17-column inventories match the release; the applied-version set is exactly `1..10` | None |
-| `OLDER_WEAKER_CONSTRAINTS` | Both phone constraints present and matching the pre-`9d4e68e` weak form (`<col> !~ '[0-9]{8,}'` only); everything else matches | Operator decides: **accept** (record compensating control) or **remediate forward** via a **new** migration |
-| `MISSING_CONSTRAINTS` | Fewer than two phone-denylist CHECKs exist, with the rest of the contract intact | Security finding — do not deploy until remediated or explicitly accepted in writing |
-| `UNEXPECTED_DRIFT` | Any other deviation: unexpected/missing structural constraint, unexpected/missing column, unexpected/missing applied version, or a phone predicate that is neither known form (`{10,}` conjunct only, mis-bound column, `OR`, altered quantifier, extra term, or the two columns in different forms) | **STOP.** Do not classify, do not deploy. Escalate. |
+| `MATCHES_CURRENT_SECURITY_CONSTRAINTS` | Both phone predicates carry **both** conjuncts, bound to their own columns; the full 10-constraint and 17-column inventories match the release; no required version is missing and no version outside `1..11` is recorded | None. This is the state of a database built from HEAD (where `0006` already carries the strengthened predicate, so `0011` is a no-op) **and** the post-`0011` state of a drifted database, whether or not `0011`'s version row was recorded. This classifier deliberately does not distinguish them: the predicate is the control, the version row is bookkeeping. |
+| `OLDER_WEAKER_CONSTRAINTS` | Both phone constraints present and matching the pre-`9d4e68e` weak form (`<col> !~ '[0-9]{8,}'` only); everything else matches. **This is the recorded production state.** | Operator decides: **accept** (record compensating control) or **remediate forward** via a **new** migration — the prepared remediation is `0011` (§12b) |
+| `MISSING_CONSTRAINTS` | Fewer than two phone-denylist CHECKs exist, with the rest of the contract intact | Security finding — do not deploy until remediated or explicitly accepted in writing. `0011` also handles this state (§12b). |
+| `UNEXPECTED_DRIFT` | Any other deviation: unexpected/missing structural constraint, unexpected/missing column, unexpected/missing applied version, or a phone predicate that is neither known form (`{10,}` conjunct only, mis-bound column, `OR`, altered quantifier, extra term, or the two columns in different forms) | **STOP.** Do not classify, do not deploy. Escalate. `0011` refuses this state too, rather than guessing. |
 | `UNKNOWN` | Inspection not completed (no authorization, failure, timeout, partial output, non-zero `psql` exit, or step 2 not printing `CLASSIFICATION OK`) | **Default and BLOCKING.** Never a PASS. |
 
-**Remediation is forward-only.** If the class is `OLDER_WEAKER_CONSTRAINTS` or
-`MISSING_CONSTRAINTS` and remediation is chosen, ship a **new** migration that `DROP`s and
-re-`ADD`s the constraints. **Never** edit `packages/db/migrations/0006_notifications.sql`
-again — the version-only runner would never reapply it, so the edit would be inert.
+**`UNKNOWN` is always the default, and it is always blocking.** If a future inspection cannot
+complete — no authorization, a connection failure, a timeout, partial output, or a non-zero
+`psql` exit — then `DATABASE_SCHEMA_COMPATIBILITY = UNKNOWN` and **no schema-compatibility
+claim may be made**. "Unknown" is never a PASS. The same applies after `0011` is applied: if
+the re-inspection cannot complete, the post-migration state is `UNKNOWN`, not "presumed
+fixed".
+
+**Inspected state vs planned state — keep these distinct.** The classification above is the
+**inspected production state** as of 2026-10-09. The **planned release state** is
+`MATCHES_CURRENT_SECURITY_CONSTRAINTS`, and it is reached only when `0011` is applied by an
+authorized operator action (§12b, checklist J10). Until then, the database does **not** match
+the release source.
+
+**Remediation is forward-only and is prepared as `0011`.** The production class is
+`OLDER_WEAKER_CONSTRAINTS`, so the correction ships as a **new** migration,
+`packages/db/migrations/0011_notification_outbox_phone_constraints.sql` (§12b). **Never** edit
+`packages/db/migrations/0006_notifications.sql` again — the version-only runner would never
+reapply it, so the edit would be inert.
 
 **Do not infer the class from the repository diff.** A non-empty
 `git diff 6d7f940..HEAD -- packages/db/migrations` (§1 **C**) says only what the *source*
 contains, not what the *database* has.
+
+### 12b. Prepared remediation — `0011_notification_outbox_phone_constraints.sql`
+
+**Status: written, tested locally, NOT APPLIED to production.** No production mutation is
+authorized by this document.
+
+The migration converges the two phone constraints onto the release predicate whatever the
+starting point, and **fails closed** on anything it does not recognise:
+
+| Starting state | Behaviour |
+|---|---|
+| both constraints already strengthened | **no-op** (this is a database built from HEAD) |
+| both constraints in the weak form (**production**) | `DROP` and re-`ADD` strengthened |
+| both constraints absent | `ADD` strengthened |
+| a target name exists but is NOT a CHECK constraint | `RAISE EXCEPTION`, **change nothing** (a type-agnostic `DROP CONSTRAINT` would otherwise remove it) |
+| mixed / `NOT VALID` / unrecognised predicate | `RAISE EXCEPTION`, **change nothing** |
+| `notification_outbox` absent | `RAISE EXCEPTION`, **change nothing** |
+
+Properties that matter for the cutover:
+
+- **Names are preserved.** The release inventory of 10 CHECK constraints on
+  `notification_outbox` is unchanged, so the classifier's expected inventory needs no name
+  change and its negative controls keep working.
+- **Lock behaviour — this is an `ACCESS EXCLUSIVE` window.** `ALTER TABLE ... DROP CONSTRAINT`
+  and `ADD CONSTRAINT` both take `ACCESS EXCLUSIVE` on `notification_outbox`. `ADD CONSTRAINT`
+  validates **every existing row** while holding it, so the window scales with the table. On a
+  large outbox this blocks all reads and writes of that table for the duration. The migration
+  sets **no `lock_timeout`**, so if the lock cannot be acquired immediately it waits behind any
+  open transaction instead of failing fast. **Measure the row count and the lock wait before
+  applying, and prefer a maintenance window.** A timeout can be imposed by the caller, e.g.
+  `PGOPTIONS='-c lock_timeout=5s'`, and the migration is safe to retry after a timeout because
+  it changes nothing on failure.
+- **No `BEGIN`/`COMMIT` in the file.** The runner already wraps each migration in its own
+  transaction, so the DDL and the `schema_migrations` version row commit **atomically**. (Note
+  that `0006` is the only migration carrying its own `BEGIN`/`COMMIT`, which ends the runner's
+  transaction early; `0011` deliberately does not repeat that, and the migration suite asserts
+  the absence statically.)
+- **The version row is written by the runner, not by `psql -f`.** Applying the file with plain
+  `psql` runs the DDL but never records version 11. The constraints converge either way, so
+  this is not a security gap — but the runner would then attempt to re-apply on the next start.
+  Prefer the migrator (checklist J10), or record the row in the same transaction as the DDL.
+- **`standard_conforming_strings` cannot corrupt the predicate.** The regex literals are
+  **dollar-quoted** (`$re$…$re$`). This is load-bearing: under
+  `standard_conforming_strings=off` a plain `'…\-…'` literal has its backslash consumed by the
+  string-literal escape, so the server parses `[0-9][0-9-._() ]{10,}[0-9]` — in which `9-.` is
+  an **invalid character range**, producing a constraint that RAISES on every insert. Worse, a
+  self-referential comparison would then have certified that broken predicate as "already
+  strengthened". Dollar quoting is immune, so the intended regex is what both the expectation
+  and the real constraint are built from. Asserted by scenario 13 of the migration suite.
+- **Canonical predicate comparison.** The expected constraint is materialised on a `TEMP`
+  table and compared through `pg_get_constraintdef`, so both sides are rendered by the same
+  PostgreSQL code path in the same session. A literal string comparison would be wrong:
+  `pg_get_constraintdef` renders the regex backslash differently under
+  `standard_conforming_strings=off`, and appends ` NOT VALID` to an unvalidated constraint.
+- **A non-CHECK constraint with a target name is refused, not dropped.** `DROP CONSTRAINT` is
+  type-agnostic, so a same-named `NOT NULL` constraint (PostgreSQL 18 allows named ones) would
+  be silently removed. The migration detects that case and raises.
+- **A `NOT VALID` final state is never accepted**, because an unvalidated constraint has not
+  been checked against existing rows. `0011` always `ADD`s with validation.
+
+Tested by `scripts/ops/test-migration-0011.sh` — a disposable local cluster covering a fresh
+all-migrations database, the weak state, the already-hardened state, the absent state, mixed /
+spoofed / `NOT VALID` drift, pre-existing violating rows, transaction rollback, reapplication
+and version tracking, real enforcement on `subject` and on `body_template`, column binding,
+ordinary-content compatibility, `standard_conforming_strings=off`, the absence of a top-level
+`BEGIN`/`COMMIT`, and the definitions of all eight structural constraints. Observed result:
+**20 pass / 0 fail**. Every assertion checks the **actual resulting schema**
+(`pg_get_constraintdef`, `convalidated`, constraint count), not merely a zero exit code, and
+uses only synthetic data.
+
+**Idempotent.** A second run is a no-op, whether or not the version row was recorded. No row is
+rewritten or deleted: if any existing row violates the strengthened predicate, `ADD CONSTRAINT`
+raises, the transaction aborts and the database is left exactly as it was. Whether such rows
+exist is **not known** — the inspection read metadata only and never touched application rows.
+If the migration fails on this, **STOP**: remediating those rows is a separate, explicitly
+authorized decision, not part of this migration.
+
+**Applying `0011` is a separate, explicitly authorized operator action.** It is *not* part of
+the deploy cutover (§3.1): production `SIGAP_AUTO_MIGRATE` is empty, so `docker compose up`
+applies no DDL. After it is applied, re-run the inspection (§12a) and record
+`MATCHES_CURRENT_SECURITY_CONSTRAINTS`.
 
 ---
 
@@ -914,7 +1120,8 @@ contains, not what the *database* has.
 
 **Why this is blocking.** The application images are built locally and have **no registry
 backing** (`RepoDigests` empty), so `latest` is their only reference and a `build` retags it.
-The host was observed at **90% disk used / 17 GB free**. A `docker save` of the three
+The host was measured at **90% used / 16 GB free of a 158 GB filesystem** (2026-10-09; the
+previous day's read was 17 GB free, so free space is shrinking). A `docker save` of the three
 application images plus a rebuild peak can exhaust that headroom, and an out-of-space build
 can leave the stack in a partially-tagged state.
 
@@ -925,14 +1132,31 @@ can leave the stack in a partially-tagged state.
    (api ≈ 27 MB, web ≈ 324 MB, engine ≈ 90 MB → ≈ 440 MB, worst case ~460 MB), **plus**
    the build peak (a rebuild can transiently hold the old image, the new layers, and the
    build cache simultaneously).
-3. **Abort** if free space after the projected archive + build peak would fall below a
-   **10% margin**.
-4. To free space **before** preservation, free **non-Docker** space only (logs, old build
+3. **Abort** if free space after the projected archive **plus a stated build-peak allowance**
+   would fall below the floor in 3b. The margin is expressed as an **absolute floor**, not a
+   bare percentage: the previous "10% margin" wording named no base (10% of the volume? of
+   free space? of the archive?) and was therefore undecidable.
+
+   **3b. The floor is `max(2 GB, 10% of the filesystem size)` free after archive + build peak.**
+   Naming the base is the fix; it is not a relaxation. On this host 10% of 158 GB is **15.8 GB**,
+   which is *stricter* than the 2 GB term and is therefore the binding one. The 2 GB term exists
+   only so the rule still means something on a much smaller filesystem.
+4. **The build peak is an unmeasured input and must be measured before this gate can pass.**
+   On the 2026-10-09 figures the gate **fails**: `16 GB − 0.44 GB = 15.56 GB`, which is
+   `9.85%` of the 158 GB volume — below the 10%-of-volume floor — and the build peak is
+   still unaccounted for. Until the measurements in §13e are taken, treat this gate as
+   **BLOCKED**, not as passing.
+5. To free space **before** preservation, free **non-Docker** space only (logs, old build
    output, `$ARCHIVE_DIR` contents from a superseded release). **Do not** run
    `docker image prune` / `docker rmi` at this point: after a build retags `:latest`, the
    orphaned running release *is* a dangling image, so pruning here can destroy exactly the
    artifact §7c preserves. Dangling-image pruning is permitted **only after** §7c's archives
    exist and `sha256sum -c` passes (§13b).
+
+   Note the reclaimable headroom already measured on the host: `docker system df` reported
+   **Images 47.6 GB (14.18 GB reclaimable)** and **Build Cache 17.64 GB (11.65 GB
+   reclaimable)**. That is ~25.8 GB, far more than the deficit — but it is **only** reachable
+   *after* §7c preservation, and it is the operator's decision, not this runbook's.
 
 ### 13b. Ordering rule (non-negotiable)
 
@@ -953,8 +1177,43 @@ here would delete a volume, stop.
 
 ### 13d. Post-deploy capacity
 
-After a successful deploy, confirm free space did not drop below the §13a margin. Record the
-before/after figures in `RELEASE_CHECKLIST.md`.
+After a successful deploy, confirm free space did not drop below the §13a **floor**
+(`max(2 GB, 10% of the filesystem size)`). Record the before/after figures in
+`RELEASE_CHECKLIST.md`.
+
+### 13e. Storage remediation options (plan only — nothing here is executed)
+
+**Status: PLAN ONLY.** No archive is created, no image is removed, no volume is changed, no
+prune is run by this release. The disk gate is **BLOCKED** (§13a step 4) until the operator
+chooses an option below and the measurements in 13e.4 are taken.
+
+**The deficit.** ~16 GB free; the archive budget is ~0.44 GB; the build peak is unmeasured.
+The gate cannot pass until either free space rises or the peak is shown to be small.
+
+| # | Option | Effect | Cost / risk | Verdict |
+|---|---|---|---|---|
+| **S1** | **Off-host encrypted image archive.** `docker save` the three application images, gzip, encrypt (`age`/`gpg`) **on the host**, and move the ciphertext off-host (the existing R2 backup target already configured for `AUDIT-701` is the natural destination). | The archives no longer need to live on the production filesystem at all, so the ~0.44 GB is transient and the local copy can be deleted after the checksum is verified remotely. | Requires an off-host target, a key managed outside the host, and a transfer. The archive must be encrypted **before** it leaves the host. | **Preferred.** It is the only option that removes the artifact from the constrained filesystem instead of trading one consumer against another, and it reuses the backup path already in production. |
+| **S2** | **Dedicated backup filesystem or expanded VPS storage.** Attach a second volume, or grow the existing one, and point `$ARCHIVE_DIR` at it. | Removes the constraint permanently and makes the build peak irrelevant. | Requires a VPS resize or volume attach — an operator/provider action with its own cost, downtime, and a filesystem resize on a running production host. | Viable fallback. Slower to arrange and it touches the running host; do it only if S1's off-host target is unacceptable. |
+| **S3** | **Storage cleanup only, after preservation is verified.** Reclaim the measured `docker system df` headroom: 14.18 GB of images + 11.65 GB of build cache (~25.8 GB). | Would clear the deficit several times over. | **Ordering is load-bearing.** Pruning *before* §7c archives exist destroys the only copy of the running release (§13b). Only reachable *after* `sha256sum -c` passes. | **Not a primary plan — a supplement to S1.** It frees space but does not by itself preserve anything, and it is the option most likely to be run in the wrong order. |
+| **S4** | **Build strategies that minimise peak pressure.** Build with `--no-cache=false` and reuse the existing cache; build one service at a time (`build api`, then `build web`) instead of `build` with no target; avoid `docker buildx` multi-platform output; set `DOCKER_BUILDKIT=1` so intermediate layers are not duplicated in the legacy builder's on-disk layout. | Lowers the peak, which is the unmeasured term in the gate. | Reduces parallelism; may lengthen the window in which the stack is mid-cutover. | **Adopt alongside whichever of S1–S3 is chosen.** It reduces the unknown rather than paying for it. |
+
+**13e.4 — Exact measurements required before the gate can be decided.** Take these read-only,
+on the host, and record them in `RELEASE_CHECKLIST.md`:
+
+1. `df -h /` and `df -B1 /` — free bytes, not just the rounded `16G`.
+2. `docker system df -v` — image and build-cache sizes with reclaimable split out.
+3. `docker image inspect --format '{{.Size}}' <api|web|engine>` — exact per-image bytes, to
+   replace the ≈27/324/90 MB estimates with measurements.
+4. **A measured build peak**: one full `build` of `api` and `web` on the host with
+   `df -B1 /` sampled immediately before and immediately after, plus the maximum observed
+   during the build (`while :; do df -B1 /; sleep 1; done` in a second session). This is the
+   single input the gate is currently missing. **Do not** run it on the release commit; run it
+   on a throwaway tag so it cannot be mistaken for a deploy.
+5. `du -sh $ARCHIVE_DIR` and the target off-host capacity, for S1.
+
+**Do not weaken this gate to permit a deploy.** A deploy that fills the disk mid-build leaves
+a partially-tagged stack with no preserved rollback image — the exact failure §7c exists to
+prevent.
 
 ---
 
