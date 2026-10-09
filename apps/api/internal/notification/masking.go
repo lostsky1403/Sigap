@@ -152,25 +152,41 @@ func minInt(a, b int) int {
 }
 
 // digitRunRegex matches sequences that look like a raw phone number.
-// It has two alternatives:
 //
-//  1. [0-9]{8,} — 8 or more CONSECUTIVE ASCII digits. This catches
-//     raw phone numbers like "081234567890" with no formatting.
+// THIS PREDICATE IS A CONTRACT WITH THE DATABASE. It is the Go expression of
+// the same semantic predicate enforced by the CHECK constraints
+// notification_outbox_no_raw_phone_in_subject_chk and
+// ..._in_body_chk, created by packages/db/migrations/0006_notifications.sql
+// and converged forward by 0011_notification_outbox_phone_constraints.sql.
 //
-//  2. A formatted-phone detector for numbers like "0812-3456-7890" or
-//     "+62 812 3456 7890". Unlike alternative 1, this catches phone
-//     numbers that have been split by hyphens, dots, spaces, or
-//     parentheses so that no single run reaches 8 digits.
+// The two MUST agree. If Go is more permissive than the database, a value the
+// service accepts is rejected later by the CHECK constraint, and because
+// Enqueue runs on a fire-and-forget goroutine the notification is lost with
+// only a log line. If Go is stricter, it rejects content the database would
+// have accepted, silently narrowing the product.
 //
-//     The pattern matches: a digit run of 3-4, followed by a separator
-//     and another digit group of 3-4, followed by a separator and
-//     another digit group of 2-4. This requires at least 8 digits
-//     spread across groups — a layout typical of phone numbers but
-//     not of dates (which use a 4-2-2 pattern with short tails).
+// It has two alternatives, matching the two conjuncts of the SQL predicate
+// `col !~ '[0-9]{8,}' AND col !~ '[0-9][0-9\-._() ]{10,}[0-9]'`:
 //
-//     Example matches: "0812-3456-7890", "+62 812 345 6789",
-//     "(021) 555-1234"
+//  1. [0-9]{8,} — 8 or more CONSECUTIVE ASCII digits. Catches an unformatted
+//     phone number such as "081234567890".
 //
-//     Non-matches: "2026-06-22" (only 2 digit groups after the first),
-//     "09:00" (too few digits), "Order #1234567" (single run of 7).
-var digitRunRegex = regexp.MustCompile(`[0-9]{8,}|[0-9]{3,4}[-._() ][0-9]{3,4}[-._() ][0-9]{2,4}`)
+//  2. [0-9][0-9\-._() ]{10,}[0-9] — a digit, then 10 or more characters drawn
+//     from digits and the phone separators `- . _ ( )` and space, then a
+//     digit. Catches numbers split by separators so that no single run reaches
+//     8 digits: "0812-3456-7890", "+62 812 3456 7890", "(021) 555-1234".
+//
+// KNOWN CONSEQUENCE, BY DESIGN. Alternative 2 also matches a bare ISO
+// date adjacent to a time, e.g. "2026-06-22 09:00", because that is an 11+
+// character digit-and-separator run between two digits. Such a body is
+// rejected by the DATABASE as well, so the Go layer rejects it first and
+// reports it, rather than letting the insert fail after the fact. Templates
+// that need a date and time MUST render them in a form that is not a single
+// separator-joined digit run — the localized Indonesian form
+// "9 Oktober 2026 pukul 14.30" is accepted by both layers. See
+// docs/operations/DEPLOYMENT_RUNBOOK.md.
+//
+// The database predicate is authoritative. Do not "improve" this regex without
+// changing 0006/0011 in the same release, and do not relax it to admit a value
+// the database would reject.
+var digitRunRegex = regexp.MustCompile(`[0-9]{8,}|[0-9][0-9\-._() ]{10,}[0-9]`)
