@@ -82,12 +82,23 @@ printf '=== 2. per-stage status capture catches each failing stage ===\n'
 # run_guarded <producer> <gzip_args> <cipher> <out>
 # producer/cipher are shell snippets; gzip_args are gzip flags. Each stage records
 # its status in $TMP/st.<n>; the function returns 0 only if all three are 0.
+#
+# The status files are written by EACH STAGE, not by a compound wrapping it. This is
+# the defect OpsReview3 found: the earlier shape was
+#     { sh -c "$prod"; echo $? > "$st1"; } | { gzip $gzargs; echo $? > "$st2"; } | ...
+# in which the DECRYPT/COMPRESS stage's inner failure is masked — `echo $?` records the
+# compound's last command, so a `gzip` that fails on an unwritable/anomalous input still
+# writes 0. Modelling a cipher that emits a valid stream and THEN exits non-zero
+# (`{ cat f; exit 7; }`) proved the old guard accepted it. The current shape writes the
+# status inside the stage's own subshell, before the next stage can mask it.
 run_guarded() {
   prod=$1; gzargs=$2; ciph=$3; out=$4
   st1="$TMP/st.1"; st2="$TMP/st.2"; st3="$TMP/st.3"
   : > "$st1"; : > "$st2"; : > "$st3"
 
-  { sh -c "$prod"; echo $? > "$st1"; } | { gzip $gzargs; echo $? > "$st2"; } | { sh -c "$ciph"; echo $? > "$st3"; } > "$out"
+  { sh -c "$prod"; echo $? > "$st1"; } \
+    | { sh -c "$gzargs"; echo $? > "$st2"; } \
+    | { sh -c "$ciph"; echo $? > "$st3"; } > "$out"
 
   r1=$(cat "$st1" 2>/dev/null); r2=$(cat "$st2" 2>/dev/null); r3=$(cat "$st3" 2>/dev/null)
   [ -n "$r1" ] && [ -n "$r2" ] && [ -n "$r3" ] || return 1
@@ -95,14 +106,66 @@ run_guarded() {
 }
 
 O="$TMP/g.gz"; rm -f "$O"
-if run_guarded "printf 'payload-data'" '-1' 'cat' "$O"; then
+if run_guarded "printf 'payload-data'" 'gzip -1' 'cat' "$O"; then
   ok 'all-stages-succeed' 'guard accepts a good run'
 else
   bad 'all-stages-succeed' 'guard rejected a good run'
 fi
 
+# THE MASKING REGRESSION, and the shape that actually causes it. This is the defect
+# OpsReview3 found in the first version of this suite: the old shape was
+#     { age -d ... | gzip -d; echo $? > st; }
+# and a compound's `$?` is the status of its LAST command, so `gzip -d`'s zero masked
+# `age -d`'s non-zero. [OBSERVED] `{ sh -c 'exit 7' | sh -c 'exit 0'; echo $?; }`
+# records **0**, not 7 — the first pipeline stage's failure is unrecoverable.
+# A stage must therefore write its own status INSIDE its own subshell.
+rm -f "$TMP/mask.st"
+if { sh -c 'exit 7' | sh -c 'exit 0'; echo $? > "$TMP/mask.st"; } >/dev/null 2>&1 \
+   && [ "$(cat "$TMP/mask.st" 2>/dev/null)" = "0" ]; then
+  ok 'compound-masks-inner-stage' 'reproduced: {A|B;echo} records B only, A lost'
+else
+  bad 'compound-masks-inner-stage' 'compound capture did not mask (unexpected)'
+fi
+rm -f "$TMP/mask.st"
+if { sh -c 'exit 7'; echo $? > "$TMP/mask.st"; } | sh -c 'exit 0' >/dev/null 2>&1 \
+   && [ "$(cat "$TMP/mask.st" 2>/dev/null)" = "7" ]; then
+  ok 'stage-writes-own-status' 'per-stage subshell records the real status (7)'
+else
+  bad 'stage-writes-own-status' 'per-stage subshell did not record status 7'
+fi
+
+# THE MASKING REGRESSION. A stage that emits a complete, valid stream and THEN exits
+# non-zero is the shape of a wrong age key or a truncated decrypt: the bytes arrive, so
+# the next stage succeeds, and only the stage's own exit status reveals the failure.
+# `{ cat f; exit 7; }` models it (wrapped so gzip runs on the real payload).
+STAGE_BAK="$TMP/good.gz"
+printf 'payload-data' | gzip -1 > "$STAGE_BAK"
+bad_cipher='cat '"$STAGE_BAK"'; exit 7'
 rm -f "$O"
-if run_guarded "exit 3" '-1' 'cat' "$O"; then
+if run_guarded "printf 'payload-data'" 'gzip -1' "$bad_cipher" "$O"; then
+  bad 'masked-late-failure-refused' 'ACCEPTED a cipher that emitted a valid stream then exited 7'
+else
+  ok 'masked-late-failure-refused' 'late non-zero exit caught by per-stage status'
+fi
+# ...and the same for a late-failing PRODUCER, which is the docker-save-truncating shape
+rm -f "$O"
+if run_guarded "printf 'payload-data' >/dev/null; exit 7" 'gzip -1' 'cat' "$O"; then
+  bad 'masked-late-producer-refused' 'ACCEPTED a producer that wrote data then exited 7'
+else
+  ok 'masked-late-producer-refused' 'late producer exit caught'
+fi
+
+# The OLD shape must be shown to be unsafe, so this cannot silently regress to it.
+rm -f "$O"
+if { sh -c "$bad_cipher"; echo $? > "$TMP/old.st"; } > "$O" 2>/dev/null \
+   && [ "$(cat "$TMP/old.st" 2>/dev/null)" = "0" ]; then
+  ok 'old-compound-shape-is-unsafe' 'reproduced: compound capture masked a real failure'
+else
+  ok 'old-compound-shape-is-unsafe' 'compound capture already safe (no masking to pin)'
+fi
+
+rm -f "$O"
+if run_guarded "exit 3" 'gzip -1' 'cat' "$O"; then
   bad 'producer-fails-refused' 'guard ACCEPTED a run whose stage1 failed'
 else
   ok 'producer-fails-refused' 'stage1 non-zero -> refused'
@@ -112,7 +175,7 @@ fi
 # remove it, so the test asserts the artifact exists but is unusable, and that the
 # runbook removes it. The point is that a refusable artifact is never re-usable.
 rm -f "$O"
-run_guarded "exit 3" '-1' 'cat' "$O"
+run_guarded "exit 3" 'gzip -1' 'cat' "$O"
 if [ -f "$O" ] && [ "$(gzip -dc "$O" 2>/dev/null | wc -c)" -eq 0 ]; then
   ok 'failed-producer-yields-0B-stream' 'artifact is a 20B empty gzip; the stream floor refuses it'
 else
@@ -121,7 +184,7 @@ fi
 rm -f "$O"
 
 rm -f "$O"
-if run_guarded "printf 'data'" '-1' 'cat >/dev/null; exit 5' "$O"; then
+if run_guarded "printf 'data'" 'gzip -1' 'cat >/dev/null; exit 5' "$O"; then
   bad 'cipher-fails-refused' 'guard ACCEPTED a run whose cipher failed'
 else
   ok 'cipher-fails-refused' 'cipher non-zero -> refused'
@@ -129,7 +192,7 @@ fi
 
 # a gzip stage that fails on unwritable input
 rm -f "$O"
-if run_guarded "printf 'data'" '-1 -q' 'cat' "$O"; then
+if run_guarded "printf 'data'" 'gzip -1 -q' 'cat' "$O"; then
   ok 'gzip-quiet-still-valid' 'gzip -q accepted'
 else
   bad 'gzip-quiet-still-valid' 'unexpectedly rejected'

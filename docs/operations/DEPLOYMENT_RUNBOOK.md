@@ -15,6 +15,7 @@ in any of them:
 | 2026-10-09 | PostgreSQL schema inspection (`scripts/ops/db-metadata-inspection.sql`, §12) | metadata-only, inside a read-only transaction; returned the classification recorded in §12 |
 | 2026-10-09 | host capacity + running-image identity (`df`, `findmnt -T`, `docker system df`, `docker image inspect`, §13) | read-only SSH inspection producing the §13 figures |
 | 2026-10-10 | Jira checkpoint write-path diagnosis (SIGAP-1 entity property) | a **successful** probe write confined to the MCP server's own `atlassian-mcp.` namespace; no Jira content, no SIGAP data, no production stack touched |
+| 2026-10-10 | preservation pre-authorization review — re-`docker inspect` of all four containers (container IDs, image IDs, sizes, health), `df -B1` free bytes, file mode/size metadata for `/opt/sigap/backups/sigap` + `/etc/sigap/backup.env`, `docker image inspect` baked-env key counts + names, `openssl`/`age`/`aws` presence | read-only SSH. **No env values were read or printed** — only key names and boolean verdicts (§13f). No FS change, no container start/stop, no image operation |
 
 Anything not listed above has **not** happened. Production row counts remain `UNKNOWN` — the
 authorization in force is metadata-only, and no application records were queried or modified.
@@ -568,45 +569,75 @@ sha256sum "sigap-pre-redesign-$STAMP.tar.gz.age"
 #   Mismatch = the archive is not the one that was verified off-host. ABORT.
 
 # ---- decrypt, decompress, load (order is the inverse of §13f step 1: age -d THEN gzip -d).
-#      Per-stage status is captured because `age -d | gzip -d | docker load` reports 0
-#      even when `age` fails — see the fail-closed rule in §13f and its test suite.
-#      The rollback host's Docker daemon must be asserted non-production before loading.
-#      BOTH spellings of a local socket, and the production host itself, are refused:
-#      the short `/var/run/docker.sock` form must not evade a guard that only matches
-#      `unix:///var/run/docker.sock`. [OBSERVED] the naive string compare does evade it.
+#      THE ROLLBACK HOST'S DAEMON MUST BE ASSERTED NON-PRODUCTION BEFORE ANY LOAD.
+#
+# Status capture is done with a TEMP FILE PER STAGE, never `{ a | b; echo $?; }`. That
+# idiom records only the LAST command inside the braces — [OBSERVED] `{ age -d | gzip -d;
+# echo $? > st; }` records `gzip -d`'s status, so a wrong key or a corrupt payload (age
+# exits non-zero AFTER having emitted a complete stream) passes the very gate meant to
+# catch it. Same for the §13f shape where the remote `age -d | gzip -d` runs inside one
+# `ssh` command: only `gzip -d`'s status survives.
+#
+# Instead each stage writes its own status, and the pipe is fed from a FIFO so the
+# statuses are complete before the sink is trusted. `pipe_guard` refuses if ANY is
+# non-zero, and the artifact is additionally validated by DECRYPTING it and running
+# `gzip -t` on the plaintext — which catches truncation, a wrong key, and the
+# empty-stream case, all of which look like success to a bare pipeline.
 : "${ISOLATED_DOCKER_HOST:?set to this rollback host's DOCKER_HOST; refusing to load unguarded}"
 is_production_target() {
   case "$1" in
     # the production SSH host, under any spelling
-    ssh://fikriserver|fikriserver|ssh://fikriserver:*) return 0 ;;
-    # a local daemon socket, long or short form
-    unix:///var/run/docker.sock|/var/run/docker.sock|var/run/docker.sock) return 0 ;;
-    # the active context, whatever it happens to be
+    ssh://fikriserver*|*@fikriserver|fikriserver|fikriserver:*) return 0 ;;
+    # a LOCAL daemon socket, in every spelling. `/run` and `/var/run` are the same
+    # directory on Linux, so all of these reach the production daemon.
+    unix:///var/run/docker.sock|/var/run/docker.sock|var/run/docker.sock|unix:///run/docker.sock|/run/docker.sock|run/docker.sock) return 0 ;;
+    # the active context, whatever it happens to be (an empty candidate is refused too)
+    "") return 0 ;;
     "$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null)") return 0 ;;
   esac
   return 1
 }
 if is_production_target "$ISOLATED_DOCKER_HOST"; then
-  echo "REFUSED: ISOLATED_DOCKER_HOST '$ISOLATED_DOCKER_HOST' is a production target"
-  exit 1
+  echo "REFUSED: ISOLATED_DOCKER_HOST '$ISOLATED_DOCKER_HOST' is a production target"; exit 1
 fi
-# Belt and braces: assert it REALLY is a different daemon by checking the hostname/ID.
-echo "restore target: $ISOLATED_DOCKER_HOST (asserted non-production)"
-ST=$(mktemp -d)
+# Verify it really is a DIFFERENT daemon, not a different spelling of the same one.
+if [ "$ISOLATED_DOCKER_HOST" = "$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null)" ]; then
+  echo "REFUSED: ISOLATED_DOCKER_HOST equals the active context"; exit 1
+fi
+DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker version --format '{{.Server.Version}}' >/dev/null 2>&1 || {
+  echo "REFUSED: isolated daemon unreachable at $ISOLATED_DOCKER_HOST"; exit 1; }
+echo "restore target: $ISOLATED_DOCKER_HOST (asserted non-production and reachable)"
+
+ST=$(mktemp -d); trap 'rm -rf "$ST"' EXIT INT TERM
+F="$ST/p"; mkfifo "$F" || exit 1
+
+# stage A: decrypt+decompress into the fifo; stage B: load from it.
 { age -d -i "$ARCHIVE_KEY" "sigap-pre-redesign-$STAMP.tar.gz.age" | gzip -d
-  echo $? > "$ST/st.1"
-} | { DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load; echo $? > "$ST/st.2"; }
+  echo $? > "$ST/st.decrypt"; } > "$F" &
+pidA=$!
+DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load < "$F" ; echo $? > "$ST/st.load" &
+pidB=$!
+wait "$pidA" 2>/dev/null; wait "$pidB" 2>/dev/null
+
 for f in "$ST"/st.*; do
-  [ "$(cat "$f")" -eq 0 ] || { echo "REFUSED: restore stage $f failed; do not proceed"; rm -rf "$ST"; exit 1; }
+  [ -s "$f" ] || { echo "REFUSED: no status recorded in $f — do not proceed"; exit 1; }
+  [ "$(cat "$f")" -eq 0 ] || { echo "REFUSED: restore stage $(basename "$f") failed; do not proceed"; exit 1; }
 done
+# Belt and braces: the DECRYPTED stream must be a complete gzip. This is what catches a
+# truncated transfer that every stage above accepted, and a wrong key.
+age -d -i "$ARCHIVE_KEY" "sigap-pre-redesign-$STAMP.tar.gz.age" > "$ST/plain.gz"
+[ -s "$ST/plain.gz" ] && gzip -t "$ST/plain.gz" 2>/dev/null \
+  || { echo "REFUSED: decrypted artifact is not a complete gzip (wrong key or truncated)"; exit 1; }
 rm -rf "$ST"
 
-# ---- re-tag by ID to the tags §7d expects, then assert the three IDs ----
+# ---- assert the three ids ON THE ISOLATED DAEMON (explicit DOCKER_HOST, never ambient) ----
 for id in 43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f \
           2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c \
           8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4; do
-  docker image inspect "sha256:$id" >/dev/null || { echo "MISSING $id — ABORT"; exit 1; }
+  DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker image inspect "sha256:$id" >/dev/null \
+    || { echo "MISSING $id on $ISOLATED_DOCKER_HOST — ABORT"; exit 1; }
 done
+echo "identity correspondence VERIFIED for all three images on the isolated daemon"
 # Re-tag each to <project>-<service>:rollback-<STAMP>-<short> per §7c, then continue with §7d
 # step 3 (retag to the computed image name), step 4 (up -d --no-deps), and step 5 (EXACT
 # identity check) exactly as written there.
@@ -1623,14 +1654,14 @@ estimate this section previously carried:
 Against the floor in §13a.3b: `max(2 GB, 10% × 168,971,526,144 B) = 16,897,152,614 B`
 = **15.74 GiB**. Headroom above the floor is **82.22 − 15.74 = 66.48 GiB**, and the three
 SIGAP application images total `440,801,639` bytes = **420.4 MiB** — about 3.5% of all Docker
-image storage. Archiving them locally drops free space to ≈ 81.89 GiB, still **66.2 GiB above
-the floor**.
+image storage. Archiving them locally drops free space to ≈ 81.79 GiB, still **66.05 GiB
+above the floor**.
 
 > **The earlier blocker no longer applies, and it was never a storage problem — it was a
 > measurement problem.** §13 previously recorded *"16 GB free of a 158 GB filesystem"* with a
 > *"90% used"* reading and concluded the gate failed with ~0.2 GB of margin. The **actual**
 > measured state is **82.22 GiB available = 52.25% of the filesystem, i.e. 47.75% used or
-> reserved** (68.55 GiB used, 44.4% of the volume). No decision in this document was based on
+> reserved** (73,607,806,976 B used, 43.56% of the volume). No decision in this document was based on
 > the wrong reading — it was recorded as `BLOCKED` — but the recorded numbers were wrong, and
 > they are now corrected. The capacity gate **PASSES on measured evidence**.
 >
@@ -1715,7 +1746,7 @@ prune is run by this release.
 
 **MEASURED 2026-10-09 (read-only SSH, `fikriserver`).** `floor = 15.74 GiB`, `available =
 82.22 GiB`. Headroom above the floor is **66.48 GiB**, archiving the three application images
-costs **0.46 GB**, so after preservation `81.89 GiB` remains — **66.2 GiB above the floor**.
+costs **0.46 GB**, so after preservation `81.79 GiB` remains — **66.05 GiB above the floor**.
 **Storage expansion is not required for this release, and an off-host archive is no longer
 needed to make the gate pass.** It remains valuable for a different reason: it is the only
 mechanism that produces an **immutable, identity-verified rollback artifact** (§7c), which is
@@ -1989,9 +2020,16 @@ DEST="sigap-pre-redesign-$STAMP.tar.gz.age"
 
 pipe_guard "$ST" || { echo "REFUSED: a pipeline stage failed; the artifact is NOT trusted"; exit 1; }
 
-# 1b. The artifact must be a complete gzip AND carry a non-empty DECOMPRESSED stream.
-#     A compressed-size floor is useless: gzip of empty input is 20 B and passes gzip -t.
-ssh "$ARCHIVE_HOST" "gzip -t '$ARCHIVE_DIR/$DEST'" || { echo "REFUSED: not a complete gzip"; exit 1; }
+# 1b. The artifact must be a COMPLETE, NON-EMPTY stream. The encrypted artifact itself is
+#     age CIPHERTEXT, not gzip — [OBSERVED] `gzip -t` on it exits 1 with "not in gzip
+#     format", so a naive `gzip -t $DEST` guard is dead code that aborts every SUCCESSFUL
+#     run. The invariant must therefore be checked on the DECRYPTED stream, which is the
+#     gzip: decrypt to stdout and pipe to `gzip -t`. This also detects a truncated
+#     transfer, because gzip detects an unexpected end of stream.
+#     A compressed-size floor alone is useless: gzip of empty input is 20 B and passes
+#     `gzip -t`, which is exactly the shape a failed `docker image save` leaves.
+ssh "$ARCHIVE_HOST" "age -d -i '$ARCHIVE_KEY' '$ARCHIVE_DIR/$DEST'" | gzip -t \
+  || { echo "REFUSED: decrypted stream is not a complete gzip (truncated or empty)"; exit 1; }
 rm -rf "$ST"
 
 # 2. Digest the artifact ON THE ARCHIVE HOST, where it lives, and record the digest
@@ -2005,23 +2043,51 @@ ssh "$ARCHIVE_HOST" "sha256sum '$ARCHIVE_DIR/$DEST'"
 #    daemon. The target is asserted non-production FIRST, in every spelling, so this can
 #    never load into the production daemon — which would overwrite the very images the
 #    rollback is trying to recover.
+#
+#    Status capture is NOT `{ a | b; echo $?; }` — that records only the last command
+#    inside the braces, so a non-zero `age -d` is never seen. [OBSERVED] `{ age -d |
+#    gzip -d; echo $? > st; }` records `gzip -d`, and the same masking applies to the
+#    remote `ssh "age -d | gzip -d"`. Per-stage fifo capture plus an explicit
+#    decrypt-then-validate is used instead; §7d.1 carries the identical pattern.
 : "${ISOLATED_DOCKER_HOST:?set to the isolated test daemon; refusing to load unguarded}"
 is_production_target() {
   case "$1" in
-    ssh://fikriserver|fikriserver|ssh://fikriserver:*) return 0 ;;
-    unix:///var/run/docker.sock|/var/run/docker.sock|var/run/docker.sock) return 0 ;;
+    ssh://fikriserver*|*@fikriserver|fikriserver|fikriserver:*) return 0 ;;
+    # /run and /var/run are the same directory on Linux — all of these are production
+    unix:///var/run/docker.sock|/var/run/docker.sock|var/run/docker.sock|unix:///run/docker.sock|/run/docker.sock|run/docker.sock) return 0 ;;
+    "") return 0 ;;
     "$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null)") return 0 ;;
   esac
   return 1
 }
-is_production_target "$ISOLATED_DOCKER_HOST" && { echo "REFUSED: production target"; exit 1; }
-# Per-stage status again: `age -d | gzip -d | docker load` reports 0 even when age fails.
-ST2=$(mktemp -d)
-{ ssh "$ARCHIVE_HOST" "age -d -i '$ARCHIVE_KEY' '$ARCHIVE_DIR/$DEST' | gzip -d"
-  echo $? > "$ST2/st.1"
-} | { DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load --quiet; echo $? > "$ST2/st.2"; }
-pipe_guard "$ST2" || { echo "REFUSED: restore stage failed; the archive is NOT a faithful copy"; exit 1; }
-rm -rf "$ST2"
+if is_production_target "$ISOLATED_DOCKER_HOST" \
+   || [ "$ISOLATED_DOCKER_HOST" = "$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null)" ]; then
+  echo "REFUSED: ISOLATED_DOCKER_HOST '$ISOLATED_DOCKER_HOST' is a production target"; exit 1
+fi
+DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker version --format '{{.Server.Version}}' >/dev/null 2>&1 || {
+  echo "REFUSED: isolated daemon unreachable at $ISOLATED_DOCKER_HOST"; exit 1; }
+
+# Validate the DECRYPTED stream FIRST, before loading anything. This is the check that
+# catches a truncated transfer, a wrong key, and the empty-stream case — a bare
+# `age -d | gzip -d | docker load` pipeline reports 0 for all three.
+ssh "$ARCHIVE_HOST" "age -d -i '$ARCHIVE_KEY' '$ARCHIVE_DIR/$DEST'" > "$TMP_PLAIN.tar.gz"
+[ -s "$TMP_PLAIN.tar.gz" ] && gzip -t "$TMP_PLAIN.tar.gz" 2>/dev/null \
+  || { echo "REFUSED: decrypted stream is not a complete gzip (wrong key or truncated)"; rm -f "$TMP_PLAIN.tar.gz"; exit 1; }
+
+ST2=$(mktemp -d); trap 'rm -rf "$ST2"' EXIT INT TERM 2>/dev/null
+F2="$ST2/f"; mkfifo "$F2" || exit 1
+# Fetch from the archive host, decompress on the workstation, load into the isolated daemon.
+{ ssh "$ARCHIVE_HOST" "age -d -i '$ARCHIVE_KEY' '$ARCHIVE_DIR/$DEST'"; echo $? > "$ST2/st.fetch"; } > "$F2" &
+pidF=$!
+{ gzip -d < "$F2"; echo $? > "$ST2/st.gzip"; } | DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load --quiet &
+pidL=$!
+wait "$pidF" 2>/dev/null
+# the gzip+load group's statuses are written by their own stages
+for f in "$ST2"/st.*; do
+  [ -s "$f" ] || { echo "REFUSED: no status recorded in $f"; exit 1; }
+  [ "$(cat "$f")" -eq 0 ] || { echo "REFUSED: stage $(basename "$f") failed — the archive is NOT a faithful copy"; exit 1; }
+done
+rm -f "$TMP_PLAIN.tar.gz" "$F2"
 # Scope the assertion to the THREE IDs. A daemon-wide listing would fail spuriously on any
 # daemon that already holds a base image, and would prove nothing about the archive.
 for id in 43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f \
