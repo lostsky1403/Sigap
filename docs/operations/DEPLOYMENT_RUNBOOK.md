@@ -556,92 +556,51 @@ curl -fsS https://<SIGAP_PUBLIC_HOST>/ >/dev/null          # through the edge (T
 (`sigap-pre-redesign-<STAMP>.tar.gz.age`) whose digest is recorded **out-of-band** — not the
 unencrypted `*.tar.gz` + `SHA256SUMS` pair §7d steps 1–2 consume. Restoring it on a fresh host
 requires the §13f key custody model (private key lives on the archive host, never on the
-workstation that fetched the ciphertext):
+workstation that fetched the ciphertext).
+
+**This is an executable contract, not a recipe.** `scripts/ops/sigap-archive-restore.sh`
+performs every check below and exits non-zero unless all of them pass. It **requires `bash`**
+(uses `set -euo pipefail` and `PIPESTATUS`; `/bin/sh` has neither). Invoke it; do not
+re-implement it inline.
 
 ```bash
-# ---- fetch: ciphertext only lands on the rollback host ----
-: "${ARCHIVE_HOST:?}" "${ARCHIVE_DIR:?}" "${ARCHIVE_KEY:?}" "${STAMP:?}"
-scp "$ARCHIVE_HOST:$ARCHIVE_DIR/sigap-pre-redesign-$STAMP.tar.gz.age" ./
-
-# ---- verify the digest against the OUT-OF-BAND record, not a file beside the archive ----
-sha256sum "sigap-pre-redesign-$STAMP.tar.gz.age"
-#   compare with the digest recorded in RELEASE_CHECKLIST.md / the Jira issue at §13f step 2.
-#   Mismatch = the archive is not the one that was verified off-host. ABORT.
-
-# ---- decrypt, decompress, load (order is the inverse of §13f step 1: age -d THEN gzip -d).
-#      THE ROLLBACK HOST'S DAEMON MUST BE ASSERTED NON-PRODUCTION BEFORE ANY LOAD.
-#
-# Status capture is done with a TEMP FILE PER STAGE, never `{ a | b; echo $?; }`. That
-# idiom records only the LAST command inside the braces — [OBSERVED] `{ age -d | gzip -d;
-# echo $? > st; }` records `gzip -d`'s status, so a wrong key or a corrupt payload (age
-# exits non-zero AFTER having emitted a complete stream) passes the very gate meant to
-# catch it. Same for the §13f shape where the remote `age -d | gzip -d` runs inside one
-# `ssh` command: only `gzip -d`'s status survives.
-#
-# Instead each stage writes its own status, and the pipe is fed from a FIFO so the
-# statuses are complete before the sink is trusted. `pipe_guard` refuses if ANY is
-# non-zero, and the artifact is additionally validated by DECRYPTING it and running
-# `gzip -t` on the plaintext — which catches truncation, a wrong key, and the
-# empty-stream case, all of which look like success to a bare pipeline.
-: "${ISOLATED_DOCKER_HOST:?set to this rollback host's DOCKER_HOST; refusing to load unguarded}"
-is_production_target() {
-  case "$1" in
-    # the production SSH host, under any spelling
-    ssh://fikriserver*|*@fikriserver|fikriserver|fikriserver:*) return 0 ;;
-    # a LOCAL daemon socket, in every spelling. `/run` and `/var/run` are the same
-    # directory on Linux, so all of these reach the production daemon.
-    unix:///var/run/docker.sock|/var/run/docker.sock|var/run/docker.sock|unix:///run/docker.sock|/run/docker.sock|run/docker.sock) return 0 ;;
-    # the active context, whatever it happens to be (an empty candidate is refused too)
-    "") return 0 ;;
-    "$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null)") return 0 ;;
-  esac
-  return 1
-}
-if is_production_target "$ISOLATED_DOCKER_HOST"; then
-  echo "REFUSED: ISOLATED_DOCKER_HOST '$ISOLATED_DOCKER_HOST' is a production target"; exit 1
-fi
-# Verify it really is a DIFFERENT daemon, not a different spelling of the same one.
-if [ "$ISOLATED_DOCKER_HOST" = "$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null)" ]; then
-  echo "REFUSED: ISOLATED_DOCKER_HOST equals the active context"; exit 1
-fi
-DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker version --format '{{.Server.Version}}' >/dev/null 2>&1 || {
-  echo "REFUSED: isolated daemon unreachable at $ISOLATED_DOCKER_HOST"; exit 1; }
-echo "restore target: $ISOLATED_DOCKER_HOST (asserted non-production and reachable)"
-
-ST=$(mktemp -d); trap 'rm -rf "$ST"' EXIT INT TERM
-F="$ST/p"; mkfifo "$F" || exit 1
-
-# stage A: decrypt+decompress into the fifo; stage B: load from it.
-{ age -d -i "$ARCHIVE_KEY" "sigap-pre-redesign-$STAMP.tar.gz.age" | gzip -d
-  echo $? > "$ST/st.decrypt"; } > "$F" &
-pidA=$!
-DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load < "$F" ; echo $? > "$ST/st.load" &
-pidB=$!
-wait "$pidA" 2>/dev/null; wait "$pidB" 2>/dev/null
-
-for f in "$ST"/st.*; do
-  [ -s "$f" ] || { echo "REFUSED: no status recorded in $f — do not proceed"; exit 1; }
-  [ "$(cat "$f")" -eq 0 ] || { echo "REFUSED: restore stage $(basename "$f") failed; do not proceed"; exit 1; }
-done
-# Belt and braces: the DECRYPTED stream must be a complete gzip. This is what catches a
-# truncated transfer that every stage above accepted, and a wrong key.
-age -d -i "$ARCHIVE_KEY" "sigap-pre-redesign-$STAMP.tar.gz.age" > "$ST/plain.gz"
-[ -s "$ST/plain.gz" ] && gzip -t "$ST/plain.gz" 2>/dev/null \
-  || { echo "REFUSED: decrypted artifact is not a complete gzip (wrong key or truncated)"; exit 1; }
-rm -rf "$ST"
-
-# ---- assert the three ids ON THE ISOLATED DAEMON (explicit DOCKER_HOST, never ambient) ----
-for id in 43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f \
-          2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c \
-          8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4; do
-  DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker image inspect "sha256:$id" >/dev/null \
-    || { echo "MISSING $id on $ISOLATED_DOCKER_HOST — ABORT"; exit 1; }
-done
-echo "identity correspondence VERIFIED for all three images on the isolated daemon"
-# Re-tag each to <project>-<service>:rollback-<STAMP>-<short> per §7c, then continue with §7d
-# step 3 (retag to the computed image name), step 4 (up -d --no-deps), and step 5 (EXACT
-# identity check) exactly as written there.
+ARCHIVE="$PWD/sigap-pre-redesign-$STAMP.tar.gz.age" \
+ARCHIVE_HOST="$ARCHIVE_HOST" ARCHIVE_DIR="$ARCHIVE_DIR" ARCHIVE_KEY="$ARCHIVE_KEY" \
+STAMP="$STAMP" \
+EXPECT_DIGEST="$OUT_OF_BAND_DIGEST" \
+ISOLATED_DOCKER_HOST="$ISOLATED_DOCKER_HOST" \
+ALLOWED_ENGINE_ID="$ISOLATED_ENGINE_ID" \
+EXPECT_IDS="sha256:43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f,sha256:2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c,sha256:8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4" \
+  bash scripts/ops/sigap-archive-restore.sh
+# 0 = every stage verified; 10 unset var; 11 target refused; 12 digest mismatch;
+# 13 not a complete gzip; 14 a stage failed; 15 identity correspondence failed
 ```
+
+**Per-stage status — the defect this closes.** The previous §7d.1 block used
+`{ age -d | gzip -d; echo $? > st; }`, and a compound's `$?` is the status of its **last
+command**, so a wrong key — `age` emits a complete stream, then exits non-zero — **passed** the
+very gate meant to catch it. `[OBSERVED]` `{ sh -c 'exit 7' | sh -c 'exit 0'; echo $?; }`
+records **0**, not 7. The helper instead runs the pipeline under `set -euo pipefail` and reads
+`PIPESTATUS[0]`/`PIPESTATUS[1]` separately, so `age` and `gzip` are each judged on their own
+exit and neither can mask the other. `docker load`'s status is captured independently too.
+
+**Isolation is proved by engine identity, not string matching.** `is_production_target` is a
+necessary negative control but insufficient proof, so the helper additionally: refuses the
+production host and both local-socket spellings; reads the target's **engine ID** from
+`docker info` and compares it against an **explicitly allowlisted** `ALLOWED_ENGINE_ID`;
+refuses any daemon on which `docker ps -a` reports compose project `sigap`; and asserts every
+`docker image inspect` runs with an **explicit** `DOCKER_HOST` rather than the ambient context.
+If the engine ID cannot be read, the restore **refuses** — `N: missing Docker engine identity`.
+
+**No plaintext at rest.** `mktemp -d` (0700) holds the decrypted image; the ciphertext alone is
+copied into it. A `trap cleanup EXIT INT TERM HUP` shreds and removes the plaintext on **every**
+exit path including interruption, and asserts no plaintext remains in the worktree. `set -e`
+cannot skip the trap. Nothing decrypted is ever written to `$PWD`, so no decrypted artifact can
+enter the Git worktree. `docker load` reads the temp file directly, so no second copy is made.
+
+After the helper exits 0, re-tag each ID to `<project>-<service>:rollback-<STAMP>-<short>` per
+§7c, then continue with §7d step 3 (retag to the computed image name), step 4 (`up -d
+--no-deps`), and step 5 (EXACT identity check) exactly as written there.
 
 Both restore paths converge on §7d step 3. This subsection is the **prerequisite** the §13f
 plan depends on: without it the off-host archive is not a usable rollback artifact and §13e
@@ -1985,6 +1944,9 @@ is not the default here.
 
 **Proposed execution (NOT RUN — requires separate authorization).**
 
+**This block requires `bash`.** It uses `declare -A`, `local`, `set -o pipefail` and
+`PIPESTATUS`, none of which exist in POSIX `/bin/sh`. Run it as `bash`, not `sh`.
+
 **Fail-closed pipeline rule (mandatory, and the reason this is not a plain `|` chain).**
 A POSIX pipeline reports **only the last command's status**. `[OBSERVED]` on this host:
 `docker image save <bad-id> | gzip -1 > out.gz` gives `$? = 0`, leaves a **20-byte**
@@ -2016,32 +1978,67 @@ pipe_guard() {
 
 ```bash
 # ---- ON THE WORKSTATION (holds ciphertext only; no private key) ----
-# 0. Identity first: re-confirm the running image IDs have not changed, and RECORD them.
-#    If any ID differs from the table above, STOP — the running images are not the ones
-#    this plan was written against.
+# 0. Identity first: re-confirm the RUNNING image IDs on PRODUCTION, and RECORD them.
+#    These MUST be read THROUGH the authorized SSH connection with an explicit remote
+#    command. `docker inspect sigap-api` on the WORKSTATION queries the LOCAL daemon,
+#    which does not hold the SIGAP production containers at all — [OBSERVED] it fails
+#    or, worse, resolves a different image and the preflight silently passes.
+#    If any complete ID differs from the table above, STOP: the running images are not
+#    the ones this plan was written against.
+declare -A EXPECT=(
+  [api]=43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f
+  [web]=2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c
+  [rust-engine]=8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4
+)
+PREFLIGHT_FAILED=0
 for s in api web rust-engine; do
-  docker inspect "sigap-$s" --format '{{.Image}}'
+  # explicit remote execution, and a guard against an empty/unreachable result
+  got=$(ssh -o BatchMode=yes fikriserver \
+        "docker inspect --format '{{.Image}}' sigap-$s" 2>/dev/null) || got=''
+  got=${got#sha256:}
+  if [ -z "$got" ]; then
+    echo "STOP: could not read sigap-$s image ID from fikriserver"; PREFLIGHT_FAILED=1; continue
+  fi
+  if [ "$got" != "${EXPECT[$s]}" ]; then
+    echo "STOP: sigap-$s is $got, expected ${EXPECT[$s]}"; PREFLIGHT_FAILED=1
+  else
+    printf 'ok   %-12s %s\n' "$s" "$got"
+  fi
 done
+[ "$PREFLIGHT_FAILED" -eq 0 ] || { echo "REFUSING: production image IDs changed"; exit 1; }
+echo "all three running image IDs confirmed on fikriserver"
 
 # 1. Stream the three images off-host, compressed, ENCRYPTED TO A PUBLIC RECIPIENT, straight
 #    to the archive host. Nothing is written on the VPS root filesystem, and the workstation
 #    never sees plaintext at rest.
+#    Per-stage status is captured with PIPESTATUS inside a bash function — NOT the
+#    `{ a | b; echo $?; }` compound, which records only the last command [OBSERVED].
 #    Verify the `docker image save` flag spelling against `docker image save --help` on the
 #    host first — it differs across Docker versions.
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 ST=$(mktemp -d)
 DEST="sigap-pre-redesign-$STAMP.tar.gz.age"
 
-{ ssh fikriserver "docker image save \
-    sha256:43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f \
-    sha256:2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c \
-    sha256:8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4"
-  echo $? > "$ST/st.1"
-} | { gzip -1; echo $? > "$ST/st.2"; } \
-  | { age -r "$OFFHOST_RECIPIENT"; echo $? > "$ST/st.3"; } \
-  | { ssh "$ARCHIVE_HOST" "set -C; cat > '$ARCHIVE_DIR/$DEST'"; echo $? > "$ST/st.4"; }
-
-pipe_guard "$ST" || { echo "REFUSED: a pipeline stage failed; the artifact is NOT trusted"; exit 1; }
+stream_offhost() {
+  local r1 r2 r3 r4
+  set +e
+  set -o pipefail
+  { ssh -o BatchMode=yes fikriserver "docker image save \
+      sha256:${EXPECT[api]} \
+      sha256:${EXPECT[web]} \
+      sha256:${EXPECT[rust-engine]}"; r1=$?; } \
+    | { gzip -1; r2=$?; } \
+    | { age -r "$OFFHOST_RECIPIENT"; r3=$?; } \
+    | { ssh "$ARCHIVE_HOST" "set -C; cat > '$ARCHIVE_DIR/$DEST'"; r4=$?; }
+  set +o pipefail
+  printf '%s\n' "$r1" > "$ST/st.1" "$r2" > "$ST/st.2" \
+                "$r3" > "$ST/st.3" "$r4" > "$ST/st.4"
+}
+stream_offhost
+for f in "$ST"/st.*; do
+  [ -s "$f" ] || { echo "REFUSED: no status recorded in $f"; exit 1; }
+  [ "$(cat "$f")" -eq 0 ] || { echo "REFUSED: stage $(basename "$f") failed — the artifact is NOT trusted"; exit 1; }
+done
 
 # 1b. The artifact must be a COMPLETE, NON-EMPTY stream. The encrypted artifact itself is
 #     age CIPHERTEXT, not gzip — [OBSERVED] `gzip -t` on it exits 1 with "not in gzip
