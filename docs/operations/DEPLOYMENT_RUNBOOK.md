@@ -841,6 +841,29 @@ below. A `checkin_code` is separately rendered and must be checked in item 6.
 6. **Legitimate identifiers** — appointment codes, check-in codes, facility names.
 7. **Unsafe phone-like content** — must be **rejected in every variant**, never silently
    accepted in one and rejected in another.
+8. **Outbox drain path** `[OBSERVED]` the matrix's most consequential omission, caught by
+   DbReview3. A/B/C otherwise run against a **static** outbox that never drains, so the
+   realistic transition state is never reached. `apps/api/internal/notification/worker.go:217`
+   `claim()` runs
+   `UPDATE notification_outbox SET status='processing', next_attempt_at=NOW()+… WHERE … FOR
+   UPDATE SKIP LOCKED`, and `provider.go:125` INSERTs into `notification_delivery_attempts`.
+   Sequence to exercise: (a) the **legacy binary's own Enqueue** writes the row; (b) the worker
+   claims it; (c) the provider delivers; (d) the delivery-attempt row is written. Then
+   re-check both constraints are still satisfied. The worker's `UPDATE` touches only
+   `status`/`next_attempt_at` — **never** `subject`/`body_template` — so it cannot itself trip
+   the phone constraints, but it **does hold rows against `0011`'s `ACCESS EXCLUSIVE` ALTER**
+   (§12b lists it as an interrupted write) and it is what makes variant C's state realistic
+   (rows already delivered/processing when the migration runs).
+   **Run it explicitly**: `SIGAP_NOTIFICATION_WORKER_ENABLED=true`, or with
+   `SIGAP_NOTIFICATION_WORKER_ONCE=true` for a single drain pass. The environment table has
+   **no worker** and `docker-compose.yml` never sets these vars, so without this row the
+   matrix silently skips the drain path.
+9. **Third-party providers — disclosed as NOT COVERED.** The dev provider is offline/simulated
+   (`provider.go:81-96` `DevSimulateOutcome`). A real SMS, WhatsApp, email or SatuSehat
+   gateway is a live third-party service and **must be excluded and disclosed as not covered**
+   — which means the delivery *mechanism* stays `UNKNOWN` for those channels. This does **not**
+   weaken the compatibility question: the constraint is on what the legacy binary **writes**,
+   and item 1–3 exercise those writes directly.
 
 **Comparison and reporting.** For every operation, record `RESULT BEFORE 0011` vs
 `RESULT AFTER 0011`, and flag **any legitimate write that succeeds in A or C but fails in B or
