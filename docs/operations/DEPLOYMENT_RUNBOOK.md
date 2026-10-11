@@ -15,7 +15,9 @@ in any of them:
 | 2026-10-09 | PostgreSQL schema inspection (`scripts/ops/db-metadata-inspection.sql`, §12) | metadata-only, inside a read-only transaction; returned the classification recorded in §12 |
 | 2026-10-09 | host capacity + running-image identity (`df`, `findmnt -T`, `docker system df`, `docker image inspect`, §13) | read-only SSH inspection producing the §13 figures |
 | 2026-10-10 | Jira checkpoint write-path diagnosis (SIGAP-1 entity property) | a **successful** probe write confined to the MCP server's own `atlassian-mcp.` namespace; no Jira content, no SIGAP data, no production stack touched |
-| 2026-10-10 | preservation pre-authorization review — re-`docker inspect` of all four containers (container IDs, image IDs, sizes, health), `df -B1` free bytes, file mode/size metadata for `/opt/sigap/backups/sigap` + `/etc/sigap/backup.env`, `docker image inspect` baked-env key counts + names, `openssl`/`age`/`aws` presence | read-only SSH. **No env values were read or printed** — only key names and boolean verdicts (§13f). No FS change, no container start/stop, no image operation |
+| 2026-10-10 | preservation pre-authorization review — re-`docker inspect` of all four containers (container IDs, image IDs, sizes, health), `df -B1` free bytes, file mode/size metadata for `/opt/sigap/backups/sigap` + `/etc/sigap/backup.env`, `docker image inspect` baked-env key **counts and key names** plus label/history counts | read-only SSH. **No env values were read or printed** — key names and counts only (§13f). No FS change, no container start/stop, no image operation |
+| 2026-10-10 | execution-closure review — baked-env key classification for all three images (SAFE), `openssl`/`age`/`gpg`/`aws` presence and `openssl enc` cipher support probes (`aes-256-gcm` and `chacha20-poly1305@openssl.com` both **unsupported**; `aes-256-ctr`/`-cbc` available but unauthenticated) | read-only SSH. No package installed, no key generated, no archive created. |
+| 2026-10-10 | local Docker-daemon reachability probe (`docker info`, `docker -H tcp://127.0.0.1:2375 info`) — both refused | **local** workstation probe, not a production contact. Establishes `REAL_DUMMY_RESTORE = NOT_VERIFIED`. |
 
 Anything not listed above has **not** happened. Production row counts remain `UNKNOWN` — the
 authorization in force is metadata-only, and no application records were queried or modified.
@@ -2149,26 +2151,39 @@ echo "identity correspondence VERIFIED for all three images"
 Note the decoder order in step 3 is the exact inverse of step 1 — `age -d` **then**
 `gzip -d`, in that order. Getting it backwards is a silent no-op on a `docker save` tar.
 
-**Destination.** The on-host `/opt/sigap/backups/sigap` exists but is **empty (4 KiB),
-mode 775 (world-readable) and on the same root filesystem** — `[OBSERVED]` 2026-10-10. It is
-**not** an off-host target and its mode must be fixed before any archive is written there.
-Two **separate** properties must be recorded, because the obvious candidate satisfies only one:
+**Destination — `ARCHIVE_DESTINATION = UNCONFIRMED`. Three options evaluated, none verified.**
 
-| Property | Why | R2 (`AUDIT-701`) candidate |
-|---|---|---|
-| **Not readable from the VPS** | A credential on the VPS makes "off-host" nominal | **NO** — its write credential lives on the VPS at `/etc/sigap/backup.env` (mode 640, 473 B) |
-| **Client-side encrypted** | Provider SSE does not protect against the provider | **YES if** the cipher layer is applied — `BACKUP_RESTORE.md` §5 says the DB-dump store is **SSE-only**, with client-side encryption not pre-implemented |
+No candidate is reachable from the workstation without production credentials, so none could
+be tested. What is known `[OBSERVED]`:
 
-The destination must satisfy all of: genuinely **off-host**; **free space** ≥ ~0.5 GB per
-retained release; **restricted access** (not `775`); **client-side encryption** with a key held
-off the VPS; **immutable** evidence (checksums recorded out-of-band); **restore access
-independent of production**; and **retrievability during a production outage**.
+| # | Option | Independence from the VPS | Encryption tool | Verdict |
+|---|---|---|---|---|
+| **A** | Owner's Windows workstation, restricted + encrypted volume | **highest** — no VPS credential involved at all | `age`/`openssl` installable locally; **encryption happens where the key already is** | **RECOMMENDED for the first capture** |
+| **B** | R2 / object storage (`AUDIT-701` target) | low — the write credential lives **on the VPS** at `/etc/sigap/backup.env` (mode 640, 473 B) | `aws` cli **is** present on the host; but the store is **SSE-only**, not client-side encrypted | needs independent credentials before it qualifies |
+| **C** | A separate authorized backup host | good, if it exists | unknown — no such host was identified | needs an owner decision |
 
-Capacity ≥ ~0.5 GB per retained release. Credentials and reachability of any candidate were
-**not** verified in this read-only inspection, so destination feasibility is **[UNKNOWN]** and
-must be confirmed before execution. The `aws` cli is present on the host, which makes the
-`backup-postgres.sh` S3 path the natural candidate — but **`age` is absent** (see the
-encryption gap above), so the cipher layer is undecided.
+**Why A is recommended for the first capture.** The archive's value is that it is *not* on the
+VPS. Option B's write credential is on the VPS, so a VPS compromise reads the bucket; option A
+has no such path. Option A also puts the cipher key on the machine that already holds the
+operator's tooling, which avoids the key-custody problem entirely for a first capture.
+
+**Minimum owner action, option A (three steps, nothing else required):**
+1. Create the destination directory on the workstation, e.g. `F:\Sehat-Hub-backups\pre-redesign`.
+2. Restrict it to the current user (`icacls <dir> /grant:r "%USERNAME%":F` on Windows, or
+   `chmod 700` on a POSIX path) and confirm it is **not** inside a cloud-synced folder.
+3. Install `age` on the workstation (`winget install FiloSottile.age`, or
+   `choco install age`) and generate a recipient key **on the workstation**:
+   `age-keygen -o age-recipient.txt`. Pass the **public** recipient to §13f as
+   `OFFHOST_RECIPIENT`; the private key never leaves the workstation.
+
+**Still blocking even with A:** the cipher mechanism for the *stream* is undecided (§13f records
+`age` ABSENT on the prod host and no AEAD in `openssl` there). With option A the smallest change
+is to install `age` on the workstation and have the workstation do the decryption, leaving the VPS
+to stream plain gzip **over the encrypted SSH channel** only — which is safe, because the channel
+is already authenticated and the ciphertext never rests on the VPS.
+
+**Do not** invent backup credentials, print the existing `/etc/sigap/backup.env` contents, or
+create live backup objects without authorization.
 
 **Restore path — exists, and is a prerequisite.** §7d is the only restore procedure and it
 verifies `sha256sum -c SHA256SUMS` and loads `"$ARCHIVE_DIR"/*.tar.gz`; the §13f artifact is a
