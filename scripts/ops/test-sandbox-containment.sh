@@ -97,46 +97,86 @@ sbx_require_contained "$SBX_ROOT/log" >/dev/null 2>&1 \
   || bad 'contained-log-accepted' 'rejected'
 
 printf '=== cleanup can only touch the disposable root ===\n'
-CANARY="$SBX_ROOT/log/canary"; : > "$CANARY"
-[ -f "$CANARY" ] && ok 'writes-confined-to-root' 'write landed inside the root' \
-                 || bad 'writes-confined-to-root' 'write escaped the root'
+# QaReview5: writing a canary and asserting it exists only proves `: >` works, so the
+# guard was never under test. Assert the guard ACCEPTS the contained path and REFUSES
+# an escaping one, then perform the write.
+CANARY="$SBX_ROOT/log/canary"
+if sbx_require_contained "$CANARY" >/dev/null 2>&1; then guarded=yes; else guarded=no; fi
+if sbx_require_contained "$SBX_ROOT/../../bin/canary" >/dev/null 2>&1; then escaped=yes; else escaped=no; fi
+if [ "$guarded" = "yes" ] && [ "$escaped" = "no" ] && : > "$CANARY" && [ -f "$CANARY" ]; then
+  ok 'writes-confined-to-root' 'guard accepted contained, refused escaping, write landed'
+else
+  bad 'writes-confined-to-root' "guarded=$guarded escaped=$escaped"
+fi
 # A cleanup aimed outside the root must be a no-op, not a delete.
+# QaReview5: `$APPROVED/../outside` resolves OUTSIDE $APPROVED, so sbx_canonical fails
+# and the case passed by fall-through without ever reaching the containment check.
+# Point it at a REAL existing child of the approved root instead — the case that would
+# actually delete if the guard were wrong. Note this also exposes that sbx_cleanup is
+# scoped to the APPROVED ROOT, not to the root this invocation created; that scoping is
+# deliberate (it can only ever remove children of the approved root) but is now asserted
+# against a real directory rather than a non-existent path.
 OUTSIDE="$APPROVED/outside"; mkdir -p "$OUTSIDE"; : > "$OUTSIDE/keep"
+[ -f "$OUTSIDE/keep" ] || bad 'unsafe-cleanup-refused' 'cannot set up the canary'
 SBX_ROOT_BEFORE="$SBX_ROOT"
-SBX_ROOT="$APPROVED/../outside" sbx_cleanup >/dev/null 2>&1
-[ -f "$OUTSIDE/keep" ] && ok 'unsafe-cleanup-refused' 'cleanup outside the root refused' \
-                       || bad 'unsafe-cleanup-refused' 'cleanup deleted outside the root'
+SBX_ROOT="$OUTSIDE" sbx_cleanup >/dev/null 2>&1
+if [ -f "$OUTSIDE/keep" ]; then
+  ok 'unsafe-cleanup-refused' 'cleanup left a child of the approved root intact'
+else
+  bad 'unsafe-cleanup-refused' 'cleanup DELETED a child of the approved root'
+fi
+# And the legitimate case must still clean up: a root inside the approved root IS removed.
+JUNK="$APPROVED/junk"; mkdir -p "$JUNK"; : > "$JUNK/x"
+SBX_ROOT="$JUNK" sbx_cleanup >/dev/null 2>&1
+[ -d "$JUNK" ] && bad 'cleanup-removes-own-root' 'a contained root was NOT removed' \
+              || ok 'cleanup-removes-own-root' 'a contained root was removed'
 SBX_ROOT="$SBX_ROOT_BEFORE"
 
 printf '=== explicit argument passing works (the preferred fix) ===\n'
-# The parent must pass the root to the child; the child must not rely on scope.
-child_ok() { [ $# -ge 1 ] && [ -n "$1" ] && sbx_require_contained "$1/bin" >/dev/null 2>&1; }
-child_ok "$SBX_ROOT" && ok 'explicit-argument-passing' 'child received the root as $1' \
-                       || bad 'explicit-argument-passing' 'argument passing failed'
-child_ok ""        && bad 'explicit-argument-empty' 'empty argument accepted' \
-                       || ok 'explicit-argument-empty' 'refused'
+# A real child process, so relying on inherited scope actually fails.
+cat > "$SBX_ROOT/argchild.sh" <<'CHILD'
+. /f/Sehat-Hub-ui-redesign/scripts/ops/ops-sandbox.sh
+SIGAP_TEST_ROOT="$1" sbx_init >/dev/null 2>&1
+if [ $# -ge 1 ] && [ -n "$2" ] && sbx_require_contained "$2/bin" >/dev/null 2>&1; then
+  printf 'ACCEPT'; else printf 'REFUSE'; fi
+CHILD
+res=$(sh "$SBX_ROOT/argchild.sh" "$SIGAP_TEST_ROOT" "$SBX_ROOT" 2>/dev/null)
+[ "$res" = "ACCEPT" ] && ok 'explicit-argument-passing' 'child received the root as $2' \
+                       || bad 'explicit-argument-passing' "child returned $res"
+res=$(sh "$SBX_ROOT/argchild.sh" "$SIGAP_TEST_ROOT" "" 2>/dev/null)
+[ "$res" = "REFUSE" ] && ok 'explicit-argument-empty' 'empty argument refused' \
+                       || bad 'explicit-argument-empty' "empty argument returned $res"
 
 printf '=== a broken host gzip must fail the real-compression gate ===\n'
 # Defect D: a synthetic fallback must NEVER satisfy a gate that claims real gzip
-# compatibility. Simulate "real gzip unavailable" and require the gate to refuse.
+# compatibility. QaReview5: both arms of the previous `if` printed `ok`, so this case
+# could never fail. Each arm now asserts the OPPOSITE outcome, so a wrong gate fails.
 realgzip_ok() {
   _g=$(command -v gzip 2>/dev/null) || return 1
   timeout 5 "$_g" --version >/dev/null 2>&1 || return 1
   return 0
 }
 if realgzip_ok; then
-  ok 'real-gzip-gate' 'a working gzip satisfies the gate (expected on this host)'
+  # With a working gzip the gate must pass. Assert the binary really compresses.
+  _t="$SBX_ROOT/log/gz.t"; printf 'data' > "$_t"
+  if command -v timeout >/dev/null 2>&1; then timeout 5 gzip -t "$_t" >/dev/null 2>&1; gt=$?; else gt=1; fi
+  # gzip -t on a NON-gzip file must FAIL (exit non-zero) — that is what makes -t meaningful.
+  if [ "$gt" -ne 0 ]; then
+    ok 'real-gzip-gate' 'a working gzip correctly rejects a non-gzip file'
+  else
+    bad 'real-gzip-gate' 'gzip -t accepted a non-gzip file — -t is not discriminating'
+  fi
 else
-  ok 'real-gzip-gate' 'no working gzip — the gate MUST fail, not fall back'
+  bad 'real-gzip-gate' 'no working gzip: the real-compression gate MUST fail, not pass'
 fi
-# The negative control: the gate must not accept a lie.
-gate_accepts_only_real() {
-  realgzip_ok || return 1
-  printf 'x' | tr 'a-zA-Z' 'n-za-mN-ZA-M' >/dev/null || return 1
-  return 0
-}
-gate_accepts_only_real && ok 'no-synthetic-fallback' 'gate requires real gzip, not a transform' \
-                       || bad 'no-synthetic-fallback' 'gate accepted without real gzip'
+# The gate must consult the REAL binary, not a transform.
+_g=$(command -v gzip 2>/dev/null)
+_t="$SBX_ROOT/log/gz2.t"; printf 'data' > "$_t"
+if [ -n "$_g" ] && timeout 5 "$_g" -t "$_t" >/dev/null 2>&1; then
+  bad 'no-synthetic-fallback' '-t accepted a non-gzip input via the resolved binary'
+else
+  ok 'no-synthetic-fallback' 'gate requires real gzip output, not a tr transform'
+fi
 
 printf '\n--- tests: %d pass, %d fail ---\n' "$pass" "$failed"
 [ "$failed" -eq 0 ] || exit 1

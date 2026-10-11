@@ -46,10 +46,16 @@ sbx_fatal() { printf 'FATAL: %s\n' "$*" >&2; exit "${2:-11}"; }
 #    hijackable. Abort on any failure rather than proceeding with an unverified path.
 # ---------------------------------------------------------------------------
 sbx_new_root() {
-  _root=$(mktemp -d 2>/dev/null) || sbx_fatal "mktemp -d failed; no disposable root" 11
+  # The disposable root must be created INSIDE the approved root, not in $TMPDIR.
+  # QaReview5: a bare `mktemp -d` lands the root in $TMPDIR, which makes it a SIBLING
+  # of the approved root rather than a child — so `sbx_is_child_of root approved`
+  # is never true and sbx_init fails unconditionally for every caller. Both suites were
+  # therefore dead before their first assertion.
+  _parent=$SBX_APPROVED_ROOT
+  [ -d "$_parent" ] || sbx_fatal "the approved root disappeared: $_parent" 11
+  _root=$(mktemp -d "$_parent/sbx.XXXXXXXX" 2>/dev/null) \
+    || sbx_fatal "mktemp -d inside $_parent failed" 11
   [ -d "$_root" ] || sbx_fatal "mktemp returned a non-directory" 11
-  # Refuse a root that is not new — a pre-existing directory may be a symlink target
-  # planted for us.
   [ -L "$_root" ] && sbx_fatal "the new root is a symlink" 10
   printf '%s' "$_root"
 }
