@@ -597,6 +597,16 @@ copied into it. A `trap cleanup EXIT INT TERM HUP` shreds and removes the plaint
 exit path including interruption, and asserts no plaintext remains in the worktree. `set -e`
 cannot skip the trap. Nothing decrypted is ever written to `$PWD`, so no decrypted artifact can
 enter the Git worktree. `docker load` reads the temp file directly, so no second copy is made.
+`.gitignore` adds a second line of defence for the plaintext names.
+
+**Real disposable-image round-trip: `NOT_VERIFIED` on this workstation.** No Docker daemon is
+reachable — `docker info` fails with *"open //./pipe/dockerDesktopLinuxEngine: The system cannot
+find the file specified"*, and `tcp://127.0.0.1:2375` is refused. So the full
+`docker save → gzip → encrypt → decrypt → docker load → ID comparison` loop has **not** been
+exercised against a real engine, and `REAL_DUMMY_RESTORE` is **NOT_VERIFIED**, not PASS.
+`test-isolated-restore-environment.sh` rehearses the *guard logic* against a modelled daemon,
+which proves the assertions discriminate but does **not** prove a real `docker load` restores
+the IDs. Performing it requires a local daemon; the exact commands are in the runbook.
 
 After the helper exits 0, re-tag each ID to `<project>-<service>:rollback-<STAMP>-<short>` per
 §7c, then continue with §7d step 3 (retag to the computed image name), step 4 (`up -d
