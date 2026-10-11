@@ -124,26 +124,34 @@ sbx_is_system_path() {
 # PARENT is not.
 # ---------------------------------------------------------------------------
 sbx_require_contained() {
+  # The guard MUST fail closed. An earlier version called `sbx_die` (which does
+  # `return 10`) as the last command of an `if`/`&&` list and then ran another
+  # statement, which resets $? — so the function returned 0 for every input,
+  # including `/`. Every negative test then reported `bad`, and, worse, every
+  # caller that trusted the guard's exit status would have proceeded with the
+  # write. `sbx_fatal` exits the process instead of returning, so the process
+  # itself dies and the status can never be skipped.
   _dest=$1
-  [ -n "${SBX_ROOT:-}" ] || sbx_die "sbx_init was never called" 10
-  [ -n "$_dest" ] || sbx_die "destination is empty — the unset-variable shape from SIGAP-88" 10
+  [ -n "${SBX_ROOT:-}" ] || sbx_fatal "sbx_init was never called" 10
+  [ -n "$_dest" ] || sbx_fatal "destination is empty — the unset-variable shape from SIGAP-88" 10
   # Any `..` component in the RAW argument is rejected outright. Canonicalising the
   # parent would resolve it, but rejecting it here is clearer and defence in depth.
   case "$_dest" in
-    *..*) sbx_die "destination contains a '..' component: $_dest" 10 ;;
+    *..*) sbx_fatal "destination contains a '..' component: $_dest" 10 ;;
   esac
-  [ -L "$_dest" ] && sbx_die "destination is a symlink: $_dest" 10
+  [ -L "$_dest" ] && sbx_fatal "destination is a symlink: $_dest" 10
 
   # Canonicalise the PARENT (which must already exist), then re-attach the final
   # component, so the path actually written is the path judged.
   _parent=$(dirname -- "$_dest")
   _base=$(basename -- "$_dest")
-  _cp=$(sbx_canonical "$_parent") || sbx_die "destination's parent does not resolve: $_parent" 10
+  _cp=$(sbx_canonical "$_parent") || sbx_fatal "destination's parent does not resolve: $_parent" 10
   _c="$_cp/$_base"
-  [ -L "$_c" ] && sbx_die "destination is a symlink after canonicalisation: $_c" 10
-  sbx_is_system_path "$_c" && sbx_die "destination is a system directory: $_c" 10
-  sbx_is_child_of "$_c" "$SBX_ROOT" || sbx_die "destination escapes the disposable root: $_c" 10
+  [ -L "$_c" ] && sbx_fatal "destination is a symlink after canonicalisation: $_c" 10
+  sbx_is_system_path "$_c" && sbx_fatal "destination is a system directory: $_c" 10
+  sbx_is_child_of "$_c" "$SBX_ROOT" || sbx_fatal "destination escapes the disposable root: $_c" 10
   SBX_LAST_OK="$_c"
+  return 0
 }
 
 # ---------------------------------------------------------------------------

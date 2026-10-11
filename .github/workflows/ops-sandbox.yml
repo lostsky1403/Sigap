@@ -246,7 +246,7 @@ jobs:
               else
                 echo "ok: OS refused the write to /bin/gzip:"; sed -n "1,2p" /tmp/err
               fi
-              # And the library's own gate must refuse it too, independently.
+              # And the gate provided by the library must refuse it too, independently.
               # NO trailing `true`: the earlier form ran
               #   sbx_require_contained "/bin/gzip"; true
               # inside the `if`, which discarded the guard's real exit status and made
