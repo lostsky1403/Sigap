@@ -264,7 +264,10 @@ jobs:
               # Without the subshell the refusal would kill this whole step, and
               # `|| rc_forbidden=$?` would never see the status it is meant to check.
               . ./scripts/ops/ops-sandbox.sh
-              SIGAP_TEST_ROOT="$SIGAP_TEST_ROOT" sbx_init >/dev/null 2>&1
+              # Errors are NOT suppressed: an earlier `sbx_init >/dev/null 2>&1` hid
+              # the FATAL reason, so a failing init looked like an unexplained rc=10
+              # with no diagnosis in the log.
+              SIGAP_TEST_ROOT="$SIGAP_TEST_ROOT" sbx_init
               rc_forbidden=0
               ( sbx_require_contained "/bin/gzip" >/dev/null 2>&1 ) || rc_forbidden=$?
               if [ "$rc_forbidden" -eq 0 ]; then
