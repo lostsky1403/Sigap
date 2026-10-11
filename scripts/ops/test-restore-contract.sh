@@ -362,10 +362,14 @@ out=$(TOP_LOG="$LOG" PATH="$NARROW_PATH" \
               || bad 'missing-var-fails-closed' "want=10 got=$?"
 
 printf '=== every docker call is pinned to the isolated daemon ===\n'
-clear_all; : > "$LOG/KEEP_have_api"
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/have_$API"
 # Reset the call log so the count reflects THIS run only — the fake appends across
 # cases, and earlier cases run `docker context` through the ambient context.
 : > "$LOG/docker.calls" 2>/dev/null || true
+# The have_$API marker is required: without it the helper dies at the image-inspect
+# stage after `docker load`, so the load call is still recorded but the run is not a
+# clean end-to-end pass. Creating it makes this a full successful run whose recorded
+# calls are exactly the ones the pinning guarantee must cover.
 env TOP_LOG="$LOG" PATH="$NARROW_PATH" \
     ARCHIVE="$LOG/archive.age" ARCHIVE_HOST=fakehost ARCHIVE_DIR=/fake \
     ARCHIVE_KEY=/fake/key STAMP=20261010 EXPECT_DIGEST="$DIG" \
