@@ -258,8 +258,13 @@ jobs:
               # And the gate provided by the library must refuse it too, independently.
               # NO trailing `true`: the earlier form ran
               #   sbx_require_contained "/bin/gzip"; true
-              # inside the `if`, which discarded the guard's real exit status and made
-              # every refusal look like success. The actual return code is captured.
+              # inside the `if`, which discarded the real exit status of the guard and
+              # made every refusal look like success. The actual return code is captured.
+              # NOTE: no apostrophes may appear anywhere inside this single-quoted
+              # `bash -c` block, because an unescaped one closes the quote early and the
+              # remainder is then parsed by the RUNNER instead of the container. That
+              # happened once and produced an unexplained `SIGAP_TEST_ROOT does not
+              # resolve`, because the surviving text ran on the host.
               # The guard fails closed by EXITING, so each probe runs in a subshell.
               # Without the subshell the refusal would kill this whole step, and
               # `|| rc_forbidden=$?` would never see the status it is meant to check.
