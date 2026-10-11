@@ -77,6 +77,17 @@ if [ -n "$AMBIENT_CTX" ] && is_production_string "$AMBIENT_CTX"; then
   printf '      is pinned to DOCKER_HOST=%s.\n' "$ISOLATED_DOCKER_HOST" >&2
 fi
 
+# ALLOWED_ENGINE_ID is MANDATORY and is checked BEFORE any daemon contact. It must be
+# first because it is a caller-side precondition, not a daemon-side observation: a
+# missing allowlist is a configuration error the caller can see without talking to
+# anything, and reporting it as "daemon unreachable" (11) hides the real defect.
+#
+# OpsReview5 P1: `${VAR:?msg}` aborts with status 1, which is outside the documented
+# 0/10-15 exit-code table. An explicit test produces the documented code 10.
+if [ -z "${ALLOWED_ENGINE_ID:-}" ]; then
+  die "ALLOWED_ENGINE_ID is required — refusing to load without a pinned engine ID" 10
+fi
+
 # Reachability and engine identity. `docker info` returns the ENGINE id, which is a
 # property of the daemon itself, so two spellings of the same daemon cannot both pass.
 if ! target_engine=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker info --format '{{.ID}}' 2>/dev/null); then
@@ -84,16 +95,6 @@ if ! target_engine=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker info --format '{
 fi
 [ -n "$target_engine" ] || die "isolated daemon returned no engine ID" 11
 
-# ALLOWED_ENGINE_ID is MANDATORY: absent aborts. Previously it warned and continued,
-# so a caller could omit the allowlist and load the decrypted image into WHATEVER the
-# ambient context happened to be. [Defect C]
-#
-# OpsReview5 P1: `${VAR:?msg}` aborts with status 1, which is outside the documented
-# 0/10-15 exit-code table and contradicted the suite's expectation of 10. An explicit
-# test produces the documented code.
-if [ -z "${ALLOWED_ENGINE_ID:-}" ]; then
-  die "ALLOWED_ENGINE_ID is required — refusing to load without a pinned engine ID" 10
-fi
 [ "$target_engine" = "$ALLOWED_ENGINE_ID" ] \
   || die "engine ID $target_engine is not the allowlisted $ALLOWED_ENGINE_ID" 11
 
@@ -180,7 +181,20 @@ printf 'stage statuses: age=%s\n' "$rc_age"
 # wrote the decompressed data to a file literally NAMED `plain.gz` and then ran
 # `gzip -t` on it — testing a decompressed payload for gzip integrity, which is
 # meaningless and cannot fail for the reason claimed. [Defect A]
-gzip -t "$WORK/archive.tar.gz" 2>/dev/null \
+# Two distinct failures are distinguished here, because they have different causes and
+# the caller needs to tell them apart:
+#   13 — the bytes are not a valid gzip archive (corrupt or truncated payload)
+#   14 — gzip itself could not run (missing tool, killed, I/O error)
+# gzip exits 1 for a structural test failure and 2+ for an operational one. Reporting
+# both as 13 once made a broken toolchain look like a corrupt archive.
+set +e
+gzip -t "$WORK/archive.tar.gz" 2>"$WORK/err.gz"
+rc_gzip_test=$?
+set -e
+if [ "$rc_gzip_test" -ge 2 ]; then
+  die "gzip could not validate the archive (rc=$rc_gzip_test): $(sed -n '1,2p' "$WORK/err.gz")" 14
+fi
+[ "$rc_gzip_test" -eq 0 ] \
   || die "decrypted artifact is not a complete gzip archive (wrong key or truncated)" 13
 
 # Validate that it is a DOCKER IMAGE TAR before spending a load on it: a docker save
