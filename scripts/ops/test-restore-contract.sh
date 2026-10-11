@@ -202,23 +202,35 @@ cat > "$BIN/gzip" <<F
 # transform with \`tr\` so the suite still runs on a host with a broken gzip. The helper
 # only ever checks \`gzip -t\` and decompression, both of which this satisfies. A REAL
 # deployment never uses this path — it is test scaffolding only.
+# Defect D: there is NO synthetic fallback here. On a host with a broken gzip the fake
+# exits non-zero, so the real-compression gate FAILS rather than passing on a transform
+# that claims to be gzip. OpsReview5 confirmed the earlier `tr` fallback was reachable
+# with only a warning, while the suite still reported "N pass, 0 fail".
 if [ -n "$REAL_GZIP" ]; then
-  exec "$REAL_GZIP" "\$@"
+  exec "$REAL_GZIP" "$@"
 fi
-mode=-1
-for a in "\$@"; do case "\$a" in -d*) mode=-d ;; esac; done
-if [ "\$mode" = "-1" ]; then tr 'a-zA-Z' 'n-za-mN-ZA-M'; else tr 'a-zA-Z' 'n-za-mN-ZA-M'; fi
-exit 0
+echo "fake gzip: no working real gzip — refusing rather than emulating" >&2
+exit 3
 F
 
 chmod +x "$BIN"/age "$BIN"/docker "$BIN"/scp "$BIN"/sha256sum "$BIN"/gzip
 
-# The payload is "compressed" with the same transform the fake uses, so a real gzip is
-# not required on this host. `tr` is a POSIX builtin-adjacent utility that always works.
+# The fixture must be a REAL docker-save-shaped tar, because the helper now validates
+# that the decrypted stream is a docker image TAR (Defect A). OpsReview5 P1: the previous
+# fixture was a bare gzip of a string, so `tar -t` failed and the helper died 13 before
+# ever reaching docker load — the gate rejected the suite's own valid payload. Built
+# with `tar` so the member list genuinely contains manifest.json.
 if [ -n "$REAL_GZIP" ]; then
-  printf 'fake-image-tar-payload' | "$REAL_GZIP" -1 > "$LOG/payload.gz"
+  _stage="$TOP/stage"; mkdir -p "$_stage"
+  printf '{"images":[]}' > "$_stage/manifest.json"
+  printf '{"created":"2026-01-01T00:00:00Z"}' > "$_stage/created-by.json"
+  ( cd "$_stage" && tar -cf ../image.tar manifest.json created-by.json ) 2>/dev/null \
+    || { printf 'FAIL: cannot build the tar fixture\\n' >&2; exit 1; }
+  "$REAL_GZIP" -1 < "$TOP/image.tar" > "$LOG/payload.gz"
 else
-  printf 'fake-image-tar-payload' | tr 'a-zA-Z' 'n-za-mN-ZA-M' > "$LOG/payload.gz"
+  # No working gzip: the fixture cannot be validated, so the real-compression gate must
+  # fail rather than silently use a synthetic transform. [Defect D]
+  printf 'SYNTHETIC-ONLY\\n' > "$LOG/payload.gz"
 fi
 DIG=$(sha256sum "$LOG/payload.gz" | cut -d' ' -f1)
 printf '%s  %s\n' "$DIG" "$LOG/payload.gz" > "$LOG/digest.val"
