@@ -64,10 +64,18 @@ TOP="$SBX_ROOT"; BIN="$SBX_BIN"; LOG="$SBX_ROOT/log"
 export TOP_LOG="$LOG"
 CHAIN="$BIN:/usr/bin:/bin"
 
-# Every creation below is gated: if any destination is not contained, refuse and abort.
+# Every creation below is gated, and the gate is FATAL on refusal. The harness runs
+# under `set -u` but not `set -e`, so a bare `sbx_require_contained "$_dest"` could be
+# ignored and the write would proceed anyway. `sbx_write_gate` aborts before the write.
+# The gate protects the EXACT destination being written, not an earlier prefix.
+sbx_write_gate() {
+  sbx_require_contained "$1" \
+    || { printf 'FATAL: containment refused %s — refusing to write\n' "$1" >&2; exit 10; }
+}
 for _dest in "$BIN/age" "$BIN/docker" "$BIN/scp" "$BIN/sha256sum" "$BIN/gzip"; do
-  sbx_require_contained "$_dest"
+  sbx_write_gate "$_dest"
 done
+sbx_write_gate "$TOP/stage"
 
 # Resolve the commands the fakes must delegate to ONCE, BEFORE the fake directory is
 # put on PATH — otherwise `command -v gzip`/`sha256sum` inside a fake resolves the
@@ -213,6 +221,10 @@ echo "fake gzip: no working real gzip — refusing rather than emulating" >&2
 exit 3
 F
 
+# chmod is a write too: gate every path before changing modes, and abort on refusal.
+for _d in "$BIN/age" "$BIN/docker" "$BIN/scp" "$BIN/sha256sum" "$BIN/gzip"; do
+  sbx_write_gate "$_d"
+done
 chmod +x "$BIN"/age "$BIN"/docker "$BIN"/scp "$BIN"/sha256sum "$BIN"/gzip
 
 # The fixture must be a REAL docker-save-shaped tar, because the helper now validates
@@ -221,7 +233,7 @@ chmod +x "$BIN"/age "$BIN"/docker "$BIN"/scp "$BIN"/sha256sum "$BIN"/gzip
 # ever reaching docker load — the gate rejected the suite's own valid payload. Built
 # with `tar` so the member list genuinely contains manifest.json.
 if [ -n "$REAL_GZIP" ]; then
-  _stage="$TOP/stage"; mkdir -p "$_stage"
+  _stage="$TOP/stage"; sbx_write_gate "$_stage"; mkdir -p "$_stage"
   printf '{"images":[]}' > "$_stage/manifest.json"
   printf '{"created":"2026-01-01T00:00:00Z"}' > "$_stage/created-by.json"
   ( cd "$_stage" && tar -cf ../image.tar manifest.json created-by.json ) 2>/dev/null \

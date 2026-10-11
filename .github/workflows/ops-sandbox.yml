@@ -26,9 +26,20 @@ name: ops-sandbox
 #     credential is present here, not because of a network deny policy.
 
 on:
-  # Only same-repo PRs. Fork PRs inherit the restricted permissions above and
-  # receive no secrets, so they are safe, but the target branch is restricted to
-  # the redesign stream to avoid running this on every main PR.
+  # BASE branch filter — GitHub evaluates `pull_request.branches` against the PR's
+  # TARGET branch, not the head branch.
+  #
+  # Therefore the direction that ACTIVATES this workflow is:
+  #
+  #     ci/sigap-88-validation  ->  design/ui-ux-overhaul
+  #
+  # A PR in the opposite direction (design/ui-ux-overhaul -> main) does NOT match
+  # this filter and will never trigger it. That inversion was a real defect in the
+  # first published version of this workflow and is corrected here.
+  #
+  # The base is deliberately the feature branch, NOT main: this workflow validates
+  # the SIGAP-88 harnesses on the redesign stream without requiring anything to reach
+  # the default branch, and without any merge into main.
   pull_request:
     branches: [ design/ui-ux-overhaul ]
     paths:
@@ -40,8 +51,7 @@ on:
       - 'scripts/ops/test-isolated-restore-environment.sh'
       - 'scripts/ops/test-image-preservation-pipeline.sh'
       - 'scripts/ops/image-config-secret-classifier.sh'
-      - 'docs/operations/DEPLOYMENT_RUNBOOK.md'
-      - 'docs/operations/REVIEWER_SANDBOX_POLICY.md'
+      - 'docs/operations/CI_EXECUTION_CONTRACT.md'
 
 permissions:
   contents: read
@@ -119,10 +129,25 @@ jobs:
           sh scripts/ops/test-image-preservation-pipeline.sh
           sh scripts/ops/test-isolated-restore-environment.sh
 
-      - name: Image config classifier (scope-honest)
+      - name: Image config classifier (scope-honest, NOT APPLICABLE here)
+        # Deliberately NOT invoked. This job runs on a GitHub-hosted Linux runner
+        # with no SIGAP production images present, so there is nothing legitimate to
+        # inspect. The previous version called the classifier with NO image
+        # arguments and masked its exit code with `|| true`, which silently turned a
+        # security check into a no-op that always reported success.
+        #
+        # A production-image inspection is NOT APPLICABLE to this CI job. Marking it
+        # so explicitly is more honest than a masked call that looks like a pass.
         run: |
           set -euo pipefail
-          sh scripts/ops/image-config-secret-classifier.sh 2>&1 | tail -5 || true
+          echo "SKIP: image-config secret classification"
+          echo "  reason : no SIGAP application images exist on a GitHub-hosted runner"
+          echo "  scope  : NOT APPLICABLE to this job, NOT verified, NOT a pass"
+          echo "  correct place: scripts/ops/image-config-secret-classifier.sh, run by"
+          echo "               an operator against the real images on the production host"
+          echo "  NOTE   : that classifier inspects Config.Env key names ONLY. It does"
+          echo "           not scan labels, history/build-args, or layer contents, so"
+          echo "           its verdict is SAFE_WITH_DEFINED_SCOPE — never 'no secrets'."
 
       - name: Upload sanitized evidence
         if: always()
@@ -150,20 +175,38 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Prepare the adversarial image (networked, before isolation)
+        run: |
+          set -euo pipefail
+          # Dependencies are installed BEFORE the isolated container starts, in a
+          # separate, networked build step. The previous version ran
+          # `apt-get update` INSIDE the `--network none` container, which can never
+          # succeed — package repositories are unreachable. Installing here keeps the
+          # adversarial run itself fully isolated while still having the tools it needs.
+          docker build -q -t sigap-adversarial:local - <<'DOCKERFILE'
+          FROM ubuntu:24.04
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                gzip coreutils tar ca-certificates \
+            && rm -rf /var/lib/apt/lists/*
+          DOCKERFILE
+          echo "adversarial image built: sigap-adversarial:local"
+
       - name: Run adversarial containment in a disposable container
         run: |
           set -euo pipefail
-          # `--network none`   : no egress at all.
-          # `--read-only`      : the container root filesystem is read-only, so a
-          #                     rogue write to a system path fails at the OS.
-          # `--tmpfs /tmp`     : the only writable path, and it is memory-backed
-          #                     and destroyed with the container.
-          # `--memory/--pids`  : bounds the exhaustion classes from the incident.
-          # `--cap-drop=ALL`   : no capabilities.
-          # NO --volume mount  : the host filesystem and the host Docker socket are
-          #                     NOT exposed. The repository arrives via a bind of
-          #                     this workspace only, read-only.
-          # `-w /repo`         : runs from the checked-out tree.
+          # Isolation, in force for the whole adversarial run:
+          #   --network none    : no egress at all, from the first command
+          #   --read-only       : the container rootfs is read-only, so a rogue write
+          #                      to a system path fails at the OS, not in a script
+          #   --tmpfs /tmp      : the ONLY writable path, memory-backed, destroyed
+          #                      with the container
+          #   --pids-limit 256  : bounds the fork storm from the incident
+          #   --memory 2g       : bounds the exhaustion class from the incident
+          #   --cap-drop=ALL    : no capabilities
+          #   no-new-privileges : no setuid escalation
+          #   NO host --volume  : the host filesystem is not exposed
+          #   NO docker socket  : /var/run/docker.sock is not mounted
+          #   -v repo:ro        : repository input is READ-ONLY
           docker run --rm \
             --network none \
             --read-only \
@@ -178,30 +221,35 @@ jobs:
             -w /repo \
             -e SIGAP_TEST_ROOT=/tmp/sigap-sandbox \
             -e SIGAP_REQUIRE_REAL_GZIP=1 \
-            ubuntu:24.04 bash -c '
+            sigap-adversarial:local bash -c '
               set -euo pipefail
-              export DEBIAN_FRONTEND=noninteractive
-              # Minimal deps only. No network is available, so this apt run needs
-              # the image cache; if it fails the job fails loudly rather than
-              # silently skipping the adversarial tests.
-              apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-                gzip coreutils tar >/dev/null
               mkdir -p "$SIGAP_TEST_ROOT" && chmod 700 "$SIGAP_TEST_ROOT"
               echo "=== runner identity ==="
-              cat /etc/os-release | grep PRETTY_NAME
+              grep PRETTY_NAME /etc/os-release
               uname -srm
+              echo "isolated rootfs: $(findmnt -no FSTYPE,OPTIONS / | cut -c1-60)"
               echo "=== host-exposure assertions (must all be absent) ==="
               for p in /mnt/c /mnt/f /var/run/docker.sock; do
                 if [ -e "$p" ]; then echo "UNEXPECTED: $p exists"; exit 1; else echo "ok: $p absent"; fi
               done
-              echo "=== the SIGAP-88 shape, reproduced safely ==="
-              # Inside a read-only rootfs, /bin is NOT writable, so this MUST fail
-              # with an OS-level permission error. That failure is the proof that
-              # containment is enforced rather than merely declared.
+              echo "=== dependencies pre-staged ==="
+              for t in gzip tar; do command -v "$t" >/dev/null || { echo "MISSING $t"; exit 1; }; done
+              echo "ok: gzip + tar present with no network"
+              echo "=== the SIGAP-88 shape, reproduced against a REAL gzip ==="
+              # On a read-only rootfs /bin is NOT writable, so this MUST fail with an
+              # OS-level permission error. That OS-level failure is the proof that
+              # containment is ENFORCED, not merely declared by a script.
               if sh -c "T=; BIN=\$T/bin; cat > \"\$BIN/gzip\"" 2>/tmp/err; then
-                echo "CRITICAL: the write to /bin/gzip SUCCEEDED — containment is NOT enforced"; exit 1
+                echo "CRITICAL: write to /bin/gzip SUCCEEDED — containment NOT enforced"; exit 1
               else
-                echo "ok: write to /bin/gzip refused by the OS:"; cat /tmp/err
+                echo "ok: OS refused the write to /bin/gzip:"; sed -n "1,2p" /tmp/err
+              fi
+              # And the library's own gate must refuse it too, independently.
+              if SIGAP_TEST_ROOT="$SIGAP_TEST_ROOT" \
+                 sh -c ". ./scripts/ops/ops-sandbox.sh && sbx_init >/dev/null && sbx_require_contained \"/bin/gzip\"; true"; then
+                echo "CRITICAL: sbx_require_contained ACCEPTED /bin/gzip"; exit 1
+              else
+                echo "ok: sbx_require_contained refused /bin/gzip"
               fi
               echo "=== adversarial containment suite ==="
               SIGAP_TEST_ROOT="$SIGAP_TEST_ROOT" sh scripts/ops/test-sandbox-containment.sh
@@ -229,34 +277,85 @@ jobs:
           set -euo pipefail
           mkdir -p "$SIGAP_TEST_ROOT" && chmod 700 "$SIGAP_TEST_ROOT"
 
-          # A purpose-built dummy image. NOT a production image, and not derived
-          # from any SIGAP artifact.
-          docker build -q -t sigap-restore-dummy:"$GITHUB_SHA" - <<'DOCKERFILE'
+          # A purpose-built dummy image with a REAL build context.
+          # The previous version piped a Dockerfile via stdin while `FROM scratch`
+          # and `COPY README.md` — no context was supplied, so the build could not
+          # succeed. The context is created here, deterministically, and contains
+          # only synthetic content: no production files, images, config or secrets.
+          CTX="$SIGAP_TEST_ROOT/ctx"
+          mkdir -p "$CTX"
+          printf 'sigap-88 disposable dummy image\nno production content\n' > "$CTX/README.txt"
+          cat > "$CTX/Dockerfile" <<'DOCKERFILE'
           FROM scratch
-          COPY README.md /README.md
+          COPY README.txt /README.txt
           DOCKERFILE
+
+          docker build -q -t sigap-restore-dummy:"$GITHUB_SHA" "$CTX"
 
           SRC=$(docker image inspect "sigap-restore-dummy:$GITHUB_SHA" --format '{{.Id}}')
           echo "source image id: $SRC"
+          [ -n "$SRC" ] || { echo "FAIL: source id empty"; exit 1; }
 
-          # save -> gzip -> decrypt-shape round-trip. `age` is not installed and
-          # no network is assumed, so the archive is compressed and verified
-          # rather than encrypted; the encryption stage is covered by the
-          # simulated-daemon suite (Track 1), which injects age failures.
-          docker save "sigap-restore-dummy:$GITHUB_SHA" \
-            | gzip -1 > "$SIGAP_TEST_ROOT/dummy.tar.gz"
-          gzip -t "$SIGAP_TEST_ROOT/dummy.tar.gz"
-          gzip -dc "$SIGAP_TEST_ROOT/dummy.tar.gz" | tar -t | grep -q '^manifest.json$' \
-            && echo "ok: archive contains manifest.json" || { echo "FAIL"; exit 1; }
+          # --- 1. plain Docker image round-trip -------------------------------
+          docker save "sigap-restore-dummy:$GITHUB_SHA" > "$SIGAP_TEST_ROOT/dummy.tar"
+          tar -tf "$SIGAP_TEST_ROOT/dummy.tar" | grep -q '^manifest.json$' \
+            && echo "ok: plain archive contains manifest.json" || { echo "FAIL"; exit 1; }
 
-          # Remove, then restore from the archive only.
+          # --- 2. compression integrity ----------------------------------------
+          gzip -1 < "$SIGAP_TEST_ROOT/dummy.tar" > "$SIGAP_TEST_ROOT/dummy.tar.gz"
+          gzip -t "$SIGAP_TEST_ROOT/dummy.tar.gz" \
+            && echo "ok: gzip -t passes on the compressed archive" || { echo "FAIL"; exit 1; }
+          IN_B=$(wc -c < "$SIGAP_TEST_ROOT/dummy.tar")
+          OUT_B=$(wc -c < "$SIGAP_TEST_ROOT/dummy.tar.gz")
+          echo "compression: ${IN_B}B -> ${OUT_B}B"
+
+          # --- 3. authenticated encryption / decryption round-trip --------------
+          # `age` provides authenticated encryption: a tampered or truncated
+          # ciphertext fails to decrypt, which is the property the restore path
+          # depends on. Installed here because the runner image may not ship it.
+          if ! command -v age >/dev/null 2>&1; then
+            sudo apt-get install -y -qq age >/dev/null 2>&1 || true
+          fi
+          if command -v age >/dev/null 2>&1; then
+            KEY="$SIGAP_TEST_ROOT/disposable.key"
+            age-keygen -o "$KEY" >/dev/null 2>&1
+            RECIP=$(grep -m1 'public key:' "$KEY" | cut -d' ' -f3-)
+            [ -n "$RECIP" ] || { echo "FAIL: no recipient derived"; exit 1; }
+            age -r "$RECIP" -o "$SIGAP_TEST_ROOT/dummy.tar.gz.age" \
+                "$SIGAP_TEST_ROOT/dummy.tar.gz"
+            echo "ok: encrypted -> $(wc -c < "$SIGAP_TEST_ROOT/dummy.tar.gz.age")B"
+            # Tamper detection: flipping a byte MUST cause decryption to fail.
+            cp "$SIGAP_TEST_ROOT/dummy.tar.gz.age" "$SIGAP_TEST_ROOT/tampered.age"
+            printf '\xff' | dd of="$SIGAP_TEST_ROOT/tampered.age" bs=1 seek=64 count=1 \
+              conv=notrunc status=none
+            if age -d -i "$KEY" "$SIGAP_TEST_ROOT/tampered.age" >/dev/null 2>&1; then
+              echo "FAIL: tampered ciphertext decrypted — NOT authenticated"; exit 1
+            else
+              echo "ok: tampered ciphertext REJECTED (authenticated encryption verified)"
+            fi
+            # Clean decrypt must reproduce the compressed bytes exactly.
+            age -d -i "$KEY" "$SIGAP_TEST_ROOT/dummy.tar.gz.age" \
+              > "$SIGAP_TEST_ROOT/roundtrip.tar.gz"
+            cmp -s "$SIGAP_TEST_ROOT/dummy.tar.gz" "$SIGAP_TEST_ROOT/roundtrip.tar.gz" \
+              && echo "ok: decrypt -> gzip byte-identical" || { echo "FAIL: roundtrip differs"; exit 1; }
+            RESTORE_INPUT="$SIGAP_TEST_ROOT/roundtrip.tar.gz"
+            echo "ENCRYPTION_VERIFIED=yes"
+          else
+            # No age available: compression round-trip only. Reported as a PARTIAL
+            # result rather than claimed as verified.
+            echo "ENCRYPTION_VERIFIED=no (age unavailable; authenticated round-trip SKIPPED)"
+            RESTORE_INPUT="$SIGAP_TEST_ROOT/dummy.tar.gz"
+          fi
+
+          # --- restore from the archive only -----------------------------------
           docker rmi -f "sigap-restore-dummy:$GITHUB_SHA" >/dev/null
-          gzip -dc "$SIGAP_TEST_ROOT/dummy.tar.gz" | docker load --quiet
+          gzip -dc "$RESTORE_INPUT" | docker load --quiet
 
           DST=$(docker image inspect "sigap-restore-dummy:$GITHUB_SHA" --format '{{.Id}}')
           echo "restored image id: $DST"
+          [ -n "$DST" ] || { echo "FAIL: restored id empty"; exit 1; }
           [ "$SRC" = "$DST" ] && echo "PASS: exact image-ID correspondence" \
-                              || { echo "FAIL: id mismatch"; exit 1; }
+                              || { echo "FAIL: id mismatch ($SRC != $DST)"; exit 1; }
 
           # Cleanup is bounded to the disposable root only.
           rm -rf "$SIGAP_TEST_ROOT"
