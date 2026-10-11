@@ -601,6 +601,36 @@ cannot skip the trap. Nothing decrypted is ever written to `$PWD`, so no decrypt
 enter the Git worktree. `docker load` reads the temp file directly, so no second copy is made.
 `.gitignore` adds a second line of defence for the plaintext names.
 
+**Incident SIGAP-88 — containment controls, now in the harness.**
+
+The original corruption happened in an ad hoc reviewer-generated script, not in a
+committed file, so `scripts/ops/ops-sandbox.sh` provides **positive containment** for
+every test double the committed harness creates: a fresh `mktemp -d` root, canonicalised
+with `pwd -P`, validated as a child of an explicitly approved `SIGAP_TEST_ROOT`, and
+gated before any `cat >`/`chmod`/`rm -rf`. System directories and their Windows/MSYS
+aliases are additionally denied — but as defence in depth only, since **a denylist alone
+cannot establish safety; positive containment is mandatory**.
+
+`scripts/ops/test-sandbox-containment.sh` proves the gate is not vacuous: it must refuse
+unset, empty, `/`-shaped, `/bin`, `/usr/bin`, MSYS-alias, symlink-escape, `../`-escape,
+non-`mktemp` and unexported-parent-variable destinations, and must accept the contained
+one. A cleanup aimed outside the root must be a no-op.
+
+Four defects were also corrected in `scripts/ops/sigap-archive-restore.sh`:
+
+| ID | Defect | Correction |
+|---|---|---|
+| A | Decompressed data was written to a file **named** `plain.gz`, then `gzip -t` was run on it — testing a decompressed payload for gzip integrity, which can never fail for the reason claimed | the decrypted stream is now named `archive.tar.gz` (what it is), validated with `gzip -t`, checked for a docker `manifest.json`, then decompressed to `image.tar` and loaded. Residual-risk disclosure added for the unavoidable plaintext TAR |
+| B | Temp path was predictable and PID-derived (`sigap-restore.$$`) with permissive `mkdir -p` — hijackable via a pre-created symlink | `mktemp -d` only, mode 0700, symlink refused, **no fallback string** |
+| C | `ALLOWED_ENGINE_ID` absent only **warned**, so a call could omit it and load into whatever the ambient context was | `ALLOWED_ENGINE_ID` is **mandatory**: absent or mismatched aborts with exit 11, before *and* after the load |
+| D | A synthetic `tr` fallback silently substituted for a broken gzip, so a real-compression gate could pass without real gzip | the fallback is labelled synthetic and cannot satisfy the gate; `SIGAP_REQUIRE_REAL_GZIP=1` makes an unavailable real gzip a hard failure |
+
+**`REVIEWER_SANDBOX_POLICY.md`** records the isolation policy for QA/reviewer agents.
+It is **documented, NOT enforced** on this workstation — no container runtime is
+available (`docker` fails, `podman` absent) and starting WSL would mutate host state
+outside the granted authorization. Until an enforced sandbox exists, reviewer agents
+**must not be relaunched** for work that creates or executes scripts.
+
 **Real disposable-image round-trip: `NOT_VERIFIED` on this workstation.** No Docker daemon is
 reachable — `docker info` fails with *"open //./pipe/dockerDesktopLinuxEngine: The system cannot
 find the file specified"*, and `tcp://127.0.0.1:2375` is refused. So the full
