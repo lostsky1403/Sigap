@@ -374,6 +374,7 @@ env TOP_LOG="$LOG" PATH="$NARROW_PATH" \
     ARCHIVE="$LOG/archive.age" ARCHIVE_HOST=fakehost ARCHIVE_DIR=/fake \
     ARCHIVE_KEY=/fake/key STAMP=20261010 EXPECT_DIGEST="$DIG" \
     ISOLATED_DOCKER_HOST="tcp://isolated:9999" EXPECT_IDS="$API" \
+    ALLOWED_ENGINE_ID="engineaaa" \
     timeout 60 "$BASH_BIN" "$HELPER" >/dev/null 2>&1
 # Count docker invocations and how many were pinned.
 # `docker context inspect` is deliberately AMBIENT — it reads the local configuration
@@ -381,11 +382,9 @@ env TOP_LOG="$LOG" PATH="$NARROW_PATH" \
 # Every other call, especially the ones that write, must carry the isolated DOCKER_HOST.
 total=$(grep '^docker ' "$LOG/docker.calls" 2>/dev/null | grep -vc 'docker context' || true)
 total=${total:-0}
-unpinned=$(grep -A1 '^DOCKER_HOST=' "$LOG/docker.calls" 2>/dev/null \
-           | paste - - - 2>/dev/null | grep -v '^DOCKER_HOST=tcp://isolated:9999' \
-           | grep -c 'docker ' || true)
 # Count unpinned calls that are NOT context inspections, by pairing each DOCKER_HOST
-# line with the docker line that follows it.
+# line with the docker line that follows it. An earlier grep|paste|grep form of this
+# was computed and then unconditionally overwritten, so it never took effect.
 unpinned=0
 while IFS= read -r line; do
   case "$line" in
