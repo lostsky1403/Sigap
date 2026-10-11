@@ -2034,19 +2034,32 @@ ST=$(mktemp -d)
 DEST="sigap-pre-redesign-$STAMP.tar.gz.age"
 
 stream_offhost() {
-  local r1 r2 r3 r4
+  # Per-stage status via PIPESTATUS, captured in the PARENT shell. Two wrong forms were
+  # used here and are now corrected:
+  #  (a) `{ cmd; rN=$?; } | …` runs each group in a PIPELINE SUBSHELL, so r1–r4 are
+  #      assigned in the subshell and are UNSET in the parent — [OBSERVED] a faithful
+  #      repro leaves all four empty while the artifact is written correctly.
+  #  (b) `rc_age=${PIPESTATUS[0]}; rc_gzip=${PIPESTATUS[1]}` — the first assignment
+  #      resets PIPESTATUS, so the second is a constant. Capture the array ONCE.
   set +e
   set -o pipefail
-  { ssh -o BatchMode=yes fikriserver "docker image save \
+  { ssh -o BatchMode=yes -o ConnectTimeout=20 fikriserver "docker image save \
       sha256:${EXPECT[api]} \
       sha256:${EXPECT[web]} \
-      sha256:${EXPECT[rust-engine]}"; r1=$?; } \
-    | { gzip -1; r2=$?; } \
-    | { age -r "$OFFHOST_RECIPIENT"; r3=$?; } \
-    | { ssh "$ARCHIVE_HOST" "set -C; cat > '$ARCHIVE_DIR/$DEST'"; r4=$?; }
+      sha256:${EXPECT[rust-engine]}" \
+    | gzip -1 \
+    | age -r "$OFFHOST_RECIPIENT" \
+    | ssh -o BatchMode=yes -o ConnectTimeout=20 "$ARCHIVE_HOST" "set -C; cat > '$ARCHIVE_DIR/$DEST'"
+  }
+  ps=("${PIPESTATUS[@]}")
   set +o pipefail
-  printf '%s\n' "$r1" > "$ST/st.1" "$r2" > "$ST/st.2" \
-                "$r3" > "$ST/st.3" "$r4" > "$ST/st.4"
+  set -e
+  r_save=${ps[0]:-1}; r_gzip=${ps[1]:-1}; r_age=${ps[2]:-1}; r_scp=${ps[3]:-1}
+  printf '%s\n' "$r_save" > "$ST/st.1"
+  printf '%s\n' "$r_gzip" > "$ST/st.2"
+  printf '%s\n' "$r_age"  > "$ST/st.3"
+  printf '%s\n' "$r_scp"  > "$ST/st.4"
+  echo "stream stages: save=$r_save gzip=$r_gzip age=$r_age scp=$r_scp"
 }
 stream_offhost
 for f in "$ST"/st.*; do
