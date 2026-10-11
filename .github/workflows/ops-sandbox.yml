@@ -204,9 +204,11 @@ jobs:
           #   --memory 2g       : bounds the exhaustion class from the incident
           #   --cap-drop=ALL    : no capabilities
           #   no-new-privileges : no setuid escalation
-          #   NO host --volume  : the host filesystem is not exposed
-          #   NO docker socket  : /var/run/docker.sock is not mounted
-          #   -v repo:ro        : repository input is READ-ONLY
+          #   no docker socket : /var/run/docker.sock is NOT mounted
+          #   -v repo:ro        : the repository is the ONLY host path exposed, and it
+          #                       is mounted READ-ONLY. This IS a host bind mount, so
+          #                       "no host volume at all" would be false; the accurate
+          #                       claim is that no WRITABLE host path is exposed.
           docker run --rm \
             --network none \
             --read-only \
@@ -245,11 +247,33 @@ jobs:
                 echo "ok: OS refused the write to /bin/gzip:"; sed -n "1,2p" /tmp/err
               fi
               # And the library's own gate must refuse it too, independently.
-              if SIGAP_TEST_ROOT="$SIGAP_TEST_ROOT" \
-                 sh -c ". ./scripts/ops/ops-sandbox.sh && sbx_init >/dev/null && sbx_require_contained \"/bin/gzip\"; true"; then
+              # NO trailing `true`: the earlier form ran
+              #   sbx_require_contained "/bin/gzip"; true
+              # inside the `if`, which discarded the guard's real exit status and made
+              # every refusal look like success. The actual return code is captured.
+              . ./scripts/ops/ops-sandbox.sh
+              SIGAP_TEST_ROOT="$SIGAP_TEST_ROOT" sbx_init >/dev/null 2>&1
+              rc_forbidden=0
+              sbx_require_contained "/bin/gzip" >/dev/null 2>&1 || rc_forbidden=$?
+              if [ "$rc_forbidden" -eq 0 ]; then
                 echo "CRITICAL: sbx_require_contained ACCEPTED /bin/gzip"; exit 1
               else
-                echo "ok: sbx_require_contained refused /bin/gzip"
+                echo "ok: sbx_require_contained refused /bin/gzip (rc=$rc_forbidden)"
+              fi
+              # And the POSITIVE control: a contained destination must return zero, so
+              # the refusal above cannot pass merely because the gate always fails.
+              # The destination MUST be inside the root the guard actually owns. sbx_init
+              # sets SBX_ROOT to a fresh `mktemp -d` CHILD of SIGAP_TEST_ROOT, so
+              # "$SIGAP_TEST_ROOT/bin" is a SIBLING of the sandbox root, not a child:
+              # sbx_is_child_of fails and the guard correctly refuses it, which made this
+              # control unreachable and kept the job permanently red. "$SBX_ROOT/bin" is
+              # created by sbx_init and is the boundary the gate judges against.
+              rc_good=1
+              sbx_require_contained "$SBX_ROOT/bin" >/dev/null 2>&1 && rc_good=0
+              if [ "$rc_good" -eq 0 ]; then
+                echo "ok: sbx_require_contained ACCEPTED a contained destination (rc=0)"
+              else
+                echo "CRITICAL: guard refused a valid contained path — gate is not discriminating"; exit 1
               fi
               echo "=== adversarial containment suite ==="
               SIGAP_TEST_ROOT="$SIGAP_TEST_ROOT" sh scripts/ops/test-sandbox-containment.sh
@@ -269,6 +293,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      - name: Prepare dependencies (networked, before the restore)
+        # `age` is installed HERE, with network access, because the restore step below
+        # must be able to fail if it is missing rather than silently degrading.
+        run: |
+          set -euo pipefail
+          command -v age >/dev/null 2>&1 || sudo apt-get install -y -qq age >/dev/null
+          command -v age >/dev/null 2>&1 || { echo "FAIL: could not install age"; exit 1; }
+          age --version
 
       - name: Dummy image round-trip
         env:
@@ -310,42 +343,44 @@ jobs:
           echo "compression: ${IN_B}B -> ${OUT_B}B"
 
           # --- 3. authenticated encryption / decryption round-trip --------------
-          # `age` provides authenticated encryption: a tampered or truncated
-          # ciphertext fails to decrypt, which is the property the restore path
-          # depends on. Installed here because the runner image may not ship it.
-          if ! command -v age >/dev/null 2>&1; then
-            sudo apt-get install -y -qq age >/dev/null 2>&1 || true
-          fi
-          if command -v age >/dev/null 2>&1; then
-            KEY="$SIGAP_TEST_ROOT/disposable.key"
-            age-keygen -o "$KEY" >/dev/null 2>&1
-            RECIP=$(grep -m1 'public key:' "$KEY" | cut -d' ' -f3-)
-            [ -n "$RECIP" ] || { echo "FAIL: no recipient derived"; exit 1; }
-            age -r "$RECIP" -o "$SIGAP_TEST_ROOT/dummy.tar.gz.age" \
-                "$SIGAP_TEST_ROOT/dummy.tar.gz"
-            echo "ok: encrypted -> $(wc -c < "$SIGAP_TEST_ROOT/dummy.tar.gz.age")B"
-            # Tamper detection: flipping a byte MUST cause decryption to fail.
-            cp "$SIGAP_TEST_ROOT/dummy.tar.gz.age" "$SIGAP_TEST_ROOT/tampered.age"
-            printf '\xff' | dd of="$SIGAP_TEST_ROOT/tampered.age" bs=1 seek=64 count=1 \
-              conv=notrunc status=none
-            if age -d -i "$KEY" "$SIGAP_TEST_ROOT/tampered.age" >/dev/null 2>&1; then
-              echo "FAIL: tampered ciphertext decrypted — NOT authenticated"; exit 1
-            else
-              echo "ok: tampered ciphertext REJECTED (authenticated encryption verified)"
-            fi
-            # Clean decrypt must reproduce the compressed bytes exactly.
-            age -d -i "$KEY" "$SIGAP_TEST_ROOT/dummy.tar.gz.age" \
-              > "$SIGAP_TEST_ROOT/roundtrip.tar.gz"
-            cmp -s "$SIGAP_TEST_ROOT/dummy.tar.gz" "$SIGAP_TEST_ROOT/roundtrip.tar.gz" \
-              && echo "ok: decrypt -> gzip byte-identical" || { echo "FAIL: roundtrip differs"; exit 1; }
-            RESTORE_INPUT="$SIGAP_TEST_ROOT/roundtrip.tar.gz"
-            echo "ENCRYPTION_VERIFIED=yes"
+          # `age` provides AUTHENTICATED encryption: a tampered or truncated ciphertext
+          # fails to decrypt, which is the property the restore path depends on.
+          # MANDATORY here, not optional: this workflow's acceptance criterion is an
+          # authenticated encrypted restore. An earlier version tolerated an age
+          # install failure and reported PARTIAL, which let the gate look complete
+          # while the encryption stage never ran. age is pre-installed in the
+          # networked prepare step, so its absence here is a hard failure.
+          # There is deliberately NO fallback branch below: a fallback would let the job
+          # report success with the encryption stage unrun, which is the masked-pass
+          # defect this workflow exists to close.
+          command -v age >/dev/null 2>&1 || { echo "FAIL: age unavailable — the authenticated encryption gate CANNOT pass"; exit 1; }
+          KEY="$SIGAP_TEST_ROOT/disposable.key"
+          age-keygen -o "$KEY" >/dev/null 2>&1
+          # `age-keygen -y` derives the recipient from the identity file. The previous
+          # `grep -m1 'public key:' | cut -d' ' -f3-` parsed a COMMENT line
+          # ("# public key: age1..."), whose third space-separated field is the literal
+          # "key:", so RECIP became "key: age1..." and `age -r` failed outright.
+          RECIP=$(age-keygen -y "$KEY")
+          [ -n "$RECIP" ] || { echo "FAIL: no recipient derived"; exit 1; }
+          age -r "$RECIP" -o "$SIGAP_TEST_ROOT/dummy.tar.gz.age" \
+              "$SIGAP_TEST_ROOT/dummy.tar.gz"
+          echo "ok: encrypted -> $(wc -c < "$SIGAP_TEST_ROOT/dummy.tar.gz.age")B"
+          # Tamper detection: flipping a byte MUST cause decryption to fail.
+          cp "$SIGAP_TEST_ROOT/dummy.tar.gz.age" "$SIGAP_TEST_ROOT/tampered.age"
+          printf '\xff' | dd of="$SIGAP_TEST_ROOT/tampered.age" bs=1 seek=64 count=1 \
+            conv=notrunc status=none
+          if age -d -i "$KEY" "$SIGAP_TEST_ROOT/tampered.age" >/dev/null 2>&1; then
+            echo "FAIL: tampered ciphertext decrypted — NOT authenticated"; exit 1
           else
-            # No age available: compression round-trip only. Reported as a PARTIAL
-            # result rather than claimed as verified.
-            echo "ENCRYPTION_VERIFIED=no (age unavailable; authenticated round-trip SKIPPED)"
-            RESTORE_INPUT="$SIGAP_TEST_ROOT/dummy.tar.gz"
+            echo "ok: tampered ciphertext REJECTED (authenticated encryption verified)"
           fi
+          # Clean decrypt must reproduce the compressed bytes exactly.
+          age -d -i "$KEY" "$SIGAP_TEST_ROOT/dummy.tar.gz.age" \
+            > "$SIGAP_TEST_ROOT/roundtrip.tar.gz"
+          cmp -s "$SIGAP_TEST_ROOT/dummy.tar.gz" "$SIGAP_TEST_ROOT/roundtrip.tar.gz" \
+            && echo "ok: decrypt -> gzip byte-identical" || { echo "FAIL: roundtrip differs"; exit 1; }
+          RESTORE_INPUT="$SIGAP_TEST_ROOT/roundtrip.tar.gz"
+          echo "ENCRYPTION_VERIFIED=yes"
 
           # --- restore from the archive only -----------------------------------
           docker rmi -f "sigap-restore-dummy:$GITHUB_SHA" >/dev/null
