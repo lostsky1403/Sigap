@@ -168,6 +168,15 @@ jobs:
     name: Adversarial containment (containerised)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # The RUNNER needs this too, not only the container. The step sources
+      # ops-sandbox.sh, which sets `set -u`, and then references
+      # SIGAP_TEST_ROOT on the runner side before entering the container. With the
+      # value supplied only via `docker run -e`, the runner aborted with
+      # `SIGAP_TEST_ROOT: unbound variable` before the container ever started.
+      # `/tmp` inside the container is a tmpfs, so this is disposable either way.
+      SIGAP_TEST_ROOT: /tmp/sigap-sandbox
+      SIGAP_REQUIRE_REAL_GZIP: '1'
 
     steps:
       - name: Checkout (no persisted credentials)

@@ -160,7 +160,11 @@ while [ $# -gt 0 ]; do
   case "$1" in
     info|ps|context|load) [ -z "$sub" ] && sub=$1 ;;
     image) sub=image ;;
-    -*) shift 2 2>/dev/null || shift ;;
+    # A flag plus its value. Under dash (/bin/sh on Ubuntu) `shift 2` is a FATAL
+    # error when fewer than two positional parameters remain, so it must be
+    # guarded explicitly — `shift 2 2>/dev/null || shift` still fails there,
+    # because the error is not suppressible that way.
+    -*) if [ $# -ge 2 ]; then shift; fi ;;
     sha256:*|sha256) ref=$1 ;;
   esac
   shift
