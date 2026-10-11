@@ -1774,7 +1774,7 @@ is **`READY_FOR_AUTHORIZATION`** rather than `BLOCKED`: the capacity arithmetic 
 
 | Input | Status | Value |
 |---|---|---|
-| 1. Exact free bytes (`df -B1 /`) | **DONE (re-measured 2026-10-10)** | `88,279,465,984` bytes = 82.25 GiB (was 88,368,025,600 on 2026-10-09; −0.09 GiB of normal host activity) |
+| 1. Exact free bytes (`df -B1 /`) | **DONE (re-measured 2026-10-10)** | `88,279,465,984` bytes = 82.22 GiB (was `88,368,025,600` on 2026-10-09; −88,559,616 B = −0.08 GiB of normal host activity) |
 | 2. `docker system df -v` | **DONE** | Images 12.56 GB (100% reclaimable); Containers 4.895 GB; Volumes 5.4 GB (731.6 MB reclaimable); **Build Cache 0 B** |
 | 3. Exact per-image bytes | **DONE** | api `26,911,970`; web `323,542,368`; engine `90,347,301`; postgres `294,282,098` |
 | 4. **Measured build peak** | **OUTSTANDING** | strategy in §13e.6 below. **No production build may run to obtain it.** |
@@ -1889,21 +1889,25 @@ never a value:
 sh scripts/ops/image-config-secret-classifier.sh sigap-api sigap-web sigap-rust-engine
 ```
 
-Expected: `VERDICT: SAFE` with only the keys the Dockerfiles bake —
+Expected: `VERDICT: SAFE_WITH_DEFINED_SCOPE` with only the keys the Dockerfiles bake —
 `api`: `PATH`, `SIGAP_API_PORT`, `SIGAP_ENGINE_ADDR`; `web`: `PATH`, `NODE_VERSION`,
 `YARN_VERSION`, `PORT`, `HOST`; `rust-engine`: `PATH`, `RUST_LOG`.
 
-**`[OBSERVED]` 2026-10-10 on the live production host** (`fikriserver`, read-only): exactly that
-set, and **`VERDICT: SAFE`** — no baked credential in any of the three images. `PATH`,
-`NODE_VERSION` and `YARN_VERSION` are base-image variables, not secrets. `RepoDigests` and
-image IDs unchanged from the 2026-10-09 capture, so this classifier result applies to the
-images §13f preserves.
+**`[OBSERVED]` 2026-10-10 on the live production host** (`fikriserver`, read-only): exactly that set.
+No credential-shaped **env key** is baked in any of the three images, so the classifier's env verdict
+is `SAFE_WITH_DEFINED_SCOPE`. **Scope, stated plainly:** the classifier reads `Config.Env` key names
+only. Labels, history/build-args and layer contents are **not** examined — each image carries
+**3 labels** and the history count is unreadable through this inspect form — so a credential baked
+into a label or via `--build-arg` would **not** be detected. The honest verdict is therefore
+`SAFE_WITH_DEFINED_SCOPE` for env **plus `REVIEW_REQUIRED`** for the unexamined labels, **not**
+"the images contain no secrets". A full label/history scan is a separate, explicitly authorized step.
 
 A `STOP` for any key (`DATABASE_URL`, `SMTP_PASSWORD`, a DSN, a token, a private key) means a
 baked credential is suspected: **do not preserve, request owner disposition**. A `REVIEW`
-means an unrecognised key is present and the owner must classify it. An `UNREADABLE` count
-also aborts — a count that does not parse is treated as a failed inspection, never as zero,
-because a false `SAFE` here is the exact failure this gate exists to prevent.
+means an unrecognised key is present, or labels/history were not inspected, and the owner must
+classify it. An `UNREADABLE` count is `BLOCKED` — a count that does not parse is treated as a
+failed inspection, never as zero, because a false pass here is the exact failure this gate
+exists to prevent.
 
 **Distinction that matters:** the classifier reads the **image config**, which is what the
 archive carries. `SIGAP_AUTH_ISSUER`, `SIGAP_AUTH_AUDIENCE`, `SIGAP_AUTH_JWKS_URL`,
