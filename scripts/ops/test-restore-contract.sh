@@ -47,11 +47,22 @@ done
 [ -n "$BASH_BIN" ] || { printf 'FAIL %s\n' "no working bash interpreter"; exit 1; }
 printf 'using bash: %s\n' "$BASH_BIN"
 
-TOP=$(mktemp -d 2>/dev/null || echo "/tmp/sigap-rst.$$")
-BIN="$TOP/bin"; LOG="$TOP/log"; mkdir -p "$BIN" "$LOG"
-trap 'rm -rf "$TOP"' EXIT INT TERM
+# --- SIGAP-88 remediation: positive containment, not a permissive temp dir ----------
+# The original incident was caused by exactly the shape below: a permissive temporary
+# directory plus an unvalidated `$BIN` destination. `mktemp -d` was used, but nothing
+# PROVED the result was disposable, and an unset/unescaped variable would have
+# collapsed it to /bin and overwritten a host executable. The sandbox library now
+# creates the root, canonicalises it, and gates every write.
+. "$(cd -P -- "$(dirname "$0")" && pwd -P)/ops-sandbox.sh"
+SIGAP_TEST_ROOT="${SIGAP_TEST_ROOT:-/tmp}" sbx_init >/dev/null
+TOP="$SBX_ROOT"; BIN="$SBX_BIN"; LOG="$SBX_ROOT/log"
 export TOP_LOG="$LOG"
 CHAIN="$BIN:/usr/bin:/bin"
+
+# Every creation below is gated: if any destination is not contained, refuse and abort.
+for _dest in "$BIN/age" "$BIN/docker" "$BIN/scp" "$BIN/sha256sum" "$BIN/gzip"; do
+  sbx_require_contained "$_dest"
+done
 
 # Resolve the commands the fakes must delegate to ONCE, BEFORE the fake directory is
 # put on PATH — otherwise `command -v gzip`/`sha256sum` inside a fake resolves the
@@ -80,6 +91,21 @@ for cand in gzip /usr/bin/gzip /bin/gzip; do
 done
 REAL_SUM=$(command -v sha256sum)
 [ -n "$REAL_SUM" ] || { printf 'FAIL %s\n' "no real sha256sum found"; exit 1; }
+
+# ---- Defect D: a synthetic fallback must never satisfy a real-compatibility gate ---
+# When no working gzip exists, the fake below implements a reversible `tr` transform so
+# the SUITE still runs on a host with a broken toolchain. That is legitimate only for
+# assertions about the guard logic. It must NEVER be presented as evidence of real gzip
+# archive compatibility. [OBSERVED] this is precisely the situation incident SIGAP-88
+# created: a corrupted host gzip made every real-compression result meaningless.
+if [ -z "$REAL_GZIP" ]; then
+  if [ "${SIGAP_REQUIRE_REAL_GZIP:-0}" = "1" ]; then
+    printf 'FAIL: no working gzip and SIGAP_REQUIRE_REAL_GZIP=1 — the real-compression gate MUST fail\n' >&2
+    exit 1
+  fi
+  printf 'WARNING: no working gzip — assertions are SYNTHETIC ONLY and do NOT prove\n' >&2
+  printf '         gzip archive compatibility. Set SIGAP_REQUIRE_REAL_GZIP=1 to enforce.\n' >&2
+fi
 printf 'selftest' > "$TOP/.selftest"
 "$REAL_SUM" "$TOP/.selftest" >/dev/null 2>&1 \
   || { printf 'FAIL %s\n' "resolved sha256sum does not work: $REAL_SUM"; exit 1; }

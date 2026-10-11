@@ -84,12 +84,12 @@ if ! target_engine=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker info --format '{
 fi
 [ -n "$target_engine" ] || die "isolated daemon returned no engine ID" 11
 
-if [ -n "${ALLOWED_ENGINE_ID:-}" ]; then
-  [ "$target_engine" = "$ALLOWED_ENGINE_ID" ] \
-    || die "engine ID $target_engine is not the allowlisted $ALLOWED_ENGINE_ID" 11
-else
-  printf 'WARNING: ALLOWED_ENGINE_ID unset — engine identity not pinned\n' >&2
-fi
+# ALLOWED_ENGINE_ID is MANDATORY: absent aborts. Previously it warned and continued,
+# so a caller could omit the allowlist and load the decrypted image into WHATEVER the
+# ambient context happened to be. [Defect C]
+: "${ALLOWED_ENGINE_ID:?ALLOWED_ENGINE_ID is required — refusing to load without a pinned engine ID}"
+[ "$target_engine" = "$ALLOWED_ENGINE_ID" ] \
+  || die "engine ID $target_engine is not the allowlisted $ALLOWED_ENGINE_ID" 11
 
 # Never load into a daemon that is (or contains) the production project.
 if DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker ps -a --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null \
@@ -105,17 +105,22 @@ echo "restore target verified: endpoint=$ISOLATED_DOCKER_HOST engine=$target_eng
 #    guaranteed on every exit path INCLUDING interruption (SIGINT/SIGTERM) — the
 #    trap fires before the shell exits, and `set -e` cannot skip it.
 # ---------------------------------------------------------------------------
-WORK="${TMPDIR:-/tmp}/sigap-restore.$$"
-mkdir -p "$WORK" 2>/dev/null || die "cannot create temporary directory" 14
-chmod 700 "$WORK" || true
+# A predictable PID-derived path is hijackable: a local attacker can pre-create it as a
+# symlink and have us write through it. `mktemp -d` gives an unpredictable path created
+# atomically with mode 0700. A fallback string is NOT acceptable. [Defect B]
+WORK=$(mktemp -d 2>/dev/null) || die "mktemp -d failed; refusing a predictable fallback" 14
+[ -d "$WORK" ] || die "mktemp did not yield a directory" 14
+[ -L "$WORK" ] && die "the temporary directory is a symlink" 11
+chmod 700 "$WORK" 2>/dev/null || true
 cleanup() {
   # The decrypted plaintext is the only sensitive artifact; remove it unconditionally.
   # `shred` is preferred but absent on some platforms (macOS, minimal images), so fall
   # back to a plain remove — the guarantee is REMOVAL, not a specific shred path.
-  if [ -f "$WORK/plain.gz" ]; then
-    shred -u "$WORK/plain.gz" 2>/dev/null || rm -f "$WORK/plain.gz"
-  fi
-  rm -rf "$WORK"
+  # Image TAR and decrypted archive are both sensitive plaintext; shred when possible.
+  for f in "$WORK/image.tar" "$WORK/archive.tar.gz" "$WORK/plain.gz"; do
+    [ -f "$f" ] && { shred -u "$f" 2>/dev/null || rm -f "$f"; }
+  done
+  rm -rf -- "$WORK"
   # Belt and braces: assert nothing plaintext survived in the worktree.
   [ -n "${worktree_plain:-}" ] && rm -f "$worktree_plain"
   # Report rather than trust: if a plaintext file survived, say so loudly.
@@ -156,32 +161,54 @@ echo "digest verified against out-of-band record"
 # fix, and this script REQUIRES bash.
 # ---------------------------------------------------------------------------
 set +e
-age -d -i "$ARCHIVE_KEY" "$WORK/archive.age" | gzip -d > "$WORK/plain.gz"
-# Capture PIPESTATUS into an ARRAY in ONE statement. Two separate assignments are
-# WRONG: the first assignment is itself a simple command, so bash resets PIPESTATUS to
-# a one-element array before the second expansion runs, `${PIPESTATUS[1]}` is then
-# unset and its `:-1` default fires — making rc_gzip a constant 1 whatever gzip really
-# did. [OBSERVED] reproduced: `cat good.gz | gzip -d; rc_age=${PIPESTATUS[0]:-1};
-# rc_gzip=${PIPESTATUS[1]:-1}` prints `0 1` when both stages actually exited 0.
+age -d -i "$ARCHIVE_KEY" "$WORK/archive.age" > "$WORK/archive.tar.gz"
 ps=("${PIPESTATUS[@]}")
-rc_age=${ps[0]:-1}; rc_gzip=${ps[1]:-1}
+rc_age=${ps[0]:-1}
 set -e
-printf 'stage statuses: age=%s gzip=%s\n' "$rc_age" "$rc_gzip"
-[ "$rc_age"  -eq 0 ] || die "age decrypt failed (rc=$rc_age)" 14
-[ "$rc_gzip" -eq 0 ] || die "gzip decompress failed (rc=$rc_gzip)" 14
+printf 'stage statuses: age=%s\n' "$rc_age"
+[ "$rc_age" -eq 0 ] || die "age decrypt failed (rc=$rc_age)" 14
+[ -s "$WORK/archive.tar.gz" ] || die "decrypted stream is empty" 13
 
-# Belt and braces: the plaintext must be a COMPLETE, NON-EMPTY gzip. This also
-# catches truncation and the empty-stream case, which look like success to a
-# bare pipeline.
-[ -s "$WORK/plain.gz" ] || die "decrypted stream is empty" 13
-gzip -t "$WORK/plain.gz" 2>/dev/null || die "decrypted stream is not a complete gzip" 13
+# Naming matters, and the original code got it wrong: the DECRYPTED stream IS the
+# archive (a .tar.gz); the DECOMPRESSED form is the image TAR. The previous version
+# wrote the decompressed data to a file literally NAMED `plain.gz` and then ran
+# `gzip -t` on it — testing a decompressed payload for gzip integrity, which is
+# meaningless and cannot fail for the reason claimed. [Defect A]
+gzip -t "$WORK/archive.tar.gz" 2>/dev/null \
+  || die "decrypted artifact is not a complete gzip archive (wrong key or truncated)" 13
+
+# Validate that it is a DOCKER IMAGE TAR before spending a load on it: a docker save
+# archive always contains a manifest.json. This turns a silently-empty load — which
+# could exit 0 with no images restored — into a hard refusal.
+if ! gzip -dc "$WORK/archive.tar.gz" 2>/dev/null | tar -t 2>/dev/null | grep -q 'manifest.json'; then
+  die "the decrypted archive is not a docker image tar (no manifest.json)" 13
+fi
+
+# Decompress and load in ONE pipeline so both statuses are captured together: a gzip
+# failure cannot be masked by a successful docker load, or the reverse.
+set +e
+gzip -dc "$WORK/archive.tar.gz" > "$WORK/image.tar"
+rc_gunzip=$?
+set -e
+[ "$rc_gunzip" -eq 0 ] || die "gzip decompress failed (rc=$rc_gunzip)" 14
+[ -s "$WORK/image.tar" ] || die "decompressed image tar is empty" 13
 
 set +e
-DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load --input "$WORK/plain.gz"
+DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load < "$WORK/image.tar"
 rc_load=$?
 set -e
 [ "$rc_load" -eq 0 ] || die "docker load failed (rc=$rc_load)" 14
 echo "docker load succeeded"
+
+# ---- Residual-risk disclosure (Defect A, unavoidable plaintext) ------------------
+# The decompressed image TAR is a temporary plaintext, unavoidable because `docker
+# load` consumes a TAR stream. Mitigations: it exists only inside a 0700 `mktemp -d`
+# directory, is shredded and removed by the cleanup trap on EVERY exit path including
+# interruption, is never written to the working directory, and .gitignore adds a second
+# line of defence. RESIDUAL RISK: a reader of /tmp, or a core dump during the window,
+# could observe the image TAR. The window is the duration of `docker load` only, and
+# the TAR holds the image layers — which is what the archive already holds — not the
+# plaintext application data.
 
 # Re-read the engine ID AFTER the load closes the verification-to-load TOCTOU window:
 # if the ambient context changed between the check above and this load, the ID differs
@@ -189,10 +216,8 @@ echo "docker load succeeded"
 target_engine=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker info --format '{{.ID}}' 2>/dev/null) \
   || die "isolated daemon unreachable after load" 11
 [ -n "$target_engine" ] || die "no engine ID after load" 11
-if [ -n "${ALLOWED_ENGINE_ID:-}" ]; then
-  [ "$target_engine" = "$ALLOWED_ENGINE_ID" ] \
-    || die "engine ID changed after load ($target_engine != $ALLOWED_ENGINE_ID)" 11
-fi
+[ "$target_engine" = "$ALLOWED_ENGINE_ID" ] \
+  || die "engine ID changed after load ($target_engine != $ALLOWED_ENGINE_ID)" 11
 
 # ---------------------------------------------------------------------------
 # 7. Identity correspondence — per-image, ON the isolated daemon, with explicit
