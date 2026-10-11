@@ -222,7 +222,7 @@ cat > "$BIN/gzip" <<F
 # checks gzip integrity and decompression, so delegating is the honest behaviour.
 # [Defect D]
 if [ -n "$REAL_GZIP" ]; then
-  exec "$REAL_GZIP" "$@"
+  exec "$REAL_GZIP" "\$@"
 fi
 echo "fake gzip: no working real gzip — refusing rather than emulating" >&2
 exit 3
