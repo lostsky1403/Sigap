@@ -174,3 +174,55 @@ concluded no interception existed based only on locally installed extensions; th
 scanning its compiled bundle was inconclusive. Documented bypasses exist regardless:
 print/ACP input is outside the interception contract, and restricted children do not admit
 extension tools. **No OMP hook is implemented here.**
+
+## First-run activation procedure
+
+The workflow has never executed. Activating it requires an owner-authorised validation PR.
+
+### PR direction
+
+```
+ci/sigap-88-validation   ->   design/ui-ux-overhaul
+        (head)                      (base)
+```
+
+`on.pull_request.branches` is a **base** filter, so the base must be
+`design/ui-ux-overhaul` for the workflow to fire. The earlier documented direction
+(`design/ui-ux-overhaul -> main`) does **not** match that filter and would not have run.
+
+The validation branch is dedicated and disposable. `main` is never a target, is never
+merged, and the validation PR is **not** to be merged.
+
+### Activation steps
+
+1. Create `ci/sigap-88-validation` from `design/ui-ux-overhaul`.
+2. Make one documentation-only commit (this file is already in the path filter).
+3. Push and open the PR with base `design/ui-ux-overhaul`.
+4. Confirm head/base from the PR's own metadata, not from the branch name.
+5. If GitHub requires manual approval before the workflow runs, **STOP** and request
+   approval in the GitHub UI. Repository security policy is never bypassed.
+
+### Runtime evidence requirements
+
+A run is only evidence if it is recorded from GitHub's actual run metadata. Per job:
+
+- run URL and run ID; job ID
+- actual runner (`ubuntu-latest` image)
+- started and completed timestamps
+- conclusion and exit status
+- passed/failed assertion counts
+- timeout or cancellation
+- explicitly enforced resource limits
+- any skipped checks
+- sanitised failure logs
+
+These five outcomes are **never** conflated: a workflow that never triggered; a workflow
+that could not start; a job that failed during setup; a test assertion that failed; a
+genuinely successful runtime test. Missing execution is **never** reported as PASS.
+
+### Failure handling
+
+On failure, identify the **first** causal failure from the real logs. Do not create
+multiple speculative fixes, do not rerun suites on the Windows host, and do not weaken
+OS-level isolation. Fix only verified defects, on the validation branch, and re-run
+through the PR's normal `synchronize` event. Preserve the failed-run evidence.
