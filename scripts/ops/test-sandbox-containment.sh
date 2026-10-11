@@ -37,74 +37,61 @@ sbx_init
 printf 'containment root: %s\n' "$SBX_ROOT" >&2
 
 printf '=== unset / empty / root-shaped destinations must be REFUSED ===\n'
-sbx_require_contained "" >/dev/null 2>&1 && bad 'unset-destination' 'empty accepted' \
-                                             || ok 'unset-destination' 'refused'
+# The guard fails closed by EXITING (sbx_fatal), so a plain
+# `sbx_require_contained x && bad || ok` can no longer observe a refusal: the process
+# dies instead of returning. Each probe runs in a subshell and its EXIT CODE is the
+# evidence. `0` = accepted, `10` = refused by the guard.
+probe() { ( sbx_require_contained "$1" >/dev/null 2>&1 ); printf '%s' "$?"; }
+refused() { rc=$(probe "$1"); [ "$rc" = 10 ] && ok "$2" 'refused (rc=10)' || bad "$2" "guard returned $rc, expected 10"; }
+accepted() { rc=$(probe "$1"); [ "$rc" = 0 ] && ok "$2" 'accepted (rc=0)' || bad "$2" "guard returned $rc, expected 0"; }
+
+refused "" 'unset-destination'
 UNSET_NEVER_EXPORTED=
-sbx_require_contained "$UNSET_NEVER_EXPORTED/bin" >/dev/null 2>&1 \
-  && bad 'unset-parent-variable' '/bin collapse accepted' \
-  || ok 'unset-parent-variable' 'refused — the exact SIGAP-88 shape'
-sbx_require_contained "/" >/dev/null 2>&1 && bad 'root-path' '/ accepted' \
-                                                || ok 'root-path' 'refused'
+refused "$UNSET_NEVER_EXPORTED/bin" 'unset-parent-variable'
+refused "/" 'root-path'
 
 printf '=== system directories and MSYS/Windows aliases must be REFUSED ===\n'
 for p in /bin /usr/bin /usr/local/bin /usr /sbin /opt /etc /run /var/run /tmp \
          /c/WINDOWS/system32 "C:/Windows/System32" "C:/Program Files/Git/usr/bin"; do
-  sbx_require_contained "$p" >/dev/null 2>&1 && bad "system[$p]" 'accepted' || ok "system[$p]" 'refused'
+  refused "$p" "system[$p]"
 done
 
 printf '=== containment escapes must be REFUSED ===\n'
-sbx_require_contained "$SBX_ROOT/../../etc" >/dev/null 2>&1 \
-  && bad 'dotdot-escape' '../ escape accepted' || ok 'dotdot-escape' 'refused'
-sbx_require_contained "$APPROVED" >/dev/null 2>&1 \
-  && bad 'approved-root-itself' 'the parent itself accepted' \
-  || ok 'approved-root-itself' 'refused'
+refused "$SBX_ROOT/../../etc" 'dotdot-escape'
+refused "$APPROVED" 'approved-root-itself'
 # A symlink inside the disposable root pointing at /bin must be rejected, both as a
 # destination and as a parent whose target is a system directory.
 ln -s /bin "$SBX_ROOT/escape" 2>/dev/null
 if [ -L "$SBX_ROOT/escape" ]; then
-  sbx_require_contained "$SBX_ROOT/escape" >/dev/null 2>&1 \
-    && bad 'symlink-escape' 'symlink to /bin accepted' \
-    || ok 'symlink-escape' 'refused'
+  refused "$SBX_ROOT/escape" 'symlink-escape'
 else
   ok 'symlink-escape' 'symlink unsupported here; system paths still refused'
 fi
 
 printf '=== a validated prefix with a .. suffix must be REFUSED (SIGAP88-001) ===\n'
-# The gate must judge the WRITE TARGET, not a validated prefix. These are the exact\n
-# escapes the earlier prefix-only design allowed.\n
-sbx_require_contained "$SBX_BIN/../../bin/gzip" >/dev/null 2>&1 \
-  && bad 'dotdot-suffix-escape' 'a .. suffix escaped the gate' \
-  || ok 'dotdot-suffix-escape' 'refused'
-sbx_require_contained "$SBX_BIN/../escape/gzip" >/dev/null 2>&1 \
-  && bad 'dotdot-then-inside' 'refused only incidentally' \
-  || ok 'dotdot-then-inside' 'refused'
-sbx_require_contained "$SBX_ROOT/./bin/gzip" >/dev/null 2>&1 \
-  && ok 'plain-child-file-accepted' 'a plain child file is accepted' \
-  || bad 'plain-child-file-accepted' 'a legitimate child file was rejected'
+# The gate must judge the WRITE TARGET, not a validated prefix. These are the exact
+# escapes the earlier prefix-only design allowed.
+refused "$SBX_BIN/../../bin/gzip" 'dotdot-suffix-escape'
+refused "$SBX_BIN/../escape/gzip" 'dotdot-then-inside'
+accepted "$SBX_ROOT/./bin/gzip" 'plain-child-file-accepted'
 
 printf '=== a pre-existing, attacker-chosen directory must be REFUSED ===\n'
 PRECD="$APPROVED/predetermined"; mkdir -p "$PRECD"
-sbx_require_contained "$PRECD" >/dev/null 2>&1 \
-  && bad 'predetermined-path' 'a non-mktemp path accepted' \
-  || ok 'predetermined-path' 'refused — only mktemp roots are contained'
+refused "$PRECD" 'predetermined-path'
 
 printf '=== the contained destination must be ACCEPTED (non-vacuous) ===\n'
-sbx_require_contained "$SBX_BIN" >/dev/null 2>&1 \
-  && ok 'contained-bin-accepted' "$SBX_BIN accepted" \
-  || bad 'contained-bin-accepted' 'a valid contained path was rejected'
-sbx_require_contained "$SBX_ROOT/log" >/dev/null 2>&1 \
-  && ok 'contained-log-accepted' 'accepted' \
-  || bad 'contained-log-accepted' 'rejected'
+accepted "$SBX_BIN" 'contained-bin-accepted'
+accepted "$SBX_ROOT/log" 'contained-log-accepted'
 
 printf '=== cleanup can only touch the disposable root ===\n'
 # QaReview5: writing a canary and asserting it exists only proves `: >` works, so the
 # guard was never under test. Assert the guard ACCEPTS the contained path and REFUSES
 # an escaping one, then perform the write.
 CANARY="$SBX_ROOT/log/canary"
-if sbx_require_contained "$CANARY" >/dev/null 2>&1; then guarded=yes; else guarded=no; fi
-if sbx_require_contained "$SBX_ROOT/../../bin/canary" >/dev/null 2>&1; then escaped=yes; else escaped=no; fi
-if [ "$guarded" = "yes" ] && [ "$escaped" = "no" ] && : > "$CANARY" && [ -f "$CANARY" ]; then
-  ok 'writes-confined-to-root' 'guard accepted contained, refused escaping, write landed'
+guarded=$(probe "$CANARY")
+escaped=$(probe "$SBX_ROOT/../../bin/canary")
+if [ "$guarded" = 0 ] && [ "$escaped" = 10 ] && : > "$CANARY" && [ -f "$CANARY" ]; then
+  ok 'writes-confined-to-root' "guard accepted contained (rc=$guarded), refused escaping (rc=$escaped), write landed"
 else
   bad 'writes-confined-to-root' "guarded=$guarded escaped=$escaped"
 fi
@@ -214,16 +201,18 @@ case "$MODE" in
   # it here (rather than handing a stale path to a second child, which creates a
   # different root) is what makes the positive control reachable at all.
   self-accept)
-    if sbx_require_contained "$SBX_ROOT/bin" >/dev/null 2>&1
-    then printf 'ACCEPT'; else printf 'REFUSE'; fi
+    sbx_require_contained "$SBX_ROOT/bin" >/dev/null 2>&1 \
+      && printf 'ACCEPT' || printf 'REFUSE'
     exit 0 ;;
 esac
 # A distinct marker, not a bare REFUSE. Without it this case cannot fail: removing the
 # guard leaves "$DEST/bin" as /bin, which the system-path check refuses anyway, so the
 # observable output is identical whether or not the guard exists.
 [ -n "$DEST" ] || { printf 'REFUSE:empty'; exit 0; }
-if sbx_require_contained "$DEST/bin" >/dev/null 2>&1; then
-  printf 'ACCEPT'; else printf 'REFUSE'; fi
+# The guard exits the process on refusal, so it must run in a subshell for the child to
+# survive and report the outcome.
+( sbx_require_contained "$DEST/bin" >/dev/null 2>&1 ) \
+  && printf 'ACCEPT' || printf 'REFUSE'
 CHILD
 LIB_PATH=$(cd -P -- "$(dirname "$0")" && pwd -P)/ops-sandbox.sh
 [ -f "$LIB_PATH" ] || bad 'library-path-resolves' "cannot find ops-sandbox.sh at $LIB_PATH"
