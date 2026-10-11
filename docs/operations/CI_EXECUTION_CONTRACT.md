@@ -72,17 +72,40 @@ Enforced by the trigger and job configuration, not by convention:
 
 ## What this workflow does NOT claim
 
-- **No network-deny policy is claimed.** GitHub-hosted runners have public egress by
-  default. Production is unreachable here **only because no production credential is
-  present in this workflow** — not because of a network boundary. That is a real
-  distinction and it is stated rather than blurred.
+- **No network-deny policy is claimed, and the distinction is load-bearing.**
+  GitHub-hosted runners have public egress by default. Three separate facts must not be
+  conflated:
+  1. **No production credentials are supplied** — true, verified by the absence of any
+     `secrets.*` reference.
+  2. **No production service is *intentionally* contacted** — true, because no step in this
+     workflow addresses a production endpoint.
+  3. **Network isolation is actually enforced** — true **only** inside the `adversarial`
+     container (`--network none`). The `sandbox-tests` and `real-restore` jobs have full
+     egress.
+
+  Absence of a credential does **not** make a production endpoint unreachable: an
+  unauthenticated endpoint, or one reachable without a secret, is still reachable. The
+  correct claim is (1) and (2), not (3) workflow-wide.
+- **Action pinning.** `@v4` is a **major-version tag**, a mutable ref the maintainer can
+  move. That is the conventional pin, and it is **not** immutable commit-SHA pinning.
+  Hardening to `@<full-commit-sha>` is a deliberate improvement, recorded as **not done**.
 - **Host VM isolation is not a sandbox for every adversarial command.** The adversarial
   job therefore adds a container with `--read-only`, `--network none`, `--pids-limit`,
-  `--memory`, and **no host volume or Docker-socket mount**.
-- **The `adversarial` job depends on `apt-get` succeeding without network.** It runs
-  with `--network none`, so it relies on the `ubuntu:24.04` image cache. If that fails,
-  the job **fails loudly** rather than silently skipping — a skipped adversarial test is
-  reported BLOCKED, never PASS.
+  `--memory`, and **no Docker-socket mount**. It **does** bind-mount the repository
+  read-only (`-v "$GITHUB_WORKSPACE:/repo:ro"`) — that mount is the adversarial input and
+  the container's working directory. The accurate claim is that **no writable host path
+  is exposed**, not that the host filesystem is unreachable.
+- **The `adversarial` job's dependencies are pre-installed in a separate networked build
+  step** (`sigap-adversarial:local`), so the isolated container has no network from its
+  first command. The earlier design ran `apt-get` inside the `--network none` container,
+  which could never succeed; that was corrected rather than worked around.
+- **Authenticated encryption is a hard acceptance criterion for `real-restore`, not an
+  optional extra.** `age` is installed in a networked prepare step and its absence is a
+  hard failure — there is **no fallback branch**, so the job cannot reach the restore step
+  with the encryption stage unrun. The round-trip must produce byte-identical plaintext
+  **and** reject a tampered ciphertext. Plain-image and compression results are reported
+  as they are produced, but the restore input is the *decrypted* archive, so a run that
+  never encrypted cannot restore at all.
 
 ## Runner budget (GitHub-hosted standard, `ubuntu-latest`)
 
@@ -96,7 +119,7 @@ incident. Exact allocation is GitHub-controlled and not guaranteed.
 |---|---|---|---|
 | `sandbox-tests` | none | containment guard logic, restore-contract failure modes, exit-code propagation | real Docker behaviour |
 | `adversarial` | container, `--read-only --network none` | **the SIGAP-88 shape is refused by the OS**, not by a script | anything about the runner VM itself |
-| `real-restore` | runner's disposable daemon | exact image-ID correspondence through save → gzip → load | encryption, production images |
+| `real-restore` | runner's disposable daemon | exact image-ID correspondence through save → gzip → **age encrypt → decrypt** → load, plus tamper rejection | production images, production keys |
 
 ## Corrections applied before the first run
 
