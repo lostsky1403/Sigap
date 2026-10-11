@@ -260,10 +260,13 @@ jobs:
               #   sbx_require_contained "/bin/gzip"; true
               # inside the `if`, which discarded the guard's real exit status and made
               # every refusal look like success. The actual return code is captured.
+              # The guard fails closed by EXITING, so each probe runs in a subshell.
+              # Without the subshell the refusal would kill this whole step, and
+              # `|| rc_forbidden=$?` would never see the status it is meant to check.
               . ./scripts/ops/ops-sandbox.sh
               SIGAP_TEST_ROOT="$SIGAP_TEST_ROOT" sbx_init >/dev/null 2>&1
               rc_forbidden=0
-              sbx_require_contained "/bin/gzip" >/dev/null 2>&1 || rc_forbidden=$?
+              ( sbx_require_contained "/bin/gzip" >/dev/null 2>&1 ) || rc_forbidden=$?
               if [ "$rc_forbidden" -eq 0 ]; then
                 echo "CRITICAL: sbx_require_contained ACCEPTED /bin/gzip"; exit 1
               else
@@ -278,7 +281,7 @@ jobs:
               # control unreachable and kept the job permanently red. "$SBX_ROOT/bin" is
               # created by sbx_init and is the boundary the gate judges against.
               rc_good=1
-              sbx_require_contained "$SBX_ROOT/bin" >/dev/null 2>&1 && rc_good=0
+              ( sbx_require_contained "$SBX_ROOT/bin" >/dev/null 2>&1 ) && rc_good=0
               if [ "$rc_good" -eq 0 ]; then
                 echo "ok: sbx_require_contained ACCEPTED a contained destination (rc=0)"
               else
