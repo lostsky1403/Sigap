@@ -210,14 +210,17 @@ F
 cat > "$BIN/gzip" <<F
 #!/bin/sh
 [ -f "\$TOP_LOG/gzip_fails" ] && { echo "gzip failed" >&2; exit 2; }        # C
-# Delegate to the real gzip when one works; otherwise implement a trivial reversible
-# transform with \`tr\` so the suite still runs on a host with a broken gzip. The helper
-# only ever checks \`gzip -t\` and decompression, both of which this satisfies. A REAL
-# deployment never uses this path — it is test scaffolding only.
-# Defect D: there is NO synthetic fallback here. On a host with a broken gzip the fake
-# exits non-zero, so the real-compression gate FAILS rather than passing on a transform
-# that claims to be gzip. OpsReview5 confirmed the earlier `tr` fallback was reachable
-# with only a warning, while the suite still reported "N pass, 0 fail".
+# This heredoc is UNQUOTED so that \$REAL_GZIP and \$REAL_SUM are baked in as absolute
+# paths. That means EVERY unescaped backtick in the body would be executed as a command
+# substitution — a stray pair around a tool name silently runs that tool and substitutes
+# its (empty) output into the fake, corrupting it. No backticks appear below for that
+# reason: write tool names plainly.
+#
+# Delegate to the real gzip when one works. There is NO synthetic fallback: on a host
+# with a broken gzip the fake exits non-zero, so the real-compression gate FAILS rather
+# than passing on a transform that merely claims to be gzip. The helper only ever
+# checks gzip integrity and decompression, so delegating is the honest behaviour.
+# [Defect D]
 if [ -n "$REAL_GZIP" ]; then
   exec "$REAL_GZIP" "$@"
 fi
