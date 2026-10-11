@@ -168,18 +168,31 @@ sbx_init() {
   sbx_is_child_of "$_cr" "$SBX_APPROVED_ROOT" || sbx_fatal "the new root is not inside the approved root: $_cr" 10
 
   SBX_ROOT="$_cr"
+  SBX_CREATED="$_cr"          # ownership record: cleanup may remove ONLY this
   SBX_BIN="$SBX_ROOT/bin"
   mkdir "$SBX_BIN" "$SBX_ROOT/log" || sbx_fatal "cannot create bin/log inside the disposable root" 11
 
-  # Cleanup that can ONLY touch what this invocation created.
-  sbx_cleanup() {
-    case "${SBX_ROOT:-}" in
-      "") return 0 ;;
-    esac
-    _c=$(sbx_canonical "$SBX_ROOT") || return 0
-    sbx_is_child_of "$_c" "${SBX_APPROVED_ROOT:-/nonexistent}" || return 0
-    [ -d "$_c" ] && rm -rf -- "$_c"
-  }
+  # Ownership invariant: only the disposable directory CREATED by this invocation may
+  # be recursively removed. QaReview5 and AuditReview5 both found that the previous
+  # cleanup would `rm -rf` ANY child of the approved root, so a caller who replaced
+  # SBX_ROOT with a sibling could delete a directory this invocation did not create.
+  # The created root is recorded at init time and cleanup compares against that
+  # recorded value, never against a mutable global.
   trap 'sbx_cleanup' EXIT INT TERM HUP
   printf 'sandbox root: %s\n' "$SBX_ROOT" >&2
+}
+
+# Cleanup is safe exactly when SBX_ROOT resolves to the root THIS invocation created.
+sbx_cleanup() {
+  [ -n "${SBX_ROOT:-}" ] || return 0
+  [ -n "${SBX_CREATED:-}" ] || return 0          # never recorded → refuse
+  _c=$(sbx_canonical "$SBX_ROOT") || return 0
+  _created=$(sbx_canonical "$SBX_CREATED") || return 0
+  # Both the current root and the recorded root must be children of the approved
+  # parent AND must be the SAME directory. A sibling with a valid-looking path fails
+  # the second test and survives.
+  sbx_is_child_of "$_c" "${SBX_APPROVED_ROOT:-/nonexistent}" || return 0
+  [ "$_c" = "$_created" ] || return 0
+  [ -d "$_c" ] && rm -rf -- "$_c"
+  return 0
 }

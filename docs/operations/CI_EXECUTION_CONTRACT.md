@@ -26,9 +26,31 @@ This workflow uses **`pull_request` on `design/ui-ux-overhaul` only**, so:
 - it runs from the feature branch **without merging the redesign into `main`**;
 - it is path-filtered, so unrelated PR activity does not trigger it.
 
-**Activation status: `NOT_VERIFIED`.** The workflow has never run. Running it requires
-opening a PR from `design/ui-ux-overhaul`, which needs the owner's explicit approval —
-that PR is for CI validation only and **must not be merged**.
+## Activation — exact PR direction (corrected)
+
+`on.pull_request.branches` is a **BASE branch** filter: GitHub matches it against the PR's
+*target*, not its head. The first published version documented the activation direction as
+`design/ui-ux-overhaul → main`, which does **not** match `branches: [design/ui-ux-overhaul]`
+and would never have triggered the workflow. Corrected.
+
+**The direction that activates this workflow is:**
+
+```
+ci/sigap-88-validation  ->  design/ui-ux-overhaul
+   (head)                     (base — matches the filter)
+```
+
+A PR in the opposite direction (`design/ui-ux-overhaul → main`) does **not** match and will
+never run it. The base is deliberately the feature branch, not `main`: the harnesses are
+validated on the redesign stream without anything reaching the default branch, and without a
+merge into `main`.
+
+The PR head branch must contain a change matching the `paths` filter — editing
+`.github/workflows/ops-sandbox.yml`, any listed `scripts/ops/*.sh`, or this document is
+sufficient.
+
+**Activation status: `NOT_VERIFIED`.** The workflow has never run. Opening that PR needs the
+owner's explicit approval; it is for CI validation only and **must not be merged**.
 
 ## Security contract
 
@@ -76,11 +98,44 @@ incident. Exact allocation is GitHub-controlled and not guaranteed.
 | `adversarial` | container, `--read-only --network none` | **the SIGAP-88 shape is refused by the OS**, not by a script | anything about the runner VM itself |
 | `real-restore` | runner's disposable daemon | exact image-ID correspondence through save → gzip → load | encryption, production images |
 
+## Corrections applied before the first run
+
+Audited and fixed before any execution, each verified in source:
+
+1. **Trigger direction.** `branches` is a base filter; the documented activation direction was
+   inverted. Corrected above — `ci/sigap-88-validation → design/ui-ux-overhaul`.
+2. **Adversarial dependencies.** The container ran `apt-get update` under `--network none`,
+   which cannot succeed. Dependencies are now installed in a separate **networked build step**
+   (`sigap-adversarial:local`), so the isolated run has no network from its first command.
+   Isolation is not weakened to make the test pass.
+3. **Dummy-image build context.** `docker build … -` with `FROM scratch` + `COPY README.md`
+   supplied no context. The context is now created deterministically with synthetic content
+   only, and the round-trip verifies exact image-ID correspondence plus a real `age`
+   authenticated-encryption round-trip including a tamper-rejection check.
+4. **Hardcoded Windows path.** The containment suite sourced
+   `/f/Sehat-Hub-ui-redesign/scripts/ops/ops-sandbox.sh`, which does not exist on a hosted
+   runner. The library is resolved from the script's own location and passed as an explicit,
+   validated argument; wrong, empty and nonexistent paths fail closed, and no Windows-specific
+   fallback was added.
+5. **Containment enforcement.** The harness runs `set -u` but not `set -e`, so a bare
+   `sbx_require_contained` could be ignored and the write would proceed anyway.
+   `sbx_write_gate` now aborts before **every** write, `chmod`, and temporary-payload
+   creation, gating the exact destination rather than a validated prefix.
+6. **Cleanup ownership.** Cleanup could `rm -rf` any child of the approved root, so a caller
+   replacing `SBX_ROOT` with a sibling could delete a directory it did not create. Cleanup now
+   removes only the root recorded at init (`SBX_CREATED`), with a negative control proving a
+   sibling survives while the created root is still removable.
+7. **Classifier reporting.** The workflow called the classifier with no image arguments and
+   masked its exit with `|| true`, turning a security check into an always-passing no-op.
+   Production-image inspection is now marked **NOT APPLICABLE** to this job, stated plainly
+   rather than reported as a pass.
+
 ## Evidence standard
 
 A PASS requires: the actual command, the runner identity, the exit code, a pass/fail
 count, the timeout status, the resource limits in force, whether anything was skipped,
-and a sanitized artifact URL. **Static YAML validity is not evidence.**
+and a sanitized artifact URL. **Static YAML validity and source review are not evidence of
+execution**, and are reported as such.
 
 ## Remaining host execution risk
 

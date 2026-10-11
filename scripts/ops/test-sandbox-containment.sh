@@ -132,20 +132,61 @@ SBX_ROOT="$JUNK" sbx_cleanup >/dev/null 2>&1
               || ok 'cleanup-removes-own-root' 'a contained root was removed'
 SBX_ROOT="$SBX_ROOT_BEFORE"
 
+# OWNERSHIP: a SIBLING of the created root must SURVIVE cleanup. This is the case that
+# caught the previous cleanup deleting any child of the approved root.
+SIB="$APPROVED/sibling"; mkdir -p "$SIB"; : > "$SIB/keep"
+[ -f "$SIB/keep" ] || bad 'cleanup-sibling-survives' 'cannot set up sibling canary'
+SBX_ROOT="$SIB" sbx_cleanup >/dev/null 2>&1
+if [ -f "$SIB/keep" ]; then
+  ok 'cleanup-sibling-survives' 'a sibling directory survived cleanup (ownership enforced)'
+else
+  bad 'cleanup-sibling-survives' 'cleanup DELETED a sibling this invocation did not create'
+fi
+# And the created root itself must still be removable through the same code path,
+# proving the sibling case above is not passing merely because cleanup never deletes.
+SBX_ROOT="$SBX_CREATED" sbx_cleanup >/dev/null 2>&1
+[ -d "$SBX_CREATED" ] && bad 'cleanup-own-root-removable' 'own root survived' \
+                      || ok 'cleanup-own-root-removable' 'own root removed when pointed at it'
+SBX_ROOT="$SBX_ROOT_BEFORE"
+
 printf '=== explicit argument passing works (the preferred fix) ===\n'
 # A real child process, so relying on inherited scope actually fails.
+# The library is resolved from THIS script's own location and passed to the child as
+# an explicit, validated argument. A hardcoded absolute path was a real defect: it
+# worked on the development workstation and silently failed on a GitHub-hosted Ubuntu
+# runner, where that path does not exist. No Windows-specific fallback is added — an
+# unresolvable library fails closed.
 cat > "$SBX_ROOT/argchild.sh" <<'CHILD'
-. /f/Sehat-Hub-ui-redesign/scripts/ops/ops-sandbox.sh
-SIGAP_TEST_ROOT="$1" sbx_init >/dev/null 2>&1
-if [ $# -ge 1 ] && [ -n "$2" ] && sbx_require_contained "$2/bin" >/dev/null 2>&1; then
+LIB="$1"; ROOT="$2"; DEST="$3"
+[ -n "$LIB" ] && [ -f "$LIB" ] || { echo "REFUSE:no-library"; exit 0; }
+[ -n "$ROOT" ] || { echo "REFUSE:no-root"; exit 0; }
+. "$LIB"
+SIGAP_TEST_ROOT="$ROOT" sbx_init >/dev/null 2>&1
+if [ -n "$DEST" ] && sbx_require_contained "$DEST/bin" >/dev/null 2>&1; then
   printf 'ACCEPT'; else printf 'REFUSE'; fi
 CHILD
-res=$(sh "$SBX_ROOT/argchild.sh" "$SIGAP_TEST_ROOT" "$SBX_ROOT" 2>/dev/null)
-[ "$res" = "ACCEPT" ] && ok 'explicit-argument-passing' 'child received the root as $2' \
+LIB_PATH=$(cd -P -- "$(dirname "$0")" && pwd -P)/ops-sandbox.sh
+[ -f "$LIB_PATH" ] || bad 'library-path-resolves' "cannot find ops-sandbox.sh at $LIB_PATH"
+[ -f "$LIB_PATH" ] && ok 'library-path-resolves' "$LIB_PATH"
+
+res=$(sh "$SBX_ROOT/argchild.sh" "$LIB_PATH" "$SIGAP_TEST_ROOT" "$SBX_ROOT" 2>/dev/null)
+[ "$res" = "ACCEPT" ] && ok 'explicit-argument-passing' 'child received the root as $3' \
                        || bad 'explicit-argument-passing' "child returned $res"
-res=$(sh "$SBX_ROOT/argchild.sh" "$SIGAP_TEST_ROOT" "" 2>/dev/null)
+res=$(sh "$SBX_ROOT/argchild.sh" "$LIB_PATH" "$SIGAP_TEST_ROOT" "" 2>/dev/null)
 [ "$res" = "REFUSE" ] && ok 'explicit-argument-empty' 'empty argument refused' \
                        || bad 'explicit-argument-empty' "empty argument returned $res"
+# A wrong or nonexistent library path must fail closed, never silently pass.
+res=$(sh "$SBX_ROOT/argchild.sh" /nonexistent/ops-sandbox.sh "$SIGAP_TEST_ROOT" "$SBX_ROOT" 2>/dev/null)
+case "$res" in
+  REFUSE*) ok 'library-path-wrong-fails-closed' "returned $res" ;;
+  ACCEPT)  bad 'library-path-wrong-fails-closed' 'accepted with a nonexistent library' ;;
+  *)       bad 'library-path-wrong-fails-closed' "unexpected: $res" ;;
+esac
+res=$(sh "$SBX_ROOT/argchild.sh" "" "$SIGAP_TEST_ROOT" "$SBX_ROOT" 2>/dev/null)
+case "$res" in
+  REFUSE*) ok 'library-path-empty-fails-closed' "returned $res" ;;
+  *)       bad 'library-path-empty-fails-closed' "empty library path returned $res" ;;
+esac
 
 printf '=== a broken host gzip must fail the real-compression gate ===\n'
 # Defect D: a synthetic fallback must NEVER satisfy a gate that claims real gzip
