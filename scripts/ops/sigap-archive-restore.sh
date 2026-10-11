@@ -68,6 +68,14 @@ fi
 if [ "$ISOLATED_DOCKER_HOST" = "$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null)" ]; then
   die "ISOLATED_DOCKER_HOST equals the active context" 11
 fi
+# If the AMBIENT context is itself production, an UNPINNED docker command would target
+# it. The helper therefore pins EVERY docker command below with an explicit DOCKER_HOST
+# and warns loudly, rather than trusting that no command was forgotten.
+AMBIENT_CTX=$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null) || AMBIENT_CTX=''
+if [ -n "$AMBIENT_CTX" ] && is_production_string "$AMBIENT_CTX"; then
+  printf 'NOTE: the active context (%s) is production-like; every docker command below\n' "$AMBIENT_CTX" >&2
+  printf '      is pinned to DOCKER_HOST=%s.\n' "$ISOLATED_DOCKER_HOST" >&2
+fi
 
 # Reachability and engine identity. `docker info` returns the ENGINE id, which is a
 # property of the daemon itself, so two spellings of the same daemon cannot both pass.
@@ -149,9 +157,14 @@ echo "digest verified against out-of-band record"
 # ---------------------------------------------------------------------------
 set +e
 age -d -i "$ARCHIVE_KEY" "$WORK/archive.age" | gzip -d > "$WORK/plain.gz"
-# Under `set -u`, PIPESTATUS[n] is only defined for stages that RAN: a pipeline that
-# fails in its first stage leaves later indices unset, so index them defensively.
-rc_age=${PIPESTATUS[0]:-1}; rc_gzip=${PIPESTATUS[1]:-1}
+# Capture PIPESTATUS into an ARRAY in ONE statement. Two separate assignments are
+# WRONG: the first assignment is itself a simple command, so bash resets PIPESTATUS to
+# a one-element array before the second expansion runs, `${PIPESTATUS[1]}` is then
+# unset and its `:-1` default fires — making rc_gzip a constant 1 whatever gzip really
+# did. [OBSERVED] reproduced: `cat good.gz | gzip -d; rc_age=${PIPESTATUS[0]:-1};
+# rc_gzip=${PIPESTATUS[1]:-1}` prints `0 1` when both stages actually exited 0.
+ps=("${PIPESTATUS[@]}")
+rc_age=${ps[0]:-1}; rc_gzip=${ps[1]:-1}
 set -e
 printf 'stage statuses: age=%s gzip=%s\n' "$rc_age" "$rc_gzip"
 [ "$rc_age"  -eq 0 ] || die "age decrypt failed (rc=$rc_age)" 14
@@ -164,11 +177,22 @@ printf 'stage statuses: age=%s gzip=%s\n' "$rc_age" "$rc_gzip"
 gzip -t "$WORK/plain.gz" 2>/dev/null || die "decrypted stream is not a complete gzip" 13
 
 set +e
-docker load --input "$WORK/plain.gz"
+DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load --input "$WORK/plain.gz"
 rc_load=$?
 set -e
 [ "$rc_load" -eq 0 ] || die "docker load failed (rc=$rc_load)" 14
 echo "docker load succeeded"
+
+# Re-read the engine ID AFTER the load closes the verification-to-load TOCTOU window:
+# if the ambient context changed between the check above and this load, the ID differs
+# and the identity assertion below is against a different daemon than the verified one.
+target_engine=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker info --format '{{.ID}}' 2>/dev/null) \
+  || die "isolated daemon unreachable after load" 11
+[ -n "$target_engine" ] || die "no engine ID after load" 11
+if [ -n "${ALLOWED_ENGINE_ID:-}" ]; then
+  [ "$target_engine" = "$ALLOWED_ENGINE_ID" ] \
+    || die "engine ID changed after load ($target_engine != $ALLOWED_ENGINE_ID)" 11
+fi
 
 # ---------------------------------------------------------------------------
 # 7. Identity correspondence — per-image, ON the isolated daemon, with explicit
