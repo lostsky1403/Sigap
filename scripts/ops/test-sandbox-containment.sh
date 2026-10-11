@@ -31,7 +31,9 @@ trap 'rm -rf -- "$APPROVED"' EXIT INT TERM HUP
 
 # The guard under test, exercised WITHOUT initialising a root (so $SBX_ROOT is empty)
 # for the empty/unset-argument cases, and with a root for the containment cases.
-sbx_init >/dev/null 2>&1
+# NOT redirected: AuditReview5 showed a silent `sbx_init >/dev/null 2>&1` hid a fatal
+# misconfiguration, so the whole suite exited with no output at all.
+sbx_init
 printf 'containment root: %s\n' "$SBX_ROOT" >&2
 
 printf '=== unset / empty / root-shaped destinations must be REFUSED ===\n'
@@ -66,6 +68,19 @@ if [ -L "$SBX_ROOT/escape" ]; then
 else
   ok 'symlink-escape' 'symlink unsupported here; system paths still refused'
 fi
+
+printf '=== a validated prefix with a .. suffix must be REFUSED (SIGAP88-001) ===\n'
+# The gate must judge the WRITE TARGET, not a validated prefix. These are the exact\n
+# escapes the earlier prefix-only design allowed.\n
+sbx_require_contained "$SBX_BIN/../../bin/gzip" >/dev/null 2>&1 \
+  && bad 'dotdot-suffix-escape' 'a .. suffix escaped the gate' \
+  || ok 'dotdot-suffix-escape' 'refused'
+sbx_require_contained "$SBX_BIN/../escape/gzip" >/dev/null 2>&1 \
+  && bad 'dotdot-then-inside' 'refused only incidentally' \
+  || ok 'dotdot-then-inside' 'refused'
+sbx_require_contained "$SBX_ROOT/./bin/gzip" >/dev/null 2>&1 \
+  && ok 'plain-child-file-accepted' 'a plain child file is accepted' \
+  || bad 'plain-child-file-accepted' 'a legitimate child file was rejected'
 
 printf '=== a pre-existing, attacker-chosen directory must be REFUSED ===\n'
 PRECD="$APPROVED/predetermined"; mkdir -p "$PRECD"

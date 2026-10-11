@@ -54,7 +54,12 @@ printf 'using bash: %s\n' "$BASH_BIN"
 # collapsed it to /bin and overwritten a host executable. The sandbox library now
 # creates the root, canonicalises it, and gates every write.
 . "$(cd -P -- "$(dirname "$0")" && pwd -P)/ops-sandbox.sh"
-SIGAP_TEST_ROOT="${SIGAP_TEST_ROOT:-/tmp}" sbx_init >/dev/null
+# The approved root must exist BEFORE sbx_init and must NOT be a denylisted system
+# directory. `/tmp` is in the denylist, so an earlier `:-/tmp` default was self-refused
+# and the suite died before its first case. A disposable working root is created here
+# and passed explicitly; SIGAP_TEST_ROOT may still override it.
+SBX_HOST=$(mktemp -d 2>/dev/null) || { printf 'FAIL: mktemp\n' >&2; exit 1; }
+SIGAP_TEST_ROOT="${SIGAP_TEST_ROOT:-$SBX_HOST}" sbx_init
 TOP="$SBX_ROOT"; BIN="$SBX_BIN"; LOG="$SBX_ROOT/log"
 export TOP_LOG="$LOG"
 CHAIN="$BIN:/usr/bin:/bin"
@@ -235,7 +240,8 @@ run_case() {  # run_case <desc> <want-rc> [VAR=val ...] — markers pre-set by c
   out=$(env TOP_LOG="$LOG" PATH="$NARROW_PATH" \
         ARCHIVE="$LOG/archive.age" ARCHIVE_HOST=fakehost ARCHIVE_DIR=/fake \
         ARCHIVE_KEY=/fake/key STAMP=20261010 EXPECT_DIGEST="$DIG" \
-        ISOLATED_DOCKER_HOST="tcp://isolated:9999" EXPECT_IDS="$API" "$@" \
+        ISOLATED_DOCKER_HOST="tcp://isolated:9999" EXPECT_IDS="$API" \
+        ALLOWED_ENGINE_ID="engineaaa" "$@" \
         timeout 60 "$BASH_BIN" "$HELPER" 2>&1)
   rc=$?
   if [ "$rc" -eq "$want" ]; then
@@ -299,6 +305,14 @@ run_case 'L2-image-present-accepted' 0
 clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/no_engine"
 run_case 'N-missing-engine-identity' 11
 
+printf '=== Defect C: ALLOWED_ENGINE_ID is mandatory ===\n'
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/no_engine" 2>/dev/null || rm -f "$LOG/no_engine"
+run_case 'engine-allowlist-absent-refused' 10 ISOLATED_DOCKER_HOST="tcp://isolated:9999" \
+         ALLOWED_ENGINE_ID="" EXPECT_IDS="$API"
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'engine-allowlist-mismatch-refused' 11 ISOLATED_DOCKER_HOST="tcp://isolated:9999" \
+         ALLOWED_ENGINE_ID="engineWRONG" EXPECT_IDS="$API"
+
 printf '=== restore-target isolation ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
 run_case 'M-production-host-refused' 11 ISOLATED_DOCKER_HOST=ssh://fikriserver
@@ -311,7 +325,8 @@ clear_all; : > "$LOG/KEEP_have_api"
 out=$(TOP_LOG="$LOG" PATH="$NARROW_PATH" \
       ARCHIVE_HOST=h ARCHIVE_DIR=/d ARCHIVE_KEY=/k \
       STAMP=s EXPECT_DIGEST="$DIG" ISOLATED_DOCKER_HOST="tcp://i:1" \
-      EXPECT_IDS="$API" timeout 60 "$BASH_BIN" "$HELPER" 2>&1)
+      EXPECT_IDS="$API" ALLOWED_ENGINE_ID="engineaaa" \
+      timeout 60 "$BASH_BIN" "$HELPER" 2>&1)
 [ $? -eq 10 ] && ok 'missing-var-fails-closed' 'rc=10' \
               || bad 'missing-var-fails-closed' "want=10 got=$?"
 

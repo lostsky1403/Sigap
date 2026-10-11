@@ -32,7 +32,13 @@ set -u
 # default that looks plausible is exactly the failure mode being remedied.
 SBX_APPROVED_ROOT="${SIGAP_TEST_ROOT:-}"
 
-sbx_die() { printf 'REFUSED: %s\n' "$*" >&2; exit "${2:-10}"; }
+# Refusals are RETURNED, not exited. AuditReview5 (P0): an earlier version ended with
+# `exit`, so a refused destination terminated the CALLING shell — which made every
+# negative assertion untestable (`sbx_require_contained x && bad || ok` could never
+# observe a refusal, because the test process died first). `return` keeps the refusal
+# observable; genuine setup failures use `sbx_fatal`, which does exit.
+sbx_die() { printf 'REFUSED: %s\n' "$*" >&2; return "${2:-10}"; }
+sbx_fatal() { printf 'FATAL: %s\n' "$*" >&2; exit "${2:-11}"; }
 
 # ---------------------------------------------------------------------------
 # 1. Create the disposable root. `mktemp -d` must succeed; a fallback string is NOT
@@ -40,11 +46,11 @@ sbx_die() { printf 'REFUSED: %s\n' "$*" >&2; exit "${2:-10}"; }
 #    hijackable. Abort on any failure rather than proceeding with an unverified path.
 # ---------------------------------------------------------------------------
 sbx_new_root() {
-  _root=$(mktemp -d 2>/dev/null) || sbx_die "mktemp -d failed; no disposable root" 11
-  [ -d "$_root" ] || sbx_die "mktemp returned a non-directory" 11
+  _root=$(mktemp -d 2>/dev/null) || sbx_fatal "mktemp -d failed; no disposable root" 11
+  [ -d "$_root" ] || sbx_fatal "mktemp returned a non-directory" 11
   # Refuse a root that is not new — a pre-existing directory may be a symlink target
   # planted for us.
-  [ -L "$_root" ] && sbx_die "the new root is a symlink" 10
+  [ -L "$_root" ] && sbx_fatal "the new root is a symlink" 10
   printf '%s' "$_root"
 }
 
@@ -90,22 +96,47 @@ sbx_is_system_path() {
       return 0 ;;
     /c/WINDOWS/*|/c/Windows/*|/c/ProgramFiles/*|/c/Program\ Files/*|C:/WINDOWS/*|C:/Windows/*|C:/ProgramFiles/*|C:/Program\ Files/*)
       return 0 ;;
-    //*|\\*) return 0 ;;
+    # The toolchain damaged in SIGAP-88, in both MSYS and native Windows spellings.
+    /c/laragon/*|C:/laragon/*|C:\\laragon\\*|/c/laragon|C:/laragon)
+      return 0 ;;
+    # UNC paths and drive-relative forms that can resolve onto host volumes.
+    //*|\\\\*) return 0 ;;
+    # Drive-relative (C:foo.exe) has no leading slash and so cannot be contained.
+    [A-Za-z]:[!/\\]*) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 # ---------------------------------------------------------------------------
 # 4. The gate every write must pass.
+#
+# SIGAP88-001: an earlier version contained only its ARGUMENT, so a write such as
+# `cat > "$BIN/../../bin/gzip"` escaped — the guard validated $BIN and never saw the
+# `..`. The gate therefore now takes the EXACT write target and canonicalises its
+# PARENT, so any `..` or symlink in the write path is resolved before the decision.
+# A missing final component is fine (the file is about to be created); a missing
+# PARENT is not.
 # ---------------------------------------------------------------------------
 sbx_require_contained() {
   _dest=$1
   [ -n "${SBX_ROOT:-}" ] || sbx_die "sbx_init was never called" 10
-  [ -n "$_dest" ]          || sbx_die "destination is empty — the unset-variable shape from SIGAP-88" 10
-  [ -L "$_dest" ]          && sbx_die "destination is a symlink: $_dest" 10
-  _c=$(sbx_canonical "$_dest") || sbx_die "destination does not resolve: $_dest" 10
-  sbx_is_system_path "$_c"  && sbx_die "destination is a system directory: $_c" 10
-  sbx_is_child_of "$_c" "${SBX_ROOT}" || sbx_die "destination escapes the disposable root: $_c" 10
+  [ -n "$_dest" ] || sbx_die "destination is empty — the unset-variable shape from SIGAP-88" 10
+  # Any `..` component in the RAW argument is rejected outright. Canonicalising the
+  # parent would resolve it, but rejecting it here is clearer and defence in depth.
+  case "$_dest" in
+    *..*) sbx_die "destination contains a '..' component: $_dest" 10 ;;
+  esac
+  [ -L "$_dest" ] && sbx_die "destination is a symlink: $_dest" 10
+
+  # Canonicalise the PARENT (which must already exist), then re-attach the final
+  # component, so the path actually written is the path judged.
+  _parent=$(dirname -- "$_dest")
+  _base=$(basename -- "$_dest")
+  _cp=$(sbx_canonical "$_parent") || sbx_die "destination's parent does not resolve: $_parent" 10
+  _c="$_cp/$_base"
+  [ -L "$_c" ] && sbx_die "destination is a symlink after canonicalisation: $_c" 10
+  sbx_is_system_path "$_c" && sbx_die "destination is a system directory: $_c" 10
+  sbx_is_child_of "$_c" "$SBX_ROOT" || sbx_die "destination escapes the disposable root: $_c" 10
   SBX_LAST_OK="$_c"
 }
 
@@ -113,20 +144,26 @@ sbx_require_contained() {
 # 5. Full initialisation: create the root, canonicalise, require the approved parent,
 #    and expose SBX_ROOT / SBX_BIN for the caller.
 # ---------------------------------------------------------------------------
+# Read the approved root AT CALL TIME, not at source time. AuditReview5 (P0): the
+# library captured `${SIGAP_TEST_ROOT:-}` when sourced, so a caller that set the variable
+# after sourcing it had no effect — the suite then aborted with no output. Reading it
+# here makes `SIGAP_TEST_ROOT=x sbx_init` and `SIGAP_TEST_ROOT=x; . lib; sbx_init` both
+# work, which is the whole point of testing an unexported-variable failure mode.
 sbx_init() {
-  [ -n "$SBX_APPROVED_ROOT" ] || sbx_die "SIGAP_TEST_ROOT is not set; refusing to invent a default" 10
-  _ar=$(sbx_canonical "$SBX_APPROVED_ROOT") || sbx_die "SIGAP_TEST_ROOT does not resolve: $SBX_APPROVED_ROOT" 10
-  sbx_is_system_path "$_ar" && sbx_die "SIGAP_TEST_ROOT is a system directory: $_ar" 10
-  [ -w "$_ar" ] || sbx_die "SIGAP_TEST_ROOT is not writable: $_ar" 11
+  SBX_APPROVED_ROOT="${SIGAP_TEST_ROOT:-}"
+  [ -n "$SBX_APPROVED_ROOT" ] || sbx_fatal "SIGAP_TEST_ROOT is not set; refusing to invent a default" 10
+  _ar=$(sbx_canonical "$SBX_APPROVED_ROOT") || sbx_fatal "SIGAP_TEST_ROOT does not resolve: $SBX_APPROVED_ROOT" 10
+  sbx_is_system_path "$_ar" && sbx_fatal "SIGAP_TEST_ROOT is a system directory: $_ar" 10
+  [ -w "$_ar" ] || sbx_fatal "SIGAP_TEST_ROOT is not writable: $_ar" 11
   SBX_APPROVED_ROOT="$_ar"
 
   _r=$(sbx_new_root)
-  _cr=$(sbx_canonical "$_r") || sbx_die "the new root does not resolve" 10
-  sbx_is_child_of "$_cr" "$SBX_APPROVED_ROOT" || sbx_die "the new root is not inside the approved root: $_cr" 10
+  _cr=$(sbx_canonical "$_r") || sbx_fatal "the new root does not resolve" 10
+  sbx_is_child_of "$_cr" "$SBX_APPROVED_ROOT" || sbx_fatal "the new root is not inside the approved root: $_cr" 10
 
   SBX_ROOT="$_cr"
   SBX_BIN="$SBX_ROOT/bin"
-  mkdir "$SBX_BIN" "$SBX_ROOT/log" || sbx_die "cannot create bin/log inside the disposable root" 11
+  mkdir "$SBX_BIN" "$SBX_ROOT/log" || sbx_fatal "cannot create bin/log inside the disposable root" 11
 
   # Cleanup that can ONLY touch what this invocation created.
   sbx_cleanup() {
