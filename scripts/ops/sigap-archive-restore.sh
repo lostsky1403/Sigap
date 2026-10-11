@@ -87,7 +87,13 @@ fi
 # ALLOWED_ENGINE_ID is MANDATORY: absent aborts. Previously it warned and continued,
 # so a caller could omit the allowlist and load the decrypted image into WHATEVER the
 # ambient context happened to be. [Defect C]
-: "${ALLOWED_ENGINE_ID:?ALLOWED_ENGINE_ID is required — refusing to load without a pinned engine ID}"
+#
+# OpsReview5 P1: `${VAR:?msg}` aborts with status 1, which is outside the documented
+# 0/10-15 exit-code table and contradicted the suite's expectation of 10. An explicit
+# test produces the documented code.
+if [ -z "${ALLOWED_ENGINE_ID:-}" ]; then
+  die "ALLOWED_ENGINE_ID is required — refusing to load without a pinned engine ID" 10
+fi
 [ "$target_engine" = "$ALLOWED_ENGINE_ID" ] \
   || die "engine ID $target_engine is not the allowlisted $ALLOWED_ENGINE_ID" 11
 
@@ -178,20 +184,29 @@ gzip -t "$WORK/archive.tar.gz" 2>/dev/null \
   || die "decrypted artifact is not a complete gzip archive (wrong key or truncated)" 13
 
 # Validate that it is a DOCKER IMAGE TAR before spending a load on it: a docker save
-# archive always contains a manifest.json. This turns a silently-empty load — which
-# could exit 0 with no images restored — into a hard refusal.
-if ! gzip -dc "$WORK/archive.tar.gz" 2>/dev/null | tar -t 2>/dev/null | grep -q 'manifest.json'; then
-  die "the decrypted archive is not a docker image tar (no manifest.json)" 13
-fi
-
-# Decompress and load in ONE pipeline so both statuses are captured together: a gzip
-# failure cannot be masked by a successful docker load, or the reverse.
+# archive always contains a manifest.json. This turns a silently-empty load into a hard
+# refusal.
+#
+# OpsReview5 P1: the earlier form piped `gzip -dc | tar -t | grep -q manifest.json`.
+# `grep -q` exits at the FIRST match, and manifest.json is normally the first listing
+# entry, so `tar -t` was killed by SIGPIPE and — with `set -o pipefail` — the pipeline
+# returned non-zero, reporting "no manifest.json" for an archive that CONTAINS it. Each
+# stage is therefore run to completion separately and its own status checked, so a
+# tar failure is reported as a tar failure, not as a missing manifest.
 set +e
-gzip -dc "$WORK/archive.tar.gz" > "$WORK/image.tar"
+gzip -dc "$WORK/archive.tar.gz" > "$WORK/image.tar" 2>"$WORK/err.gz"
 rc_gunzip=$?
 set -e
 [ "$rc_gunzip" -eq 0 ] || die "gzip decompress failed (rc=$rc_gunzip)" 14
 [ -s "$WORK/image.tar" ] || die "decompressed image tar is empty" 13
+
+set +e
+tar -tf "$WORK/image.tar" > "$WORK/listing.txt" 2>"$WORK/err.tar"
+rc_tar=$?
+set -e
+[ "$rc_tar" -eq 0 ] || die "the decrypted archive is not a readable tar (rc=$rc_tar)" 13
+grep -q '^manifest\.json$' "$WORK/listing.txt" 2>/dev/null \
+  || die "the decrypted archive is not a docker image tar (no manifest.json)" 13
 
 set +e
 DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load < "$WORK/image.tar"
