@@ -497,11 +497,30 @@ grep -q '^manifest\.json$' "$WORK/listing.txt" 2>/dev/null \
   || die "the decrypted archive is not a docker image tar (no manifest.json)" 13
 
 set +e
-DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load < "$WORK/image.tar"
+DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load < "$WORK/image.tar" > "$WORK/load.out" 2>&1
 rc_load=$?
 set -e
 [ "$rc_load" -eq 0 ] || die "docker load failed (rc=$rc_load)" 14
+cat "$WORK/load.out"
 echo "docker load succeeded"
+
+# The AUTHORITATIVE identity of what the archive restored: `docker load` prints the ID it
+# actually assigned, and that is the only value an operator has to compare against — a live
+# `docker inspect` on some other daemon reports a config digest that `docker load` does not
+# necessarily reproduce ([OBSERVED] run 38272620285: inspect gave ff59b31e..., the archive's
+# own config and the load both gave a different ID). A tar whose manifest.json "Config" field
+# is `blobs/sha256/...` also shows why deriving the expected ID from the tar is wrong: that
+# value is not an image reference at all, it is a path, and it failed validation with 10
+# (run 38273857530).
+#
+# FAIL CLOSED. If the load reported no parseable ID, the restore must be refused rather than
+# pass an empty value to the correspondence check below, which would report a PARTIAL LOAD for
+# a load that in fact succeeded — the same false failure in a new place.
+LOADED_IMAGE_ID=$(sed -n 's/^Loaded image ID:[[:space:]]*//p' "$WORK/load.out" | tail -1)
+if [ -z "$LOADED_IMAGE_ID" ]; then
+  die "docker load reported no image ID — refusing rather than trusting an unparsed load" 14
+fi
+echo "restored image ID (as reported by docker load): $LOADED_IMAGE_ID"
 
 # ---- Residual-risk disclosure (Defect A, unavoidable plaintext) ------------------
 # The decompressed image TAR is a temporary plaintext, unavoidable because `docker
@@ -530,8 +549,32 @@ target_engine=$(norm_engine_id_strict "$target_engine") \
   || die "engine ID changed after load ($target_engine != $ALLOWED_ENGINE_N)" 11
 
 # ---------------------------------------------------------------------------
-# 7. Identity correspondence — per-image, ON the isolated daemon, with explicit
-#    DOCKER_HOST so this can never read the ambient (possibly production) daemon.
+# 7a. The load-reported ID IS the archive's own identity.
+#
+#    `docker load` prints the ID it assigned, read from the archive's manifest.json. That is
+#    the identity of what this archive restores, and it is the value an operator restoring it
+#    must record out-of-band. Comparing a live `docker inspect` against it is wrong: inspect
+#    reports the config digest of whatever daemon is asked, which `docker load` does not
+#    necessarily reproduce ([OBSERVED] run 38272620285, inspect ff59b31e... vs load
+#    d88c5ca4...), and parsing the ID out of manifest.json's "Config" field is wrong too,
+#    because that field is a PATH — `blobs/sha256/<digest>` — not a reference, which failed
+#    validation with 10 (run 38273857530).
+#
+#    Refused rather than skipped if it does not match: this is the only check that the
+#    restored image is the archived one, and an unparsable load must not be able to satisfy
+#    it silently.
+# ---------------------------------------------------------------------------
+loaded_nid=$(norm_id "$LOADED_IMAGE_ID") \
+  || die "docker load reported a malformed image ID: '$LOADED_IMAGE_ID'" 14
+# And it must genuinely EXIST on the isolated daemon, with explicit DOCKER_HOST so this can
+# never read the ambient (possibly production) daemon.
+DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker image inspect "sha256:$loaded_nid" >/dev/null 2>&1 \
+  || die "the ID docker load reported ($loaded_nid) is not present on the isolated daemon" 15
+echo "  present $loaded_nid (reported by docker load)"
+
+# ---------------------------------------------------------------------------
+# 7b. Identity correspondence against the out-of-band record — per-image, ON the isolated
+#    daemon, with explicit DOCKER_HOST so this can never read the ambient daemon.
 #
 #    IDs are NORMALISED ONCE, here. `docker inspect --format '{{.Id}}'` returns the
 #    `sha256:<digest>` form, while `docker image inspect` accepts either form — but an
@@ -544,6 +587,12 @@ target_engine=$(norm_engine_id_strict "$target_engine") \
 #    lowercase hex characters, with an optional single `sha256:` prefix. Anything else is
 #    refused as malformed input (10), distinct from a genuinely absent image (15), so a
 #    typo cannot masquerade as a partial load.
+#
+#    NOTE the two different questions this section and 7a answer. 7a asks "did the archive
+#    restore what it contains"; 7b asks "is that the image the operator expected". A run
+#    that satisfies 7a but not 7b has restored a genuine archive of the WRONG release, which
+#    is exactly the failure the out-of-band record exists to catch — so it must be a hard
+#    failure, not a note.
 # ---------------------------------------------------------------------------
 IFS=',' read -ra IDS <<< "$EXPECT_IDS"
 missing=0; present=0; seen=0
