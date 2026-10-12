@@ -113,6 +113,7 @@ Rehearsal only; see `DEPLOYMENT_RUNBOOK.md` §4a. All checks are in
 | F19 | **Isolated restore from R2 exercised with the REAL image IDs** via `sigap-archive-restore.sh` with `ARCHIVE_URI=r2://…` | runbook §7d.1, §13f step 3 | **OPERATOR** — `REAL_ISOLATED_RESTORE = NOT_RUN` |
 | F20 | **`J11_ROLLBACK_SAFETY` resolved** — preserved binary tested against the post-`0011` schema (§7g), **not** inferred from image IDs | runbook §7f/§7g | **OPERATOR** — currently `UNKNOWN`, which BLOCKS J10 |
 | F21 | **Bucket Lock retention behaviour verified on the real service**, using a throwaway object — **not** by the MinIO CI test, which cannot prove it | runbook §13g.9 | **OPERATOR** — requires separate authorization |
+| F21c | **CI test EXECUTED and PASSING** — run `38280297031` on `89f9bcf`, all 19 steps, including all four negative controls at their expected exit codes and refusal reasons | runbook §13g.12 | **DONE** — `R2_MINIO_ROUND_TRIP = PASS`, `R2_NEGATIVE_CONTROLS = PASS` (MinIO only; **not** retention) |
 | F21b | **CI test activated** — the `r2-validation` label created, a PR opened with base `design/ui-ux-overhaul`, and the label **applied** (the `labeled` activity type is what starts the run; without it the gate is unreachable) | runbook §13g.11 | **OPERATOR** — `GITHUB_TEST_ACTIVATION = READY`, `R2_RUNTIME_TEST = NOT_RUN` |
 | F22 | **`PRODUCTION_ENGINE_ID` recorded** (`docker info .ID` on the production daemon) and exported for every restore | runbook §7d.1, §13f | **OPERATOR** — Gate D. The only alias-proof production control; without it an SSH tunnel or DNS alias of production defeats the string denylist |
 
@@ -120,11 +121,16 @@ Rehearsal only; see `DEPLOYMENT_RUNBOOK.md` §4a. All checks are in
 > `R2_CONTRACT_ACCURACY = PASS` (corrected against the platform's published semantics — see
 > below) · `ENCRYPTION_DESIGN = READY` · `PRODUCTION_PRIVATE_KEY = NOT_GENERATED_BY_AGENT` ·
 > `PRODUCTION_IMAGES_PRESERVED = NO` · `REAL_ISOLATED_RESTORE = NOT_RUN` ·
-> `GITHUB_TEST_ACTIVATION = READY` (mechanism committed and verified; **label not yet created**,
-> so no run has been or can be started) · `R2_RUNTIME_TEST = NOT_RUN` ·
+> `GITHUB_TEST_ACTIVATION = PASS` (label created and applied; the `labeled` event executed the
+> run) · `R2_MINIO_ROUND_TRIP = PASS` · `R2_NEGATIVE_CONTROLS = PASS` ·
+> `REAL_CLOUDFLARE_R2_PROOF = NONE` (disposable MinIO only — see §13g.9/§13g.12) ·
 > `J11_ROLLBACK_SAFETY = UNKNOWN` · `MIGRATION_0011 = NOT_AUTHORIZED` ·
-> `PRODUCTION_DEPLOYMENT = BLOCKED`. The design is complete; **nothing has been created or
-> executed**, and no approval transfers between gates.
+> `PRODUCTION_DEPLOYMENT = BLOCKED`. The design is complete. **Nothing in production has been
+> created, read or executed**, and no approval transfers between gates. What *has* now run is
+> the CI drill only: a disposable MinIO endpoint, a throwaway age key, a synthetic image and an
+> isolated daemon on a GitHub runner (§13g.12). That is a statement about the *contract*, not
+> about production, and it does not make the bucket, the key, the retention rules or the
+> rollback path any less outstanding.
 >
 > **Two corrections that weaken earlier claims, recorded deliberately.** Bucket Lock is **not**
 > AWS S3 Object Lock and is **administratively removable** — it is a retention control, not an
