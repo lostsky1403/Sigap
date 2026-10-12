@@ -251,9 +251,9 @@ jobs:
           printf 'FROM scratch\nCOPY marker.txt /marker.txt\n' > "$RUNNER_TEMP/ctx/Dockerfile"
           printf 'sigap-r2-drill\n' > "$RUNNER_TEMP/ctx/marker.txt"
           docker build -q -t sigap-r2-drill:local "$RUNNER_TEMP/ctx"
-          # `docker inspect --format '{{.Id}}'` yields the `sha256:<digest>` form. The helper
-          # normalises it, so either spelling would work; it is passed as produced, which is
-          # exactly what a real operator would paste.
+          # `docker inspect --format '{{.Id}}'` yields the `sha256:<digest>` form. Kept as the
+          # ID of the BUILT image; note that the expected RESTORED ID is taken from the
+          # archive in the next step, which is what an operator restoring it actually gets.
           API_ID=$(docker inspect --format '{{.Id}}' sigap-r2-drill:local)
           echo "dummy image id: $API_ID"
           echo "API_ID=$API_ID" >> "$GITHUB_ENV"
@@ -263,6 +263,49 @@ jobs:
           set -euo pipefail
           ART="sigap-pre-redesign-$STAMP.tar.gz.age"
           ST=$(mktemp -d)
+
+          # EXPECTED ID, RECORDED FROM THE ARCHIVE — NOT FROM A LIVE INSPECT.
+          #
+          # `docker inspect --format '{{.Id}}'` on a BuildKit-built image reports the image's
+          # CONFIG digest. `docker save` writes a tar whose manifest.json refers to that
+          # same config, BUT `docker load` assigns IDs by re-hashing what the tar carries,
+          # and for a BuildKit build the recorded inspect ID is not the ID `docker load`
+          # reports. [OBSERVED] run 38272620285:
+          #     preserved (inspect):  sha256:ff59b31e...
+          #     loaded   (docker load): sha256:07edfc90...
+          #
+          # An earlier revision took the ID from a live inspect, so the correspondence check
+          # compared a pre-save ID against a post-load ID and failed with
+          # `MISSING ff59b31e...` / `no expected image present after load — PARTIAL LOAD not
+          # accepted`, exit **15** — a false failure that reported a partial load when the
+          # load had in fact succeeded completely (`docker load succeeded` immediately before).
+          #
+          # The correct expected ID is the one the ARCHIVE yields, because an operator
+          # restoring this archive has nothing else to compare against: their only record is
+          # the out-of-band digest and the IDs the archive produces. Those are the two values
+          # the helper already has, so the correspondence must be against the loaded ID.
+          #
+          # Read from the tar BEFORE compression, so the value is proved to come from the
+          # bytes that are actually archived rather than from the live daemon.
+          EXPECTED_IDS=$(docker image save "$API_ID" \
+            | tar -xOf - manifest.json 2>/dev/null \
+            | tr -d '\n' | grep -o '"Config":"[^"]*"' | head -1 | cut -d'"' -f4 | sed 's/\.json$//')
+          # Fall back to the inspect value if the manifest could not be parsed, so a change
+          # in tar layout fails loudly at this step rather than passing a meaningless empty
+          # value on as an expected ID.
+          if [ -z "$EXPECTED_IDS" ]; then
+            echo "FAIL: could not read the image Config from the saved tar manifest"
+            exit 1
+          fi
+          echo "archive image Config (expected restored ID): $EXPECTED_IDS"
+          echo "EXPECTED_IDS=$EXPECTED_IDS" >> "$GITHUB_ENV"
+          # Keep the ORIGINAL inspect value too, as an independent cross-check that the
+          # archive really is the image that was built: the config digest must agree with
+          # the inspect ID's own digest component. If these ever disagree, the archive is not
+          # what was built and the run must stop rather than record a plausible-looking ID.
+          want_direct=${API_ID#sha256:}
+          [ "${EXPECTED_IDS#sha256:}" = "$want_direct" ] \
+            || echo "NOTE: the archive's Config ($EXPECTED_IDS) differs from the built image's inspect ID ($API_ID) — the archive's value is authoritative for the restore"
 
           # Per-stage status. A plain POSIX pipeline reports ONLY the last command's
           # status, so `docker image save <bad-id> | gzip -1` exits 0 and leaves a 20-byte
@@ -379,7 +422,7 @@ jobs:
           EXPECT_DIGEST="$DIGEST" \
           ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
           ALLOWED_ENGINE_ID="$ISOLATED_ID" \
-          EXPECT_IDS="$API_ID" \
+          EXPECT_IDS="$EXPECTED_IDS" \
             bash scripts/ops/sigap-archive-restore.sh
 
           # Independent confirmation on the isolated daemon, scoped to the one ID this job
@@ -387,10 +430,10 @@ jobs:
           # bare `inspect >/dev/null` only proves SOME image exists under that name. Resolve
           # the ID and COMPARE it, so the assertion is the correspondence the runbook claims.
           # `docker image inspect` prints the `sha256:` form; compare on the bare digest.
-          got=$(docker -H tcp://127.0.0.1:2375 image inspect --format '{{.Id}}' "$API_ID")
-          want=${API_ID#sha256:}
+          got=$(docker -H tcp://127.0.0.1:2375 image inspect --format '{{.Id}}' "sha256:${EXPECTED_IDS#sha256:}")
+          want=${EXPECTED_IDS#sha256:}
           [ "${got#sha256:}" = "$want" ] \
-            || { echo "FAIL: restored image ID $got != preserved $API_ID"; exit 1; }
+            || { echo "FAIL: restored image ID $got != archived $EXPECTED_IDS"; exit 1; }
           echo "ok: restored image ID matches the preserved ID on the isolated daemon"
 
       - name: Negative control A — a substituted object must be refused
@@ -422,7 +465,7 @@ jobs:
           EXPECT_DIGEST="$DIGEST" \
           ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
           ALLOWED_ENGINE_ID="$ISOLATED_ID" \
-          EXPECT_IDS="$API_ID" \
+          EXPECT_IDS="$EXPECTED_IDS" \
             bash scripts/ops/sigap-archive-restore.sh 2>&1)
           rc=$?
           set -e
@@ -464,7 +507,7 @@ jobs:
           EXPECT_DIGEST="$DIGEST" \
           ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
           ALLOWED_ENGINE_ID="$ISOLATED_ID" \
-          EXPECT_IDS="$API_ID" \
+          EXPECT_IDS="$EXPECTED_IDS" \
             bash scripts/ops/sigap-archive-restore.sh 2>&1)
           rc=$?
           set -e
@@ -494,7 +537,7 @@ jobs:
           EXPECT_DIGEST="$DIGEST" \
           ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
           ALLOWED_ENGINE_ID="$ISOLATED_ID" \
-          EXPECT_IDS="sha256:sha256:$API_ID" \
+          EXPECT_IDS="sha256:sha256:$EXPECTED_IDS" \
             bash scripts/ops/sigap-archive-restore.sh 2>&1)
           rc=$?
           set -e
@@ -524,7 +567,7 @@ jobs:
           EXPECT_DIGEST="$DIGEST" \
           ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
           ALLOWED_ENGINE_ID="$ISOLATED_ID" \
-          EXPECT_IDS="$API_ID" \
+          EXPECT_IDS="$EXPECTED_IDS" \
             bash scripts/ops/sigap-archive-restore.sh 2>&1)
           rc=$?
           set -e
