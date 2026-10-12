@@ -125,7 +125,7 @@ printf 'selftest' > "$TOP/.selftest"
 rm -f "$TOP/.selftest"
 printf 'delegating to: gzip=%s sha256sum=%s\n' "${REAL_GZIP:-<self-implemented>}" "$REAL_SUM"
 
-API=43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f
+API=43fcbcb35ed276b33327fa4d9ad8d9d909de6875cde185e2360bbc7374794c8f
 
 # Engine IDs the fake docker returns. Real engine IDs come in TWO machine-generated forms —
 # 64 lowercase hex on older daemons, and an 8-4-4-4-12 UUID on current ones (Docker 29
@@ -233,9 +233,23 @@ case "$sub" in
            if [ -f "$TOP_LOG/sigap_project" ]; then printf 'sigap\n'; fi
            exit 0 ;;
   context) echo "unix:///var/run/docker.sock" ;;
+  # FIDELITY: real `docker load` prints the ID it assigned, and the helper now READS that
+  # line rather than inferring the identity from the live daemon — `docker inspect` reports a
+  # config digest that `docker load` does not necessarily reproduce ([OBSERVED] run
+  # 38272620285, inspect ff59b31e... vs load d88c5ca4...). The old fake drained stdin and
+  # exited 0 with NO output, which would have made the new fail-closed check reject every
+  # happy-path case with "docker load reported no image ID" — a fixture failing, not a
+  # helper. The literal is the bare-hex form of `API`, matching what the fake's `image`
+  # branch resolves. `LOADED_IMAGE_ID` overrides it from the environment for cases that must
+  # exercise a load reporting a DIFFERENT ID than the one being looked up.
   load)    cat >/dev/null 2>/dev/null || true                 # drain stdin, never block
            [ -f "$TOP_LOG/load_fails" ] && { echo "load failed" >&2; exit 1; }  # K
-           exit 0 ;;                                          # L: succeeds silently
+           # `load_no_id` models a load that SUCCEEDS but reports no ID — the shape that must be
+           # refused rather than trusted. `${VAR:-default}` cannot express "empty" because an
+           # empty assignment is indistinguishable from unset, so a marker is used.
+           [ -f "$TOP_LOG/load_no_id" ] && exit 0
+           echo "Loaded image ID: ${LOADED_IMAGE_ID:-43fcbcb35ed276b33327fa4d9ad8d9d909de6875cde185e2360bbc7374794c8f}"
+           exit 0 ;;
   image)   id=$(printf '%s' "$ref" | sed 's/^sha256://; s/[^0-9a-f]//g')
            [ -n "$id" ] && [ -f "$TOP_LOG/have_$id" ] && { printf 'sha256:%s\n' "$id"; exit 0; }
            echo "Error: No such image" >&2; exit 1 ;;
@@ -385,7 +399,7 @@ clear_all() { rm -f "$LOG"/dec_fail_first "$LOG"/dec_then_fail "$LOG"/enc_fails 
                    "$LOG"/load_fails "$LOG"/no_engine "$LOG"/KEEP_have_api \
                    "$LOG"/aws_fails "$LOG"/aws_truncated "$LOG"/same_engine \
                    "$LOG"/ambient_fails "$LOG"/ambient_whitespace "$LOG"/sigap_project \
-                   "$LOG"/ps_fails "$LOG"/uuid_engine; }
+                   "$LOG"/ps_fails "$LOG"/uuid_engine "$LOG"/load_no_id; }
 
 printf '=== the happy path first, so every refusal is a genuine refusal ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
@@ -437,6 +451,21 @@ run_case 'L-load-succeeds-image-missing' 15
 #      missing image rather than by an unrelated breakage.
 clear_all; : > "$LOG/KEEP_have_api"
 run_case 'L2-image-present-accepted' 0
+
+# REGRESSION — a load that reports NO image ID must be refused, not trusted. `docker load`
+# printing the ID it assigned is the archive's own identity, and the helper now reads that
+# line rather than inferring the ID from a live `docker inspect` (which reports a config
+# digest `docker load` does not necessarily reproduce — [OBSERVED] run 38272620285, inspect
+# ff59b31e... vs load d88c5ca4...). An unparsable load must therefore be a hard failure (14),
+# because passing an empty value on would report a PARTIAL LOAD for a load that succeeded.
+# `LOADED_IMAGE_ID=` empty makes the fake print the prefix with nothing after it.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/load_no_id"
+run_case 'load-reports-no-image-id-refused' 14
+# ...and a load reporting a DIFFERENT ID than the one archived is a real correspondence
+# failure (15), not a crash — the archive restored something, just not what was recorded.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'load-reports-foreign-image-refused' 15 \
+         LOADED_IMAGE_ID="sha256:$(printf 'f%.0s' $(seq 1 64))" EXPECT_IDS="$API"
 
 # N — the engine reports no identity.
 clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/no_engine"

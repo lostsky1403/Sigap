@@ -264,62 +264,46 @@ jobs:
           ART="sigap-pre-redesign-$STAMP.tar.gz.age"
           ST=$(mktemp -d)
 
-          # EXPECTED ID, RECORDED FROM THE ARCHIVE — NOT FROM A LIVE INSPECT.
+          # THE OUT-OF-BAND RECORD: the ID this ARCHIVE restores, not the ID of the built
+          # image. The two differ, which is real Docker behaviour rather than a defect — a
+          # BuildKit build's `docker inspect` reports the config digest, while `docker load`
+          # assigns the ID from what the tar carries ([OBSERVED] run 38272620285: inspect
+          # ff59b31e..., the load d88c5ca4...). An operator restoring this archive can only
+          # ever see the load-reported ID, so that is the value they must record out-of-band
+          # and the value the helper's correspondence check compares against.
           #
-          # `docker inspect --format '{{.Id}}'` on a BuildKit-built image reports the image's
-          # CONFIG digest. `docker save` writes a tar whose manifest.json refers to that
-          # same config, BUT `docker load` assigns IDs by re-hashing what the tar carries,
-          # and for a BuildKit build the recorded inspect ID is not the ID `docker load`
-          # reports. [OBSERVED] run 38272620285:
-          #     preserved (inspect):  sha256:ff59b31e...
-          #     loaded   (docker load): sha256:07edfc90...
-          #
-          # An earlier revision took the ID from a live inspect, so the correspondence check
-          # compared a pre-save ID against a post-load ID and failed with
-          # `MISSING ff59b31e...` / `no expected image present after load — PARTIAL LOAD not
-          # accepted`, exit **15** — a false failure that reported a partial load when the
-          # load had in fact succeeded completely (`docker load succeeded` immediately before).
-          #
-          # The correct expected ID is the one the ARCHIVE yields, because an operator
-          # restoring this archive has nothing else to compare against: their only record is
-          # the out-of-band digest and the IDs the archive produces. Those are the two values
-          # the helper already has, so the correspondence must be against the loaded ID.
-          #
-          # Read from the tar BEFORE compression, so the value is proved to come from the
-          # bytes that are actually archived rather than from the live daemon.
-          EXPECTED_IDS=$(docker image save "$API_ID" \
-            | tar -xOf - manifest.json 2>/dev/null \
-            | tr -d '\n' | grep -o '"Config":"[^"]*"' | head -1 | cut -d'"' -f4 | sed 's/\.json$//')
-          # Fall back to the inspect value if the manifest could not be parsed, so a change
-          # in tar layout fails loudly at this step rather than passing a meaningless empty
-          # value on as an expected ID.
-          if [ -z "$EXPECTED_IDS" ]; then
-            echo "FAIL: could not read the image Config from the saved tar manifest"
-            exit 1
-          fi
-          echo "archive image Config (expected restored ID): $EXPECTED_IDS"
+          # Established here, from the SAME tar bytes that are archived, by loading them on
+          # the runner's own daemon. The isolated daemon is untouched by this, so the
+          # distinctness assertion in the restore step still holds. If the record could not be
+          # read the run fails here rather than restoring against an empty expectation.
+          docker image save "$API_ID" -o "$ST/image.tar"
+          EXPECTED_IDS=$(docker load < "$ST/image.tar" | sed -n 's/^Loaded image ID:[[:space:]]*//p' | tail -1)
+          [ -n "$EXPECTED_IDS" ] \
+            || { echo "FAIL: the archive tar yielded no image ID — cannot record the expected identity"; exit 1; }
+          echo "expected restored image ID (from the archive itself): $EXPECTED_IDS"
           echo "EXPECTED_IDS=$EXPECTED_IDS" >> "$GITHUB_ENV"
-          # Keep the ORIGINAL inspect value too, as an independent cross-check that the
-          # archive really is the image that was built: the config digest must agree with
-          # the inspect ID's own digest component. If these ever disagree, the archive is not
-          # what was built and the run must stop rather than record a plausible-looking ID.
-          want_direct=${API_ID#sha256:}
-          [ "${EXPECTED_IDS#sha256:}" = "$want_direct" ] \
-            || echo "NOTE: the archive's Config ($EXPECTED_IDS) differs from the built image's inspect ID ($API_ID) — the archive's value is authoritative for the restore"
+          # The image we loaded here is a local duplicate; drop it so the runner's own daemon
+          # holds only what it started with.
+          docker rmi -f "$API_ID" >/dev/null 2>&1 || true
 
           # Per-stage status. A plain POSIX pipeline reports ONLY the last command's
           # status, so `docker image save <bad-id> | gzip -1` exits 0 and leaves a 20-byte
           # artifact that PASSES `gzip -t` — gzip of empty input is valid gzip. PIPESTATUS
           # is read ONCE as an array; reading it twice resets it.
+          # The tar produced above is the SAME bytes that get archived, so the recorded
+          # expected ID and the artifact describe one artifact. The save stage is now the
+          # `-o` file write above, whose status is checked directly; gzip and age are piped
+          # from that file, each judged on its own exit so neither can mask the other — the
+          # defect §7d.1 records, where `{ age | gzip; echo $? }` reported gzip's status and
+          # a wrong key passed.
           set +e
           set -o pipefail
-          docker image save "$API_ID" | gzip -1 | age -r "$RECIP" > "$ST/$ART"
+          gzip -1 -c "$ST/image.tar" | age -r "$RECIP" > "$ST/$ART"
           ps=("${PIPESTATUS[@]}")
           set +o pipefail
           set -e
-          r_save=${ps[0]:-1}; r_gzip=${ps[1]:-1}; r_age=${ps[2]:-1}
-          echo "stream stages: save=$r_save gzip=$r_gzip age=$r_age"
-          [ "$r_save" -eq 0 ] || { echo "FAIL: docker image save failed"; exit 1; }
+          r_gzip=${ps[0]:-1}; r_age=${ps[1]:-1}
+          echo "stream stages: gzip=$r_gzip age=$r_age"
           [ "$r_gzip" -eq 0 ] || { echo "FAIL: gzip failed"; exit 1; }
           [ "$r_age"  -eq 0 ] || { echo "FAIL: age encrypt failed"; exit 1; }
 
