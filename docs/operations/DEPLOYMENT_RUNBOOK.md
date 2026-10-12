@@ -581,14 +581,22 @@ ALLOWED_ENGINE_ID="$ISOLATED_ENGINE_ID" \
 PRODUCTION_ENGINE_ID="$PRODUCTION_ENGINE_ID" \
 EXPECT_IDS="sha256:43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f,sha256:2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c,sha256:8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4" \
   bash scripts/ops/sigap-archive-restore.sh
-# 0 = every stage verified; 10 unset var; 11 target refused; 12 digest mismatch;
+# 0 = every stage verified; 10 unset or malformed var; 11 target refused; 12 digest mismatch;
 # 13 not a complete gzip; 14 a stage failed; 15 identity correspondence failed
 ```
 
 `PRODUCTION_ENGINE_ID` is the **production** daemon's `docker info .ID`, recorded during the
 Gate D reinspection. Set it whenever it is known: it is the only production control that
 cannot be defeated by aliasing, because an engine ID is a property of the daemon rather than
-a name. `ALLOWED_ENGINE_ID` is the **isolated** target's ID and must differ from it.
+a name. `ALLOWED_ENGINE_ID` is the **isolated** target's ID and must differ from it. It accepts
+a comma-separated list, and a **malformed** entry exits **10** rather than being skipped — a
+typo must not be able to disable the denylist.
+
+A **loopback** target is refused by default, because production reached through an SSH tunnel
+looks exactly like a local daemon. `SIGAP_ALLOW_LOOPBACK_TARGET=1` is the narrow opt-in for the
+one legitimate case (a disposable daemon running as a container on the same CI runner). It
+relaxes **only** the loopback refusal: the engine allowlist, the ambient-distinctness check and
+the production denylist all still apply.
 
 The same helper reads a legacy relay copy or an operator-staged file by changing only the
 URI — the storage layer is a dispatch, not an SSH assumption:
@@ -617,7 +625,23 @@ production host and both local-socket spellings; reads the target's **engine ID*
 `docker info` and compares it against an **explicitly allowlisted** `ALLOWED_ENGINE_ID`;
 refuses any daemon on which `docker ps -a` reports compose project `sigap`; and asserts every
 `docker image inspect` runs with an **explicit** `DOCKER_HOST` rather than the ambient context.
-If the engine ID cannot be read, the restore **refuses** — `N: missing Docker engine identity`.
+`ALLOWED_ENGINE_ID` is **mandatory** and validated **before any daemon contact** — an absent or
+malformed allowlist exits **10**, because it is a caller-side configuration error and reporting
+it as "daemon unreachable" (**11**) would hide the real defect. A daemon that cannot be reached,
+returns no engine ID, or returns a **malformed** one is refused with **11**; it is never treated
+as "identity unknown, proceed".
+
+**Engine IDs are compared in one canonical form.** All four engine inputs — the allowlist, the
+target, the ambient probe and the production denylist — pass through the same normaliser, which
+accepts 64 lowercase hex with at most one optional `sha256:` prefix. Comparison is therefore
+symmetric: `sha256:<digest>` and `<digest>` are the same engine, and no input is normalised on
+one side of a comparison but not the other.
+
+**A typo cannot disable the production denylist.** `PRODUCTION_ENGINE_ID` is a comma-separated
+list of engine IDs recorded from the production daemon (Gate D). A **malformed** entry exits
+**10** rather than being skipped: an earlier revision used `|| continue`, so one typo silently
+turned the only alias-proof production control into a no-op. A match against any listed ID is
+refused with **11** regardless of every other check.
 
 **No plaintext at rest.** `mktemp -d` (0700) holds the decrypted image; the ciphertext alone is
 copied into it. A `trap cleanup EXIT INT TERM HUP` shreds and removes the plaintext on **every**
@@ -2494,6 +2518,37 @@ Egress being free is what makes a full restore drill — downloading 0.44 GB —
 which matters because a rollback is exactly when you do not want a metered download. `[INFERENCE]`
 pricing is from published R2 rates and is not verified against a live account; it is an estimate,
 not a quote.
+
+**13g.11 — Activating the CI test, and the one prerequisite that does not yet exist.**
+`.github/workflows/r2-offhost-backup.yml` is committed on `design/ui-ux-overhaul`, which is
+**not** the default branch. GitHub registers `workflow_dispatch` entries only from the default
+branch, so as committed the file cannot be dispatched and has no Actions-UI entry. Two
+consequences, both verified:
+
+- the workflow did **not** trigger on any of the pushes to this branch (it has no `push`
+  trigger; `pull_request` and `workflow_dispatch` only), and
+- the repository has **no `r2-validation` label** — the job-level `if` therefore cannot be
+  satisfied until the owner creates it.
+
+Activation, in order:
+
+1. **Create the label** (owner, once):
+   `gh label create r2-validation --repo lostsky1403/Sigap --description "Owner approval to run the R2 off-host round trip" --color FBCA04`
+   Without this step the job is skipped for every PR and the gate can never open.
+2. **Open a PR whose base is `design/ui-ux-overhaul`** and which touches one of the workflow's
+   `paths` entries. GitHub evaluates a `pull_request` workflow from the PR's own merge ref, so
+   the workflow runs even though it is absent from the default branch. This is the mechanism
+   already proven by the SIGAP-88 validation run (`.github/workflows/ops-sandbox.yml`, run
+   `38163833629`, event `pull_request`, conclusion `success`).
+3. **Apply `r2-validation` to that PR.** Only then does the job run. A PR without the label
+   runs nothing at all.
+
+Merging to `main` is **not** a prerequisite, and the workflow must not be merged to `main`
+merely to make it dispatchable. What the run proves is bounded: with a disposable MinIO
+endpoint and a throwaway age key it exercises the **object path and input validation** —
+off-host upload, read-back, restore through the real helper, and four negative controls. It
+does **not** touch the real bucket, does **not** prove retention (§13g.9), and does **not**
+preserve or restore a production image.
 
 ---
 
