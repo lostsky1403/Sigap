@@ -104,6 +104,20 @@ Rehearsal only; see `DEPLOYMENT_RUNBOOK.md` §4a. All checks are in
 | F11 | **Rollback restore exercised/verified** (re-tag or load, `up -d --no-deps rust-engine api web`, exact-ID match) | runbook §7d steps 1–6 | **OPERATOR** |
 | F12 | **Postgres NOT restarted during rollback** | runbook §7d step 4 (`up -d --no-deps`, no `postgres`) | **OPERATOR** |
 | F13 | **Compose identity preserved** (project `sigap`; volumes `sigap_pgdata`/`sigap_pgcerts`; networks `sigap_default`/`traefik`; loopback-only `18080`/`5433`/`50051`/`3005`) | runbook §7d; evidence bundle | **OPERATOR** |
+| F14 | **Gate A — R2 bucket created and secured** (private; Object Lock/retention enabled; incomplete-multipart abort rule; versioning) | runbook §13g.1, §13g.4 A1–A2 | **OPERATOR** — `R2_BUCKET = NOT_CREATED` |
+| F15 | **Gate A — two narrowly scoped credentials** (write-only for the relay, read-only for recovery; neither may delete) | runbook §13g.3, §13g.4 A3–A6 | **OPERATOR** |
+| F16 | **Gate A — age key pair generated off-host and two recovery copies secured** (neither in Git, CI, R2, Jira or on the relay) | runbook §13h.2, §13h.4 C1–C6 | **OPERATOR** — `PRODUCTION_PRIVATE_KEY = NOT_GENERATED_BY_AGENT` |
+| F17 | **Gate A — public recipient recorded and matched to the recovery identity** via `age-keygen -y` and a round-trip drill | runbook §13h.3, §13h.5 | **OPERATOR** |
+| F18 | **Artifact URI and SHA-256 recorded out-of-band** (checklist + Jira gate, never a co-located sidecar in R2) | runbook §13g.7 | **OPERATOR** — `PRODUCTION_IMAGES_PRESERVED = NO` |
+| F19 | **Isolated restore from R2 exercised with the REAL image IDs** via `sigap-archive-restore.sh` with `ARCHIVE_URI=r2://…` | runbook §7d.1, §13f step 3 | **OPERATOR** — `REAL_ISOLATED_RESTORE = NOT_RUN` |
+| F20 | **`J11_ROLLBACK_SAFETY` resolved** — preserved binary tested against the post-`0011` schema (§7g), **not** inferred from image IDs | runbook §7f/§7g | **OPERATOR** — currently `UNKNOWN`, which BLOCKS J10 |
+
+> **Gate A verdicts.** `OFFHOST_STORAGE_DESIGN = READY` · `R2_BUCKET = NOT_CREATED` ·
+> `ENCRYPTION_DESIGN = READY` · `PRODUCTION_PRIVATE_KEY = NOT_GENERATED_BY_AGENT` ·
+> `PRODUCTION_IMAGES_PRESERVED = NO` · `REAL_ISOLATED_RESTORE = NOT_RUN` ·
+> `J11_ROLLBACK_SAFETY = UNKNOWN` · `MIGRATION_0011 = NOT_AUTHORIZED` ·
+> `PRODUCTION_DEPLOYMENT = BLOCKED`. The design is complete; **nothing has been created or
+> executed**, and no approval transfers between gates.
 
 ## G. Negative controls (non-vacuity of the new smoke assertions)
 

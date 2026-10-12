@@ -228,11 +228,30 @@ echo "fake gzip: no working real gzip — refusing rather than emulating" >&2
 exit 3
 F
 
+# Fake `aws` for the r2:// fetch path. QUOTED heredoc, because the argument scan and
+# `$#` must be evaluated when the FAKE runs — an unquoted heredoc would bake in the
+# suite's own empty argument list. DEST is the last argument; `--query ContentLength
+# --output text` prints the object length on stdout while the body goes to the file.
+cat > "$BIN/aws" <<'F'
+#!/bin/sh
+[ -f "$TOP_LOG/aws_fails" ] && { echo "fake aws: unable to reach endpoint" >&2; exit 255; }
+eval "dest=\${$#}"
+[ -n "$dest" ] || { echo "fake aws: no destination argument" >&2; exit 2; }
+cp "$TOP_LOG/payload.gz" "$dest" 2>/dev/null || { echo "fake aws: copy failed" >&2; exit 1; }
+n=$(wc -c < "$dest" | tr -d ' ')
+# aws_truncated models a transfer that COMPLETES with a shorter object than the API
+# reports: bytes land, the command exits 0, and only the read-back length check catches
+# it. That is the failure mode a bare exit-status check cannot see.
+[ -f "$TOP_LOG/aws_truncated" ] && n=$((n + 4096))
+printf '%s\n' "$n"
+exit 0
+F
+
 # chmod is a write too: gate every path before changing modes, and abort on refusal.
-for _d in "$BIN/age" "$BIN/docker" "$BIN/scp" "$BIN/sha256sum" "$BIN/gzip"; do
+for _d in "$BIN/age" "$BIN/docker" "$BIN/scp" "$BIN/sha256sum" "$BIN/gzip" "$BIN/aws"; do
   sbx_write_gate "$_d"
 done
-chmod +x "$BIN"/age "$BIN"/docker "$BIN"/scp "$BIN"/sha256sum "$BIN"/gzip
+chmod +x "$BIN"/age "$BIN"/docker "$BIN"/scp "$BIN"/sha256sum "$BIN"/gzip "$BIN"/aws
 
 # The fixture must be a REAL docker-save-shaped tar, because the helper now validates
 # that the decrypted stream is a docker image TAR (Defect A). OpsReview5 P1: the previous
@@ -254,6 +273,13 @@ fi
 DIG=$(sha256sum "$LOG/payload.gz" | cut -d' ' -f1)
 printf '%s  %s\n' "$DIG" "$LOG/payload.gz" > "$LOG/digest.val"
 
+# The helper requires the URI's final path component to be
+# `sigap-pre-redesign-<STAMP>.tar.gz.age`, so the `file://` fixture is named to match.
+# A URI naming a different release is refused rather than restored (tested below).
+TSTAMP=20261010
+ART="sigap-pre-redesign-$TSTAMP.tar.gz.age"
+cp "$LOG/payload.gz" "$LOG/$ART"
+
 # A deliberately NARROW path: the fake dir plus /usr/bin:/bin. The real docker.exe
 # lives in /c/WINDOWS/system32 and reaches a dead named pipe that blocks forever, so
 # it must NOT be reachable here. The environment is KEPT (not `env -i`), because
@@ -269,8 +295,8 @@ run_case() {  # run_case <desc> <want-rc> [VAR=val ...] — markers pre-set by c
   # separate arguments — never appended as shell words, which the shell would try to
   # EXECUTE as a program named "ISOLATED_DOCKER_HOST=..." [OBSERVED] rc=127.
   out=$(env TOP_LOG="$LOG" PATH="$NARROW_PATH" \
-        ARCHIVE="$LOG/archive.age" ARCHIVE_HOST=fakehost ARCHIVE_DIR=/fake \
-        ARCHIVE_KEY=/fake/key STAMP=20261010 EXPECT_DIGEST="$DIG" \
+        ARCHIVE_URI="file://$LOG/$ART" \
+        ARCHIVE_KEY=/fake/key STAMP="$TSTAMP" EXPECT_DIGEST="$DIG" \
         ISOLATED_DOCKER_HOST="tcp://isolated:9999" EXPECT_IDS="$API" \
         ALLOWED_ENGINE_ID="engineaaa" "$@" \
         timeout 60 "$BASH_BIN" "$HELPER" 2>&1)
@@ -283,7 +309,8 @@ run_case() {  # run_case <desc> <want-rc> [VAR=val ...] — markers pre-set by c
 }
 clear_all() { rm -f "$LOG"/dec_fail_first "$LOG"/dec_then_fail "$LOG"/enc_fails \
                    "$LOG"/gzip_fails "$LOG"/scp_fails "$LOG"/digest_bad \
-                   "$LOG"/load_fails "$LOG"/no_engine "$LOG"/KEEP_have_api; }
+                   "$LOG"/load_fails "$LOG"/no_engine "$LOG"/KEEP_have_api \
+                   "$LOG"/aws_fails "$LOG"/aws_truncated; }
 
 printf '=== the happy path first, so every refusal is a genuine refusal ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
@@ -353,9 +380,12 @@ run_case 'M4-empty-endpoint-refused'  10 ISOLATED_DOCKER_HOST=""
 
 printf '=== required input is validated, never defaulted ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
+# ARCHIVE_URI is omitted entirely. The `req` loop must refuse BEFORE the basename check
+# dereferences it, otherwise `set -u` would abort with an undocumented status instead of
+# the documented 10.
 out=$(TOP_LOG="$LOG" PATH="$NARROW_PATH" \
-      ARCHIVE_HOST=h ARCHIVE_DIR=/d ARCHIVE_KEY=/k \
-      STAMP=s EXPECT_DIGEST="$DIG" ISOLATED_DOCKER_HOST="tcp://i:1" \
+      ARCHIVE_KEY=/k \
+      STAMP="$TSTAMP" EXPECT_DIGEST="$DIG" ISOLATED_DOCKER_HOST="tcp://i:1" \
       EXPECT_IDS="$API" ALLOWED_ENGINE_ID="engineaaa" \
       timeout 60 "$BASH_BIN" "$HELPER" 2>&1)
 [ $? -eq 10 ] && ok 'missing-var-fails-closed' 'rc=10' \
@@ -371,8 +401,8 @@ clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/have_$API"
 # clean end-to-end pass. Creating it makes this a full successful run whose recorded
 # calls are exactly the ones the pinning guarantee must cover.
 env TOP_LOG="$LOG" PATH="$NARROW_PATH" \
-    ARCHIVE="$LOG/archive.age" ARCHIVE_HOST=fakehost ARCHIVE_DIR=/fake \
-    ARCHIVE_KEY=/fake/key STAMP=20261010 EXPECT_DIGEST="$DIG" \
+    ARCHIVE_URI="file://$LOG/$ART" \
+    ARCHIVE_KEY=/fake/key STAMP="$TSTAMP" EXPECT_DIGEST="$DIG" \
     ISOLATED_DOCKER_HOST="tcp://isolated:9999" EXPECT_IDS="$API" \
     ALLOWED_ENGINE_ID="engineaaa" \
     timeout 60 "$BASH_BIN" "$HELPER" >/dev/null 2>&1
@@ -413,6 +443,58 @@ if [ -n "$loadline" ]; then
 else
   ok 'load-is-pinned' 'load not reached in this fixture; pinning asserted in the helper'
 fi
+
+printf '=== storage dispatch: r2://, ssh://, file:// and malformed URIs ===\n'
+# The storage layer is a dispatch, not an SSH assumption. These cases prove R2 is a real
+# retrieval path, that the legacy relay still works without being required, and that a
+# URI naming the WRONG RELEASE is refused rather than restored.
+R2ENV="ARCHIVE_URI=r2://sigap-backups/$ART R2_ENDPOINT=https://acct.r2.cloudflarestorage.com AWS_ACCESS_KEY_ID=AKIAREADONLY AWS_SECRET_ACCESS_KEY=not-a-real-secret"
+
+# r2:// happy path — the primary destination.
+clear_all; : > "$LOG/KEEP_have_api"
+# shellcheck disable=SC2086
+run_case 'r2-happy-path-accepted' 0 $R2ENV
+
+# A read-only recovery credential is mandatory: without it the fetch cannot be
+# authenticated and the helper must refuse rather than attempt an anonymous read.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'r2-missing-recovery-credential-refused' 10 \
+  ARCHIVE_URI="r2://sigap-backups/$ART" \
+  R2_ENDPOINT=https://acct.r2.cloudflarestorage.com \
+  AWS_SECRET_ACCESS_KEY=present-but-no-access-key-id
+
+# A transfer that completes with fewer bytes than the API reports. The bytes land and
+# the command exits 0, so only the read-back length check catches it.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/aws_truncated"
+# shellcheck disable=SC2086
+run_case 'r2-truncated-transfer-refused' 14 $R2ENV
+
+# Transport failure must be a refusal, not a silent empty artifact.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/aws_fails"
+# shellcheck disable=SC2086
+run_case 'r2-fetch-failure-refused' 14 $R2ENV
+
+# THE WRONG-RELEASE GUARD. A URI naming a different stamp would otherwise be fetched,
+# digest-checked against ITS OWN out-of-band record, and loaded — all while reporting
+# success for THIS release.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'wrong-release-uri-refused' 10 \
+  ARCHIVE_URI="r2://sigap-backups/sigap-pre-redesign-19990101.tar.gz.age" \
+  R2_ENDPOINT=https://acct.r2.cloudflarestorage.com \
+  AWS_ACCESS_KEY_ID=AKIAREADONLY AWS_SECRET_ACCESS_KEY=x
+
+# An unrecognised scheme must refuse rather than fall through to a default transport.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'unsupported-uri-scheme-refused' 10 ARCHIVE_URI="ftp://host/$ART"
+
+# The legacy SSH relay keeps working — supported, but no longer REQUIRED.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'ssh-legacy-happy-path-accepted' 0 ARCHIVE_URI="ssh://fakehost/srv/arch/$ART"
+
+# file:// is the operator-staged path, already exercised by every case above; assert the
+# scheme explicitly so a future refactor cannot silently drop it.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'file-staged-happy-path-accepted' 0 ARCHIVE_URI="file://$LOG/$ART"
 
 printf '=== non-vacuity: the old masking idiom accepts what B refuses ===\n'
 # Case B's refusal is only meaningful if the OLD idiom would have ACCEPTED the same

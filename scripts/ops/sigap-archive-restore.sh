@@ -18,13 +18,23 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 #
 # Usage:
-#   ARCHIVE=<path-to-.age> ARCHIVE_HOST=<host> ARCHIVE_DIR=<dir> ARCHIVE_KEY=<key>
-#   EXPECT_DIGEST=<sha256> ISOLATED_DOCKER_HOST=<endpoint> EXPECT_IDS=<id1,id2,...>
-#   [ALLOWED_ENGINE_ID=<id>] ./sigap-archive-restore.sh
+#   ARCHIVE_URI=<uri> ARCHIVE_KEY=<key> STAMP=<stamp> EXPECT_DIGEST=<sha256>
+#   ISOLATED_DOCKER_HOST=<endpoint> ALLOWED_ENGINE_ID=<id> EXPECT_IDS=<id1,id2,...>
+#   ./sigap-archive-restore.sh
+#
+# ARCHIVE_URI schemes — the storage layer is a dispatch, not an SSH assumption:
+#   r2://<bucket>/<key>          Cloudflare R2 via the S3 API. Also requires
+#                                R2_ENDPOINT, AWS_ACCESS_KEY_ID and
+#                                AWS_SECRET_ACCESS_KEY (a READ-ONLY credential).
+#   ssh://<host>[:port]/<path>   legacy SSH relay (still supported, no longer required)
+#   file:///<path>               ciphertext already staged locally by the operator
+#
+# The URI's final path component MUST be `sigap-pre-redesign-$STAMP.tar.gz.age`, so a
+# URI naming a different release is refused rather than silently restored.
 #
 # Exit codes:
 #   0  every stage succeeded AND identity correspondence verified
-#   10 a required variable was unset
+#   10 a required variable was unset, or the URI/inputs are malformed
 #   11 destination/target refused (production or unverifiable)
 #   12 digest mismatch
 #   13 decrypted stream is not a complete gzip
@@ -41,10 +51,23 @@ die() { printf 'REFUSED: %s\n' "$*" >&2; exit "${2:-14}"; }
 # Required inputs — validated, never defaulted. Note: `${VAR:?msg}` EXITS the shell
 # with status 1 before `||` can run, so an explicit test is used to return 10.
 req() { [ -n "${!1:-}" ] || die "$1 is required (see the script header)" 10; }
-for v in ARCHIVE ARCHIVE_HOST ARCHIVE_DIR ARCHIVE_KEY STAMP EXPECT_DIGEST \
+for v in ARCHIVE_URI ARCHIVE_KEY STAMP EXPECT_DIGEST \
          ISOLATED_DOCKER_HOST EXPECT_IDS; do req "$v"; done
 
 ART="sigap-pre-redesign-$STAMP.tar.gz.age"
+
+# The storage layer is a DISPATCH, not an SSH assumption. `ARCHIVE_HOST`/`ARCHIVE_DIR`
+# were mandatory inputs in an earlier revision, which made R2 compatibility impossible
+# to claim: every restore was forced through one relay with one directory layout. The
+# URI is now the single input, and each scheme is one implementation of `fetch`.
+#
+# The basename check is not cosmetic — it is what stops a restore of the WRONG release.
+# A URI that names a different stamp would otherwise be fetched, digest-checked against
+# ITS OWN out-of-band record, and loaded, all while reporting success for this release.
+_uri_scheme=${ARCHIVE_URI%%://*}
+_uri_basename=${ARCHIVE_URI##*/}
+[ "$_uri_basename" = "$ART" ] \
+  || die "ARCHIVE_URI names '$_uri_basename', expected '$ART' for STAMP=$STAMP" 10
 
 # ---------------------------------------------------------------------------
 # 2. Restore target isolation — proved by ENGINE IDENTITY, not string matching.
@@ -139,11 +162,69 @@ worktree_plain="$PWD/sigap-restore-plain-$$.tar.gz"
 trap cleanup EXIT INT TERM HUP
 
 # ---------------------------------------------------------------------------
-# 4. Fetch — ciphertext only. The workstation/rollback host never holds the key,
-#    so nothing decrypted can land here.
+# 4. Fetch — ciphertext only. This host never holds the private key unless it IS the
+#    designated recovery host, so nothing decrypted can land here by accident.
+#
+#    One dispatch, three schemes. R2 is the primary destination; `file://` exists so an
+#    operator who retrieved the object by any other means can still run the identical
+#    verification, and `ssh://` keeps the legacy relay working without being required.
 # ---------------------------------------------------------------------------
-scp -q "$ARCHIVE_HOST:$ARCHIVE_DIR/$ART" "$WORK/archive.age" || die "fetch from \$ARCHIVE_HOST failed" 14
-[ -s "$WORK/archive.age" ] || die "fetched artifact is empty" 14
+case "$_uri_scheme" in
+  r2)
+    # r2://<bucket>/<key>  — Cloudflare R2 over the S3 API.
+    _spec=${ARCHIVE_URI#r2://}
+    _bucket=${_spec%%/*}
+    _key=${_spec#*/}
+    { [ -n "$_bucket" ] && [ -n "$_key" ] && [ "$_key" != "$_spec" ]; } \
+      || die "malformed ARCHIVE_URI: need r2://<bucket>/<key>" 10
+    # A READ-ONLY recovery credential. These are never in the repo, never in CI, and
+    # never the same pair used for upload.
+    req R2_ENDPOINT
+    req AWS_ACCESS_KEY_ID
+    req AWS_SECRET_ACCESS_KEY
+    command -v aws >/dev/null 2>&1 \
+      || die "the 'aws' CLI is required for r2:// retrieval" 14
+    # `--query ContentLength --output text` prints the object length on stdout while
+    # the body is written to the destination file. That gives an independent read-back
+    # length WITHOUT a second HEAD request, so a truncated transfer that still exits 0
+    # is caught here rather than surfacing later as a confusing gzip error.
+    _api_len=$(aws s3api get-object \
+                 --bucket "$_bucket" --key "$_key" \
+                 --endpoint-url "$R2_ENDPOINT" \
+                 --query 'ContentLength' --output text \
+                 "$WORK/archive.age" 2>"$WORK/fetch.err") \
+      || die "R2 fetch failed: $(sed -n '1,2p' "$WORK/fetch.err" 2>/dev/null)" 14
+    [ -s "$WORK/archive.age" ] || die "fetched object is empty" 14
+    _disk_len=$(wc -c < "$WORK/archive.age" | tr -d ' ')
+    [ -n "$_api_len" ] && [ "$_api_len" = "$_disk_len" ] \
+      || die "R2 read-back length mismatch (api=${_api_len:-none} disk=$_disk_len) — truncated transfer" 14
+    echo "fetched from r2://$_bucket/$_key ($_disk_len bytes, read-back length verified)"
+    ;;
+  ssh)
+    # ssh://<host>[:port]/<path>  — legacy relay.
+    _spec=${ARCHIVE_URI#ssh://}
+    _host=${_spec%%/*}
+    _path=/${_spec#*/}
+    { [ -n "$_host" ] && [ "$_path" != "/" ]; } \
+      || die "malformed ARCHIVE_URI: need ssh://<host>/<path>" 10
+    scp -q "$_host:$_path" "$WORK/archive.age" \
+      || die "fetch over ssh from $_host failed" 14
+    [ -s "$WORK/archive.age" ] || die "fetched artifact is empty" 14
+    echo "fetched from ssh://$_host$_path"
+    ;;
+  file)
+    # file:///<path>  — already staged by the operator.
+    _path=${ARCHIVE_URI#file://}
+    [ -f "$_path" ] || die "file:// source is not a regular file: $_path" 14
+    [ -L "$_path" ] && die "file:// source is a symlink: $_path" 11
+    cp -- "$_path" "$WORK/archive.age" || die "copy of file:// source failed" 14
+    [ -s "$WORK/archive.age" ] || die "staged artifact is empty" 14
+    echo "fetched from file://$_path"
+    ;;
+  *)
+    die "unsupported ARCHIVE_URI scheme '$_uri_scheme' (use r2://, ssh:// or file://)" 10
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 # 5. Digest — compared against the OUT-OF-BAND record, never a co-located file

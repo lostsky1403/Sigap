@@ -556,9 +556,10 @@ curl -fsS https://<SIGAP_PUBLIC_HOST>/ >/dev/null          # through the edge (T
 
 §13f's artifact is a **client-side-encrypted, compressed** multi-image archive
 (`sigap-pre-redesign-<STAMP>.tar.gz.age`) whose digest is recorded **out-of-band** — not the
-unencrypted `*.tar.gz` + `SHA256SUMS` pair §7d steps 1–2 consume. Restoring it on a fresh host
-requires the §13f key custody model (private key lives on the archive host, never on the
-workstation that fetched the ciphertext).
+unencrypted `*.tar.gz` + `SHA256SUMS` pair §7d steps 1–2 consume. It is retrieved from
+**Cloudflare R2** and restored on a recovery host holding the §13h private key. The key is
+**never** on production, on the relay, in Git, in CI, in R2 or in Jira; the relay that
+produced the ciphertext held only the public recipient and could not decrypt it.
 
 **This is an executable contract, not a recipe.** `scripts/ops/sigap-archive-restore.sh`
 performs every check below and exits non-zero unless all of them pass. It **requires `bash`**
@@ -566,8 +567,13 @@ performs every check below and exits non-zero unless all of them pass. It **requ
 re-implement it inline.
 
 ```bash
-ARCHIVE="$PWD/sigap-pre-redesign-$STAMP.tar.gz.age" \
-ARCHIVE_HOST="$ARCHIVE_HOST" ARCHIVE_DIR="$ARCHIVE_DIR" ARCHIVE_KEY="$ARCHIVE_KEY" \
+# Primary destination — Cloudflare R2. The credential here is the READ-ONLY recovery
+# credential, which is NOT the one used for upload (§13g).
+ARCHIVE_URI="r2://$R2_BUCKET/sigap/sigap-pre-redesign-$STAMP.tar.gz.age" \
+R2_ENDPOINT="$R2_ENDPOINT" \
+AWS_ACCESS_KEY_ID="$R2_READONLY_ACCESS_KEY_ID" \
+AWS_SECRET_ACCESS_KEY="$R2_READONLY_SECRET" \
+ARCHIVE_KEY="$RECOVERY_AGE_IDENTITY" \
 STAMP="$STAMP" \
 EXPECT_DIGEST="$OUT_OF_BAND_DIGEST" \
 ISOLATED_DOCKER_HOST="$ISOLATED_DOCKER_HOST" \
@@ -577,6 +583,19 @@ EXPECT_IDS="sha256:43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794
 # 0 = every stage verified; 10 unset var; 11 target refused; 12 digest mismatch;
 # 13 not a complete gzip; 14 a stage failed; 15 identity correspondence failed
 ```
+
+The same helper reads a legacy relay copy or an operator-staged file by changing only the
+URI — the storage layer is a dispatch, not an SSH assumption:
+
+```bash
+ARCHIVE_URI="ssh://$ARCHIVE_RELAY/srv/arch/sigap-pre-redesign-$STAMP.tar.gz.age"  # legacy relay
+ARCHIVE_URI="file:///mnt/encrypted/sigap-pre-redesign-$STAMP.tar.gz.age"          # staged locally
+```
+
+The URI's final path component **must** be `sigap-pre-redesign-$STAMP.tar.gz.age`; a URI
+naming a different release is refused with exit 10 rather than fetched and restored. Without
+that check a URI for another stamp would be digest-verified against *its own* out-of-band
+record and loaded, reporting success for the wrong release.
 
 **Per-stage status — the defect this closes.** The previous §7d.1 block used
 `{ age -d | gzip -d; echo $? > st; }`, and a compound's `$?` is the status of its **last
@@ -1947,46 +1966,56 @@ archive carries. `SIGAP_AUTH_ISSUER`, `SIGAP_AUTH_AUDIENCE`, `SIGAP_AUTH_JWKS_UR
 live in the container's runtime env and are *not* inspected or preserved by the image. Only a
 value baked at build time is shipped in the artifact.
 
-**Encryption tooling — a BLOCKING GAP found on the host `[OBSERVED]` 2026-10-10.**
-§13f's design assumes `age` exists on the production host. **It does not.** Read-only checks on
-`fikriserver`:
+**Encryption tooling — RESOLVED by owner decision 2026-10-12.** This section previously
+recorded a blocking gap: §13f assumed `age` existed on the production host, and it does not
+`[OBSERVED]` 2026-10-10. The owner has since decided the format and the location of the
+encryption step, and the decision **dissolves the gap rather than working around it**.
 
-| Requirement | Present | Note |
+| Requirement | Present on prod | Note |
 |---|---|---|
-| `age` / `age-keygen` | **ABSENT** | the entire §13f design as first written |
-| `gpg` | **present** | viable substitute; needs a keyring and a passphrase on the host |
-| `openssl` | **present** (3.0.2) | see the cipher table below |
-| `aws` cli | **present** | the AUDIT-701/backup-postgres.sh upload path uses it |
+| `age` / `age-keygen` | **ABSENT** | still absent — and now **not required** |
+| `gpg` | present | not used; the owner rejected symmetric passphrase custody |
+| `openssl` (3.0.2) | present | **not used**; see below |
+| `aws` cli | **present** | already used by the AUDIT-701 upload path |
+| `ssh` | present | transport to the relay |
 
-Of the ciphers `openssl enc` accepts on the prod host, the **authenticated** ones are
-**unsupported**: `aes-256-gcm` → *"AEAD ciphers not supported"*, and
-`chacha20-poly1305@openssl.com` likewise. What remains streams correctly but is **not
-authenticated**: `aes-256-ctr`, `aes-256-cbc`. `[INFERENCE]` an unauthenticated stream cipher
-is malleable — a truncated or altered archive decrypts to *something*, and the failure mode is
-not detected. For this artifact that is not acceptable, so **§13f is not authorized until the
-encryption mechanism is decided.**
+**Owner decision: Cloudflare R2 (private S3-compatible object storage) + `age` public-key
+authenticated encryption, performed OFF-HOST.** Production does not need an `age`
+installation. The encryption stage runs on the trusted relay, which needs only the **public
+recipient** — so the private key is not on production, not on the relay, not in Git, not in
+CI, not in R2 and not in Jira.
 
-**Options, none chosen for the owner:**
-1. **Install `age`** on the host (`apt install age`) — smallest change to the design, but a
-   *host package change*, needs owner approval.
-2. **`gpg` symmetric**, `gpg -c --cipher-algo AES256` on the host — already installed; needs a
-   passphrase, which then lives on the host (the same custody question `age` was chosen to
-   avoid). `[INFERENCE]` gpg also authenticates, so tampering is detectable.
-3. **Encrypt on the workstation, not the host** — `docker save | gzip | ssh ...` then the
-   workstation encrypts the stream with a tool it does have, before pushing to the archive
-   host. Keeps the key off the VPS entirely; costs a slightly longer pipeline.
+**`openssl enc` is explicitly rejected as a substitute.** Of the ciphers it accepts on the
+production host, the **authenticated** ones are unsupported: `aes-256-gcm` → *"AEAD ciphers
+not supported"*, and `chacha20-poly1305@openssl.com` likewise. What remains streams correctly
+but is **not authenticated**: `aes-256-ctr`, `aes-256-cbc`. `[INFERENCE]` an unauthenticated
+stream cipher is malleable — a truncated or altered archive decrypts to *something*, and the
+failure is not detected. **Do not silently substitute `aes-256-ctr`.** It preserves the shape
+of the plan while removing the authentication property that makes a rollback artifact
+trustworthy. The earlier options list (install `age` on the host; `gpg -c` with a passphrase
+on the host; encrypt on the workstation) is **superseded** — option 1 is unnecessary, option 2
+was rejected on custody grounds, and option 3 is subsumed by the off-host relay stage.
 
-**Do not silently substitute `aes-256-ctr` for `age`.** It preserves the shape of the plan
-while removing the authentication property that makes a rollback artifact trustworthy. The
-decision is recorded here, not made.
+**Key custody — decided 2026-10-12, and the decision is what makes R2 safe.** The private
+key is **not** on production, **not** on the relay, **not** in Git, **not** in CI, **not** in
+R2 and **not** in Jira. Only the **public recipient** is needed to encrypt, and the recipient
+is not secret — it is recorded in `RELEASE_CHECKLIST.md` and on the Jira release gate so that
+any operator can produce a correctly-encrypted artifact.
 
-**Key custody — decided, not left open.** Two models exist and the plan must pick one. **This
-plan uses the OFF-HOST-KEY model**: the encryption key exists **only** on the isolated
-archive host, never on the workstation that pulls the stream. The workstation therefore only
-ever holds **ciphertext**. If the owner prefers a local key instead, then
-`$LOCAL_ARCHIVE_DIR` becomes **key-equivalent** and must sit on an encrypted volume with
-restricted ACLs and must never be synced to a shared drive — but that weakens the design and
-is not the default here.
+Custody is split across three roles, and no single host holds both the ciphertext and the key
+in usable form:
+
+| Role | Holds | Never holds |
+|---|---|---|
+| Production (`fikriserver`) | `docker save` output, `gzip` | the recipient, the key, R2 credentials |
+| Relay (trusted, off-host) | the public recipient, R2 **write** credential, staged ciphertext | the private key |
+| Recovery host (operator-held) | the **private key**, R2 **read-only** credential | production access |
+
+Two independently protected copies of the private key are required, held apart so that a
+single failure — a lost laptop, a corrupted disk, a forgotten passphrase — cannot destroy the
+ability to restore. Full procedure in §13h. The key is generated by a **separately authorized
+trusted operator process**, never by an agent, and never printed, logged, committed, or
+pasted into Jira.
 
 **Proposed execution (NOT RUN — requires separate authorization).**
 
@@ -2073,6 +2102,12 @@ stream_offhost() {
   #      repro leaves all four empty while the artifact is written correctly.
   #  (b) `rc_age=${PIPESTATUS[0]}; rc_gzip=${PIPESTATUS[1]}` — the first assignment
   #      resets PIPESTATUS, so the second is a constant. Capture the array ONCE.
+  #
+  # The RELAY performs the `age` stage and writes only CIPHERTEXT. Production therefore
+  # needs no `age`, and no unencrypted archive is ever persisted on the relay — the
+  # remote command is `age -r RECIP > STAGE/$DEST`, with `age` reading the gzip stream on
+  # stdin. The private key is absent from production and from the relay; only the public
+  # recipient is used, and a recipient cannot decrypt.
   set +e
   set -o pipefail
   { ssh -o BatchMode=yes -o ConnectTimeout=20 fikriserver "docker image save \
@@ -2080,18 +2115,17 @@ stream_offhost() {
       sha256:${EXPECT[web]} \
       sha256:${EXPECT[rust-engine]}" \
     | gzip -1 \
-    | age -r "$OFFHOST_RECIPIENT" \
-    | ssh -o BatchMode=yes -o ConnectTimeout=20 "$ARCHIVE_HOST" "set -C; cat > '$ARCHIVE_DIR/$DEST'"
+    | ssh -o BatchMode=yes -o ConnectTimeout=20 "$ARCHIVE_RELAY" \
+        "umask 077; age -r '$OFFHOST_RECIPIENT' > '$RELAY_STAGE/$DEST'"
   }
   ps=("${PIPESTATUS[@]}")
   set +o pipefail
   set -e
-  r_save=${ps[0]:-1}; r_gzip=${ps[1]:-1}; r_age=${ps[2]:-1}; r_scp=${ps[3]:-1}
+  r_save=${ps[0]:-1}; r_gzip=${ps[1]:-1}; r_age=${ps[2]:-1}
   printf '%s\n' "$r_save" > "$ST/st.1"
   printf '%s\n' "$r_gzip" > "$ST/st.2"
   printf '%s\n' "$r_age"  > "$ST/st.3"
-  printf '%s\n' "$r_scp"  > "$ST/st.4"
-  echo "stream stages: save=$r_save gzip=$r_gzip age=$r_age scp=$r_scp"
+  echo "stream stages: save=$r_save gzip=$r_gzip age-offhost=$r_age"
 }
 stream_offhost
 for f in "$ST"/st.*; do
@@ -2099,84 +2133,90 @@ for f in "$ST"/st.*; do
   [ "$(cat "$f")" -eq 0 ] || { echo "REFUSED: stage $(basename "$f") failed — the artifact is NOT trusted"; exit 1; }
 done
 
-# 1b. The artifact must be a COMPLETE, NON-EMPTY stream. The encrypted artifact itself is
-#     age CIPHERTEXT, not gzip — [OBSERVED] `gzip -t` on it exits 1 with "not in gzip
-#     format", so a naive `gzip -t $DEST` guard is dead code that aborts every SUCCESSFUL
-#     run. The invariant must therefore be checked on the DECRYPTED stream, which is the
-#     gzip: decrypt to stdout and pipe to `gzip -t`. This also detects a truncated
-#     transfer, because gzip detects an unexpected end of stream.
-#     A compressed-size floor alone is useless: gzip of empty input is 20 B and passes
-#     `gzip -t`, which is exactly the shape a failed `docker image save` leaves.
-ssh "$ARCHIVE_HOST" "age -d -i '$ARCHIVE_KEY' '$ARCHIVE_DIR/$DEST'" | gzip -t \
-  || { echo "REFUSED: decrypted stream is not a complete gzip (truncated or empty)"; exit 1; }
+# 1b. THE RELAY CANNOT DECRYPT, and that is a deliberate consequence of the custody model:
+#     it holds no private key. So the completeness check the previous revision performed
+#     here (`ssh archive "age -d -i KEY …" | gzip -t`) is NO LONGER POSSIBLE at this point.
+#     Pretending otherwise would require putting the private key on the relay, which the
+#     owner's decision forbids.
+#
+#     What the relay CAN prove is that the artifact is a well-formed, non-empty age file:
+#     the `age-encryption.org/v1` header magic is present, and the object is non-empty.
+#     The DECRYPT verification is not skipped — it is RELOCATED to the recovery host, where
+#     the key legitimately exists, and it runs on EVERY restore via
+#     `scripts/ops/sigap-archive-restore.sh` (§7d.1). That is strictly stronger than the
+#     old inline check, which ran once at preservation time and never again.
+ssh -o BatchMode=yes "$ARCHIVE_RELAY" "head -c 30 '$RELAY_STAGE/$DEST'" 2>/dev/null \
+  | grep -q 'age-encryption.org/v1' \
+  || { echo "REFUSED: staged artifact is not an age file (missing header magic)"; exit 1; }
+ssh -o BatchMode=yes "$ARCHIVE_RELAY" "test -s '$RELAY_STAGE/$DEST'" \
+  || { echo "REFUSED: staged artifact is empty"; exit 1; }
 rm -rf "$ST"
 
-# 2. Digest the artifact ON THE ARCHIVE HOST, where it lives, and record the digest
-#    OUT-OF-BAND (RELEASE_CHECKLIST.md / the Jira issue), exactly as §12a does for EXPECT_SHA.
-#    A checksum stored beside the artifact is integrity-only: whoever can replace the .age can
-#    replace its .sha256. Out-of-band recording is what makes it tamper-evident.
-ssh "$ARCHIVE_HOST" "sha256sum '$ARCHIVE_DIR/$DEST'"
+# 2. Digest, upload, read back, then record. The digest is computed on the RELAY before
+#    upload and re-computed AFTER downloading the object back, so a corrupt or partial
+#    upload is caught here rather than during an incident. It is recorded OUT-OF-BAND
+#    (RELEASE_CHECKLIST.md / the Jira issue), exactly as §12a does for EXPECT_SHA: a
+#    checksum stored beside the artifact is integrity-only, because whoever can replace the
+#    object can replace its sidecar. Out-of-band recording is what makes it tamper-evident.
+DIGEST=$(ssh -o BatchMode=yes "$ARCHIVE_RELAY" "sha256sum '$RELAY_STAGE/$DEST'" | cut -d' ' -f1)
+[ -n "$DIGEST" ] || { echo "REFUSED: could not digest the staged artifact"; exit 1; }
 
-# 3. Identity correspondence: prove the ARCHIVE holds exactly the captured IDs.
-#    Decrypts with the key that exists ONLY on the archive host, and loads into an ISOLATED
-#    daemon. The target is asserted non-production FIRST, in every spelling, so this can
-#    never load into the production daemon — which would overwrite the very images the
-#    rollback is trying to recover.
+# Upload. `aws s3 cp` switches to a MULTIPART upload above 8 MiB and streams each part, so
+# memory stays bounded no matter the artifact size (0.44 GB today). The object key is
+# write-once: the STAMP makes it unique, and the bucket's retention policy forbids
+# overwrite (see §13g). The credential is the WRITE-ONLY one; it cannot read back, which is
+# why read-back below runs as a separate step with its own credential in a real run.
+ssh -o BatchMode=yes "$ARCHIVE_RELAY" \
+  "aws s3api put-object \
+     --bucket '$R2_BUCKET' --key 'sigap/$DEST' \
+     --body '$RELAY_STAGE/$DEST' \
+     --endpoint-url '$R2_ENDPOINT'" \
+  || { echo "REFUSED: R2 upload failed"; exit 1; }
+
+# Read-back: the object's recorded length must match the local file, AND the object must
+# download to a byte-identical digest. This is what separates "the upload command exited 0"
+# from "the object in R2 is the artifact".
+REMOTE_LEN=$(ssh -o BatchMode=yes "$ARCHIVE_RELAY" \
+  "aws s3api head-object --bucket '$R2_BUCKET' --key 'sigap/$DEST' \
+     --endpoint-url '$R2_ENDPOINT' --query ContentLength --output text")
+LOCAL_LEN=$(ssh -o BatchMode=yes "$ARCHIVE_RELAY" "wc -c < '$RELAY_STAGE/$DEST'" | tr -d ' ')
+[ "$REMOTE_LEN" = "$LOCAL_LEN" ] \
+  || { echo "REFUSED: read-back length mismatch (r2=$REMOTE_LEN local=$LOCAL_LEN)"; exit 1; }
+
+READBACK=$(ssh -o BatchMode=yes "$ARCHIVE_RELAY" \
+  "aws s3 cp 's3://$R2_BUCKET/sigap/$DEST' - --endpoint-url '$R2_ENDPOINT' | sha256sum" | cut -d' ' -f1)
+[ "$READBACK" = "$DIGEST" ] \
+  || { echo "REFUSED: read-back digest mismatch — the object in R2 is NOT the artifact"; exit 1; }
+
+# Only now is the staged copy removed. Retaining it until read-back succeeds is what allows
+# a retry without re-running the export, and is why the owner permits local staging on a
+# restricted encrypted volume. `shred` is meaningful only on a local filesystem — on a
+# network volume it degrades to `rm`, which is why the volume itself must be encrypted.
+ssh -o BatchMode=yes "$ARCHIVE_RELAY" \
+  "shred -u '$RELAY_STAGE/$DEST' 2>/dev/null || rm -f '$RELAY_STAGE/$DEST'"
+printf 'ARTIFACT: r2://%s/sigap/%s\nDIGEST:   %s\n' "$R2_BUCKET" "$DEST" "$DIGEST"
+echo "RECORD THE DIGEST ABOVE OUT-OF-BAND before authorizing any build (§13b)."
+
+# 3. Identity correspondence: prove the artifact holds exactly the captured IDs.
 #
-#    Status capture is NOT `{ a | b; echo $?; }` — that records only the last command
-#    inside the braces, so a non-zero `age -d` is never seen. [OBSERVED] `{ age -d |
-#    gzip -d; echo $? > st; }` records `gzip -d`, and the same masking applies to the
-#    remote `ssh "age -d | gzip -d"`. Per-stage fifo capture plus an explicit
-#    decrypt-then-validate is used instead; §7d.1 carries the identical pattern.
-: "${ISOLATED_DOCKER_HOST:?set to the isolated test daemon; refusing to load unguarded}"
-is_production_target() {
-  case "$1" in
-    ssh://fikriserver*|*@fikriserver|fikriserver|fikriserver:*) return 0 ;;
-    # /run and /var/run are the same directory on Linux — all of these are production
-    unix:///var/run/docker.sock|/var/run/docker.sock|var/run/docker.sock|unix:///run/docker.sock|/run/docker.sock|run/docker.sock) return 0 ;;
-    "") return 0 ;;
-    "$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null)") return 0 ;;
-  esac
-  return 1
-}
-if is_production_target "$ISOLATED_DOCKER_HOST" \
-   || [ "$ISOLATED_DOCKER_HOST" = "$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null)" ]; then
-  echo "REFUSED: ISOLATED_DOCKER_HOST '$ISOLATED_DOCKER_HOST' is a production target"; exit 1
-fi
-DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker version --format '{{.Server.Version}}' >/dev/null 2>&1 || {
-  echo "REFUSED: isolated daemon unreachable at $ISOLATED_DOCKER_HOST"; exit 1; }
-
-# Validate the DECRYPTED stream FIRST, before loading anything. This is the check that
-# catches a truncated transfer, a wrong key, and the empty-stream case — a bare
-# `age -d | gzip -d | docker load` pipeline reports 0 for all three.
-ssh "$ARCHIVE_HOST" "age -d -i '$ARCHIVE_KEY' '$ARCHIVE_DIR/$DEST'" > "$TMP_PLAIN.tar.gz"
-[ -s "$TMP_PLAIN.tar.gz" ] && gzip -t "$TMP_PLAIN.tar.gz" 2>/dev/null \
-  || { echo "REFUSED: decrypted stream is not a complete gzip (wrong key or truncated)"; rm -f "$TMP_PLAIN.tar.gz"; exit 1; }
-
-ST2=$(mktemp -d); trap 'rm -rf "$ST2"' EXIT INT TERM 2>/dev/null
-F2="$ST2/f"; mkfifo "$F2" || exit 1
-# Fetch from the archive host, decompress on the workstation, load into the isolated daemon.
-{ ssh "$ARCHIVE_HOST" "age -d -i '$ARCHIVE_KEY' '$ARCHIVE_DIR/$DEST'"; echo $? > "$ST2/st.fetch"; } > "$F2" &
-pidF=$!
-{ gzip -d < "$F2"; echo $? > "$ST2/st.gzip"; } | DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load --quiet &
-pidL=$!
-wait "$pidF" 2>/dev/null
-# the gzip+load group's statuses are written by their own stages
-for f in "$ST2"/st.*; do
-  [ -s "$f" ] || { echo "REFUSED: no status recorded in $f"; exit 1; }
-  [ "$(cat "$f")" -eq 0 ] || { echo "REFUSED: stage $(basename "$f") failed — the archive is NOT a faithful copy"; exit 1; }
-done
-rm -f "$TMP_PLAIN.tar.gz" "$F2"
-# Scope the assertion to the THREE IDs. A daemon-wide listing would fail spuriously on any
-# daemon that already holds a base image, and would prove nothing about the archive.
-for id in 43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f \
-          2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c \
-          8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4; do
-  DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker image inspect "sha256:$id" >/dev/null \
-    || { echo "MISSING $id — the archive is NOT a faithful copy; STOP"; exit 1; }
-done
-echo "identity correspondence VERIFIED for all three images"
+#    This is no longer hand-rolled here. `scripts/ops/sigap-archive-restore.sh` (§7d.1) is
+#    the executable contract, and it now retrieves from R2 directly, so the same script
+#    verifies a relay copy and an R2 copy with no branching. It performs, in order:
+#      - target isolation proved by ENGINE IDENTITY, not string matching;
+#      - fetch from r2://, ssh:// or file:// (the storage layer is a dispatch);
+#      - out-of-band digest comparison;
+#      - per-stage status capture for decrypt, decompress and load — the masking defect
+#        `{ age -d | gzip -d; echo $?; }` cannot occur, because PIPESTATUS is read per stage;
+#      - `gzip -t` on the DECRYPTED stream, plus a `manifest.json` check;
+#      - `docker load` into the verified isolated daemon only;
+#      - per-image identity correspondence for all three IDs, with a partial load refused.
+#    It exits non-zero unless EVERY check passes. Do not re-implement it inline.
+bash scripts/ops/sigap-archive-restore.sh
 ```
+
+The helper is invoked on the **recovery host**, which is the only role holding the private
+key (§13h). It reads the ciphertext from R2 with a **read-only** credential and never writes
+plaintext outside its `0700` work directory.
 
 Note the decoder order in step 3 is the exact inverse of step 1 — `age -d` **then**
 `gzip -d`, in that order. Getting it backwards is a silent no-op on a `docker save` tar.
@@ -2197,20 +2237,17 @@ VPS. Option B's write credential is on the VPS, so a VPS compromise reads the bu
 has no such path. Option A also puts the cipher key on the machine that already holds the
 operator's tooling, which avoids the key-custody problem entirely for a first capture.
 
-**Minimum owner action, option A (three steps, nothing else required):**
-1. Create the destination directory on the workstation, e.g. `F:\Sehat-Hub-backups\pre-redesign`.
-2. Restrict it to the current user (`icacls <dir> /grant:r "%USERNAME%":F` on Windows, or
-   `chmod 700` on a POSIX path) and confirm it is **not** inside a cloud-synced folder.
-3. Install `age` on the workstation (`winget install FiloSottile.age`, or
-   `choco install age`) and generate a recipient key **on the workstation**:
-   `age-keygen -o age-recipient.txt`. Pass the **public** recipient to §13f as
-   `OFFHOST_RECIPIENT`; the private key never leaves the workstation.
+**Owner action required — superseded by the 2026-10-12 decision.** The earlier "option A"
+(install `age` on the workstation, keep the key there, stream plain gzip over SSH) is
+**superseded**: the owner selected **Cloudflare R2 + off-host `age`**, and the encryption
+stage now runs on the trusted relay. The blocker that block recorded — "the cipher mechanism
+for the *stream* is undecided" — is resolved: `age` is used, off-host, and production never
+needs it.
 
-**Still blocking even with A:** the cipher mechanism for the *stream* is undecided (§13f records
-`age` ABSENT on the prod host and no AEAD in `openssl` there). With option A the smallest change
-is to install `age` on the workstation and have the workstation do the decryption, leaving the VPS
-to stream plain gzip **over the encrypted SSH channel** only — which is safe, because the channel
-is already authenticated and the ciphertext never rests on the VPS.
+What the owner must still do is **not** a workstation install. It is the three Gate A actions
+in §13g.4 and §13h.4: create the private bucket, create the two narrowly scoped credentials,
+and generate the age key pair through a separately authorized trusted process. No OMP agent
+generates, reads, prints or stores the private key.
 
 **Do not** invent backup credentials, print the existing `/etc/sigap/backup.env` contents, or
 create live backup objects without authorization.
@@ -2239,6 +2276,189 @@ Encryption is applied **before** the bytes leave the host, and the private key n
 the streaming workstation. Never place plaintext image archives on shared or world-readable
 storage, and never print image **environment values** — this inspection read only IDs, sizes,
 timestamps and statuses, and no secret values were read or recorded.
+
+---
+
+### 13g. R2 storage contract (DESIGN — no bucket, credential or object created)
+
+**Owner decision 2026-10-12:** Cloudflare R2, private S3-compatible object storage. Nothing in
+this section has been created. `R2_BUCKET = NOT_CREATED`.
+
+**13g.1 — Bucket.**
+
+| Property | Value | Rationale |
+|---|---|---|
+| Bucket name | `sigap-backups` (owner's choice; must be globally unique) | R2 requires uniqueness within the account |
+| Visibility | **Private**, no public bucket, no custom domain, no `r2.dev` public endpoint | An object URL must never be reachable without credentials |
+| Region | Automatic (R2 has no region choice for the bucket) | — |
+| **Object Lock / Bucket Lock** | **ENABLED AT CREATION**, retention **≥ 90 days** | Must be set when the bucket is created; it cannot be retrofitted on an existing bucket. Blocks object deletion and overwrite for the retention window, so a compromised credential cannot destroy the only rollback copy |
+| Lifecycle: abort incomplete multipart | **Abort after 3 days** | An interrupted multipart upload leaves billed parts that are invisible to a plain listing; without this they accumulate silently |
+| Lifecycle: expire old versions | **365 days** (owner's retention choice) | Bounds cost; must exceed the rollback window |
+| Versioning | Enabled by Object Lock | Overwrite protection |
+
+**13g.2 — Object keys.** `sigap/sigap-pre-redesign-<STAMP>.tar.gz.age`, where `STAMP` is
+`YYYYMMDDTHHMMSSZ` UTC. The key is **write-once by construction**: the stamp makes it unique,
+and Object Lock forbids overwrite within the retention window. Keys sort lexicographically by
+time, so a listing is a chronological inventory. The helper additionally refuses any URI whose
+final path component is not `sigap-pre-redesign-<STAMP>.tar.gz.age`, so a restore cannot
+silently target a different release.
+
+**13g.3 — Credentials: two, narrowly scoped, and neither can delete.**
+
+| Role | R2 permission | Can | Cannot |
+|---|---|---|---|
+| **Upload** (relay) | **Object Write** | `PutObject`, multipart create/upload/complete/abort, `ListMultipartUploads` | read any object, delete any object, list bucket contents |
+| **Recovery** (operator host) | **Object Read** | `GetObject`, `HeadObject`, list the `sigap/` prefix | write, delete, or modify anything |
+
+R2 API tokens natively provide these two tiers, so no custom policy is needed. **`DeleteObject`
+is granted to neither credential.** Deletion therefore requires the Cloudflare account
+dashboard, which is a deliberate, human-only action — a stolen upload credential cannot
+destroy the archive, and a stolen recovery credential cannot alter it. The two credentials are
+stored separately and are never co-located: the write credential lives on the relay, the read
+credential on the recovery host. Neither is in Git, CI, Jira or the repo.
+
+**13g.4 — Gate A owner actions (R2).** Nothing below may be performed by an agent.
+
+| # | Action | Notes |
+|---|---|---|
+| A1 | Create the **private** bucket with Object Lock enabled and ≥90-day retention | Object Lock must be set at creation |
+| A2 | Add the **abort-incomplete-multipart** lifecycle rule (3 days) | Prevents silent part accumulation |
+| A3 | Create the **Object Write** API token, scope it to the bucket | For the relay only |
+| A4 | Create the **Object Read** API token, scope it to the bucket | For the recovery host only |
+| A5 | Record the bucket name, endpoint and the **public recipient** in `RELEASE_CHECKLIST.md` and on the Jira gate | These are not secrets |
+| A6 | Store both credentials in the operator's secret store — **never** in the repo, CI, Jira, or a transcript | — |
+
+**13g.5 — Multipart, memory and incomplete uploads.** `aws s3 cp` switches to a multipart
+upload above 8 MiB and streams each part, so **memory is bounded by the chunk size times the
+concurrency, not by artifact size**: defaults are 8 MiB × 10 concurrent ≈ 80 MiB, regardless
+of whether the artifact is 0.44 GB or 40 GB. Tune with
+`--cli-write-timeout` / `s3.multipart_chunksize` / `s3.max_concurrent_requests` in
+`~/.aws/config` if the relay is memory-constrained. An upload interrupted before completion
+leaves **no visible object** — only parts, which the 3-day abort rule reclaims. The staged
+ciphertext remains on the relay until read-back succeeds, so a retry does not require
+re-running the export.
+
+**13g.6 — Retry and read-back.** `aws s3api put-object` / `aws s3 cp` retry transient failures
+internally (up to 5 attempts). Read-back is the authoritative check, and it is **two-part**:
+the object's `ContentLength` must equal the local file length, **and** the object must
+download to a byte-identical SHA-256. Both are required because a truncated transfer can
+complete with a zero exit status — the same failure class as `docker image save | gzip`, and
+the reason a bare "the command succeeded" is never treated as proof here.
+
+**13g.7 — Digest recorded out-of-band.** The SHA-256 is recorded in `RELEASE_CHECKLIST.md` and
+on the Jira release gate — **not** as a sidecar object in R2. A digest stored beside the
+artifact is integrity-only: whoever can replace the object can replace its sidecar. Out-of-band
+recording is what makes the artifact tamper-evident, and it survives the loss of R2 itself.
+
+**13g.8 — Recovery when production and the operator workstation are both unavailable.** This
+is the property R2 buys, and it holds because nothing in the recovery path touches either host:
+
+| Requirement | Where it lives | Independent of production? | of the workstation? |
+|---|---|---|---|
+| Ciphertext | R2 | yes | yes |
+| Private key | two custody copies (§13h) | yes | yes |
+| Out-of-band digest | `RELEASE_CHECKLIST.md` (Git) + Jira | yes | yes |
+| Read-only credential | operator secret store | yes | yes |
+| Tooling | any host with `docker`, `age`, `aws` | yes | yes |
+
+Recovery is therefore: on **any** host with Docker and the three tools, set the read-only
+credential and the digest, then run the §7d.1 helper. No production access, no relay, and no
+particular workstation is required. **The residual single point of failure is the Cloudflare
+account itself** — losing account access loses the objects. That is why the digest is also in
+Git/Jira, and why §13h requires two key copies held apart.
+
+**13g.9 — Cost.** R2 bills storage at **$0.015/GB-month**, Class A (write) at **$4.50 per
+million**, Class B (read) at **$0.36 per million**, and **egress is free**. R2 includes a free
+tier of **10 GB-month storage, 1 M Class A and 10 M Class B per month**.
+
+| Scenario | Storage | Monthly | Annual |
+|---|---|---|---|
+| One archive (0.44 GB) | 0.44 GB | **$0.00** (free tier) | $0.00 |
+| 12 monthly releases retained (≈5.3 GB) | 5.3 GB | **$0.00** (free tier) | $0.00 |
+| 24 releases (≈10.6 GB) | 10.6 GB | ≈$0.01 | ≈$0.12 |
+
+Operations are negligible: one upload is ~57 Class A calls (55 parts + create + complete) and
+read-back is 2 Class B calls. **Even a daily archive for a year stays inside the free tier.**
+Egress being free is what makes a full restore drill — downloading 0.44 GB — cost nothing,
+which matters because a rollback is exactly when you do not want a metered download. `[INFERENCE]`
+pricing is from published R2 rates and is not verified against a live account; it is an estimate,
+not a quote.
+
+---
+
+### 13h. age key custody (DESIGN — no key generated by any agent)
+
+`PRODUCTION_PRIVATE_KEY = NOT_GENERATED_BY_AGENT`. No agent generates, reads, prints, stores or
+transmits the private key. This section specifies the procedure for the owner's separately
+authorized trusted process.
+
+**13h.1 — Roles.** `age` public-key encryption means only the **recipient** (public key) is
+needed to encrypt, and a recipient cannot decrypt. The relay therefore encrypts without being
+able to read what it encrypts, and the private key exists only on the recovery side.
+
+**13h.2 — Two independently protected recovery copies.** A single key copy is a single point of
+failure: one lost laptop, one corrupted disk, one forgotten passphrase, and the archive is
+permanently unreadable. Two copies are required, held so that a single event cannot destroy
+both:
+
+| Copy | Location | Protection | Must NOT be |
+|---|---|---|---|
+| **C1 — primary** | Operator's encrypted volume / hardware token | Passphrase + full-disk encryption | in Git, CI, R2, Jira, the relay, or any cloud-synced folder |
+| **C2 — escrow** | Physically separate, offline (e.g. sealed offline media in a different location, or a second hardware token) | Separate passphrase, ideally a separate custodian | in the same building as C1; in the same cloud account as the archive |
+
+Both copies must be **tested by an actual decrypt** before the first real archive is trusted —
+an untested key is not a recovery capability. §13h.5 gives the drill.
+
+**13h.3 — Verifying the recipient matches the recovery identity, without exposing the private
+key.** `age-keygen -y <identity-file>` prints the **public** key derived from an identity file.
+That is the whole verification: it proves correspondence while emitting only public material.
+
+```bash
+# On the recovery host, holding the private key. Prints ONLY the public recipient.
+DERIVED=$(age-keygen -y "$RECOVERY_AGE_IDENTITY")
+[ "$DERIVED" = "$RECORDED_RECIPIENT" ] \
+  || { echo "STOP: the recovery key does NOT match the recipient the archive was encrypted to"; exit 1; }
+echo "recipient correspondence verified (public material only — no private key printed)"
+```
+
+Do **not** verify by printing the identity file, by hashing it into a transcript, or by
+comparing file sizes. `age-keygen -y` is the only step needed, and it is safe to paste its
+output into evidence. The operational confirmation is a **round-trip on a throwaway file**:
+encrypt to `$RECORDED_RECIPIENT`, decrypt with the identity, compare. That proves the pair
+matches in practice, not merely that two strings are equal.
+
+**13h.4 — Gate A owner actions (keys).**
+
+| # | Action | Notes |
+|---|---|---|
+| C1 | Run `age-keygen` on a trusted machine via the separately authorized process | Never through an agent; never in CI |
+| C2 | Record the **public recipient** in `RELEASE_CHECKLIST.md` and on the Jira gate | Public material — safe to record |
+| C3 | Place copy **C1** on the encrypted recovery volume; restrict to the operator | `chmod 600` / equivalent ACL |
+| C4 | Create copy **C2** on separate offline media, ideally a different custodian and location | Different passphrase |
+| C5 | Run the §13h.3 correspondence check and the §13h.5 round-trip drill | Before any real archive is trusted |
+| C6 | Confirm the key is **absent** from production, the relay, Git, CI, R2 and Jira | The whole point of the split |
+
+**13h.5 — Recovery-key drill (required before the first real archive is trusted).** Using a
+throwaway file, not production data:
+
+```bash
+printf 'sigap-key-drill' > /tmp/drill.txt
+age -r "$RECORDED_RECIPIENT" -o /tmp/drill.age /tmp/drill.txt
+# Restore with copy C1, then repeat with copy C2 — BOTH must succeed.
+age -d -i "$C1_IDENTITY" /tmp/drill.age | cmp -s - /tmp/drill.txt \
+  || { echo "FAIL: copy C1 cannot decrypt"; exit 1; }
+age -d -i "$C2_IDENTITY" /tmp/drill.age | cmp -s - /tmp/drill.txt \
+  || { echo "FAIL: copy C2 cannot decrypt"; exit 1; }
+shred -u /tmp/drill.txt /tmp/drill.age
+```
+
+A key that has never decrypted anything is an assumption. Both copies must pass this before
+§13f is authorized.
+
+**13h.6 — Rotation.** Rotating the recipient does not re-encrypt existing archives; they remain
+readable only with the identity that matches the recipient they were encrypted to. Record the
+recipient **alongside each archive's digest** out-of-band, so a future restore knows which key
+to use. Retire an old identity only after every archive encrypted to it has expired.
 
 ---
 
