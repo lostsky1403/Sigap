@@ -134,6 +134,7 @@ API=43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f
 # which is the normal, correctly-isolated case.
 TGT_ENGINE=1111111111111111111111111111111111111111111111111111111111111111
 AMB_ENGINE=2222222222222222222222222222222222222222222222222222222222222222
+OTHER_ENGINE=3333333333333333333333333333333333333333333333333333333333333333
 
 # ---------------------------------------------------------------------------
 # The fake toolchain. Behaviour is selected by marker files in $LOG, so one binary
@@ -203,6 +204,10 @@ case "$sub" in
            else echo "2222222222222222222222222222222222222222222222222222222222222222"; fi ;;
   ps)      # `sigap_project` models a target that already carries the production project,
            # which is the last production-specific control for an aliased target.
+           # `ps_fails` models an enumeration that ERRORS. The check must distinguish that
+           # from a clean daemon: an earlier form piped straight into `grep`, so a failed
+           # `docker ps` looked exactly like "no sigap project" and the check failed OPEN.
+           [ -f "$TOP_LOG/ps_fails" ] && exit 1
            if [ -f "$TOP_LOG/sigap_project" ]; then printf 'sigap\n'; fi
            exit 0 ;;
   context) echo "unix:///var/run/docker.sock" ;;
@@ -343,7 +348,8 @@ clear_all() { rm -f "$LOG"/dec_fail_first "$LOG"/dec_then_fail "$LOG"/enc_fails 
                    "$LOG"/gzip_fails "$LOG"/scp_fails "$LOG"/digest_bad \
                    "$LOG"/load_fails "$LOG"/no_engine "$LOG"/KEEP_have_api \
                    "$LOG"/aws_fails "$LOG"/aws_truncated "$LOG"/same_engine \
-                   "$LOG"/ambient_fails "$LOG"/ambient_whitespace "$LOG"/sigap_project; }
+                   "$LOG"/ambient_fails "$LOG"/ambient_whitespace "$LOG"/sigap_project \
+                   "$LOG"/ps_fails; }
 
 printf '=== the happy path first, so every refusal is a genuine refusal ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
@@ -402,7 +408,7 @@ run_case 'engine-allowlist-absent-refused' 10 ISOLATED_DOCKER_HOST="tcp://isolat
          ALLOWED_ENGINE_ID="" EXPECT_IDS="$API"
 clear_all; : > "$LOG/KEEP_have_api"
 run_case 'engine-allowlist-mismatch-refused' 11 ISOLATED_DOCKER_HOST="tcp://isolated:9999" \
-         ALLOWED_ENGINE_ID="engineWRONG" EXPECT_IDS="$API"
+         ALLOWED_ENGINE_ID="$OTHER_ENGINE" EXPECT_IDS="$API"
 
 printf '=== restore-target isolation ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
@@ -445,6 +451,10 @@ run_case 'ambient-unreadable-loopback-refused' 11 \
 printf '=== the production compose project is refused, and the check fails closed ===\n'
 clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/sigap_project"
 run_case 'target-holding-sigap-project-refused' 11 ISOLATED_DOCKER_HOST="tcp://isolated:9999"
+# An enumeration that ERRORS must be refused, not treated as "no sigap project". This is
+# the branch that used to fail OPEN.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/ps_fails"
+run_case 'container-enumeration-failure-refused' 11 ISOLATED_DOCKER_HOST="tcp://isolated:9999"
 
 printf '=== a recorded production engine ID is refused (not aliasable) ===\n'
 # Every other production control is a string test, and a string can be aliased by a tunnel
@@ -456,6 +466,12 @@ clear_all; : > "$LOG/KEEP_have_api"
 run_case 'recorded-production-engine-refused' 11 \
   ISOLATED_DOCKER_HOST="tcp://isolated:9999" \
   PRODUCTION_ENGINE_ID="$TGT_ENGINE"
+# A TYPO must not silently disable the denylist. The earlier form used `|| continue`, so a
+# malformed entry turned the strongest production control into a no-op with no signal.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'malformed-production-engine-refused' 10 \
+  ISOLATED_DOCKER_HOST="tcp://isolated:9999" \
+  PRODUCTION_ENGINE_ID="not-an-engine-id"
 
 printf '=== the loopback matcher must be COMPLETE, not a list of favourites ===\n'
 # Every one of these reaches a same-host daemon. A matcher that misses them does not
@@ -505,7 +521,10 @@ clear_all; : > "$LOG/KEEP_have_api"
 run_case 'id-partial-load-refused' 15 EXPECT_IDS="$API,$ABSENT"
 # Exact correspondence for a multi-ID list, both spellings mixed.
 clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/have_$API"
-run_case 'id-mixed-spelling-correspondence' 0 EXPECT_IDS="sha256:$API"
+# Genuinely MIXED: two different IDs, one bare and one prefixed. The previous form was a
+# duplicate of id-sha256-prefixed-accepted and therefore proved nothing extra.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/have_$ABSENT"
+run_case 'id-mixed-spelling-correspondence' 0 EXPECT_IDS="$API,sha256:$ABSENT"
 
 printf '=== required input is validated, never defaulted ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
@@ -572,7 +591,10 @@ if [ -n "$loadline" ]; then
     bad 'load-is-pinned' 'docker load used the ambient daemon (SEC-RESTORE-001)'
   fi
 else
-  ok 'load-is-pinned' 'load not reached in this fixture; pinning asserted in the helper'
+  # FAIL CLOSED. This block runs a full successful restore, so `docker load` MUST appear.
+  # The earlier form reported PASS when it did not, which made the assertion vacuous in
+  # exactly the case it exists to catch — a load that silently never happened.
+  bad 'load-is-pinned' 'no docker load recorded in a run that should have loaded — assertion could not be satisfied'
 fi
 
 printf '=== storage dispatch: r2://, ssh://, file:// and malformed URIs ===\n'

@@ -202,6 +202,11 @@ fi
 if [ -z "${ALLOWED_ENGINE_ID:-}" ]; then
   die "ALLOWED_ENGINE_ID is required — refusing to load without a pinned engine ID" 10
 fi
+# Normalised so the comparison is symmetric: an earlier revision compared the raw target
+# value against the raw allowlist while normalising the OTHER two engine inputs, so a caller
+# who wrote `sha256:<digest>` out of image-ID habit was refused with a misleading message.
+ALLOWED_ENGINE_N=$(norm_id "$ALLOWED_ENGINE_ID") \
+  || die "ALLOWED_ENGINE_ID is not a valid engine ID (need 64 hex, optional sha256: prefix): '$ALLOWED_ENGINE_ID'" 10
 
 # Reachability and engine identity. `docker info` returns the ENGINE id, which is a
 # property of the daemon itself, so two spellings of the same daemon cannot both pass.
@@ -209,9 +214,11 @@ if ! target_engine=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker info --format '{
   die "isolated daemon unreachable at $ISOLATED_DOCKER_HOST" 11
 fi
 [ -n "$target_engine" ] || die "isolated daemon returned no engine ID" 11
+target_engine=$(norm_id "$target_engine") \
+  || die "isolated daemon returned a malformed engine ID: '$target_engine'" 11
 
-[ "$target_engine" = "$ALLOWED_ENGINE_ID" ] \
-  || die "engine ID $target_engine is not the allowlisted $ALLOWED_ENGINE_ID" 11
+[ "$target_engine" = "$ALLOWED_ENGINE_N" ] \
+  || die "engine ID $target_engine is not the allowlisted $ALLOWED_ENGINE_N" 11
 
 # PRODUCTION-ENGINE DENYLIST. Every other production control here is a STRING test, and a
 # string can be aliased: an SSH tunnel exposing production on 127.0.0.1, a DNS alias, a
@@ -221,9 +228,15 @@ fi
 # It is opt-in in the sense that it only applies when the owner has recorded the production
 # engine ID; recording it is a Gate D action (production reinspection). When set, a match is
 # refused regardless of every other check.
+#
+# A MALFORMED ENTRY IS REFUSED, not skipped. The earlier form used `|| continue`, so a typo
+# in the production engine ID silently disabled the denylist — turning the strongest
+# production control into a no-op with no signal at all. A control that can be switched off
+# by a typo is not a control.
 if [ -n "${PRODUCTION_ENGINE_ID:-}" ]; then
   for _pe in $(printf '%s' "$PRODUCTION_ENGINE_ID" | tr ',' ' '); do
-    _pen=$(norm_id "$_pe" 2>/dev/null) || continue
+    _pen=$(norm_id "$_pe") \
+      || die "PRODUCTION_ENGINE_ID contains an invalid engine ID: '$_pe' — refusing rather than silently disabling the production denylist" 10
     [ "$target_engine" = "$_pen" ] \
       && die "target engine $target_engine is a recorded PRODUCTION engine — refusing" 11
   done
