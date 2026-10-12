@@ -2573,6 +2573,22 @@ upload, read-back, restore through the real helper, and four negative controls. 
 touch the real bucket, does **not** prove retention (§13g.9), and does **not** preserve or
 restore a production image.
 
+**The disposable endpoint is built from pinned upstream source, not pulled.** `minio/minio`
+was archived and the community edition is now distributed **source code only**: the upstream
+README states *"We will no longer provide pre-compiled binary releases"*, the Docker Hub
+repository is archived, and the release download endpoints return **HTTP 410 Gone**. The
+workflow therefore clones `minio/minio` at a pinned security release and builds the image
+itself, in a separate networked step. `[OBSERVED]` the first labelled run (38220464666) failed
+at the "Start disposable MinIO" step with `pull access denied for minio/minio, repository does
+not exist`, exit code 125 — an environmental failure that stopped the round trip before any
+part of the contract under test was reached.
+
+Two consequences worth knowing when reading a run's duration:
+
+- the build step is where the minutes go — a module of that size is not a fast `go build`;
+- `:latest` is never used. Both the MinIO ref and the nested `docker:29-dind` daemon tag are
+  pinned, so the result of a run is not a function of upstream state on the day it happens.
+
 **Reading the run list.** After step 3 there will be two runs for the PR: the first skipped the
 job, the second executed it. That is expected, not a duplicate-trigger defect. A run whose job
 is skipped is not evidence the workflow is broken, and a run that executed is not evidence the

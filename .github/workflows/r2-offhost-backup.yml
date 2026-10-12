@@ -76,7 +76,11 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.pull_request.labels.*.name, 'r2-validation')
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 25 minutes was budgeted for pulling a small image. The MinIO image is now BUILT from
+    # upstream source in a separate step, which is a network-clone plus a `go build` of a
+    # large module — minutes, not seconds. 40 minutes leaves the round trip itself the same
+    # budget it always had, with the build given room it did not need before.
+    timeout-minutes: 40
     env:
       # A DISPOSABLE endpoint. `minioadmin` is the well-known default for a throwaway
       # container and is NOT a secret. No real R2 credential appears anywhere in this file,
@@ -113,6 +117,47 @@ jobs:
           sudo apt-get install -y -qq age
           age --version
 
+      - name: Build the disposable MinIO image from pinned upstream source
+        run: |
+          set -euo pipefail
+          # WHY BUILD RATHER THAN PULL: `minio/minio` no longer exists as a published image.
+          # The upstream repository was archived on 2026-04-25 and its README states the
+          # community edition is "distributed as source code only. We will no longer provide
+          # pre-compiled binary releases". The Docker Hub repo is ARCHIVED, and the release
+          # download endpoints return HTTP 410 Gone. An earlier revision of this workflow
+          # pulled `minio/minio:latest` and failed at the first step with
+          #   docker: Error response from daemon: pull access denied for minio/minio,
+          #   repository does not exist
+          # [OBSERVED] run 38220464666, step "Start disposable MinIO", exit code 125. That
+          # failure is environmental, not a defect in the contract under test, so the whole
+          # round trip was never reached.
+          #
+          # The replacement is built HERE from a PINNED upstream commit, in a separate
+          # networked step, and is then treated as disposable exactly like a pulled image
+          # would be. Nothing here weakens the test: the image is still throwaway, still
+          # loopback-only, and still holds no real data.
+          #
+          # The tag is the last upstream security release, which fixes the service-account
+          # policy-bypass CVE (GHSA-jjjj-jwhf-8rgr). `:latest` is deliberately NOT used: an
+          # unpinned build would make the result of this test a function of upstream state
+          # on the day it happens to run.
+          MINIO_REF=RELEASE.2025-10-15T17-29-55Z
+          BUILD=$(mktemp -d)
+          git clone --depth 1 --branch "$MINIO_REF" https://github.com/minio/minio "$BUILD/minio"
+          # The upstream `make docker` target cannot be used verbatim: it runs
+          # `go run buildscripts/gen-ldflags.go`, which reads the version from `git describe
+          # --tags`. A depth-1 clone of a tag has no such tag, so that call panics and the
+          # build dies before compiling. The version is therefore passed explicitly — the
+          # same value upstream's own release note instructs users to build with.
+          docker build -q -t sigap-minio:local "$BUILD/minio" \
+            --build-arg RELEASE="$MINIO_REF"
+          rm -rf "$BUILD"
+          # `go build` emits no output under `-q`, so assert the image actually exists
+          # rather than trusting a zero exit from a step that produced nothing.
+          docker image inspect sigap-minio:local >/dev/null \
+            || { echo "FAIL: the built MinIO image is absent"; exit 1; }
+          echo "disposable MinIO built from upstream $MINIO_REF"
+
       - name: Start disposable MinIO
         run: |
           set -euo pipefail
@@ -122,7 +167,7 @@ jobs:
             -p 127.0.0.1:9000:9000 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:latest server /data
+            sigap-minio:local server /data
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
               echo "minio ready after ${i}s"; exit 0
@@ -134,7 +179,19 @@ jobs:
       - name: Create the disposable bucket
         run: |
           set -euo pipefail
-          aws s3api create-bucket --bucket "$R2_BUCKET" --endpoint-url "$R2_ENDPOINT"
+          # The image is built in a SEPARATE step above, so this one is a pure bucket setup.
+          # A transient container-scheduling delay does not consume the timeout budget of the
+          # round trip itself, and `--wait` avoids a race where the endpoint answers before
+          # the S3 API is ready.
+          for i in $(seq 1 30); do
+            if aws s3api create-bucket --bucket "$R2_BUCKET" --endpoint-url "$R2_ENDPOINT" \
+                 >/dev/null 2>&1; then
+              echo "bucket ready after ${i} attempt(s)"; break
+            fi
+            sleep 1
+          done
+          # Assert rather than trust: without this, a bucket that never formed would make the
+          # upload fail later as an opaque S3 error instead of the real cause.
           aws s3api head-bucket --bucket "$R2_BUCKET" --endpoint-url "$R2_ENDPOINT"
 
       - name: Generate a throwaway age key pair
@@ -236,9 +293,15 @@ jobs:
           # NO DOCKER SOCKET IS MOUNTED. `/var/run/docker.sock` is deliberately absent from
           # every `docker run` in this workflow, so neither container can drive the runner's
           # own daemon.
+          #
+          # `docker:29-dind` is pinned, not `:latest`. The runner's own Docker version is
+          # not something this workflow controls, so an unpinned nested daemon makes the
+          # result of the test a function of upstream state on the day it runs. The tag was
+          # verified to exist on Docker Hub before being used (the `dind` family has 144
+          # published tags, including `29-dind`).
           docker run -d --name sigap-restore-dind --privileged \
             -e DOCKER_TLS_CERTDIR= \
-            -p 127.0.0.1:2375:2375 docker:dind >/dev/null
+            -p 127.0.0.1:2375:2375 docker:29-dind >/dev/null
           for i in $(seq 1 90); do
             if docker -H tcp://127.0.0.1:2375 info >/dev/null 2>&1; then
               echo "isolated daemon ready after ${i}s"; break
@@ -456,6 +519,9 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
+          # The MinIO image is now BUILT rather than pulled, so it must be removed explicitly;
+          # the runner's own cleanup reclaims pulled-image layers but not a locally built tag.
           docker rm -f sigap-minio sigap-restore-dind 2>/dev/null || true
-          rm -f "$RUNNER_TEMP/throwaway.key" 2>/dev/null || true
-          echo "disposable endpoint, daemon and throwaway key destroyed with the runner"
+          docker rmi -f sigap-minio:local sigap-r2-drill:local 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/throwaway.key" "$RUNNER_TEMP/artifact.age" 2>/dev/null || true
+          echo "disposable endpoint, daemon, built images and throwaway key destroyed with the runner"
