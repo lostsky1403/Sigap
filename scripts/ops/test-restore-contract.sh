@@ -127,14 +127,24 @@ printf 'delegating to: gzip=%s sha256sum=%s\n' "${REAL_GZIP:-<self-implemented>}
 
 API=43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f
 
-# Engine IDs the fake docker returns. Real engine IDs are 64 lowercase hex, and the helper
-# validates that shape before trusting the ambient value, so these must be realistic.
+# Engine IDs the fake docker returns. Real engine IDs come in TWO machine-generated forms —
+# 64 lowercase hex on older daemons, and an 8-4-4-4-12 UUID on current ones (Docker 29
+# returns the UUID form; [OBSERVED] in CI, where the isolated daemon reported
+# `dca7b900-8462-4e5c-a7e6-6c69faafe428`). The helper validates the shape before trusting the
+# ambient value, so these must be realistic. The hex form is the default here; a marker
+# switches the target to the UUID form so both spellings are covered.
 # `TGT_ENGINE` is what the ISOLATED target answers with (DOCKER_HOST pinned);
 # `AMB_ENGINE` is what the AMBIENT probe answers with (DOCKER_HOST unset). They differ,
 # which is the normal, correctly-isolated case.
 TGT_ENGINE=1111111111111111111111111111111111111111111111111111111111111111
 AMB_ENGINE=2222222222222222222222222222222222222222222222222222222222222222
 OTHER_ENGINE=3333333333333333333333333333333333333333333333333333333333333333
+# The SAME isolated daemon as TGT_ENGINE, written the way current Docker reports it. The
+# dashless hex MUST differ from AMBIENT_ENGINE: distinctness from the ambient daemon is
+# asserted, and an ID equal to the ambient one is refused as "not an isolated target" —
+# which is correct behaviour, so the fixture must not trip it.
+TGT_ENGINE_UUID=11111111-1111-4111-8111-999999999999
+OTHER_ENGINE_UUID=33333333-3333-3333-3333-333333333333
 
 # ---------------------------------------------------------------------------
 # The fake toolchain. Behaviour is selected by marker files in $LOG, so one binary
@@ -186,18 +196,30 @@ case "$sub" in
   # indistinguishable and the distinctness assertion untestable — and would in fact make
   # it fail, since equal IDs are refused.
   info)    [ -f "$TOP_LOG/no_engine" ] && exit 1              # N: no identity
-           # Real Docker engine IDs are 64 lowercase hex characters, and the helper now
-           # VALIDATES that shape before trusting the ambient value as a security-decision
-           # input — a whitespace or short string is treated as unreadable and refused. The
-           # fake must therefore return realistic IDs, or the happy path would be refused
-           # for the wrong reason.
+           # Real Docker engine IDs are 64 lowercase hex OR an 8-4-4-4-12 UUID, and the
+           # helper VALIDATES that shape before trusting the ambient value as a
+           # security-decision input — a whitespace or short string is treated as unreadable
+           # and refused. The fake must therefore return realistic IDs, or the happy path
+           # would be refused for the wrong reason.
+           #
+           # `uuid_engine` makes the TARGET report the UUID spelling of the SAME daemon the
+           # allowlist describes, proving the helper accepts the format current Docker emits.
            #
            # `same_engine` models a misconfigured run where the allowlisted ID IS the
            # ambient engine's — the case the distinctness assertion exists to catch.
            # `ambient_fails` models a target that answers while the ambient probe does not,
            # which is the only way to reach the ambient-unreadable refusal: the target probe
            # runs first, so `no_engine` alone never gets there.
+           # Hardcoded rather than interpolated: the fake is generated from a QUOTED heredoc,
+           # so shell variables are not expanded when it is written — and it must stay
+           # self-contained to remain a faithful stub.
+           # Scoped INSIDE the DOCKER_HOST branch: only the TARGET probe is pinned, so the
+           # marker changes the target's answer without touching the ambient probe. Before
+           # this, the marker also changed what the ambient probe reported, which made the
+           # UUID daemon "the same" as ambient and tripped the distinctness refusal — a
+           # fixture bug, not a helper defect.
            if [ -f "$TOP_LOG/same_engine" ]; then echo "1111111111111111111111111111111111111111111111111111111111111111"
+           elif [ -n "${DOCKER_HOST:-}" ] && [ -f "$TOP_LOG/uuid_engine" ]; then echo "11111111-1111-4111-8111-999999999999"
            elif [ -n "${DOCKER_HOST:-}" ]; then echo "1111111111111111111111111111111111111111111111111111111111111111"
            elif [ -f "$TOP_LOG/ambient_fails" ]; then exit 1
            elif [ -f "$TOP_LOG/ambient_whitespace" ]; then printf '   \n'
@@ -363,7 +385,7 @@ clear_all() { rm -f "$LOG"/dec_fail_first "$LOG"/dec_then_fail "$LOG"/enc_fails 
                    "$LOG"/load_fails "$LOG"/no_engine "$LOG"/KEEP_have_api \
                    "$LOG"/aws_fails "$LOG"/aws_truncated "$LOG"/same_engine \
                    "$LOG"/ambient_fails "$LOG"/ambient_whitespace "$LOG"/sigap_project \
-                   "$LOG"/ps_fails; }
+                   "$LOG"/ps_fails "$LOG"/uuid_engine; }
 
 printf '=== the happy path first, so every refusal is a genuine refusal ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
@@ -450,6 +472,30 @@ run_case 'engine-allowlist-malformed-refused' 10 \
 clear_all; : > "$LOG/KEEP_have_api"
 run_case 'engine-allowlist-doubled-prefix-refused' 10 \
          ALLOWED_ENGINE_ID="sha256:sha256:$TGT_ENGINE" EXPECT_IDS="$API"
+
+# REGRESSION — the UUID spelling of the SAME daemon must be accepted, not refused.
+# `docker info --format '{{.ID}}'` returns an 8-4-4-4-12 UUID on current daemons, and the
+# earlier image-ID normaliser required exactly 64 hex, so a real isolated daemon was refused
+# before the round trip could run. [OBSERVED] run 38268640704, step "Restore":
+#   REFUSED: ALLOWED_ENGINE_ID is not a valid engine ID (need 64 hex, ...)
+#   'dca7b900-8462-4e5c-a7e6-6c69faafe428' 10
+# The allowlist is the SAME daemon as TGT_ENGINE_UUID written WITHOUT dashes — this proves
+# the normaliser makes the two spellings interchangeable. If UUID and hex did not
+# canonicalise to one value, this would be refused as a mismatch (11) instead of accepted.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/uuid_engine"
+run_case 'engine-uuid-spelling-accepted' 0          ALLOWED_ENGINE_ID="11111111111141118111999999999999" EXPECT_IDS="$API"
+# ...and a UUID naming a DIFFERENT daemon is still refused, so the widening is not vacuous.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/uuid_engine"
+run_case 'engine-uuid-mismatch-refused' 11          ALLOWED_ENGINE_ID="$OTHER_ENGINE_UUID" EXPECT_IDS="$API"
+# ...and the two spellings of the SAME daemon must be interchangeable in the denylist too.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/uuid_engine"
+# ...and the DENYLIST still works in the UUID family: the target's own UUID spelling is
+# listed as a recorded PRODUCTION engine, so the strongest control refuses it even though the
+# allowlist describes the same daemon. Listing an unrelated UUID would prove nothing — it
+# would be refused by the allowlist before the denylist is ever consulted.
+run_case 'engine-uuid-in-production-denylist-refused' 11 \
+         ALLOWED_ENGINE_ID="11111111111141118111999999999999" \
+         PRODUCTION_ENGINE_ID="$TGT_ENGINE_UUID" EXPECT_IDS="$API"
 
 printf '=== restore-target isolation ===\n'
 clear_all; : > "$LOG/KEEP_have_api"

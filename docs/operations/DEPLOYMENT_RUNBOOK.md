@@ -633,9 +633,20 @@ as "identity unknown, proceed".
 
 **Engine IDs are compared in one canonical form.** All four engine inputs — the allowlist, the
 target, the ambient probe and the production denylist — pass through the same normaliser, which
-accepts 64 lowercase hex with at most one optional `sha256:` prefix. Comparison is therefore
-symmetric: `sha256:<digest>` and `<digest>` are the same engine, and no input is normalised on
-one side of a comparison but not the other.
+accepts two machine-generated forms: **64 lowercase hex** (older daemons) and an **8-4-4-4-12
+UUID** (current daemons), with dashes removed in the canonical form and at most one optional
+`sha256:` prefix. Comparison is therefore symmetric: the UUID and its dashless spelling are the
+same engine, `sha256:<digest>` and `<digest>` are the same engine, and no input is normalised
+on one side of a comparison but not the other.
+
+**Engine IDs are a different type from image IDs, and conflating them was a real defect.**
+`docker info --format '{{.ID}}'` returns an 8-4-4-4-12 UUID on current daemons — observed in
+CI, where the isolated daemon reported `dca7b900-8462-4e5c-a7e6-6c69faafe428`. An earlier
+revision validated engine IDs with the image-ID normaliser, which requires exactly 64 hex, and
+refused a perfectly valid isolated daemon with `REFUSED: ALLOWED_ENGINE_ID is not a valid
+engine ID (need 64 hex, ...)`, exit **10**. The guard was not too weak; it was too **narrow**,
+and it rejected the very daemon it existed to verify. Image IDs remain strictly 64 hex: only
+the engine normaliser accepts the UUID family.
 
 **A typo cannot disable the production denylist.** `PRODUCTION_ENGINE_ID` is a comma-separated
 list of engine IDs recorded from the production daemon (Gate D). A **malformed** entry exits

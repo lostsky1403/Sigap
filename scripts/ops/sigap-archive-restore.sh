@@ -86,6 +86,40 @@ norm_id() {
   printf '%s' "$_v"
 }
 
+# ENGINE IDs are a DIFFERENT type from image IDs, and conflating them was a real defect.
+# `docker info --format '{{.ID}}'` returns a 64-hex digest on older daemons but a RFC-4122
+# UUID — `dca7b900-8462-4e5c-a7e6-6c69faafe428` — on current ones (observed on Docker 29
+# inside CI). Validating an engine ID with `norm_id` therefore refused a perfectly valid
+# isolated daemon:
+#   REFUSED: ALLOWED_ENGINE_ID is not a valid engine ID (need 64 hex, ...)
+#   'dca7b900-8462-4e5c-a7e6-6c69faafe428' 10
+# [OBSERVED] run 38268640704, step "Restore". The guard was not too WEAK; it was too
+# narrow, and it rejected the very daemon it was asked to verify.
+#
+# Two machine-generated forms are accepted and canonicalised to one:
+#   * 64 lowercase hex                       (older daemons)
+#   * 8-4-4-4-12 lowercase hex UUID          (current daemons)
+# Canonical form is lowercase hex with dashes REMOVED, so the two spellings of the same
+# UUID compare equal and the length (32 vs 64) still distinguishes the families. Anything
+# else is still refused: this widens acceptance to the formats a daemon actually emits, it
+# does not make the check permissive. The alias-proof property is unaffected — the value is
+# still the daemon's own reported identity, not a name.
+norm_engine_id() {
+  _v=$1
+  case "$_v" in sha256:*) _v=${_v#sha256:} ;; esac
+  case "$_v" in
+    ''|*[!0-9a-fA-F-]*) return 1 ;;
+  esac
+  _v=$(printf '%s' "$_v" | tr 'A-F' 'a-f' | tr -d '-')
+  case "$_v" in
+    *[!0-9a-f]*) return 1 ;;
+  esac
+  case "${#_v}" in
+    32|64) printf '%s' "$_v" ;;
+    *) return 1 ;;
+  esac
+}
+
 # Strip ALL whitespace, then validate. A value of `' '` is non-empty but is not an
 # identifier, and an earlier `[ -n "$X" ]` test treated it as readable — so a
 # whitespace-returning probe silently neutralised the distinctness comparison instead of
@@ -93,6 +127,12 @@ norm_id() {
 norm_id_strict() {
   _v=$(printf '%s' "$1" | tr -d '[:space:]')
   norm_id "$_v"
+}
+
+# The engine-ID equivalent of the above, for the ambient probe and the target probe.
+norm_engine_id_strict() {
+  _v=$(printf '%s' "$1" | tr -d '[:space:]')
+  norm_engine_id "$_v"
 }
 
 # ---------------------------------------------------------------------------
@@ -205,8 +245,8 @@ fi
 # Normalised so the comparison is symmetric: an earlier revision compared the raw target
 # value against the raw allowlist while normalising the OTHER two engine inputs, so a caller
 # who wrote `sha256:<digest>` out of image-ID habit was refused with a misleading message.
-ALLOWED_ENGINE_N=$(norm_id "$ALLOWED_ENGINE_ID") \
-  || die "ALLOWED_ENGINE_ID is not a valid engine ID (need 64 hex, optional sha256: prefix): '$ALLOWED_ENGINE_ID'" 10
+ALLOWED_ENGINE_N=$(norm_engine_id "$ALLOWED_ENGINE_ID") \
+  || die "ALLOWED_ENGINE_ID is not a valid engine ID (need 64 hex or an 8-4-4-4-12 UUID, optional sha256: prefix): '$ALLOWED_ENGINE_ID'" 10
 
 # Reachability and engine identity. `docker info` returns the ENGINE id, which is a
 # property of the daemon itself, so two spellings of the same daemon cannot both pass.
@@ -214,7 +254,7 @@ if ! target_engine=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker info --format '{
   die "isolated daemon unreachable at $ISOLATED_DOCKER_HOST" 11
 fi
 [ -n "$target_engine" ] || die "isolated daemon returned no engine ID" 11
-target_engine=$(norm_id "$target_engine") \
+target_engine=$(norm_engine_id "$target_engine") \
   || die "isolated daemon returned a malformed engine ID: '$target_engine'" 11
 
 [ "$target_engine" = "$ALLOWED_ENGINE_N" ] \
@@ -235,8 +275,8 @@ target_engine=$(norm_id "$target_engine") \
 # by a typo is not a control.
 if [ -n "${PRODUCTION_ENGINE_ID:-}" ]; then
   for _pe in $(printf '%s' "$PRODUCTION_ENGINE_ID" | tr ',' ' '); do
-    _pen=$(norm_id "$_pe") \
-      || die "PRODUCTION_ENGINE_ID contains an invalid engine ID: '$_pe' — refusing rather than silently disabling the production denylist" 10
+    _pen=$(norm_engine_id "$_pe") \
+      || die "PRODUCTION_ENGINE_ID contains an invalid engine ID: '$_pe' (need 64 hex or an 8-4-4-4-12 UUID) — refusing rather than silently disabling the production denylist" 10
     [ "$target_engine" = "$_pen" ] \
       && die "target engine $target_engine is a recorded PRODUCTION engine — refusing" 11
   done
@@ -259,7 +299,7 @@ fi
 # therefore honours an exported DOCKER_HOST/DOCKER_CONTEXT, so a caller who exports a decoy
 # can aim the comparison. That is inherent to comparing against the ambient context, and the
 # guard is not defending against the operator themselves.
-AMBIENT_ENGINE=$(norm_id_strict "$(docker info --format '{{.ID}}' 2>/dev/null)") \
+AMBIENT_ENGINE=$(norm_engine_id_strict "$(docker info --format '{{.ID}}' 2>/dev/null)") \
   || AMBIENT_ENGINE=''
 [ -n "$AMBIENT_ENGINE" ] \
   || die "cannot read a valid ambient engine ID — distinctness from the ambient daemon cannot be established, so isolation is UNPROVEN" 11
@@ -481,10 +521,10 @@ echo "docker load succeeded"
 # probe against the RAW allowlist, so a caller who passed `sha256:<digest>` — accepted by the
 # pre-load check, which normalises — was refused here with "engine ID changed after load".
 # That is a false failure caused by formatting, and it reports the wrong cause: the daemon
-# never changed. `norm_id_strict` also refuses a whitespace-only probe.
+# never changed. `norm_engine_id_strict` also refuses a whitespace-only probe.
 target_engine=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker info --format '{{.ID}}' 2>/dev/null) \
   || die "isolated daemon unreachable after load" 11
-target_engine=$(norm_id_strict "$target_engine") \
+target_engine=$(norm_engine_id_strict "$target_engine") \
   || die "isolated daemon returned no readable engine ID after load — isolation is UNPROVEN" 11
 [ "$target_engine" = "$ALLOWED_ENGINE_N" ] \
   || die "engine ID changed after load ($target_engine != $ALLOWED_ENGINE_N)" 11
