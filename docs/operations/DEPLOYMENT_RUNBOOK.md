@@ -581,19 +581,32 @@ ALLOWED_ENGINE_ID="$ISOLATED_ENGINE_ID" \
 PRODUCTION_ENGINE_ID="$PRODUCTION_ENGINE_ID" \
 EXPECT_IDS="sha256:43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f,sha256:2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c,sha256:8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4" \
   bash scripts/ops/sigap-archive-restore.sh
-# 0 = every stage verified; 10 unset or malformed var; 11 target refused; 12 digest mismatch;
-# 13 not a complete gzip; 14 a stage failed; 15 identity correspondence failed
+# 0 = every stage verified; 1 an unguarded command failed under `set -e`;
+# 10 unset or malformed var; 11 the target was refused or could not be established;
+# 12 digest mismatch; 13 the decrypted artifact is not a valid docker image archive;
+# 14 a stage failed; 15 identity correspondence failed; 99 not run under bash
 ```
+
+`EXPECT_IDS` is **ONE comma-separated line**. A newline-separated list is refused with **10**,
+because `read -ra` reads a single line: the IDs after the first would be silently dropped, the
+absent-image count would stay zero, and the run would report correspondence as verified for
+fewer images than the archive actually holds.
 
 `PRODUCTION_ENGINE_ID` is the **production** daemon's `docker info .ID`, recorded during the
 Gate D reinspection. Set it whenever it is known: it is the only production control that
 cannot be defeated by aliasing, because an engine ID is a property of the daemon rather than
 a name. `ALLOWED_ENGINE_ID` is the **isolated** target's ID and must differ from it. It accepts
 a comma-separated list, and a **malformed** entry exits **10** rather than being skipped — a
-typo must not be able to disable the denylist.
+typo must not be able to disable the denylist. A value that is set but holds **no** engine ID
+(`" "`, `","`, `", "`) is also refused with **10**, for the same reason: it would otherwise
+split into zero entries and leave the denylist silently inactive.
 
 A **loopback** target is refused by default, because production reached through an SSH tunnel
-looks exactly like a local daemon. `SIGAP_ALLOW_LOOPBACK_TARGET=1` is the narrow opt-in for the
+looks exactly like a local daemon. The check is **scheme-agnostic**: `127.0.0.1:2375` and
+`tcp://127.0.0.1:2375` are the same endpoint to docker (a scheme-less `DOCKER_HOST` is
+normalised to `tcp`), and a `unix://` socket is local at **any** path, so both are refused. A
+genuinely remote endpoint (`10.0.0.5:2375`) is not affected. `SIGAP_ALLOW_LOOPBACK_TARGET=1` is
+the narrow opt-in for the
 one legitimate case (a disposable daemon running as a container on the same CI runner). It
 relaxes **only** the loopback refusal: the engine allowlist, the ambient-distinctness check and
 the production denylist all still apply.

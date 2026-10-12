@@ -670,6 +670,73 @@ clear_all; : > "$LOG/KEEP_have_api"
 run_case 'production-host-case-variant-refused' 11 ISOLATED_DOCKER_HOST="tcp://FIKRISERVER:2375"
 run_case 'production-socket-trailing-slash-refused' 11 ISOLATED_DOCKER_HOST="unix:///var/run/docker.sock/"
 
+printf '=== a SCHEME-LESS endpoint is the same endpoint, and a socket is local at any path ===\n'
+# `docker` normalises a scheme-less DOCKER_HOST to `tcp` (docker/cli `opts/hosts.go` splits
+# on `://` and defaults the protocol to `tcp` when it is absent), so `127.0.0.1:2375` reaches
+# the same daemon as `tcp://127.0.0.1:2375`. An earlier matcher required the scheme to be
+# present and therefore accepted every one of these as an isolated target. [OBSERVED] before
+# the fix: all five below passed BOTH the production and the loopback gate.
+clear_all; : > "$LOG/KEEP_have_api"
+for ep in "127.0.0.1:2375" "localhost:2375" "127.1:2375" "0.0.0.0:2375" "[::1]:2375"; do
+  run_case "scheme-less-same-host-refused[$ep]" 11 ISOLATED_DOCKER_HOST="$ep"
+done
+# The opt-in must still admit them, so the fix is a tightening and not a blanket refusal.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'scheme-less-loopback-accepted-with-optin' 0 \
+  ISOLATED_DOCKER_HOST="127.0.0.1:2375" SIGAP_ALLOW_LOOPBACK_TARGET=1
+# A UNIX SOCKET IS LOCAL AT ANY PATH — it cannot be remote by construction. Only the two
+# canonical production paths were enumerated, so these two passed both gates. [OBSERVED].
+clear_all; : > "$LOG/KEEP_have_api"
+for ep in "unix:///tmp/local.sock" "unix:///home/u/.docker/desktop/docker.sock"; do
+  run_case "non-canonical-unix-socket-refused[$ep]" 11 ISOLATED_DOCKER_HOST="$ep"
+done
+# THE OTHER DIRECTION: a genuinely REMOTE endpoint must not be over-refused as same-host.
+# The loopback patterns are deliberately broad, so this pins their bound. An unescaped
+# `[::1]*` is a BRACKET EXPRESSION matching one character from `{:,1}`, so it matched the
+# leading `1` of `10.0.0.5` and refused a remote daemon as loopback. [OBSERVED].
+#
+# The assertion is rc=0, i.e. the endpoint PASSED both gates and the restore ran to
+# completion. That is the strongest available proof of no over-refusal: the fake `docker`
+# answers for any host, so a same-host false positive would have refused here with 11.
+clear_all; : > "$LOG/KEEP_have_api"
+out=$(env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
+      -u AWS_PROFILE -u R2_ENDPOINT \
+      TOP_LOG="$LOG" PATH="$NARROW_PATH" \
+      ARCHIVE_URI="file://$LOG/$ART" \
+      ARCHIVE_KEY=/fake/key STAMP="$TSTAMP" EXPECT_DIGEST="$DIG" \
+      ISOLATED_DOCKER_HOST="10.0.0.5:2375" EXPECT_IDS="$API" \
+      ALLOWED_ENGINE_ID="$TGT_ENGINE" \
+      timeout 60 "$BASH_BIN" "$HELPER" 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && ! printf '%s' "$out" | grep -q 'same-host endpoint'; then
+  ok 'scheme-less-remote-not-over-refused' 'rc=0 (remote accepted, not same-host)'
+else
+  bad 'scheme-less-remote-not-over-refused' \
+      "want=0 without same-host got=$rc :: $(printf '%s' "$out" | tail -1)"
+fi
+
+printf '=== a SET-BUT-EMPTY production denylist is refused, never silently disabled ===\n'
+# `[ -n "$PRODUCTION_ENGINE_ID" ]` is satisfied by whitespace, but the unquoted
+# word-splitting that followed yielded ZERO entries, so the loop body never ran and the
+# strongest production control became a no-op with no signal at all. [OBSERVED] 0 loop
+# iterations for " ", "," and ", " while "" and "aa,bb" gave 0 and 2.
+for pe in " " "," ", "; do
+  clear_all; : > "$LOG/KEEP_have_api"
+  run_case "empty-production-engine-refused[$pe]" 10 \
+    ISOLATED_DOCKER_HOST="tcp://isolated:9999" PRODUCTION_ENGINE_ID="$pe"
+done
+
+printf '=== a newline in EXPECT_IDS is refused, never silently truncated ===\n'
+# `read -ra` reads ONE line, so a newline-joined EXPECT_IDS yielded only its FIRST id: the
+# remaining expected images were never checked for presence, `missing` stayed 0, and the run
+# reported "identity correspondence VERIFIED for all 1 image(s)" for an archive that should
+# have restored several. A silent under-verification, so it fails closed. [OBSERVED].
+# The second id is written as a literal: this block runs BEFORE the `ABSENT` constant is
+# defined below, and `set -u` turns a forward reference into an abort.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'newline-expect-ids-refused' 10 EXPECT_IDS="$API
+0000000000000000000000000000000000000000000000000000000000000000"
+
 printf '=== image IDs: one canonical form, normalised once, no doubled prefix ===\n'
 # `docker inspect --format '{{.Id}}'` returns `sha256:<digest>`, while `docker image
 # inspect` accepts either form. An earlier revision prefixed unconditionally, so a

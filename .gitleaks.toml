@@ -29,7 +29,10 @@
 #   * the rule       — only `generic-api-key`; every other rule still applies;
 #   * commits        — only the single historical commit that introduced the constant;
 #   * paths          — only the one test file;
-#   * regexes        — only that exact string, matched against the whole finding line.
+#   * regexes        — only that exact string, matched against the whole finding text.
+#     `regexTarget = "match"` tests the regexes against the finding's FULL MATCH, not against
+#     the captured secret (that would be the default, `"secret"`) and not against the
+#     containing line (`"line"`). Named explicitly so the intent is not left to the default.
 # A genuine secret added to this file in any other commit is still detected, as is
 # anything matching any other rule anywhere. There is no path-wide or rule-wide blanket.
 #

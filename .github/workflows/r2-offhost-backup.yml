@@ -97,15 +97,24 @@ jobs:
       SIGAP_ALLOW_LOOPBACK_TARGET: '1'
     steps:
       - name: Guard — explicit opt-in
+        # EVERY context value reaches the shell through `env:`, never by `${{ }}` interpolation
+        # into the script body. `inputs.confirm_manual_run` is operator-supplied text; pasted
+        # into the script it is arbitrary shell, so a dispatch of `RUN"; <command>; "` would
+        # have executed before the guard could refuse. Passed as an environment variable it is
+        # only ever data.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CONFIRM_MANUAL_RUN: ${{ inputs.confirm_manual_run }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ "${{ inputs.confirm_manual_run }}" != "RUN" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$CONFIRM_MANUAL_RUN" != "RUN" ]; then
               echo "Refusing to run: dispatch this workflow with confirm_manual_run=RUN."
               exit 1
             fi
           else
-            echo "Opt-in satisfied by the 'r2-validation' label on PR #${{ github.event.pull_request.number }}."
+            echo "Opt-in satisfied by the 'r2-validation' label on PR #$PR_NUMBER."
           fi
 
       - uses: actions/checkout@v4
@@ -377,18 +386,48 @@ jobs:
           # pass on an image that was already present, so a `docker load` that silently did
           # nothing would go undetected — the check would be satisfied by this step's own
           # load rather than by the restore under test.
-          EXPECTED_IDS=$(docker -H tcp://127.0.0.1:2375 load < "$RUNNER_TEMP/image.tar" \
-            | sed -n 's/^Loaded image ID:[[:space:]]*//p' | tail -1)
+          #
+          # EVERY reported identity is recorded and removed, in BOTH output forms. An earlier
+          # revision ended the parse with `tail -1`, so a multi-image archive had only its
+          # FINAL image recorded and removed; the production archive is documented as holding
+          # three (§7d.1 EXPECT_IDS). The other two would have been left on the daemon, and
+          # the restore below would then have been measured against a daemon that already
+          # held them — precisely the false pass this removal exists to prevent. And because
+          # `docker load` buffers `Loaded image ID:` and writes it only when the LAST image
+          # carried no RepoTags, a tar saved by tag prints no ID line at all; the tag form is
+          # therefore parsed too, and resolved to an ID on this daemon.
+          docker -H tcp://127.0.0.1:2375 load < "$RUNNER_TEMP/image.tar" \
+            > "$RUNNER_TEMP/load.out" 2>&1 || { cat "$RUNNER_TEMP/load.out"; exit 1; }
+          cat "$RUNNER_TEMP/load.out"
+          EXPECTED_IDS=""
+          while IFS= read -r line; do
+            case "$line" in
+              'Loaded image ID: '*)
+                id=${line#Loaded image ID: } ;;
+              'Loaded image: '*)
+                tag=${line#Loaded image: }
+                id=$(docker -H tcp://127.0.0.1:2375 image inspect --format '{{.Id}}' "$tag") \
+                  || { echo "FAIL: docker load reported the tag '$tag' but it does not resolve on the isolated daemon"; exit 1; } ;;
+              *) continue ;;
+            esac
+            EXPECTED_IDS="$EXPECTED_IDS ${id#sha256:}"
+          done < "$RUNNER_TEMP/load.out"
+          # Comma-separated and deduplicated: several RepoTags on one image print one
+          # `Loaded image:` line each, all resolving to the same ID.
+          EXPECTED_IDS=$(printf '%s\n' $EXPECTED_IDS | sort -u | tr '\n' ',')
+          EXPECTED_IDS=${EXPECTED_IDS%,}
           [ -n "$EXPECTED_IDS" ] \
             || { echo "FAIL: the archive yielded no image ID on a clean daemon"; exit 1; }
           echo "out-of-band record (from a clean load of the archive): $EXPECTED_IDS"
-          docker -H tcp://127.0.0.1:2375 rmi -f "${EXPECTED_IDS}" >/dev/null 2>&1 || true
-          # Assert the removal actually happened, so the restore below is measured on an empty
-          # daemon rather than on the record step's leftovers.
-          if docker -H tcp://127.0.0.1:2375 image inspect "${EXPECTED_IDS}" >/dev/null 2>&1; then
-            echo "FAIL: the record step's image is still present; the restore would not be independent"
-            exit 1
-          fi
+          # Remove and ASSERT the removal of every one, so the restore below is measured on
+          # an empty daemon rather than on the record step's leftovers.
+          for id in $(printf '%s' "$EXPECTED_IDS" | tr ',' ' '); do
+            docker -H tcp://127.0.0.1:2375 rmi -f "sha256:$id" >/dev/null 2>&1 || true
+            if docker -H tcp://127.0.0.1:2375 image inspect "sha256:$id" >/dev/null 2>&1; then
+              echo "FAIL: the record step's image sha256:$id is still present; the restore would not be independent"
+              exit 1
+            fi
+          done
           echo "EXPECTED_IDS=$EXPECTED_IDS" >> "$GITHUB_ENV"
 
           # NO DOCKER SOCKET — ASSERTED, not merely intended. The `docker run` calls pass no
@@ -427,16 +466,26 @@ jobs:
           EXPECT_IDS="$EXPECTED_IDS" \
             bash scripts/ops/sigap-archive-restore.sh
 
-          # Independent confirmation on the isolated daemon, scoped to the one ID this job
+          # Independent confirmation on the isolated daemon, scoped to the IDs this job
           # produced. A daemon-wide listing would prove nothing about the artifact, and a
           # bare `inspect >/dev/null` only proves SOME image exists under that name. Resolve
-          # the ID and COMPARE it, so the assertion is the correspondence the runbook claims.
+          # each ID and COMPARE it, so the assertion is the correspondence the runbook claims.
           # `docker image inspect` prints the `sha256:` form; compare on the bare digest.
-          got=$(docker -H tcp://127.0.0.1:2375 image inspect --format '{{.Id}}' "sha256:${EXPECTED_IDS#sha256:}")
-          want=${EXPECTED_IDS#sha256:}
-          [ "${got#sha256:}" = "$want" ] \
-            || { echo "FAIL: restored image ID $got != archived $EXPECTED_IDS"; exit 1; }
-          echo "ok: restored image ID matches the preserved ID on the isolated daemon"
+          #
+          # EVERY id is compared, not just the first. EXPECTED_IDS is comma-separated and can
+          # hold several (the production archive holds three, §7d.1), so the previous single
+          # comparison would have passed on a partial restore.
+          n_verified=0
+          for want in $(printf '%s' "$EXPECTED_IDS" | tr ',' ' '); do
+            want=${want#sha256:}
+            got=$(docker -H tcp://127.0.0.1:2375 image inspect --format '{{.Id}}' "sha256:$want")
+            [ "${got#sha256:}" = "$want" ] \
+              || { echo "FAIL: restored image ID $got != archived sha256:$want"; exit 1; }
+            n_verified=$((n_verified + 1))
+          done
+          [ "$n_verified" -gt 0 ] \
+            || { echo "FAIL: EXPECTED_IDS was empty, so nothing was verified"; exit 1; }
+          echo "ok: all $n_verified restored image ID(s) match the preserved ID(s) on the isolated daemon"
 
       - name: Negative control A — a substituted object must be refused
         run: |
