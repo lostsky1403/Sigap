@@ -17,6 +17,14 @@ name: r2-offhost-backup
 #   2. the job-level `if` requires the `r2-validation` label, which only the owner applies.
 # A PR without that label runs nothing at all.
 #
+# PREREQUISITE — the label does not exist yet. As of the current repository state
+# `r2-validation` has never been created, so the gate cannot be satisfied and the job is
+# skipped for every PR. Create it once (owner):
+#   gh label create r2-validation --repo lostsky1403/Sigap \
+#     --description "Owner approval to run the R2 off-host round trip" --color FBCA04
+# See runbook §13g.11 for the full activation procedure and the bounded scope of what a run
+# proves.
+#
 # `workflow_dispatch` is retained for the future case where this file reaches the default
 # branch; it is NOT required for testing and merging to `main` is explicitly NOT a
 # prerequisite.
