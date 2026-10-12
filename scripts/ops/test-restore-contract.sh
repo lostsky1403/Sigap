@@ -152,6 +152,8 @@ OTHER_ENGINE=3333333333333333333333333333333333333333333333333333333333333333
 # which is correct behaviour, so the fixture must not trip it.
 TGT_ENGINE_UUID=11111111-1111-4111-8111-999999999999
 OTHER_ENGINE_UUID=33333333-3333-3333-3333-333333333333
+# An image the operator did NOT expect to find in the archive.
+EXTRA_IMAGE=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 
 # ---------------------------------------------------------------------------
 # The fake toolchain. Behaviour is selected by marker files in $LOG, so one binary
@@ -186,12 +188,22 @@ while [ $# -gt 0 ]; do
   case "$1" in
     info|ps|context|load) [ -z "$sub" ] && sub=$1 ;;
     image) sub=image ;;
+    # SUBCOMMAND WORDS ARE NOT REFERENCES. `docker image inspect --format X Y` puts
+    # `inspect` in $2, and an earlier version of this loop treated the first bare
+    # positional as the ref — so it captured the literal string `inspect` and never saw
+    # the tag, making the tag-form cases fail for a fixture reason rather than a helper
+    # one. Listed explicitly so no other subcommand can be mistaken for a reference.
+    inspect|rmi|tag|save|history|ls) ;;
     # A flag plus its value. Under dash (/bin/sh on Ubuntu) `shift 2` is a FATAL
     # error when fewer than two positional parameters remain, so it must be
     # guarded explicitly — `shift 2 2>/dev/null || shift` still fails there,
     # because the error is not suppressible that way.
     -*) if [ $# -ge 2 ]; then shift; fi ;;
     sha256:*|sha256) ref=$1 ;;
+    # Any other bare positional is a reference too — a TAG, not a digest. The
+    # helper resolves a `Loaded image: <repo:tag>` line by inspecting that tag,
+    # so the fake must accept one.
+    *) [ -z "$ref" ] && ref=$1 ;;
   esac
   shift
 done
@@ -255,9 +267,25 @@ case "$sub" in
            # refused rather than trusted. `${VAR:-default}` cannot express "empty" because an
            # empty assignment is indistinguishable from unset, so a marker is used.
            [ -f "$TOP_LOG/load_no_id" ] && exit 0
-           echo "Loaded image ID: ${LOADED_IMAGE_ID:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+           # `load_tag_form` models a tar WITH RepoTags: the daemon then prints
+           # `Loaded image: <repo:tag>` and NO `Loaded image ID:` line at all, because
+           # the ID lines are buffered and written only when the last image had no
+           # RepoTags. An earlier helper parser understood only the ID form.
+           if [ -f "$TOP_LOG/load_tag_form" ]; then
+             echo "Loaded image: sigap-drill:local"
+           else
+             echo "Loaded image ID: ${LOADED_IMAGE_ID:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+           fi
+           # `load_extra_id` models an archive carrying an image the operator did not
+           # list — it must be refused, not loaded silently.
+           [ -f "$TOP_LOG/load_extra_id" ] && echo "Loaded image ID: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
            exit 0 ;;
-  image)   id=$(printf '%s' "$ref" | sed 's/^sha256://; s/[^0-9a-f]//g')
+  image)   # `load_tag_form` makes the load report `Loaded image: sigap-drill:local`,
+           # so that tag must resolve to the SAME image the ID form names.
+           case "$ref" in
+             sigap-drill:local) ref="sha256:${LOADED_IMAGE_ID:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" ;;
+           esac
+           id=$(printf '%s' "$ref" | sed 's/^sha256://; s/[^0-9a-f]//g')
            [ -n "$id" ] && [ -f "$TOP_LOG/have_$id" ] && { printf 'sha256:%s\n' "$id"; exit 0; }
            echo "Error: No such image" >&2; exit 1 ;;
 esac
@@ -406,7 +434,8 @@ clear_all() { rm -f "$LOG"/dec_fail_first "$LOG"/dec_then_fail "$LOG"/enc_fails 
                    "$LOG"/load_fails "$LOG"/no_engine "$LOG"/KEEP_have_api \
                    "$LOG"/aws_fails "$LOG"/aws_truncated "$LOG"/same_engine \
                    "$LOG"/ambient_fails "$LOG"/ambient_whitespace "$LOG"/sigap_project \
-                   "$LOG"/ps_fails "$LOG"/uuid_engine "$LOG"/load_no_id; }
+                   "$LOG"/ps_fails "$LOG"/uuid_engine "$LOG"/load_no_id \
+                   "$LOG"/load_tag_form "$LOG"/load_extra_id; }
 
 printf '=== the happy path first, so every refusal is a genuine refusal ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
@@ -473,6 +502,35 @@ run_case 'load-reports-no-image-id-refused' 14
 clear_all; : > "$LOG/KEEP_have_api"
 run_case 'load-reports-foreign-image-refused' 15 \
          LOADED_IMAGE_ID="sha256:$(printf 'f%.0s' $(seq 1 64))" EXPECT_IDS="$API"
+
+# REGRESSION — the TAG output form. `docker load` prints `Loaded image: <repo:tag>` and NO
+# `Loaded image ID:` line when the tar carries RepoTags, which is what `docker save
+# <repo:tag>` produces. An earlier parser matched only the ID form and refused a perfectly
+# good restore with 14. [OBSERVED] daemon/internal/image/tarexport/load.go buffers the ID
+# lines and writes them only when the last image had no RepoTags. The tag must be RESOLVED
+# to an image identity, not accepted as a name.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/load_tag_form"
+run_case 'load-tag-form-accepted' 0 EXPECT_IDS="$API"
+# ...and the tag form must still fail correspondence when the tag resolves to an image the
+# operator did not expect, so accepting the form did not make the check vacuous.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/load_tag_form"
+KEEP_EXTRA_IDS="$EXTRA_IMAGE"
+run_case 'load-tag-form-wrong-image-refused' 15 EXPECT_IDS="$EXTRA_IMAGE"
+KEEP_EXTRA_IDS=""
+
+# UNEXPECTED IMAGE — an archive carrying an EXTRA image must be refused rather than loaded
+# silently. Before this check, 7a confirmed the extra image existed and 7b confirmed the
+# expected one existed, and nothing noticed the addition.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/load_extra_id"
+KEEP_EXTRA_IDS="$EXTRA_IMAGE"
+run_case 'load-unexpected-image-refused' 15 EXPECT_IDS="$API"
+KEEP_EXTRA_IDS=""
+# ...and an archive whose reported images are ALL expected is accepted, so the new check
+# does not refuse a correct multi-image restore.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/load_extra_id"
+KEEP_EXTRA_IDS="$EXTRA_IMAGE"
+run_case 'load-multi-image-all-expected-accepted' 0 EXPECT_IDS="$API,$EXTRA_IMAGE"
+KEEP_EXTRA_IDS=""
 
 # N — the engine reports no identity.
 clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/no_engine"

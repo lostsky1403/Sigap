@@ -2269,6 +2269,57 @@ plaintext outside its `0700` work directory.
 Note the decoder order in step 3 is the exact inverse of step 1 — `age -d` **then**
 `gzip -d`, in that order. Getting it backwards is a silent no-op on a `docker save` tar.
 
+**Step 3b — record the expected image identity, and record it from the ARCHIVE.** This is a
+required part of the preservation record, not an optional nicety, and it must happen before the
+archive is relied upon.
+
+**Do not record `docker inspect --format '{{.Id}}'`.** On a BuildKit-built image that reports
+the image's *config digest*, which `docker load` does not necessarily reproduce. Two values that
+look authoritative disagree:
+
+| Source | Value | What it actually is |
+|---|---|---|
+| `docker inspect --format '{{.Id}}'` on the built image | the config digest | the image's identity **on the daemon that built it** |
+| `docker load` on a **clean** daemon | the ID it reports | the identity **the archive restores** — the only value an operator can compare against |
+
+[OBSERVED] in CI: the same archive gave `inspect ff59b31e…` and `load d88c5ca4…`; a second run
+gave a *different* load ID again because the image was already present on the daemon. The
+load-reported value is **content-derived and therefore reproducible on a clean daemon**, which
+is exactly what makes it recordable.
+
+Record it like this, on the recovery host, from the artifact itself:
+
+```bash
+# On a CLEAN isolated daemon — one that does not already hold the image. A load onto a
+# daemon that already has it reports the PRE-EXISTING id and the record would be wrong.
+DEST="sigap-pre-redesign-$STAMP.tar.gz.age"
+docker -H "$ISOLATED_DOCKER_HOST" load < <(age -d -i "$RECOVERY_AGE_IDENTITY" "$DEST" | gzip -d) \
+  | tee /tmp/load-report.txt
+# One `Loaded image ID:` line per image whose tar carried no RepoTags; `Loaded image:
+# <repo:tag>` instead when it did. The helper resolves both forms, so record what the
+# load reported, not a name:
+grep -E '^Loaded image (ID:)?' /tmp/load-report.txt
+# REMOVE the images again, and verify the removal. The drill's correspondence check must be
+# satisfied by the archive's own load, not by this recording step's leftovers.
+docker -H "$ISOLATED_DOCKER_HOST" rmi -f <the ids above>
+```
+
+Then record **out-of-band**, i.e. anywhere that is not the bucket and not the archive:
+
+1. the artifact URI and its SHA-256 (`§13g.7`), and
+2. the expected image IDs **as reported by the load above**, and
+3. `PRODUCTION_ENGINE_ID` — the production daemon's `docker info .ID` (`§13f`, Gate D).
+
+**Why the identity record is independently verifiable.** The digest proves the *ciphertext* is
+the artifact that was uploaded; the load-reported IDs prove *what that artifact restores*. They
+are independent facts about the same object, and the helper checks both: the digest against the
+out-of-band record, and the restored IDs against the out-of-band ID list. A mismatch in either
+is a hard failure (12 and 15 respectively), so a corrupted transfer and a wrong-release archive
+cannot both be reported as success.
+
+**`PRODUCTION_IMAGES_PRESERVED` stays `NO` until step 1 has actually run** against production.
+Writing this procedure does not preserve anything.
+
 **Destination — `ARCHIVE_DESTINATION = UNCONFIRMED`. Three options evaluated, none verified.**
 
 No candidate is reachable from the workstation without production credentials, so none could
@@ -2440,11 +2491,11 @@ Neither credential is in Git, CI, Jira or the repo.
 |---|---|---|
 | A1 | Create the **private** bucket | No creation-time lock constraint; Bucket Lock is added separately in A2 |
 | A2 | Add a **Bucket Lock rule** with ≥90-day retention (optionally prefix-scoped to `sigap/`) | Added to the existing bucket; **administratively removable**, so it is a retention control, not an immutable guarantee |
-| A3 | Add the **abort-incomplete-multipart** lifecycle rule (3 days) | Prevents silent part accumulation |
+| A3 | **Confirm or override the incomplete-multipart rule.** R2 ships a **default** lifecycle rule that expires multipart uploads **7 days** after initiation — verify it is active, and override to 3 days only if the shorter window is wanted | The default means "add the rule" was wrong: there is nothing to add unless you want a different window. A rule that is assumed present and is not leaves billed parts invisible to a plain listing |
 | A4 | Decide the **second-copy question** (§13g.1) | Second provider, offline copy, or an explicitly accepted risk |
 | A5 | Create the **Object Read & Write** token, **scoped to this bucket** | For the relay. Treat as read+write+delete, not write-only |
-| A6 | Create the **Object Read** token, **scoped to this bucket** | For the recovery host |
-| A7 | Keep the **bucket-configuration** capability interactive and separate | Never issued to the relay, the recovery host, or CI |
+| A6 | Create the **Object Read only** token, **scoped to this bucket** | For the recovery host. The preset is literally named "Object Read only"; `Object Read` is a common misnomer for it |
+| A7 | Keep the **bucket-configuration** capability interactive and separate (`Admin Read & Write`, or the dashboard) | Never issued to the relay, the recovery host, or CI. This is the capability that can *remove the lock rule* |
 | A8 | Record the bucket name, endpoint and the **public recipient** in `RELEASE_CHECKLIST.md` and on the Jira gate | These are not secrets |
 | A9 | Store both object credentials in the operator's secret store — **never** in the repo, CI, Jira, or a transcript | — |
 
@@ -2649,6 +2700,103 @@ because each would have blocked the drill indefinitely, and each looked correct 
 5. `docker inspect` on a BuildKit-built image reports a config digest that `docker load` does
    not reproduce, and the load-reported ID also depends on whether the image was already
    present. The out-of-band record is therefore taken from a **clean** load of the archive.
+
+**13g.13 — Bucket Lock semantics confirmed against the platform, and the Gate A procedure.**
+Verified against the current Cloudflare R2 documentation rather than carried over from AWS
+assumptions. Four properties change what the operator should expect:
+
+| Property | What the documentation states | Consequence for this design |
+|---|---|---|
+| Coverage | A rule **without a prefix applies to all objects**, and rules apply to **new and existing** objects | A prefix-scoped `sigap/` rule protects only that prefix; a rule with no prefix protects everything. Choose deliberately — the default is the broader one |
+| Precedence | **Bucket lock rules take precedence over lifecycle rules.** A 30-day lifecycle delete does not fire before a 90-day lock requirement is met | A lifecycle rule is not a backdoor around retention. It also means a retention mistake cannot be corrected by shortening a lifecycle rule |
+| Emptiability | **A bucket cannot be emptied while any lock rules are configured**; all rules must be removed first. This also applies to deleting folders from the dashboard | The rule protects the archive against a bulk delete, which is the property worth having. It is also why "test retention by deleting" is the wrong test |
+| Limit | Up to **1,000 rules**; where several apply, the **strictest (longest)** wins | No practical constraint at this scale; record the rule id, since removal is by id |
+
+**The retention rule remains administratively removable.** `wrangler r2 bucket lock remove
+<BUCKET> --id <RULE_ID>` removes it, and the Cloudflare REST API exposes the same operation.
+Anyone holding **`Admin Read & Write`** — which the documentation defines as "create, list, and
+delete buckets, edit bucket configuration, read, write, and list objects" — can therefore
+remove the rule and then the object. Bucket Lock is a **retention control**, not an
+immutability guarantee, and a compromised Cloudflare administrator defeats it. That is why A4
+(the second-copy decision) is not optional.
+
+**Procedure — A1 to A9, in order.**
+
+```bash
+# --- A1. Private bucket. Bucket Lock is NOT a creation-time property. ---------------
+npx wrangler r2 bucket create sigap-backups
+
+# --- A2. Bucket Lock, >= 90 days. Record the returned rule id for removal/audit. ----
+# Prefix-scoped to sigap/ so the rule covers the archive prefix and nothing else.
+npx wrangler r2 bucket lock add sigap-backups \
+  --name sigap-retention-90d --prefix 'sigap/' --retention-days 90
+npx wrangler r2 bucket lock list sigap-backups      # confirm, and record the RULE_ID
+
+# --- A3. Multipart. R2 already ships a 7-day default; CONFIRM it, do not assume. ---
+npx wrangler r2 bucket lifecycle list sigap-backups
+# Override only if a 3-day window is wanted; the default needs no action.
+
+# --- A4. Second copy. Owner decision, recorded in RELEASE_CHECKLIST.md (F15b). -----
+# Second provider / offline encrypted copy / explicitly accepted risk. No default.
+
+# --- A5/A6. Bucket-scoped object credentials, in the Cloudflare dashboard. ----------
+#   Relay (upload):    Object Read & Write  -> can READ, write and list. No write-only
+#                      preset exists; confidentiality rests on age, not on the token.
+#   Recovery host:     Object Read only     -> can read and list.
+# Both are scoped to sigap-backups. Neither can edit bucket configuration.
+# NOTE: these two presets are supported by the S3-compatible API only, not the
+# Cloudflare REST API.
+
+# --- A7. Bucket administration stays interactive and separate. ---------------------
+# Admin Read & Write (or the dashboard) is held by the owner alone. It is the only
+# capability that can remove the lock rule. Never issue it to the relay, the recovery
+# host, or CI.
+
+# --- A8/A9. Record, then store. ----------------------------------------------------
+# Bucket name, endpoint and the age PUBLIC recipient are NOT secrets: record them in
+# RELEASE_CHECKLIST.md and on the Jira gate.
+# The two object credentials and the age PRIVATE key are secrets: operator secret store
+# only, never in the repo, CI, Jira, a shell history, or an agent transcript.
+```
+
+**13g.14 — Verifying Bucket Lock without touching a real backup.** The retention property is
+the one thing the CI drill cannot prove (§13g.9, §13g.12: MinIO does not implement Bucket
+Lock). It must be verified on the real service, and the verification must not endanger the
+archive.
+
+```bash
+# A DISPOSABLE object under a THROWAWAY prefix. Never a real backup key.
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+printf 'lock-drill' > /tmp/lock-drill.txt
+aws s3api put-object --bucket sigap-backups --key "lock-drill/$STAMP/probe.txt" \
+  --body /tmp/lock-drill.txt --endpoint-url "$R2_ENDPOINT"
+
+# Apply a SHORT rule to that prefix ONLY, and record its id.
+npx wrangler r2 bucket lock add sigap-backups \
+  --name lock-drill --prefix "lock-drill/$STAMP/" --retention-days 1
+RULE_ID=<from the output>
+
+# ASSERT deletion is refused for the window. A refusal is the expected result, so a
+# non-zero exit here is SUCCESS; treat a zero exit as the failure.
+if aws s3api delete-object --bucket sigap-backups \
+     --key "lock-drill/$STAMP/probe.txt" --endpoint-url "$R2_ENDPOINT" 2>/dev/null; then
+  echo "FAIL: a locked object was deletable — retention is not in force"; exit 1
+else
+  echo "ok: deletion refused while the lock rule is active"
+fi
+
+# Remove the drill rule, then confirm deletion SUCCEEDS — which is also the observation
+# that the rule is administratively removable, recorded as behaviour rather than assumed.
+npx wrangler r2 bucket lock remove sigap-backups --id "$RULE_ID"
+aws s3api delete-object --bucket sigap-backups \
+  --key "lock-drill/$STAMP/probe.txt" --endpoint-url "$R2_ENDPOINT"
+echo "ok: rule removable by an administrator — RETENTION = ADMINISTRATIVELY_REMOVABLE"
+```
+
+**Never attempt this against a real backup object.** The attempt is itself the destructive
+action the rule exists to prevent, and — per the confirmed semantics above — a bucket cannot be
+emptied while lock rules are configured, so a "test" of that kind risks the archive it is meant
+to protect. The drill above touches only a throwaway prefix.
 
 ---
 

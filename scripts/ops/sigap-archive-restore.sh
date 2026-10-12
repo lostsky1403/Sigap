@@ -504,23 +504,61 @@ set -e
 cat "$WORK/load.out"
 echo "docker load succeeded"
 
-# The AUTHORITATIVE identity of what the archive restored: `docker load` prints the ID it
-# actually assigned, and that is the only value an operator has to compare against — a live
-# `docker inspect` on some other daemon reports a config digest that `docker load` does not
-# necessarily reproduce ([OBSERVED] run 38272620285: inspect gave ff59b31e..., the archive's
-# own config and the load both gave a different ID). A tar whose manifest.json "Config" field
-# is `blobs/sha256/...` also shows why deriving the expected ID from the tar is wrong: that
-# value is not an image reference at all, it is a path, and it failed validation with 10
-# (run 38273857530).
+# THE IDENTITY OF WHAT THE ARCHIVE RESTORED, taken from the load's own report.
 #
-# FAIL CLOSED. If the load reported no parseable ID, the restore must be refused rather than
-# pass an empty value to the correspondence check below, which would report a PARTIAL LOAD for
-# a load that in fact succeeded — the same false failure in a new place.
-LOADED_IMAGE_ID=$(sed -n 's/^Loaded image ID:[[:space:]]*//p' "$WORK/load.out" | tail -1)
-if [ -z "$LOADED_IMAGE_ID" ]; then
-  die "docker load reported no image ID — refusing rather than trusting an unparsed load" 14
-fi
-echo "restored image ID (as reported by docker load): $LOADED_IMAGE_ID"
+# `docker load` emits TWO different lines and an earlier revision understood only one of
+# them. From the daemon source (`daemon/internal/image/tarexport/load.go`):
+#
+#     fmt.Fprintf(&imageIDsStr, "Loaded image ID: %s\n", imgID)   // buffered, per image
+#     for _, repoTag := range m.RepoTags {
+#         fmt.Fprintf(outStream, "Loaded image: %s\n", ...)       // streamed, per tag
+#     }
+#     if imageRefCount == 0 { outStream.Write([]byte(imageIDsStr.String())) }
+#
+# So `Loaded image ID:` is written ONLY when the LAST image in the manifest carried no
+# RepoTags. A tar WITH RepoTags prints `Loaded image: <repo:tag>` instead and NO ID line at
+# all. `docker save <repo:tag>` produces RepoTags; `docker save <id>` does not — which is
+# why the synthetic CI fixture (which saves by ID) never exercised the tag form, while a
+# production archive saved by tag would have produced no ID line and been refused with
+# "docker load reported no image ID" (14): a fail-closed refusal, but of a perfectly good
+# restore. [OBSERVED] the daemon source above.
+#
+# BOTH forms are parsed. The tag form is resolved to an ID on the ISOLATED daemon with an
+# explicit DOCKER_HOST, so the result is an image identity and never a name.
+#
+# ALL reported identities are collected, not only the last: the previous `tail -1` meant a
+# multi-image archive had just its FINAL image verified as load-reported, and the production
+# archive is documented as holding three (§7d.1 EXPECT_IDS).
+LOADED_IDS=""
+while IFS= read -r _line; do
+  case "$_line" in
+    'Loaded image ID: '*)
+      _raw=${_line#Loaded image ID: }
+      _nid=$(norm_id "$_raw") \
+        || die "docker load reported a malformed image ID: '$_raw'" 14
+      LOADED_IDS="$LOADED_IDS $_nid" ;;
+    'Loaded image: '*)
+      _tag=${_line#Loaded image: }
+      _nid=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" \
+               docker image inspect --format '{{.Id}}' "$_tag" 2>/dev/null) \
+        || die "docker load reported the tag '$_tag' but it does not resolve on the isolated daemon" 14
+      _nid=$(norm_id "$_nid") \
+        || die "the tag '$_tag' resolved to a malformed image ID: '$_nid'" 14
+      LOADED_IDS="$LOADED_IDS $_nid" ;;
+  esac
+done < "$WORK/load.out"
+
+# Deduplicate: several RepoTags on one image print one `Loaded image:` line each, all
+# resolving to the same ID. `sort -u` also gives a stable order for the checks below.
+LOADED_IDS=$(printf '%s\n' $LOADED_IDS | sort -u | tr '\n' ' ')
+LOADED_IDS=${LOADED_IDS% }
+echo "restored image ID(s) as reported by docker load: ${LOADED_IDS:-<none>}"
+
+# FAIL CLOSED. A load that reported no parseable identity in EITHER form is refused rather
+# than passed on as an empty value, which would report a PARTIAL LOAD for a load that in fact
+# succeeded — the same false failure in a new place.
+[ -n "$LOADED_IDS" ] \
+  || die "docker load reported no image identity in any known form — refusing rather than trusting an unparsed load" 14
 
 # ---- Residual-risk disclosure (Defect A, unavoidable plaintext) ------------------
 # The decompressed image TAR is a temporary plaintext, unavoidable because `docker
@@ -549,28 +587,24 @@ target_engine=$(norm_engine_id_strict "$target_engine") \
   || die "engine ID changed after load ($target_engine != $ALLOWED_ENGINE_N)" 11
 
 # ---------------------------------------------------------------------------
-# 7a. The load-reported ID IS the archive's own identity.
+# 7a. Every identity the load REPORTED must exist on the isolated daemon.
 #
-#    `docker load` prints the ID it assigned, read from the archive's manifest.json. That is
-#    the identity of what this archive restores, and it is the value an operator restoring it
-#    must record out-of-band. Comparing a live `docker inspect` against it is wrong: inspect
-#    reports the config digest of whatever daemon is asked, which `docker load` does not
-#    necessarily reproduce ([OBSERVED] run 38272620285, inspect ff59b31e... vs load
-#    d88c5ca4...), and parsing the ID out of manifest.json's "Config" field is wrong too,
-#    because that field is a PATH — `blobs/sha256/<digest>` — not a reference, which failed
-#    validation with 10 (run 38273857530).
+#    This is the only check that the restored bytes are the archived ones, and it is made
+#    against the daemon rather than against the load's own claim. `docker inspect` on some
+#    other daemon reports a config digest that `docker load` does not necessarily reproduce
+#    ([OBSERVED] run 38272620285, inspect ff59b31e... vs load d88c5ca4...), and reading the
+#    ID out of manifest.json's "Config" field is wrong too because that field is a PATH —
+#    `blobs/sha256/<digest>` — not a reference, which failed validation with 10
+#    (run 38273857530). The load's report, normalised, is the right source; the daemon is
+#    the right place to confirm it.
 #
-#    Refused rather than skipped if it does not match: this is the only check that the
-#    restored image is the archived one, and an unparsable load must not be able to satisfy
-#    it silently.
+#    ALL reported identities are checked, not just the last.
 # ---------------------------------------------------------------------------
-loaded_nid=$(norm_id "$LOADED_IMAGE_ID") \
-  || die "docker load reported a malformed image ID: '$LOADED_IMAGE_ID'" 14
-# And it must genuinely EXIST on the isolated daemon, with explicit DOCKER_HOST so this can
-# never read the ambient (possibly production) daemon.
-DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker image inspect "sha256:$loaded_nid" >/dev/null 2>&1 \
-  || die "the ID docker load reported ($loaded_nid) is not present on the isolated daemon" 15
-echo "  present $loaded_nid (reported by docker load)"
+for _lid in $LOADED_IDS; do
+  DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker image inspect "sha256:$_lid" >/dev/null 2>&1 \
+    || die "the identity docker load reported ($_lid) is not present on the isolated daemon" 15
+  echo "  present $_lid (reported by docker load)"
+done
 
 # ---------------------------------------------------------------------------
 # 7b. Identity correspondence against the out-of-band record — per-image, ON the isolated
@@ -588,20 +622,32 @@ echo "  present $loaded_nid (reported by docker load)"
 #    refused as malformed input (10), distinct from a genuinely absent image (15), so a
 #    typo cannot masquerade as a partial load.
 #
-#    NOTE the two different questions this section and 7a answer. 7a asks "did the archive
-#    restore what it contains"; 7b asks "is that the image the operator expected". A run
-#    that satisfies 7a but not 7b has restored a genuine archive of the WRONG release, which
-#    is exactly the failure the out-of-band record exists to catch — so it must be a hard
-#    failure, not a note.
+#    THE TWO QUESTIONS ARE SEPARATE AND BOTH ARE ASKED.
+#      7a  did the archive restore what it contains?  (reported ⊆ daemon)
+#      7b  is that what the operator expected?        (EXPECT_IDS ⊆ daemon, reported ⊆ EXPECT_IDS)
+#    A run that satisfies 7a but not 7b has restored a genuine archive of the WRONG release,
+#    which is exactly what the out-of-band record exists to catch, so it stays a hard failure.
+#
+#    RESIDUAL GAP, stated rather than hidden: `reported ⊆ EXPECT_IDS` is sound — incomplete
+#    load output can only REMOVE a reported ID, never add one, so it cannot cause a false
+#    refusal. The reverse direction cannot be closed the same way: the daemon source buffers
+#    `Loaded image ID:` lines and writes them only when the LAST image had no RepoTags, so a
+#    mixed multi-image archive can under-report. Requiring `EXPECT_IDS ⊆ reported` would
+#    therefore refuse a legitimate multi-image restore. What is NOT proved is that every
+#    EXPECT_ID came from THIS archive rather than already being on the daemon. The caller must
+#    supply a clean daemon for that; the CI workflow asserts it by removing the image its own
+#    record step loaded and verifying the removal. A production drill must do the same.
 # ---------------------------------------------------------------------------
 IFS=',' read -ra IDS <<< "$EXPECT_IDS"
 missing=0; present=0; seen=0
+EXPECT_NORM=""
 for id in "${IDS[@]}"; do
   id="${id//[[:space:]]/}"
   [ -n "$id" ] || continue
   nid=$(norm_id "$id") \
     || die "EXPECT_IDS contains an invalid image ID: '$id' (need 64 hex chars, optional sha256: prefix)" 10
   seen=$((seen+1))
+  EXPECT_NORM="$EXPECT_NORM $nid"
   # Normalised to exactly one `sha256:` prefix for the lookup.
   if DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker image inspect "sha256:$nid" >/dev/null 2>&1; then
     present=$((present+1)); printf '  present %s\n' "$nid"
@@ -612,6 +658,19 @@ done
 [ "$seen" -gt 0 ] || die "EXPECT_IDS listed no usable image ID" 10
 [ "$present" -gt 0 ] || die "no expected image present after load — PARTIAL LOAD not accepted" 15
 [ "$missing" -eq 0 ] || die "$missing expected image(s) absent after load — identity correspondence FAILED" 15
+
+# NO UNEXPECTED IMAGE. Every identity the load reported must be one the operator expected.
+# Without this, an archive carrying an EXTRA image would load it silently: 7a would confirm
+# it exists and 7b would confirm the expected ones exist, and nothing would notice the
+# addition. Reported-only-in-this-direction, so it cannot false-refuse on under-reporting.
+for _lid in $LOADED_IDS; do
+  _known=0
+  for _eid in $EXPECT_NORM; do
+    [ "$_lid" = "$_eid" ] && { _known=1; break; }
+  done
+  [ "$_known" -eq 1 ] \
+    || die "docker load restored image $_lid, which is NOT in EXPECT_IDS — the archive carries an unexpected image" 15
+done
 
 echo "identity correspondence VERIFIED for all $present image(s) on engine $target_engine"
 exit 0
