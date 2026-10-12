@@ -578,11 +578,17 @@ STAMP="$STAMP" \
 EXPECT_DIGEST="$OUT_OF_BAND_DIGEST" \
 ISOLATED_DOCKER_HOST="$ISOLATED_DOCKER_HOST" \
 ALLOWED_ENGINE_ID="$ISOLATED_ENGINE_ID" \
+PRODUCTION_ENGINE_ID="$PRODUCTION_ENGINE_ID" \
 EXPECT_IDS="sha256:43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f,sha256:2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c,sha256:8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4" \
   bash scripts/ops/sigap-archive-restore.sh
 # 0 = every stage verified; 10 unset var; 11 target refused; 12 digest mismatch;
 # 13 not a complete gzip; 14 a stage failed; 15 identity correspondence failed
 ```
+
+`PRODUCTION_ENGINE_ID` is the **production** daemon's `docker info .ID`, recorded during the
+Gate D reinspection. Set it whenever it is known: it is the only production control that
+cannot be defeated by aliasing, because an engine ID is a property of the daemon rather than
+a name. `ALLOWED_ENGINE_ID` is the **isolated** target's ID and must differ from it.
 
 The same helper reads a legacy relay copy or an operator-staged file by changing only the
 URI — the storage layer is a dispatch, not an SSH assumption:
@@ -2163,9 +2169,16 @@ DIGEST=$(ssh -o BatchMode=yes "$ARCHIVE_RELAY" "sha256sum '$RELAY_STAGE/$DEST'" 
 
 # Upload. `aws s3 cp` switches to a MULTIPART upload above 8 MiB and streams each part, so
 # memory stays bounded no matter the artifact size (0.44 GB today). The object key is
-# write-once: the STAMP makes it unique, and the bucket's retention policy forbids
-# overwrite (see §13g). The credential is the WRITE-ONLY one; it cannot read back, which is
-# why read-back below runs as a separate step with its own credential in a real run.
+# UNIQUE because of the STAMP, so a later release never collides with an earlier one; the
+# bucket's Bucket Lock rule makes overwriting impractical during its retention window, but
+# that is administrative policy, not an immutable-write property (§13g.1).
+#
+# The credential is the WRITE-CAPABLE one and it CAN ALSO READ: R2 has no write-only object
+# preset, and the bucket-scoped write permission group explicitly includes read. It can also
+# delete objects in the bucket. Do not describe it as write-only, and do not rely on it being
+# unable to read back — the read-back below is therefore possible with this credential, and
+# in a real run it is performed with the RECOVERY credential to prove that credential works
+# too.
 ssh -o BatchMode=yes "$ARCHIVE_RELAY" \
   "aws s3api put-object \
      --bucket '$R2_BUCKET' --key 'sigap/$DEST' \
@@ -2244,10 +2257,12 @@ stage now runs on the trusted relay. The blocker that block recorded — "the ci
 for the *stream* is undecided" — is resolved: `age` is used, off-host, and production never
 needs it.
 
-What the owner must still do is **not** a workstation install. It is the three Gate A actions
-in §13g.4 and §13h.4: create the private bucket, create the two narrowly scoped credentials,
-and generate the age key pair through a separately authorized trusted process. No OMP agent
-generates, reads, prints or stores the private key.
+What the owner must still do is **not** a workstation install. It is the Gate A actions in
+§13g.4 (A1–A9) and §13h.4 (C1–C6): create the private bucket, **add the Bucket Lock rule**,
+add the incomplete-multipart lifecycle rule, decide the second-copy question, create the two
+**bucket-scoped** object credentials, keep the bucket-configuration capability separate and
+interactive, and generate the age key pair through a separately authorized trusted process. No
+OMP agent generates, reads, prints or stores the private key.
 
 **Do not** invent backup credentials, print the existing `/etc/sigap/backup.env` contents, or
 create live backup objects without authorization.
@@ -2291,42 +2306,112 @@ this section has been created. `R2_BUCKET = NOT_CREATED`.
 | Bucket name | `sigap-backups` (owner's choice; must be globally unique) | R2 requires uniqueness within the account |
 | Visibility | **Private**, no public bucket, no custom domain, no `r2.dev` public endpoint | An object URL must never be reachable without credentials |
 | Region | Automatic (R2 has no region choice for the bucket) | — |
-| **Object Lock / Bucket Lock** | **ENABLED AT CREATION**, retention **≥ 90 days** | Must be set when the bucket is created; it cannot be retrofitted on an existing bucket. Blocks object deletion and overwrite for the retention window, so a compromised credential cannot destroy the only rollback copy |
+| **Bucket Lock** | **A rule with ≥90-day retention, added at setup** | R2's own retention mechanism — see the correction below. It is a **deterrent against accidental or premature deletion, not an immutable-write guarantee** |
 | Lifecycle: abort incomplete multipart | **Abort after 3 days** | An interrupted multipart upload leaves billed parts that are invisible to a plain listing; without this they accumulate silently |
-| Lifecycle: expire old versions | **365 days** (owner's retention choice) | Bounds cost; must exceed the rollback window |
-| Versioning | Enabled by Object Lock | Overwrite protection |
+| Lifecycle: expire old objects | **365 days** (owner's retention choice) | Bounds cost; must exceed the rollback window |
+| Versioning | **Not assumed.** Enable separately only if wanted | R2 versioning is its own feature and is **not** switched on by Bucket Lock. Do not rely on it unless it is deliberately enabled and verified |
+
+**CORRECTION — Bucket Lock is not AWS S3 Object Lock.** An earlier revision of this section
+claimed "Object Lock enabled at creation", that it "cannot be retrofitted", that it "blocks
+object deletion and overwrite", that "versioning is enabled by Object Lock", and that deletion
+therefore required the dashboard. **All five claims were wrong**, and they were wrong in the
+direction that matters: they described a non-removable, write-once guarantee that R2 does not
+provide. Verified against the Cloudflare documentation:
+
+| Claim in the earlier revision | Reality |
+|---|---|
+| "Object Lock", with AWS S3 Object Lock semantics | **R2 does not implement S3 Object Lock.** `CreateBucket` with `x-amz-bucket-object-lock-enabled=true` is rejected as `NotImplemented`; only `false` is accepted. R2 provides **Bucket Lock**, its own mechanism, with a different API (`PUT …/r2/buckets/<bucket>/lock`, `wrangler r2 bucket lock …`) |
+| "Must be set when the bucket is created; cannot be retrofitted" | **False.** Lock rules are added to and removed from **existing** buckets at any time. There is no creation-time-only constraint |
+| "Blocks object deletion and overwrite" | Partially true in effect, but not a guarantee: rules prevent deletion and overwriting **for the configured period**, take precedence over lifecycle rules, and cannot be bypassed by emptying a bucket while rules are configured — **but they are administrative policy, not an immutable lock** |
+| "Versioning is enabled by Object Lock" | **False.** Bucket Lock does **not** enable versioning. R2 versioning is a separate feature |
+| "Deletion requires the dashboard" | **False.** A bucket lock rule is removed by anyone holding a token with permission to **edit R2 bucket configuration** — via the dashboard **or** the API or Wrangler |
+
+**What Bucket Lock does buy, stated accurately.** It is a real retention control and worth
+enabling: it applies to existing as well as new objects, it outranks lifecycle rules, and it
+blocks emptying the bucket while configured. It is a strong protection against **accident and
+premature deletion**, and a real obstacle to a compromised *object* credential. It is **not**
+protection against a compromised **Cloudflare administrator**, who can remove the rule. The
+honest verdict is `RETENTION = ADMINISTRATIVELY_REMOVABLE`.
+
+**Proposed mitigation, if protection against a compromised Cloudflare administrator is
+required.** Bucket Lock cannot provide it, because the same administrative plane controls the
+rule and the data. A **second, independent recovery copy** is required instead, and it should
+not live in the same trust domain:
+
+* **Option 1 — second provider.** Write the same ciphertext to a second object store under a
+  different account (e.g. Backblaze B2, S3, or a second Cloudflare account held by a different
+  custodian). Different administrative plane, so one compromised administrator cannot destroy
+  both. Cost is roughly double, still trivial at this volume.
+* **Option 2 — offline copy.** Periodic download of the ciphertext to offline media held with
+  the §13h key escrow. No cloud administrative plane at all.
+* **Option 3 — accept the risk explicitly.** Record that archive destruction by a compromised
+  Cloudflare administrator is an accepted residual risk. Legitimate only if stated, not by
+  omission.
+
+This decision is the owner's and is **not** made here. The single-copy design remains adequate
+against accident, credential theft and provider-side data loss; it is **not** adequate against
+a hostile administrator.
 
 **13g.2 — Object keys.** `sigap/sigap-pre-redesign-<STAMP>.tar.gz.age`, where `STAMP` is
-`YYYYMMDDTHHMMSSZ` UTC. The key is **write-once by construction**: the stamp makes it unique,
-and Object Lock forbids overwrite within the retention window. Keys sort lexicographically by
-time, so a listing is a chronological inventory. The helper additionally refuses any URI whose
-final path component is not `sigap-pre-redesign-<STAMP>.tar.gz.age`, so a restore cannot
-silently target a different release.
+`YYYYMMDDTHHMMSSZ` UTC. Keys are **unique by construction** — the stamp distinguishes them —
+so a later release never collides with an earlier one. Keys sort lexicographically by time, so
+a listing is a chronological inventory. The helper additionally refuses any URI whose final
+path component is not `sigap-pre-redesign-<STAMP>.tar.gz.age`, so a restore cannot silently
+target a different release.
 
-**13g.3 — Credentials: two, narrowly scoped, and neither can delete.**
+Note the weaker claim, deliberately: keys are **unique**, not "write-once". A Bucket Lock rule
+makes overwriting impractical during its window, but that is policy, not an immutable-write
+property, and it can be removed.
 
-| Role | R2 permission | Can | Cannot |
+**13g.3 — Credentials, corrected. Assume the uploader can read AND write.**
+
+The earlier revision claimed an upload credential that "cannot read any object" and that
+"`DeleteObject` is granted to neither credential". **Neither claim is supportable.** Cloudflare's
+standard R2 API-token presets are:
+
+| Preset | Scope options | Effective access |
+|---|---|---|
+| **Object Read & Write** | account-wide, or **scoped to a set of buckets** | read, write and list objects; delete is part of write |
+| **Object Read** | account-wide, or **scoped to a set of buckets** | read and list objects |
+
+The corresponding bucket-scoped permission group is explicit: `Workers R2 Storage Bucket Item
+Write` — *"Can **read**, write, and list objects in buckets"*. **There is no write-only preset.**
+A write-capable object credential in R2 can also read, and its write capability carries delete.
+Assuming otherwise would be a security claim the platform does not support.
+
+| Role | Credential | Actual capability | Where it lives |
 |---|---|---|---|
-| **Upload** (relay) | **Object Write** | `PutObject`, multipart create/upload/complete/abort, `ListMultipartUploads` | read any object, delete any object, list bucket contents |
-| **Recovery** (operator host) | **Object Read** | `GetObject`, `HeadObject`, list the `sigap/` prefix | write, delete, or modify anything |
+| **Upload** (relay) | **Object Read & Write, scoped to this bucket** | read, write, list, and delete objects **in this bucket** | the relay |
+| **Recovery** (operator host) | **Object Read, scoped to this bucket** | read and list objects; cannot write | the recovery host |
 
-R2 API tokens natively provide these two tiers, so no custom policy is needed. **`DeleteObject`
-is granted to neither credential.** Deletion therefore requires the Cloudflare account
-dashboard, which is a deliberate, human-only action — a stolen upload credential cannot
-destroy the archive, and a stolen recovery credential cannot alter it. The two credentials are
-stored separately and are never co-located: the write credential lives on the relay, the read
-credential on the recovery host. Neither is in Git, CI, Jira or the repo.
+**What this changes about the threat model.** A stolen upload credential **can** delete objects
+in the bucket and **can** read the ciphertext. It **cannot** read plaintext — the ciphertext is
+encrypted to a recipient whose private key it does not hold, which is the property that
+actually matters. So the loss is: (a) the archive could be destroyed, and (b) the ciphertext
+could be exfiltrated. Bucket Lock is the control against (a), with the administrative caveat
+above. Confidentiality against (b) rests on the encryption, not on the credential.
+
+**Administrative privileges are separate, and must never be an application credential.** Editing
+R2 bucket configuration — including lock rules, lifecycle rules and versioning — requires a
+token with bucket-configuration permission. **No application component gets such a token.**
+That plane is used only interactively by the owner, and it is what makes the lock rule removable
+in the first place.
+
+Neither credential is in Git, CI, Jira or the repo.
 
 **13g.4 — Gate A owner actions (R2).** Nothing below may be performed by an agent.
 
 | # | Action | Notes |
 |---|---|---|
-| A1 | Create the **private** bucket with Object Lock enabled and ≥90-day retention | Object Lock must be set at creation |
-| A2 | Add the **abort-incomplete-multipart** lifecycle rule (3 days) | Prevents silent part accumulation |
-| A3 | Create the **Object Write** API token, scope it to the bucket | For the relay only |
-| A4 | Create the **Object Read** API token, scope it to the bucket | For the recovery host only |
-| A5 | Record the bucket name, endpoint and the **public recipient** in `RELEASE_CHECKLIST.md` and on the Jira gate | These are not secrets |
-| A6 | Store both credentials in the operator's secret store — **never** in the repo, CI, Jira, or a transcript | — |
+| A1 | Create the **private** bucket | No creation-time lock constraint; Bucket Lock is added separately in A2 |
+| A2 | Add a **Bucket Lock rule** with ≥90-day retention (optionally prefix-scoped to `sigap/`) | Added to the existing bucket; **administratively removable**, so it is a retention control, not an immutable guarantee |
+| A3 | Add the **abort-incomplete-multipart** lifecycle rule (3 days) | Prevents silent part accumulation |
+| A4 | Decide the **second-copy question** (§13g.1) | Second provider, offline copy, or an explicitly accepted risk |
+| A5 | Create the **Object Read & Write** token, **scoped to this bucket** | For the relay. Treat as read+write+delete, not write-only |
+| A6 | Create the **Object Read** token, **scoped to this bucket** | For the recovery host |
+| A7 | Keep the **bucket-configuration** capability interactive and separate | Never issued to the relay, the recovery host, or CI |
+| A8 | Record the bucket name, endpoint and the **public recipient** in `RELEASE_CHECKLIST.md` and on the Jira gate | These are not secrets |
+| A9 | Store both object credentials in the operator's secret store — **never** in the repo, CI, Jira, or a transcript | — |
 
 **13g.5 — Multipart, memory and incomplete uploads.** `aws s3 cp` switches to a multipart
 upload above 8 MiB and streams each part, so **memory is bounded by the chunk size times the
@@ -2363,11 +2448,37 @@ is the property R2 buys, and it holds because nothing in the recovery path touch
 
 Recovery is therefore: on **any** host with Docker and the three tools, set the read-only
 credential and the digest, then run the §7d.1 helper. No production access, no relay, and no
-particular workstation is required. **The residual single point of failure is the Cloudflare
-account itself** — losing account access loses the objects. That is why the digest is also in
-Git/Jira, and why §13h requires two key copies held apart.
+particular workstation is required.
 
-**13g.9 — Cost.** R2 bills storage at **$0.015/GB-month**, Class A (write) at **$4.50 per
+**The residual single point of failure is the Cloudflare account itself** — losing account
+access, or a hostile administrator, loses or destroys the objects. Bucket Lock does **not**
+close this, because the same administrative plane controls both the rule and the data. That is
+why (a) the digest is also in Git/Jira, (b) §13h requires two key copies held apart, and (c)
+§13g.1 raises the second-copy decision. Single-copy R2 is adequate against accident, credential
+theft and provider-side data loss; it is **not** adequate against a compromised administrator,
+and that gap is recorded rather than papered over.
+
+**13g.9 — Retention verification is NOT covered by the CI test, and must not be claimed as
+such.** The GitHub-hosted workflow uses a disposable MinIO container. MinIO is S3-compatible;
+it does **not** implement R2 Bucket Lock. The workflow's negative controls therefore prove
+**object integrity and input validation** — digest mismatch, wrong-release URI, malformed image
+ID, loopback opt-in — and prove **nothing** about retention behaviour.
+
+Verifying Bucket Lock requires the real service, a disposable object, and a separate
+authorization:
+
+1. create a throwaway object under a throwaway prefix (never a real backup key);
+2. apply a short lock rule to that prefix;
+3. assert deletion is **refused** for the retention window;
+4. remove the rule and confirm deletion then succeeds, which also documents the
+   administrative-removability caveat as observed behaviour rather than assumption.
+
+**Never attempt to delete or overwrite a real protected backup object to test retention.** The
+attempt is itself the destructive action the rule exists to prevent, and R2 refuses to empty a
+bucket while lock rules are configured — so a "test" of this kind risks the archive it is meant
+to protect.
+
+**13g.10 — Cost.** R2 bills storage at **$0.015/GB-month**, Class A (write) at **$4.50 per
 million**, Class B (read) at **$0.36 per million**, and **egress is free**. R2 includes a free
 tier of **10 GB-month storage, 1 M Class A and 10 M Class B per month**.
 

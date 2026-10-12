@@ -1,15 +1,34 @@
 name: r2-offhost-backup
 
-# MANUAL DISPATCH ONLY. There is deliberately NO `push` and NO `pull_request` trigger:
-# this workflow exercises the off-host R2 backup and restore path, and per the Gate A
-# authorization it must not run until the owner approves it. Adding a `push` or
-# `pull_request` trigger here would execute it on every commit.
+# ACTIVATION — why this is not `workflow_dispatch`-only.
 #
-# Nothing in this workflow touches production, the production SSH host, the real R2
-# bucket, or any real credential. It stands up a disposable MinIO service container as
-# an S3-compatible endpoint, generates a throwaway age key, and moves a synthetic image
-# through the real `sigap-archive-restore.sh` code path.
+# `workflow_dispatch` requires the workflow file to be REGISTERED ON THE DEFAULT BRANCH.
+# A dispatch-only workflow committed to `design/ui-ux-overhaul` is therefore inert: no
+# entry appears in the Actions UI and no run can be started. Activating testing must not
+# require merging to `main`, so the working trigger is `pull_request`.
+#
+# GitHub evaluates `pull_request` workflows from the pull request's own merge ref, so a
+# workflow committed on `design/ui-ux-overhaul` runs for a PR whose BASE is that branch.
+# This is the procedure already proven by the SIGAP-88 validation run
+# (`.github/workflows/ops-sandbox.yml`, run 38163833629).
+#
+# It is opt-in twice over, so it cannot fire by accident:
+#   1. the `paths` filter means it runs only when a file it actually exercises changes;
+#   2. the job-level `if` requires the `r2-validation` label, which only the owner applies.
+# A PR without that label runs nothing at all.
+#
+# `workflow_dispatch` is retained for the future case where this file reaches the default
+# branch; it is NOT required for testing and merging to `main` is explicitly NOT a
+# prerequisite.
 on:
+  pull_request:
+    branches: [design/ui-ux-overhaul]
+    paths:
+      - '.github/workflows/r2-offhost-backup.yml'
+      - 'scripts/ops/sigap-archive-restore.sh'
+      - 'scripts/ops/test-restore-contract.sh'
+      - 'scripts/ops/ops-sandbox.sh'
+      - 'docs/operations/DEPLOYMENT_RUNBOOK.md'
   workflow_dispatch:
     inputs:
       confirm_manual_run:
@@ -23,24 +42,38 @@ permissions:
 jobs:
   r2-round-trip:
     name: R2 off-host round trip (disposable MinIO + throwaway age key)
+    # The label gate. Without `r2-validation` on the PR this job is skipped, which is the
+    # explicit owner opt-in. For a manual dispatch the input guard below applies instead.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'r2-validation')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
-      # A disposable endpoint. `minioadmin` is the well-known default for a throwaway
-      # container and is NOT a secret; no real R2 credential appears anywhere in this file.
+      # A DISPOSABLE endpoint. `minioadmin` is the well-known default for a throwaway
+      # container and is NOT a secret. No real R2 credential appears anywhere in this file,
+      # and none is ever read from repository secrets.
       R2_ENDPOINT: http://127.0.0.1:9000
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin
       AWS_DEFAULT_REGION: auto
       R2_BUCKET: sigap-backup-test
       STAMP: '20260101T000000Z'
+      # The isolated daemon is reached over LOOPBACK, because it runs as a container on the
+      # same runner. The helper refuses loopback by default, so the opt-in is explicit and
+      # narrow: it does NOT relax the engine-ID allowlist or the ambient-distinctness check.
+      SIGAP_ALLOW_LOOPBACK_TARGET: '1'
     steps:
-      - name: Guard — manual confirmation
+      - name: Guard — explicit opt-in
         run: |
           set -euo pipefail
-          if [ "${{ inputs.confirm_manual_run }}" != "RUN" ]; then
-            echo "Refusing to run: dispatch this workflow with confirm_manual_run=RUN."
-            exit 1
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ inputs.confirm_manual_run }}" != "RUN" ]; then
+              echo "Refusing to run: dispatch this workflow with confirm_manual_run=RUN."
+              exit 1
+            fi
+          else
+            echo "Opt-in satisfied by the 'r2-validation' label on PR #${{ github.event.pull_request.number }}."
           fi
 
       - uses: actions/checkout@v4
@@ -55,8 +88,10 @@ jobs:
       - name: Start disposable MinIO
         run: |
           set -euo pipefail
+          # Bound to LOOPBACK ONLY. `-p 9000:9000` would publish the endpoint on every
+          # runner interface; `-p 127.0.0.1:9000:9000` exposes it to this host alone.
           docker run -d --name sigap-minio \
-            -p 9000:9000 \
+            -p 127.0.0.1:9000:9000 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
             minio/minio:latest server /data
@@ -77,15 +112,15 @@ jobs:
       - name: Generate a throwaway age key pair
         run: |
           set -euo pipefail
-          # A DISPOSABLE key. It is generated here, used here, and destroyed with the
-          # runner. It is never a production key and never leaves this job.
+          # A DISPOSABLE key. Generated here, used here, destroyed with the runner. It is
+          # never a production key, is never read from a secret, and never leaves this job.
           umask 077
           age-keygen -o "$RUNNER_TEMP/throwaway.key" 2>"$RUNNER_TEMP/keygen.err"
           RECIP=$(age-keygen -y "$RUNNER_TEMP/throwaway.key")
           echo "::add-mask::$RECIP"
           echo "RECIP=$RECIP" >> "$GITHUB_ENV"
-          # Prove correspondence WITHOUT printing the private key: `age-keygen -y` emits
-          # public material only. This is the same check runbook §13h.3 specifies.
+          # Correspondence is proven WITHOUT printing the private key: `age-keygen -y`
+          # emits public material only (runbook §13h.3).
           test -n "$RECIP"
 
       - name: Build a synthetic dummy image
@@ -96,10 +131,12 @@ jobs:
           printf 'FROM scratch\nCOPY marker.txt /marker.txt\n' > "$RUNNER_TEMP/ctx/Dockerfile"
           printf 'sigap-r2-drill\n' > "$RUNNER_TEMP/ctx/marker.txt"
           docker build -q -t sigap-r2-drill:local "$RUNNER_TEMP/ctx"
+          # `docker inspect --format '{{.Id}}'` yields the `sha256:<digest>` form. The helper
+          # normalises it, so either spelling would work; it is passed as produced, which is
+          # exactly what a real operator would paste.
           API_ID=$(docker inspect --format '{{.Id}}' sigap-r2-drill:local)
           echo "dummy image id: $API_ID"
           echo "API_ID=$API_ID" >> "$GITHUB_ENV"
-          echo "API_SHORT=${API_ID#sha256:}" >> "$GITHUB_ENV"
 
       - name: Preserve — save, compress, encrypt off-host, upload, read back
         run: |
@@ -109,9 +146,9 @@ jobs:
           ST=$(mktemp -d)
 
           # Per-stage status. A plain POSIX pipeline reports ONLY the last command's
-          # status, so `docker image save <bad-id> | gzip -1` exits 0 and leaves a
-          # 20-byte artifact that PASSES `gzip -t` — gzip of empty input is valid gzip.
-          # PIPESTATUS is read ONCE as an array; reading it twice resets it.
+          # status, so `docker image save <bad-id> | gzip -1` exits 0 and leaves a 20-byte
+          # artifact that PASSES `gzip -t` — gzip of empty input is valid gzip. PIPESTATUS
+          # is read ONCE as an array; reading it twice resets it.
           set +e
           set -o pipefail
           docker image save "$API_ID" | gzip -1 | age -r "$RECIP" > "$ST/$ART"
@@ -150,16 +187,24 @@ jobs:
             || { echo "FAIL: read-back digest mismatch — the object is NOT the artifact"; exit 1; }
           echo "ok: uploaded and read back byte-identical ($LOCAL_LEN bytes)"
 
-      - name: Restore — retrieve from R2 through the real helper
+      - name: Start the isolated restore daemon (loopback only)
         run: |
           set -euo pipefail
-          ART="sigap-pre-redesign-$STAMP.tar.gz.age"
-          # A second, isolated Docker daemon for the restore target. The helper proves
-          # isolation by ENGINE IDENTITY, so the target must be a real distinct engine.
+          # A second, isolated daemon for the restore target. The helper proves isolation by
+          # ENGINE IDENTITY, so this must be a genuinely distinct engine — which it is,
+          # because it is a separate `dockerd` inside this container.
+          #
+          # PORT BINDING: `-p 127.0.0.1:2375:2375`, NOT `-p 2375:2375`. Publishing on all
+          # interfaces would expose an unauthenticated Docker API to the runner's network,
+          # and a privileged daemon reachable that way is a host-compromise primitive.
+          #
+          # NO DOCKER SOCKET IS MOUNTED. `/var/run/docker.sock` is deliberately absent from
+          # every `docker run` in this workflow, so neither container can drive the runner's
+          # own daemon.
           docker run -d --name sigap-restore-dind --privileged \
             -e DOCKER_TLS_CERTDIR= \
-            -p 2375:2375 docker:dind >/dev/null
-          for i in $(seq 1 60); do
+            -p 127.0.0.1:2375:2375 docker:dind >/dev/null
+          for i in $(seq 1 90); do
             if docker -H tcp://127.0.0.1:2375 info >/dev/null 2>&1; then
               echo "isolated daemon ready after ${i}s"; break
             fi
@@ -167,12 +212,16 @@ jobs:
           done
           ISOLATED_ID=$(docker -H tcp://127.0.0.1:2375 info --format '{{.ID}}')
           [ -n "$ISOLATED_ID" ] || { echo "FAIL: no engine id from the isolated daemon"; exit 1; }
-          # Each `run` step is a separate shell, so the engine id must be persisted for
-          # the negative-control steps below. A bare shell variable would be empty there
-          # and the helper would refuse with rc=10, making those controls pass for the
-          # wrong reason.
+          # Each `run` step is a separate shell, so the engine id must be persisted for the
+          # negative-control steps below. A bare shell variable would be empty there and the
+          # helper would refuse with rc=10, making those controls pass for the wrong reason.
           echo "ISOLATED_ID=$ISOLATED_ID" >> "$GITHUB_ENV"
+          echo "isolated engine: $ISOLATED_ID"
 
+      - name: Restore — retrieve from R2 through the real helper
+        run: |
+          set -euo pipefail
+          ART="sigap-pre-redesign-$STAMP.tar.gz.age"
           ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
           R2_ENDPOINT="$R2_ENDPOINT" \
           ARCHIVE_KEY="$RUNNER_TEMP/throwaway.key" \
@@ -183,18 +232,23 @@ jobs:
           EXPECT_IDS="$API_ID" \
             bash scripts/ops/sigap-archive-restore.sh
 
-          # Independent confirmation on the isolated daemon, scoped to the one ID this
-          # job produced. A daemon-wide listing would prove nothing about the artifact.
+          # Independent confirmation on the isolated daemon, scoped to the one ID this job
+          # produced. A daemon-wide listing would prove nothing about the artifact.
           docker -H tcp://127.0.0.1:2375 image inspect "$API_ID" >/dev/null \
             || { echo "FAIL: the restored image is absent on the isolated daemon"; exit 1; }
           echo "ok: restored image ID matches the preserved ID on the isolated daemon"
 
-      - name: Negative control — a truncated object must be refused
+      - name: Negative control A — a substituted object must be refused
         run: |
           set -euo pipefail
           ART="sigap-pre-redesign-$STAMP.tar.gz.age"
-          # The refusal is only meaningful if a CORRECT object is accepted, which the
-          # previous step proved. Here a substituted object must fail the digest gate.
+          # GROUP A — OBJECT INTEGRITY. These cases prove the digest and URI guards, and
+          # nothing about Cloudflare retention. The refusal is only meaningful because the
+          # positive path above succeeded first.
+          #
+          # This overwrites the object in the DISPOSABLE MinIO bucket. That is safe here and
+          # is NOT a pattern for the real bucket: on R2 a protected backup object must never
+          # be overwritten to test retention (see the note at the end of this file).
           printf 'not-the-artifact' > "$RUNNER_TEMP/wrong.bin"
           aws s3api put-object --bucket "$R2_BUCKET" --key "sigap/$ART" \
             --body "$RUNNER_TEMP/wrong.bin" --endpoint-url "$R2_ENDPOINT" >/dev/null
@@ -213,7 +267,7 @@ jobs:
           [ "$rc" -eq 12 ] || { echo "FAIL: substituted object returned $rc, expected 12 (digest mismatch)"; exit 1; }
           echo "ok: substituted object refused with rc=12"
 
-      - name: Negative control — a URI naming another release must be refused
+      - name: Negative control A2 — a URI naming another release must be refused
         run: |
           set -euo pipefail
           set +e
@@ -230,6 +284,61 @@ jobs:
           set -e
           [ "$rc" -eq 10 ] || { echo "FAIL: wrong-release URI returned $rc, expected 10"; exit 1; }
           echo "ok: wrong-release URI refused with rc=10"
+
+      - name: Negative control A3 — a malformed image ID must be refused as input
+        run: |
+          set -euo pipefail
+          ART="sigap-pre-redesign-$STAMP.tar.gz.age"
+          # A doubled prefix is the exact shape the earlier unconditional prefixing produced.
+          set +e
+          ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
+          R2_ENDPOINT="$R2_ENDPOINT" \
+          ARCHIVE_KEY="$RUNNER_TEMP/throwaway.key" \
+          STAMP="$STAMP" \
+          EXPECT_DIGEST="$DIGEST" \
+          ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
+          ALLOWED_ENGINE_ID="$ISOLATED_ID" \
+          EXPECT_IDS="sha256:sha256:$API_ID" \
+            bash scripts/ops/sigap-archive-restore.sh >/dev/null 2>&1
+          rc=$?
+          set -e
+          [ "$rc" -eq 10 ] || { echo "FAIL: doubled-prefix ID returned $rc, expected 10 (malformed input)"; exit 1; }
+          echo "ok: doubled-prefix image ID refused with rc=10"
+
+      - name: Negative control A4 — a loopback target without the opt-in must be refused
+        run: |
+          set -euo pipefail
+          ART="sigap-pre-redesign-$STAMP.tar.gz.age"
+          set +e
+          env -u SIGAP_ALLOW_LOOPBACK_TARGET \
+          ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
+          R2_ENDPOINT="$R2_ENDPOINT" \
+          ARCHIVE_KEY="$RUNNER_TEMP/throwaway.key" \
+          STAMP="$STAMP" \
+          EXPECT_DIGEST="$DIGEST" \
+          ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
+          ALLOWED_ENGINE_ID="$ISOLATED_ID" \
+          EXPECT_IDS="$API_ID" \
+            bash scripts/ops/sigap-archive-restore.sh >/dev/null 2>&1
+          rc=$?
+          set -e
+          [ "$rc" -eq 11 ] || { echo "FAIL: loopback without opt-in returned $rc, expected 11"; exit 1; }
+          echo "ok: loopback target refused without SIGAP_ALLOW_LOOPBACK_TARGET=1"
+
+      # ---------------------------------------------------------------------------------
+      # GROUP B — CLOUDFLARE RETENTION-POLICY BEHAVIOUR. NOT COVERED BY THIS WORKFLOW.
+      #
+      # MinIO is S3-compatible; it does NOT implement R2 Bucket Lock. Nothing in this job
+      # therefore says anything about whether an R2 lock rule prevents deletion or
+      # overwriting. Group A proves object integrity and input/URI guards only.
+      #
+      # Verifying Bucket Lock requires the real service and a future, separately authorized
+      # test: create a DISPOSABLE object under a throwaway prefix, apply a short retention
+      # rule, and assert that deletion is refused for the window. That test must NEVER
+      # attempt to delete or overwrite a real protected backup object — the attempt is
+      # itself the destructive action the rule exists to prevent, and a bucket cannot be
+      # emptied while lock rules are configured.
+      # ---------------------------------------------------------------------------------
 
       - name: Cleanup
         if: always()

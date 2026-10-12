@@ -127,6 +127,14 @@ printf 'delegating to: gzip=%s sha256sum=%s\n' "${REAL_GZIP:-<self-implemented>}
 
 API=43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f
 
+# Engine IDs the fake docker returns. Real engine IDs are 64 lowercase hex, and the helper
+# validates that shape before trusting the ambient value, so these must be realistic.
+# `TGT_ENGINE` is what the ISOLATED target answers with (DOCKER_HOST pinned);
+# `AMB_ENGINE` is what the AMBIENT probe answers with (DOCKER_HOST unset). They differ,
+# which is the normal, correctly-isolated case.
+TGT_ENGINE=1111111111111111111111111111111111111111111111111111111111111111
+AMB_ENGINE=2222222222222222222222222222222222222222222222222222222222222222
+
 # ---------------------------------------------------------------------------
 # The fake toolchain. Behaviour is selected by marker files in $LOG, so one binary
 # serves every case and the case under test is unambiguous from the recorded call.
@@ -170,9 +178,33 @@ while [ $# -gt 0 ]; do
   shift
 done
 case "$sub" in
+  # The engine ID depends on whether DOCKER_HOST is set, which is what makes the
+  # ambient/target distinction testable. The helper probes the AMBIENT engine with no
+  # DOCKER_HOST (to prove the isolated target is a DIFFERENT daemon) and the TARGET with
+  # DOCKER_HOST pinned. A fake returning one constant for both would make those two
+  # indistinguishable and the distinctness assertion untestable — and would in fact make
+  # it fail, since equal IDs are refused.
   info)    [ -f "$TOP_LOG/no_engine" ] && exit 1              # N: no identity
-           echo "engineaaa" ;;
-  ps)      exit 0 ;;                                          # no sigap project
+           # Real Docker engine IDs are 64 lowercase hex characters, and the helper now
+           # VALIDATES that shape before trusting the ambient value as a security-decision
+           # input — a whitespace or short string is treated as unreadable and refused. The
+           # fake must therefore return realistic IDs, or the happy path would be refused
+           # for the wrong reason.
+           #
+           # `same_engine` models a misconfigured run where the allowlisted ID IS the
+           # ambient engine's — the case the distinctness assertion exists to catch.
+           # `ambient_fails` models a target that answers while the ambient probe does not,
+           # which is the only way to reach the ambient-unreadable refusal: the target probe
+           # runs first, so `no_engine` alone never gets there.
+           if [ -f "$TOP_LOG/same_engine" ]; then echo "1111111111111111111111111111111111111111111111111111111111111111"
+           elif [ -n "${DOCKER_HOST:-}" ]; then echo "1111111111111111111111111111111111111111111111111111111111111111"
+           elif [ -f "$TOP_LOG/ambient_fails" ]; then exit 1
+           elif [ -f "$TOP_LOG/ambient_whitespace" ]; then printf '   \n'
+           else echo "2222222222222222222222222222222222222222222222222222222222222222"; fi ;;
+  ps)      # `sigap_project` models a target that already carries the production project,
+           # which is the last production-specific control for an aliased target.
+           if [ -f "$TOP_LOG/sigap_project" ]; then printf 'sigap\n'; fi
+           exit 0 ;;
   context) echo "unix:///var/run/docker.sock" ;;
   load)    cat >/dev/null 2>/dev/null || true                 # drain stdin, never block
            [ -f "$TOP_LOG/load_fails" ] && { echo "load failed" >&2; exit 1; }  # K
@@ -298,7 +330,7 @@ run_case() {  # run_case <desc> <want-rc> [VAR=val ...] — markers pre-set by c
         ARCHIVE_URI="file://$LOG/$ART" \
         ARCHIVE_KEY=/fake/key STAMP="$TSTAMP" EXPECT_DIGEST="$DIG" \
         ISOLATED_DOCKER_HOST="tcp://isolated:9999" EXPECT_IDS="$API" \
-        ALLOWED_ENGINE_ID="engineaaa" "$@" \
+        ALLOWED_ENGINE_ID="$TGT_ENGINE" "$@" \
         timeout 60 "$BASH_BIN" "$HELPER" 2>&1)
   rc=$?
   if [ "$rc" -eq "$want" ]; then
@@ -310,7 +342,8 @@ run_case() {  # run_case <desc> <want-rc> [VAR=val ...] — markers pre-set by c
 clear_all() { rm -f "$LOG"/dec_fail_first "$LOG"/dec_then_fail "$LOG"/enc_fails \
                    "$LOG"/gzip_fails "$LOG"/scp_fails "$LOG"/digest_bad \
                    "$LOG"/load_fails "$LOG"/no_engine "$LOG"/KEEP_have_api \
-                   "$LOG"/aws_fails "$LOG"/aws_truncated; }
+                   "$LOG"/aws_fails "$LOG"/aws_truncated "$LOG"/same_engine \
+                   "$LOG"/ambient_fails "$LOG"/ambient_whitespace "$LOG"/sigap_project; }
 
 printf '=== the happy path first, so every refusal is a genuine refusal ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
@@ -378,6 +411,102 @@ run_case 'M2-local-socket-refused'    11 ISOLATED_DOCKER_HOST=/var/run/docker.so
 run_case 'M3-actual-production-path'  11 ISOLATED_DOCKER_HOST=unix:///run/docker.sock
 run_case 'M4-empty-endpoint-refused'  10 ISOLATED_DOCKER_HOST=""
 
+printf '=== loopback: refused by default, admitted only with an explicit opt-in ===\n'
+# Loopback is how a same-host disposable daemon is reached (the CI `docker:dind` case) AND
+# how a developer's local daemon is reached. The default must stay fail-closed, so a
+# loopback target is refused unless SIGAP_ALLOW_LOOPBACK_TARGET=1 is set explicitly.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'loopback-refused-without-optin' 11 ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375"
+run_case 'loopback-localhost-refused-without-optin' 11 ISOLATED_DOCKER_HOST="tcp://localhost:2375"
+# With the opt-in, and a proven-distinct engine, the same endpoint is admitted.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'loopback-accepted-with-optin' 0 \
+  ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" SIGAP_ALLOW_LOOPBACK_TARGET=1
+
+printf '=== the target must be a DIFFERENT engine from the ambient one ===\n'
+# Without this, ALLOWED_ENGINE_ID could name the ambient engine itself and every other
+# guard would pass while loading into the daemon the isolation exists to avoid.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/same_engine"
+run_case 'ambient-engine-equals-target-refused' 11 \
+  ISOLATED_DOCKER_HOST="tcp://isolated:9999" ALLOWED_ENGINE_ID="$TGT_ENGINE"
+
+printf '=== distinctness must be UNPROVEN => refused, not silently skipped ===\n'
+# A plain `[ -n "$AMBIENT" ]` test treated whitespace-only output as readable, so a bad
+# probe neutralised the comparison while appearing to pass. The ambient value is now
+# validated as an engine ID, and anything else is refused for EVERY target.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/ambient_fails"
+run_case 'ambient-unreadable-refused' 11 ISOLATED_DOCKER_HOST="tcp://isolated:9999"
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/ambient_whitespace"
+run_case 'ambient-whitespace-refused' 11 ISOLATED_DOCKER_HOST="tcp://isolated:9999"
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/ambient_fails"
+run_case 'ambient-unreadable-loopback-refused' 11 \
+  ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" SIGAP_ALLOW_LOOPBACK_TARGET=1
+
+printf '=== the production compose project is refused, and the check fails closed ===\n'
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/sigap_project"
+run_case 'target-holding-sigap-project-refused' 11 ISOLATED_DOCKER_HOST="tcp://isolated:9999"
+
+printf '=== a recorded production engine ID is refused (not aliasable) ===\n'
+# Every other production control is a string test, and a string can be aliased by a tunnel
+# or a DNS name. An engine ID cannot be, so this is the only alias-proof production check.
+# NOTE: `same_engine` is deliberately NOT set here — the ambient engine stays distinct, so
+# the distinctness check cannot fire and the PRODUCTION denylist is the only thing that can
+# refuse this case. Otherwise the test would pass for the wrong reason.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'recorded-production-engine-refused' 11 \
+  ISOLATED_DOCKER_HOST="tcp://isolated:9999" \
+  PRODUCTION_ENGINE_ID="$TGT_ENGINE"
+
+printf '=== the loopback matcher must be COMPLETE, not a list of favourites ===\n'
+# Every one of these reaches a same-host daemon. A matcher that misses them does not
+# deliver the fail-closed default it claims, so each must require the opt-in.
+clear_all; : > "$LOG/KEEP_have_api"
+for ep in "tcp://127.0.0.2:2375" "tcp://127.1:2375" "tcp://127.255.255.255:2375" \
+          "tcp://0.0.0.0:2375" "tcp://LOCALHOST:2375" "tcp://[::1]:2375" \
+          "tcp://[::]:2375" "tcp://[::ffff:127.0.0.1]:2375" \
+          "tcp://[0:0:0:0:0:0:0:1]:2375" "tcp://ip6-localhost:2375" \
+          "fd://3" "npipe:////./pipe/docker_engine"; do
+  run_case "same-host-refused[$ep]" 11 ISOLATED_DOCKER_HOST="$ep"
+done
+# Case variants of the production hostname must not slip past a lowercase denylist.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'production-host-case-variant-refused' 11 ISOLATED_DOCKER_HOST="tcp://FIKRISERVER:2375"
+run_case 'production-socket-trailing-slash-refused' 11 ISOLATED_DOCKER_HOST="unix:///var/run/docker.sock/"
+
+printf '=== image IDs: one canonical form, normalised once, no doubled prefix ===\n'
+# `docker inspect --format '{{.Id}}'` returns `sha256:<digest>`, while `docker image
+# inspect` accepts either form. An earlier revision prefixed unconditionally, so a
+# prefixed input became `sha256:sha256:<digest>` — not a valid reference — and the
+# resulting lookup failure was reported as "image absent", i.e. a false identity failure
+# caused by input formatting.
+ABSENT=0000000000000000000000000000000000000000000000000000000000000000
+# Bare 64-hex digest: accepted.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'id-bare-digest-accepted' 0 EXPECT_IDS="$API"
+# Prefixed form: accepted, and NOT doubled.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'id-sha256-prefixed-accepted' 0 EXPECT_IDS="sha256:$API"
+# A doubled prefix is malformed input, refused as such (10) rather than as absent (15).
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'id-doubled-prefix-refused-as-invalid' 10 EXPECT_IDS="sha256:sha256:$API"
+# Non-hex, wrong length, and uppercase-hex are all invalid.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'id-non-hex-refused' 10 EXPECT_IDS="notahash"
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'id-wrong-length-refused' 10 EXPECT_IDS="43fcbcb3"
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'id-uppercase-refused-as-non-canonical' 10 \
+  EXPECT_IDS="43FCBCB35ED276B33327FA4A9AD8D9D909DE6875CDE185E2360BBC7374794C8F"
+# A valid but ABSENT digest is a correspondence failure (15), distinct from malformed (10).
+clear_all
+run_case 'id-absent-image-fails-correspondence' 15 EXPECT_IDS="$ABSENT"
+# PARTIAL LOAD: one present, one absent must be refused, not accepted on the present one.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'id-partial-load-refused' 15 EXPECT_IDS="$API,$ABSENT"
+# Exact correspondence for a multi-ID list, both spellings mixed.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/have_$API"
+run_case 'id-mixed-spelling-correspondence' 0 EXPECT_IDS="sha256:$API"
+
 printf '=== required input is validated, never defaulted ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
 # ARCHIVE_URI is omitted entirely. The `req` loop must refuse BEFORE the basename check
@@ -386,7 +515,7 @@ clear_all; : > "$LOG/KEEP_have_api"
 out=$(TOP_LOG="$LOG" PATH="$NARROW_PATH" \
       ARCHIVE_KEY=/k \
       STAMP="$TSTAMP" EXPECT_DIGEST="$DIG" ISOLATED_DOCKER_HOST="tcp://i:1" \
-      EXPECT_IDS="$API" ALLOWED_ENGINE_ID="engineaaa" \
+      EXPECT_IDS="$API" ALLOWED_ENGINE_ID="$TGT_ENGINE" \
       timeout 60 "$BASH_BIN" "$HELPER" 2>&1)
 [ $? -eq 10 ] && ok 'missing-var-fails-closed' 'rc=10' \
               || bad 'missing-var-fails-closed' "want=10 got=$?"
@@ -404,32 +533,34 @@ env TOP_LOG="$LOG" PATH="$NARROW_PATH" \
     ARCHIVE_URI="file://$LOG/$ART" \
     ARCHIVE_KEY=/fake/key STAMP="$TSTAMP" EXPECT_DIGEST="$DIG" \
     ISOLATED_DOCKER_HOST="tcp://isolated:9999" EXPECT_IDS="$API" \
-    ALLOWED_ENGINE_ID="engineaaa" \
+    ALLOWED_ENGINE_ID="$TGT_ENGINE" \
     timeout 60 "$BASH_BIN" "$HELPER" >/dev/null 2>&1
-# Count docker invocations and how many were pinned.
-# `docker context inspect` is deliberately AMBIENT — it reads the local configuration
-# by design and touches no image — so it is excluded from the "must be pinned" set.
-# Every other call, especially the ones that write, must carry the isolated DOCKER_HOST.
-total=$(grep '^docker ' "$LOG/docker.calls" 2>/dev/null | grep -vc 'docker context' || true)
-total=${total:-0}
-# Count unpinned calls that are NOT context inspections, by pairing each DOCKER_HOST
-# line with the docker line that follows it. An earlier grep|paste|grep form of this
-# was computed and then unconditionally overwritten, so it never took effect.
-unpinned=0
+# Count docker invocations that could READ OR WRITE IMAGES, and how many of those were
+# pinned. Two call classes are excluded, because neither can affect an image and both are
+# REQUIRED to read the ambient daemon:
+#   * `docker context inspect` — reads local configuration by design;
+#   * `docker info` — the engine-ID probe. The ambient probe deliberately omits
+#     DOCKER_HOST, because its whole purpose is to prove the isolated target is a
+#     DIFFERENT engine. Counting it as "unpinned" would penalise the distinctness check.
+# Every other call, and the `docker load` above all, must carry the isolated DOCKER_HOST.
+checked=0; unpinned=0
 while IFS= read -r line; do
   case "$line" in
     DOCKER_HOST=*)
       cur=${line#DOCKER_HOST=} ;;
     docker\ *)
-      if [ "$cur" != "tcp://isolated:9999" ]; then
-        case "$line" in docker\ context*) ;; *) unpinned=$((unpinned+1)) ;; esac
-      fi ;;
+      case "$line" in
+        'docker context'*|'docker info'*) ;;
+        *)
+          checked=$((checked+1))
+          [ "$cur" = "tcp://isolated:9999" ] || unpinned=$((unpinned+1)) ;;
+      esac ;;
   esac
 done < "$LOG/docker.calls" 2>/dev/null
-if [ "$total" -gt 0 ] && [ "$unpinned" -eq 0 ]; then
-  ok 'every-docker-call-pinned' "$total image-affecting calls pinned; $unpinned unpinned"
+if [ "$checked" -gt 0 ] && [ "$unpinned" -eq 0 ]; then
+  ok 'every-docker-call-pinned' "$checked image-affecting calls pinned; $unpinned unpinned"
 else
-  bad 'every-docker-call-pinned' "$unpinned unpinned image-affecting call(s) — they target the ambient daemon"
+  bad 'every-docker-call-pinned' "$unpinned of $checked image-affecting call(s) unpinned — they target the ambient daemon"
 fi
 # And specifically the LOAD, which is the call that writes the decrypted plaintext.
 loadline=$(grep -n 'docker load' "$LOG/docker.calls" 2>/dev/null | head -1)

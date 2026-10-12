@@ -32,6 +32,28 @@ fi
 # The URI's final path component MUST be `sigap-pre-redesign-$STAMP.tar.gz.age`, so a
 # URI naming a different release is refused rather than silently restored.
 #
+# Isolation. `ISOLATED_DOCKER_HOST` must name a daemon that is NOT the ambient engine and
+# NOT a production/shared host. The guard works in four layers, and the strongest is the
+# only one that cannot be aliased:
+#   1. STRING denylist — production hostnames (case-insensitive) and local unix sockets.
+#   2. SAME-HOST gate — a loopback/`fd://`/`npipe://` endpoint is refused unless
+#      `SIGAP_ALLOW_LOOPBACK_TARGET=1` is set explicitly, because a same-host endpoint is
+#      both how a disposable CI daemon is reached and how a developer's local daemon is.
+#   3. ENGINE-ID allowlist — `ALLOWED_ENGINE_ID` must equal the target's `docker info .ID`.
+#   4. DISTINCTNESS + PRODUCTION DENYLIST — the target engine must DIFFER from the ambient
+#      engine (read unpinned, validated as a real engine ID; unreadable means UNPROVEN and
+#      is refused), and must not match `PRODUCTION_ENGINE_ID` when that is set. **An engine
+#      ID cannot be aliased**, so layer 4 is what survives an SSH tunnel exposing production
+#      on 127.0.0.1 or a DNS alias — cases layers 1 and 2 cannot see.
+#
+# `PRODUCTION_ENGINE_ID` accepts a comma-separated list. Recording it is a Gate D action
+# (production reinspection); when set, a match is refused regardless of every other check.
+#
+# TRUST BOUNDARY, stated rather than hidden: the guard trusts the `docker` client on PATH
+# (a shadowed binary determines every answer), and the ambient probe deliberately honours an
+# exported DOCKER_HOST/DOCKER_CONTEXT because "ambient" means "what an unpinned docker
+# command would reach". Neither is a defence against the operator themselves.
+#
 # Exit codes:
 #   0  every stage succeeded AND identity correspondence verified
 #   10 a required variable was unset, or the URI/inputs are malformed
@@ -44,6 +66,34 @@ fi
 set -euo pipefail
 
 die() { printf 'REFUSED: %s\n' "$*" >&2; exit "${2:-14}"; }
+
+# Canonical engine/image digest form: 64 lowercase hex, with an optional single `sha256:`
+# prefix. Defined here because more than one section needs it — the production-engine
+# denylist below and the image-identity check in step 7.
+#
+# This exists because identifiers arrive in two spellings. `docker inspect --format
+# '{{.Id}}'` yields `sha256:<digest>`, while `docker image inspect` accepts either. An
+# earlier revision prefixed unconditionally, so a prefixed input became
+# `sha256:sha256:<digest>` — not a valid reference — and the lookup failure was misreported
+# as an absent image, i.e. a false failure caused by formatting rather than by the archive.
+norm_id() {
+  _v=$1
+  case "$_v" in sha256:*) _v=${_v#sha256:} ;; esac
+  case "$_v" in
+    ''|*[!0-9a-f]*) return 1 ;;
+  esac
+  [ "${#_v}" -eq 64 ] || return 1
+  printf '%s' "$_v"
+}
+
+# Strip ALL whitespace, then validate. A value of `' '` is non-empty but is not an
+# identifier, and an earlier `[ -n "$X" ]` test treated it as readable — so a
+# whitespace-returning probe silently neutralised the distinctness comparison instead of
+# being refused. Used for the ambient probe, which is a security-decision input.
+norm_id_strict() {
+  _v=$(printf '%s' "$1" | tr -d '[:space:]')
+  norm_id "$_v"
+}
 
 # ---------------------------------------------------------------------------
 # 1. Required inputs — validated, never defaulted.
@@ -77,16 +127,58 @@ _uri_basename=${ARCHIVE_URI##*/}
 #    host so the comparison is meaningful.
 # ---------------------------------------------------------------------------
 is_production_string() {
-  case "$1" in
+  # Lowercased for MATCHING ONLY: hostnames and schemes are case-insensitive, so
+  # `TCP://FIKRISERVER` must not slip past a denylist written in lowercase. Lowercasing can
+  # only make the denylist fire MORE often, which is the safe direction. A trailing slash
+  # is stripped so `unix:///var/run/docker.sock/` is not treated as a different endpoint.
+  _l=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  _l=${_l%/}
+  case "$_l" in
     ssh://fikriserver*|*@fikriserver|fikriserver|fikriserver:*|tcp://fikriserver*) return 0 ;;
     unix:///var/run/docker.sock|/var/run/docker.sock|var/run/docker.sock|unix:///run/docker.sock|/run/docker.sock|run/docker.sock) return 0 ;;
-    ssh://localhost*|tcp://localhost*|tcp://127.0.0.1*|ssh://127.0.0.1*|tcp://[::1]:*) return 0 ;;
     "") return 0 ;;
   esac
   return 1
 }
+
+# Loopback is treated SEPARATELY from production, because it is genuinely both things: it
+# is how a disposable daemon on the same host is reached (the CI case — `docker:dind`
+# published on 127.0.0.1), and it is also how a developer's local daemon is reached.
+#
+# COMPLETENESS MATTERS HERE. An earlier version enumerated only `127.0.0.1`, `localhost`
+# and `[::1]:`, and therefore missed the rest of `127.0.0.0/8`, the shorthand `127.1`, the
+# unspecified address, expanded and mapped IPv6 forms, case variants, and the non-TCP local
+# transports (`fd://`, `npipe://`). Every one of those reaches a same-host daemon, so a
+# matcher that misses them does not deliver the fail-closed default it claims. The patterns
+# below are broad on purpose: a false positive costs one environment variable, a false
+# negative costs the isolation guarantee.
+is_loopback_endpoint() {
+  _l=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  case "$_l" in
+    # The WHOLE 127/8 range is loopback, not just 127.0.0.1. `127.1` is the shorthand form.
+    tcp://127.*|tcp://127:*) return 0 ;;
+    # The unspecified address connects to the local daemon on Linux; `::` and `::ffff:127.*`
+    # are its IPv6 and IPv4-mapped equivalents. The `[` of an IPv6 literal MUST be escaped —
+    # an unescaped `[` opens a bracket expression in a `case` pattern and is a syntax error.
+    tcp://0.0.0.0*|tcp://\[::1\]*|tcp://\[::\]*|tcp://\[::ffff:127.*|tcp://\[0:0:0:0:0:0:0:1\]*) return 0 ;;
+    # Hostname aliases. `case` is case-sensitive and DNS is not, hence the lowercasing above.
+    tcp://localhost*|tcp://ip6-localhost*|tcp://localhost.localdomain*) return 0 ;;
+    ssh://127.*|ssh://localhost*) return 0 ;;
+    # Local-daemon transports that are not TCP at all: systemd socket activation, and the
+    # Windows named pipes this project's runbook names.
+    fd://*|npipe://*) return 0 ;;
+  esac
+  return 1
+}
+
 if is_production_string "$ISOLATED_DOCKER_HOST"; then
   die "ISOLATED_DOCKER_HOST '$ISOLATED_DOCKER_HOST' matches a production/shared endpoint" 11
+fi
+# A loopback target is refused UNLESS explicitly opted in. The default is fail-closed for
+# every value except the literal `1`.
+if is_loopback_endpoint "$ISOLATED_DOCKER_HOST"; then
+  [ "${SIGAP_ALLOW_LOOPBACK_TARGET:-}" = 1 ] \
+    || die "ISOLATED_DOCKER_HOST '$ISOLATED_DOCKER_HOST' is a same-host endpoint; set SIGAP_ALLOW_LOOPBACK_TARGET=1 to permit a same-host isolated daemon" 11
 fi
 if [ "$ISOLATED_DOCKER_HOST" = "$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null)" ]; then
   die "ISOLATED_DOCKER_HOST equals the active context" 11
@@ -121,13 +213,61 @@ fi
 [ "$target_engine" = "$ALLOWED_ENGINE_ID" ] \
   || die "engine ID $target_engine is not the allowlisted $ALLOWED_ENGINE_ID" 11
 
-# Never load into a daemon that is (or contains) the production project.
-if DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker ps -a --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null \
-     | grep -qx 'sigap'; then
-  die "the target daemon holds compose project 'sigap' — refusing, it is not isolated" 11
+# PRODUCTION-ENGINE DENYLIST. Every other production control here is a STRING test, and a
+# string can be aliased: an SSH tunnel exposing production on 127.0.0.1, a DNS alias, a
+# different spelling of the same host. An ENGINE ID cannot be aliased — it is a property of
+# the daemon itself. This is therefore the only production check that survives an alias.
+#
+# It is opt-in in the sense that it only applies when the owner has recorded the production
+# engine ID; recording it is a Gate D action (production reinspection). When set, a match is
+# refused regardless of every other check.
+if [ -n "${PRODUCTION_ENGINE_ID:-}" ]; then
+  for _pe in $(printf '%s' "$PRODUCTION_ENGINE_ID" | tr ',' ' '); do
+    _pen=$(norm_id "$_pe" 2>/dev/null) || continue
+    [ "$target_engine" = "$_pen" ] \
+      && die "target engine $target_engine is a recorded PRODUCTION engine — refusing" 11
+  done
 fi
 
-echo "restore target verified: endpoint=$ISOLATED_DOCKER_HOST engine=$target_engine"
+# DISTINCTNESS FROM THE AMBIENT ENGINE. The allowlist proves the target is the daemon the
+# caller NAMED; it does not prove that daemon is a different one from the local/ambient
+# engine. Without this, `ALLOWED_ENGINE_ID` could be set to the ambient engine's own ID and
+# every guard above would pass while loading into the very daemon the isolation is meant to
+# avoid.
+#
+# The ambient value is VALIDATED, not merely tested for non-emptiness: whitespace-only
+# output is non-empty, so a plain `[ -n ]` test let a bad probe neutralise the comparison
+# while appearing to pass. If the ambient engine cannot be read as a real identifier,
+# distinctness is UNPROVEN and the run is refused — for EVERY target, not only loopback
+# ones. A target we cannot prove is distinct is a target we do not load into.
+#
+# NOTE the trust boundary, recorded rather than hidden: the ambient probe is deliberately
+# UNPINNED, because "ambient" means "what an unpinned docker command would reach". It
+# therefore honours an exported DOCKER_HOST/DOCKER_CONTEXT, so a caller who exports a decoy
+# can aim the comparison. That is inherent to comparing against the ambient context, and the
+# guard is not defending against the operator themselves.
+AMBIENT_ENGINE=$(norm_id_strict "$(docker info --format '{{.ID}}' 2>/dev/null)") \
+  || AMBIENT_ENGINE=''
+[ -n "$AMBIENT_ENGINE" ] \
+  || die "cannot read a valid ambient engine ID — distinctness from the ambient daemon cannot be established, so isolation is UNPROVEN" 11
+[ "$target_engine" != "$AMBIENT_ENGINE" ] \
+  || die "target engine $target_engine is the AMBIENT engine — not an isolated target" 11
+
+# Never load into a daemon that is (or contains) the production project.
+#
+# The enumeration's status is CHECKED. An earlier form piped straight into `grep`, so a
+# failing `docker ps` produced the same outcome as a clean daemon and the check failed
+# OPEN — which mattered, because for an aliased target this is the last production-specific
+# control standing. `grep -i` rather than an exact match, so `sigap-prod` and `Sigap` are
+# caught too; a false positive here costs a review, a false negative costs the production
+# images.
+COMPOSE_LIST=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker ps -a --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null) \
+  || die "could not enumerate the target daemon's containers — refusing, isolation is UNPROVEN" 11
+if printf '%s\n' "$COMPOSE_LIST" | grep -qi 'sigap'; then
+  die "the target daemon holds a compose project matching 'sigap' — refusing, it is not isolated" 11
+fi
+
+echo "restore target verified: endpoint=$ISOLATED_DOCKER_HOST engine=$target_engine ambient=$AMBIENT_ENGINE"
 
 # ---------------------------------------------------------------------------
 # 3. Temporary state. `mktemp -d` gives 0700 by default, so nothing we write is
@@ -332,18 +472,35 @@ target_engine=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker info --format '{{.ID}
 # ---------------------------------------------------------------------------
 # 7. Identity correspondence — per-image, ON the isolated daemon, with explicit
 #    DOCKER_HOST so this can never read the ambient (possibly production) daemon.
+#
+#    IDs are NORMALISED ONCE, here. `docker inspect --format '{{.Id}}'` returns the
+#    `sha256:<digest>` form, while `docker image inspect` accepts either form — but an
+#    earlier revision prefixed unconditionally, so a caller passing the already-prefixed
+#    form produced `sha256:sha256:<digest>`, which is not a valid reference. That failed
+#    every lookup and was reported as "image absent", i.e. a false identity-correspondence
+#    failure caused by input formatting rather than by the archive.
+#
+#    One canonical representation is accepted — see `norm_id` at the top of this file: 64
+#    lowercase hex characters, with an optional single `sha256:` prefix. Anything else is
+#    refused as malformed input (10), distinct from a genuinely absent image (15), so a
+#    typo cannot masquerade as a partial load.
 # ---------------------------------------------------------------------------
 IFS=',' read -ra IDS <<< "$EXPECT_IDS"
-missing=0; present=0
+missing=0; present=0; seen=0
 for id in "${IDS[@]}"; do
   id="${id//[[:space:]]/}"
   [ -n "$id" ] || continue
-  if DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker image inspect "sha256:$id" >/dev/null 2>&1; then
-    present=$((present+1)); printf '  present %s\n' "$id"
+  nid=$(norm_id "$id") \
+    || die "EXPECT_IDS contains an invalid image ID: '$id' (need 64 hex chars, optional sha256: prefix)" 10
+  seen=$((seen+1))
+  # Normalised to exactly one `sha256:` prefix for the lookup.
+  if DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker image inspect "sha256:$nid" >/dev/null 2>&1; then
+    present=$((present+1)); printf '  present %s\n' "$nid"
   else
-    missing=$((missing+1)); printf '  MISSING %s\n' "$id" >&2
+    missing=$((missing+1)); printf '  MISSING %s\n' "$nid" >&2
   fi
 done
+[ "$seen" -gt 0 ] || die "EXPECT_IDS listed no usable image ID" 10
 [ "$present" -gt 0 ] || die "no expected image present after load — PARTIAL LOAD not accepted" 15
 [ "$missing" -eq 0 ] || die "$missing expected image(s) absent after load — identity correspondence FAILED" 15
 
