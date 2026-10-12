@@ -292,7 +292,7 @@ jobs:
           # a wrong key passed.
           set +e
           set -o pipefail
-          gzip -1 -c "$ST/image.tar" | age -r "$RECIP" > "$ST/$ART"
+          gzip -1 -c "$RUNNER_TEMP/image.tar" | age -r "$RECIP" > "$ST/$ART"
           ps=("${PIPESTATUS[@]}")
           set +o pipefail
           set -e
