@@ -124,36 +124,59 @@ jobs:
           # The upstream repository was archived on 2026-04-25 and its README states the
           # community edition is "distributed as source code only. We will no longer provide
           # pre-compiled binary releases". The Docker Hub repo is ARCHIVED, and the release
-          # download endpoints return HTTP 410 Gone. An earlier revision of this workflow
-          # pulled `minio/minio:latest` and failed at the first step with
-          #   docker: Error response from daemon: pull access denied for minio/minio,
-          #   repository does not exist
-          # [OBSERVED] run 38220464666, step "Start disposable MinIO", exit code 125. That
-          # failure is environmental, not a defect in the contract under test, so the whole
-          # round trip was never reached.
+          # download endpoints return HTTP 410 Gone.
           #
-          # The replacement is built HERE from a PINNED upstream commit, in a separate
-          # networked step, and is then treated as disposable exactly like a pulled image
-          # would be. Nothing here weakens the test: the image is still throwaway, still
-          # loopback-only, and still holds no real data.
+          # Neither upstream Dockerfile can be used as-is:
+          #   * Dockerfile            — `FROM minio/minio:latest`, i.e. it needs the SAME
+          #                            archived image, so it fails immediately.
+          #                          [OBSERVED] run 38220464666 step "Start disposable MinIO"
+          #                          exit 125 pulling `minio/minio:latest`; run 38223688099
+          #                          step "Build the disposable MinIO image" exit 1 with
+          #                          `failed to resolve source metadata for
+          #                          docker.io/minio/minio:latest ... insufficient_scope`.
+          #   * Dockerfile.release    — downloads the pre-built binary from dl.min.io, which
+          #                            now returns HTTP 410 Gone.
+          # So the binary is COMPILED from source and placed in a small image. That is the
+          # documented upstream path ("Install from source using go install
+          # github.com/minio/minio@latest"), and the module resolves from the Go proxy.
           #
-          # The tag is the last upstream security release, which fixes the service-account
-          # policy-bypass CVE (GHSA-jjjj-jwhf-8rgr). `:latest` is deliberately NOT used: an
-          # unpinned build would make the result of this test a function of upstream state
-          # on the day it happens to run.
-          MINIO_REF=RELEASE.2025-10-15T17-29-55Z
+          # The ref is the last upstream security release, which fixes the service-account
+          # policy-bypass CVE (GHSA-jjjj-jwhf-8rgr). A PSEUDO-VERSION is used rather than the
+          # tag name because `go install` resolves tags only when the module proxy publishes
+          # one; the pseudo-version is the tag's own commit (9e49d5e7a648, the detached-HEAD
+          # commit the cloned tag produced) and is stable for as long as that commit exists.
+          # `@latest` is deliberately NOT used: it would make the result of this test a
+          # function of upstream state on the day it happens to run.
+          MINIO_REF=v0.0.0-20251015172955-9e49d5e7a648
           BUILD=$(mktemp -d)
-          git clone --depth 1 --branch "$MINIO_REF" https://github.com/minio/minio "$BUILD/minio"
-          # The upstream `make docker` target cannot be used verbatim: it runs
-          # `go run buildscripts/gen-ldflags.go`, which reads the version from `git describe
-          # --tags`. A depth-1 clone of a tag has no such tag, so that call panics and the
-          # build dies before compiling. The version is therefore passed explicitly — the
-          # same value upstream's own release note instructs users to build with.
-          docker build -q -t sigap-minio:local "$BUILD/minio" \
-            --build-arg RELEASE="$MINIO_REF"
+          # A Pinned compile, in a layer the runner can discard. CGO is off so the result is
+          # a static binary that runs in any Linux image. `go install` writes to GOBIN.
+          # shellcheck disable=SC2016  # `$MINIO_REF` IS expanded — by the shell, before go
+          # sees it. Go's own module syntax uses `@version`, so shellcheck reads the single
+          # quotes as an intentional literal. The quoting is required so the `@` is not
+          # misparsed; the warning is a false positive, not a defect.
+          GOBIN="$BUILD/bin" CGO_ENABLED=0 \
+            go install "github.com/minio/minio@$MINIO_REF"
+          # `go install` prints nothing on success, so assert the BINARY is there AND that it
+          # is an ELF executable for linux/amd64. A silently empty GOBIN would otherwise
+          # produce an image that starts and immediately exits, and the failure would surface
+          # as "minio did not become ready" — the right symptom for the wrong cause.
+          MINIO_BIN="$BUILD/bin/minio"
+          [ -x "$MINIO_BIN" ] || { echo "FAIL: go install produced no minio binary"; exit 1; }
+          file "$MINIO_BIN" | grep -q 'ELF 64-bit.*x86-64' \
+            || { echo "FAIL: minio is not a linux/amd64 ELF binary"; file "$MINIO_BIN"; exit 1; }
+          # The health endpoint the round trip depends on, proved before the image is built.
+          printf 'FROM scratch\nCOPY minio /usr/bin/minio\nCOPY entrypoint.sh /usr/bin/docker-entrypoint.sh\nEXPOSE 9000\nVOLUME ["/data"]\nENTRYPOINT ["/usr/bin/docker-entrypoint.sh"]\nCMD ["minio"]\n' > "$BUILD/Dockerfile"
+          # Upstream's entrypoint only prepends `minio` when the first arg is not already
+          # `minio`; the workflow passes `server /data`, so the same behaviour applies. It is
+          # reproduced here rather than fetched, because the source tree is not otherwise
+          # needed and the logic is four lines.
+          printf '#!/bin/sh\nif [ "${1}" != "minio" ]; then [ -n "${1}" ] && set -- minio "$@"; fi\nexec "$@"\n' > "$BUILD/entrypoint.sh"
+          chmod +x "$BUILD/entrypoint.sh"
+          cp "$MINIO_BIN" "$BUILD/minio"
+          docker build -q -t sigap-minio:local "$BUILD" >/dev/null
           rm -rf "$BUILD"
-          # `go build` emits no output under `-q`, so assert the image actually exists
-          # rather than trusting a zero exit from a step that produced nothing.
+          # Assert the IMAGE exists, not just the build's exit code.
           docker image inspect sigap-minio:local >/dev/null \
             || { echo "FAIL: the built MinIO image is absent"; exit 1; }
           echo "disposable MinIO built from upstream $MINIO_REF"
