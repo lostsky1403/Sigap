@@ -2557,6 +2557,15 @@ Activation, in order:
    starts a **second** run in which the job executes. This step is the owner's approval; it is
    the only action that authorizes execution.
 
+   The `paths` and `branches` filters do not obstruct this step: GitHub evaluates them against
+   the PR's changed-file list, which is fixed at label time, so an event type that passes them
+   once passes them on every later activity. That the filters are satisfied for this PR is
+   **[OBSERVED]** — the PR's `opened` event produced run `38215167401` (job skipped, no label).
+   That the `labeled` event then produces a second, executing run is **[INFERENCE]** from the
+   documented activity-type behaviour plus that same observation; it is deliberately left
+   unexercised, because applying the label is the owner's approval action and no agent may
+   take it.
+
 Merging to `main` is **not** a prerequisite, and the workflow must not be merged to `main`
 merely to make it dispatchable. What a run proves is bounded: with a disposable MinIO endpoint
 and a throwaway age key it exercises the **object path and input validation** — off-host
