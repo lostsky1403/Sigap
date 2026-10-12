@@ -56,12 +56,20 @@ fi
 #
 # Exit codes:
 #   0  every stage succeeded AND identity correspondence verified
+#   1  a command failed under `set -e` before reaching a `die` — an UNGUARDED failure, so
+#      the message is the failing command's own output rather than a refusal this script wrote
 #   10 a required variable was unset, or the URI/inputs are malformed
-#   11 destination/target refused (production or unverifiable)
+#   11 the target daemon was refused or could not be established: a production/denylisted
+#      endpoint, a same-host endpoint without the opt-in, an engine that is unreachable,
+#      unreadable, malformed, not the allowlisted one, the ambient engine, or a recorded
+#      production engine, a daemon holding a `sigap` compose project, or a symlinked path
 #   12 digest mismatch
-#   13 decrypted stream is not a complete gzip
-#   14 a pipeline stage failed (see per-stage report)
+#   13 the decrypted artifact is not a valid docker image archive at ANY structural level:
+#      an empty decrypted stream, a stream that is not a complete gzip, an empty decompressed
+#      TAR, a TAR that is unreadable, or a TAR with no `manifest.json`
+#   14 a pipeline stage failed (see per-stage report); also `die`'s default
 #   15 image identity correspondence failed
+#   99 the script was not run under bash (it needs BASH_VERSION for the guards below)
 
 set -euo pipefail
 
@@ -120,16 +128,7 @@ norm_engine_id() {
   esac
 }
 
-# Strip ALL whitespace, then validate. A value of `' '` is non-empty but is not an
-# identifier, and an earlier `[ -n "$X" ]` test treated it as readable — so a
-# whitespace-returning probe silently neutralised the distinctness comparison instead of
-# being refused. Used for the ambient probe, which is a security-decision input.
-norm_id_strict() {
-  _v=$(printf '%s' "$1" | tr -d '[:space:]')
-  norm_id "$_v"
-}
-
-# The engine-ID equivalent of the above, for the ambient probe and the target probe.
+# The engine-ID equivalent, for the ambient probe and the target probe.
 norm_engine_id_strict() {
   _v=$(printf '%s' "$1" | tr -d '[:space:]')
   norm_engine_id "$_v"
@@ -138,8 +137,8 @@ norm_engine_id_strict() {
 # ---------------------------------------------------------------------------
 # 1. Required inputs — validated, never defaulted.
 # ---------------------------------------------------------------------------
-# Required inputs — validated, never defaulted. Note: `${VAR:?msg}` EXITS the shell
-# with status 1 before `||` can run, so an explicit test is used to return 10.
+# Note: `${VAR:?msg}` EXITS the shell with status 1 before `||` can run, so an explicit test
+# is used to return 10.
 req() { [ -n "${!1:-}" ] || die "$1 is required (see the script header)" 10; }
 for v in ARCHIVE_URI ARCHIVE_KEY STAMP EXPECT_DIGEST \
          ISOLATED_DOCKER_HOST EXPECT_IDS; do req "$v"; done
@@ -166,6 +165,23 @@ _uri_basename=${ARCHIVE_URI##*/}
 #    explicitly allowlisted value; the production engine ID is recorded from the
 #    host so the comparison is meaningful.
 # ---------------------------------------------------------------------------
+# Extract the HOST[:PORT] part of a daemon endpoint, so a matcher never depends on how the
+# caller spelled the scheme, the userinfo, or the trailing slash.
+#
+# WHY THIS EXISTS: docker normalises a SCHEME-LESS DOCKER_HOST to tcp — `DOCKER_HOST=127.0.0.1:2375`
+# reaches the same daemon as `tcp://127.0.0.1:2375` (docker/cli `opts/hosts.go`: it splits on
+# `://` and defaults the protocol to `tcp` when absent). An earlier revision matched only
+# scheme-qualified patterns, so `127.0.0.1:2375`, `localhost:2375` and `127.1:2375` slipped past
+# BOTH string layers and were accepted as an isolated target. [OBSERVED] by running the real
+# matchers over a battery of endpoint spellings.
+_endpoint_host() {
+  _e=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  _e=${_e%/}
+  case "$_e" in *://*) _e=${_e#*://} ;; esac
+  case "$_e" in *@*)   _e=${_e#*@}   ;; esac
+  printf '%s' "$_e"
+}
+
 is_production_string() {
   # Lowercased for MATCHING ONLY: hostnames and schemes are case-insensitive, so
   # `TCP://FIKRISERVER` must not slip past a denylist written in lowercase. Lowercasing can
@@ -174,9 +190,16 @@ is_production_string() {
   _l=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
   _l=${_l%/}
   case "$_l" in
-    ssh://fikriserver*|*@fikriserver|fikriserver|fikriserver:*|tcp://fikriserver*) return 0 ;;
-    unix:///var/run/docker.sock|/var/run/docker.sock|var/run/docker.sock|unix:///run/docker.sock|/run/docker.sock|run/docker.sock) return 0 ;;
     "") return 0 ;;
+    # The canonical production socket paths, in every spelling that reaches the same socket.
+    unix:///var/run/docker.sock|/var/run/docker.sock|var/run/docker.sock|unix:///run/docker.sock|/run/docker.sock|run/docker.sock) return 0 ;;
+  esac
+  # HOST-based, so the scheme, any userinfo and the port cannot disguise the host. The
+  # earlier pattern list required the host to sit immediately after the scheme, so
+  # `tcp://user@fikriserver:2375` matched NOTHING and was accepted.
+  _h=$(_endpoint_host "$_l")
+  case "$_h" in
+    fikriserver|fikriserver:*) return 0 ;;
   esac
   return 1
 }
@@ -194,19 +217,30 @@ is_production_string() {
 # negative costs the isolation guarantee.
 is_loopback_endpoint() {
   _l=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  _l=${_l%/}
+  # A UNIX SOCKET, NAMED PIPE OR SYSTEMD FD IS ALWAYS A LOCAL DAEMON, whatever its path.
+  # Only `/var/run/docker.sock` and `/run/docker.sock` are canonical production paths, but a
+  # socket at ANY path is local by construction — a unix socket cannot be remote. Enumerating
+  # two paths meant `unix:///tmp/local.sock` and a Docker Desktop socket passed both gates.
   case "$_l" in
-    # The WHOLE 127/8 range is loopback, not just 127.0.0.1. `127.1` is the shorthand form.
-    tcp://127.*|tcp://127:*) return 0 ;;
+    unix://*|fd://*|npipe://*) return 0 ;;
+  esac
+  # Scheme-agnostic from here, so `127.0.0.1:2375` is judged the same as
+  # `tcp://127.0.0.1:2375` — which is what docker does with it.
+  _h=$(_endpoint_host "$_l")
+  case "$_h" in
+    # The WHOLE 127/8 range is loopback, not just 127.0.0.1, with or without a port. The
+    # `127.1` shorthand and the bare `127:` form are included.
+    127.*|127:*) return 0 ;;
     # The unspecified address connects to the local daemon on Linux; `::` and `::ffff:127.*`
     # are its IPv6 and IPv4-mapped equivalents. The `[` of an IPv6 literal MUST be escaped —
-    # an unescaped `[` opens a bracket expression in a `case` pattern and is a syntax error.
-    tcp://0.0.0.0*|tcp://\[::1\]*|tcp://\[::\]*|tcp://\[::ffff:127.*|tcp://\[0:0:0:0:0:0:0:1\]*) return 0 ;;
+    # an unescaped `[` opens a BRACKET EXPRESSION, which matches a single character from the
+    # set rather than the literal text. Unescaped, `[::1]*` matched any host starting with
+    # `:` or `1` — so `10.0.0.5:2375` was refused as loopback while the literal `[::1]` was
+    # NOT matched at all. [OBSERVED] by running the matchers over an endpoint battery.
+    0.0.0.0*|\[::1\]*|\[::\]*|\[::ffff:127.*|\[0:0:0:0:0:0:0:1\]*) return 0 ;;
     # Hostname aliases. `case` is case-sensitive and DNS is not, hence the lowercasing above.
-    tcp://localhost*|tcp://ip6-localhost*|tcp://localhost.localdomain*) return 0 ;;
-    ssh://127.*|ssh://localhost*) return 0 ;;
-    # Local-daemon transports that are not TCP at all: systemd socket activation, and the
-    # Windows named pipes this project's runbook names.
-    fd://*|npipe://*) return 0 ;;
+    localhost*|ip6-localhost*|localhost.localdomain*) return 0 ;;
   esac
   return 1
 }
@@ -273,8 +307,19 @@ target_engine=$(norm_engine_id "$target_engine") \
 # in the production engine ID silently disabled the denylist — turning the strongest
 # production control into a no-op with no signal at all. A control that can be switched off
 # by a typo is not a control.
+#
+# AN EMPTY-ONLY VALUE IS ALSO REFUSED. `[ -n ]` is satisfied by whitespace, but the unquoted
+# word-splitting below then yields ZERO words and the loop body never runs — so
+# `PRODUCTION_ENGINE_ID=" "` (or `","`, or `", "`) satisfied the guard and disabled the
+# denylist with no signal. [OBSERVED]: those three inputs produced 0 loop iterations while
+# `""` and `"aa,bb"` produced 0 and 2 respectively. The `set --` form makes the count
+# explicit so "set but empty" is a hard failure instead of a silent pass.
 if [ -n "${PRODUCTION_ENGINE_ID:-}" ]; then
-  for _pe in $(printf '%s' "$PRODUCTION_ENGINE_ID" | tr ',' ' '); do
+  # shellcheck disable=SC2086
+  set -- $(printf '%s' "$PRODUCTION_ENGINE_ID" | tr ',' ' ')
+  [ "$#" -gt 0 ] \
+    || die "PRODUCTION_ENGINE_ID is set to '$PRODUCTION_ENGINE_ID' but contains no engine ID — refusing rather than silently disabling the production denylist" 10
+  for _pe in "$@"; do
     _pen=$(norm_engine_id "$_pe") \
       || die "PRODUCTION_ENGINE_ID contains an invalid engine ID: '$_pe' (need 64 hex or an 8-4-4-4-12 UUID) — refusing rather than silently disabling the production denylist" 10
     [ "$target_engine" = "$_pen" ] \
@@ -344,14 +389,14 @@ cleanup() {
     [ -f "$f" ] && { shred -u "$f" 2>/dev/null || rm -f "$f"; }
   done
   rm -rf -- "$WORK"
-  # Belt and braces: assert nothing plaintext survived in the worktree.
-  [ -n "${worktree_plain:-}" ] && rm -f "$worktree_plain"
-  # Report rather than trust: if a plaintext file survived, say so loudly.
-  if [ -n "${worktree_plain:-}" ] && [ -f "$worktree_plain" ]; then
-    printf 'WARNING: plaintext still present at %s\n' "$worktree_plain" >&2
-  fi
+  # Report rather than trust: if the work directory survived, say so loudly. `$WORK` is the
+  # ONLY path this script writes plaintext to, so asserting its removal is the whole claim.
+  # An earlier revision instead tested `$PWD/sigap-restore-plain-$$.tar.gz`, a path no code
+  # ever created: the `rm -f` was a no-op and the WARNING could never fire, so the check
+  # reported safety unconditionally. A guard that cannot fail is not a guard.
+  [ ! -e "$WORK" ] \
+    || printf 'WARNING: the temporary work directory survived cleanup at %s\n' "$WORK" >&2
 }
-worktree_plain="$PWD/sigap-restore-plain-$$.tar.gz"
 trap cleanup EXIT INT TERM HUP
 
 # ---------------------------------------------------------------------------
@@ -638,6 +683,17 @@ done
 #    supply a clean daemon for that; the CI workflow asserts it by removing the image its own
 #    record step loaded and verifying the removal. A production drill must do the same.
 # ---------------------------------------------------------------------------
+# A NEWLINE IS REFUSED. `read -ra` reads ONE line, so a newline-joined EXPECT_IDS yields only
+# its FIRST id: the remaining expected images are never checked for presence, `missing` stays
+# 0, and the run reports "identity correspondence VERIFIED for all 1 image(s)" for an archive
+# that should have restored several. That is a silent under-verification, so it fails closed
+# with a message that names the separator rather than reinterpreting the value.
+_nl='
+'
+case "$EXPECT_IDS" in
+  *"$_nl"*)
+    die "EXPECT_IDS contains a newline; supply ONE comma-separated line (a newline silently drops every ID after the first)" 10 ;;
+esac
 IFS=',' read -ra IDS <<< "$EXPECT_IDS"
 missing=0; present=0; seen=0
 EXPECT_NORM=""
