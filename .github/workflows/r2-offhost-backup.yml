@@ -264,27 +264,21 @@ jobs:
           ART="sigap-pre-redesign-$STAMP.tar.gz.age"
           ST=$(mktemp -d)
 
-          # THE OUT-OF-BAND RECORD: the ID this ARCHIVE restores, not the ID of the built
-          # image. The two differ, which is real Docker behaviour rather than a defect — a
-          # BuildKit build's `docker inspect` reports the config digest, while `docker load`
-          # assigns the ID from what the tar carries ([OBSERVED] run 38272620285: inspect
-          # ff59b31e..., the load d88c5ca4...). An operator restoring this archive can only
-          # ever see the load-reported ID, so that is the value they must record out-of-band
-          # and the value the helper's correspondence check compares against.
+          # The tar is the artifact's payload. It is kept in $RUNNER_TEMP because each `run`
+          # step is a separate shell and the out-of-band record is established in a LATER
+          # step, on the ISOLATED daemon.
           #
-          # Established here, from the SAME tar bytes that are archived, by loading them on
-          # the runner's own daemon. The isolated daemon is untouched by this, so the
-          # distinctness assertion in the restore step still holds. If the record could not be
-          # read the run fails here rather than restoring against an empty expectation.
-          docker image save "$API_ID" -o "$ST/image.tar"
-          EXPECTED_IDS=$(docker load < "$ST/image.tar" | sed -n 's/^Loaded image ID:[[:space:]]*//p' | tail -1)
-          [ -n "$EXPECTED_IDS" ] \
-            || { echo "FAIL: the archive tar yielded no image ID — cannot record the expected identity"; exit 1; }
-          echo "expected restored image ID (from the archive itself): $EXPECTED_IDS"
-          echo "EXPECTED_IDS=$EXPECTED_IDS" >> "$GITHUB_ENV"
-          # The image we loaded here is a local duplicate; drop it so the runner's own daemon
-          # holds only what it started with.
-          docker rmi -f "$API_ID" >/dev/null 2>&1 || true
+          # WHY NOT RECORD THE ID HERE: `docker inspect` on the built image reports a config
+          # digest, and `docker load` assigns the ID from what the tar carries — the two
+          # differ ([OBSERVED] run 38272620285: inspect ff59b31e..., load d88c5ca4...). Worse,
+          # loading the tar on a daemon that ALREADY holds the image reports that pre-existing
+          # ID rather than the ID a clean load produces ([OBSERVED] run 38276467207: runner
+          # load c1d7f34b..., isolated load 864c7a42... for the SAME bytes). A record taken
+          # here would therefore never match the isolated daemon's load, and the drill would
+          # fail for a reason that has nothing to do with the archive.
+          docker image save "$API_ID" -o "$RUNNER_TEMP/image.tar"
+          [ -s "$RUNNER_TEMP/image.tar" ] \
+            || { echo "FAIL: docker image save produced no tar"; exit 1; }
 
           # Per-stage status. A plain POSIX pipeline reports ONLY the last command's
           # status, so `docker image save <bad-id> | gzip -1` exits 0 and leaves a 20-byte
@@ -372,6 +366,30 @@ jobs:
           done
           ISOLATED_ID=$(docker -H tcp://127.0.0.1:2375 info --format '{{.ID}}')
           [ -n "$ISOLATED_ID" ] || { echo "FAIL: no engine id from the isolated daemon"; exit 1; }
+
+          # THE OUT-OF-BAND RECORD, established where it is meaningful: a load of the archive's
+          # own bytes onto this CLEAN daemon. That is the identity an operator restoring the
+          # archive would record, and the identity this same daemon will report when the
+          # helper loads it — the load ID is content-derived, so the same bytes on the same
+          # empty daemon give the same answer.
+          #
+          # The image is then REMOVED. Without that, the helper's correspondence check would
+          # pass on an image that was already present, so a `docker load` that silently did
+          # nothing would go undetected — the check would be satisfied by this step's own
+          # load rather than by the restore under test.
+          EXPECTED_IDS=$(docker -H tcp://127.0.0.1:2375 load < "$RUNNER_TEMP/image.tar" \
+            | sed -n 's/^Loaded image ID:[[:space:]]*//p' | tail -1)
+          [ -n "$EXPECTED_IDS" ] \
+            || { echo "FAIL: the archive yielded no image ID on a clean daemon"; exit 1; }
+          echo "out-of-band record (from a clean load of the archive): $EXPECTED_IDS"
+          docker -H tcp://127.0.0.1:2375 rmi -f "${EXPECTED_IDS}" >/dev/null 2>&1 || true
+          # Assert the removal actually happened, so the restore below is measured on an empty
+          # daemon rather than on the record step's leftovers.
+          if docker -H tcp://127.0.0.1:2375 image inspect "${EXPECTED_IDS}" >/dev/null 2>&1; then
+            echo "FAIL: the record step's image is still present; the restore would not be independent"
+            exit 1
+          fi
+          echo "EXPECTED_IDS=$EXPECTED_IDS" >> "$GITHUB_ENV"
 
           # NO DOCKER SOCKET — ASSERTED, not merely intended. The `docker run` calls pass no
           # `-v`, but the recipe is not evidence. A socket bind-mount would let either
