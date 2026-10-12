@@ -166,19 +166,31 @@ jobs:
           file "$MINIO_BIN" | grep -q 'ELF 64-bit.*x86-64' \
             || { echo "FAIL: minio is not a linux/amd64 ELF binary"; file "$MINIO_BIN"; exit 1; }
           # The health endpoint the round trip depends on, proved before the image is built.
-          printf 'FROM scratch\nCOPY minio /usr/bin/minio\nCOPY entrypoint.sh /usr/bin/docker-entrypoint.sh\nEXPOSE 9000\nVOLUME ["/data"]\nENTRYPOINT ["/usr/bin/docker-entrypoint.sh"]\nCMD ["minio"]\n' > "$BUILD/Dockerfile"
-          # Upstream's entrypoint only prepends `minio` when the first arg is not already
-          # `minio`; the workflow passes `server /data`, so the same behaviour applies. It is
-          # reproduced here rather than fetched, because the source tree is not otherwise
-          # needed and the logic is four lines.
-          printf '#!/bin/sh\nif [ "${1}" != "minio" ]; then [ -n "${1}" ] && set -- minio "$@"; fi\nexec "$@"\n' > "$BUILD/entrypoint.sh"
-          chmod +x "$BUILD/entrypoint.sh"
+          #
+          # NO SHELL WRAPPER. An earlier revision copied a `#!/bin/sh` entrypoint into a
+          # `FROM scratch` image, which cannot work: `scratch` has no `/bin/sh`, so the
+          # kernel cannot resolve the shebang and reports ENOENT — surfacing as
+          #   exec /usr/bin/docker-entrypoint.sh: no such file or directory
+          # which reads as a missing SCRIPT when the file is present and the INTERPRETER is
+          # what is missing. [OBSERVED] run 38228084236, step "Start disposable MinIO".
+          #
+          # Upstream's entrypoint only exists to prepend `minio` when the first argument is
+          # not already the subcommand. Making the BINARY the entrypoint achieves the same
+          # thing with no interpreter at all: the workflow passes `server /data`, so the
+          # process is `/usr/bin/minio server /data`.
+          printf 'FROM scratch\nCOPY minio /usr/bin/minio\nEXPOSE 9000\nVOLUME ["/data"]\nENTRYPOINT ["/usr/bin/minio"]\nCMD ["server", "/data"]\n' > "$BUILD/Dockerfile"
           cp "$MINIO_BIN" "$BUILD/minio"
           docker build -q -t sigap-minio:local "$BUILD" >/dev/null
           rm -rf "$BUILD"
           # Assert the IMAGE exists, not just the build's exit code.
           docker image inspect sigap-minio:local >/dev/null \
             || { echo "FAIL: the built MinIO image is absent"; exit 1; }
+          # And assert the entrypoint RESOLVES, which is the failure that cost a run: a
+          # `FROM scratch` image with no interpreter starts and dies with a misleading ENOENT.
+          # `--version` overrides CMD, so this executes `/usr/bin/minio --version` through the
+          # real ENTRYPOINT — the same exec path the server will use.
+          docker run --rm sigap-minio:local --version | grep -q 'minio' \
+            || { echo "FAIL: the built image cannot execute its entrypoint"; exit 1; }
           echo "disposable MinIO built from upstream $MINIO_REF"
 
       - name: Start disposable MinIO
