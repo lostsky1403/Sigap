@@ -125,7 +125,14 @@ printf 'selftest' > "$TOP/.selftest"
 rm -f "$TOP/.selftest"
 printf 'delegating to: gzip=%s sha256sum=%s\n' "${REAL_GZIP:-<self-implemented>}" "$REAL_SUM"
 
-API=43fcbcb35ed276b33327fa4d9ad8d9d909de6875cde185e2360bbc7374794c8f
+# A SYNTHETIC 64-hex placeholder, deliberately low-entropy. The previous value was a
+# realistic-looking digest and gitleaks flagged it as a generic API key (entropy 3.86)
+# in `API=<hex>` shape — a false positive, since it is a test constant and not a
+# secret. The fix is to make the fixture OBVIOUSLY a placeholder rather than to
+# allowlist the scanner: an allowlist entry would also hide a real secret added to
+# this file later, so the scanner keeps full strength and the constant changes.
+# The format is what the tests exercise; the value's realism was never load-bearing.
+API=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 # Engine IDs the fake docker returns. Real engine IDs come in TWO machine-generated forms —
 # 64 lowercase hex on older daemons, and an 8-4-4-4-12 UUID on current ones (Docker 29
@@ -248,7 +255,7 @@ case "$sub" in
            # refused rather than trusted. `${VAR:-default}` cannot express "empty" because an
            # empty assignment is indistinguishable from unset, so a marker is used.
            [ -f "$TOP_LOG/load_no_id" ] && exit 0
-           echo "Loaded image ID: ${LOADED_IMAGE_ID:-43fcbcb35ed276b33327fa4d9ad8d9d909de6875cde185e2360bbc7374794c8f}"
+           echo "Loaded image ID: ${LOADED_IMAGE_ID:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
            exit 0 ;;
   image)   id=$(printf '%s' "$ref" | sed 's/^sha256://; s/[^0-9a-f]//g')
            [ -n "$id" ] && [ -f "$TOP_LOG/have_$id" ] && { printf 'sha256:%s\n' "$id"; exit 0; }
@@ -625,10 +632,10 @@ run_case 'id-doubled-prefix-refused-as-invalid' 10 EXPECT_IDS="sha256:sha256:$AP
 clear_all; : > "$LOG/KEEP_have_api"
 run_case 'id-non-hex-refused' 10 EXPECT_IDS="notahash"
 clear_all; : > "$LOG/KEEP_have_api"
-run_case 'id-wrong-length-refused' 10 EXPECT_IDS="43fcbcb3"
+run_case 'id-wrong-length-refused' 10 EXPECT_IDS="aaaaaaaa"
 clear_all; : > "$LOG/KEEP_have_api"
 run_case 'id-uppercase-refused-as-non-canonical' 10 \
-  EXPECT_IDS="43FCBCB35ED276B33327FA4A9AD8D9D909DE6875CDE185E2360BBC7374794C8F"
+  EXPECT_IDS="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 # A valid but ABSENT digest is a correspondence failure (15), distinct from malformed (10).
 clear_all
 run_case 'id-absent-image-fails-correspondence' 15 EXPECT_IDS="$ABSENT"
