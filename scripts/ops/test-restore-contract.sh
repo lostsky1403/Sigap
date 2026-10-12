@@ -328,10 +328,24 @@ run_case() {  # run_case <desc> <want-rc> [VAR=val ...] — markers pre-set by c
   desc=$1; want=$2; shift 2
   rm -f "$LOG"/have_*
   [ -f "$LOG/KEEP_have_api" ] && : > "$LOG/have_$API"
+  # Additional images that must be PRESENT, space-separated. A case that lists two
+  # DIFFERENT ids — one bare, one `sha256:`-prefixed — needs both registered, and it
+  # cannot do that by touching `have_$ID` itself: the `rm -f have_*` above wipes it.
+  for _xid in ${KEEP_EXTRA_IDS:-}; do : > "$LOG/have_$_xid"; done
   # Extra arguments are ENVIRONMENT ASSIGNMENTS, so they are passed to `env` as
   # separate arguments — never appended as shell words, which the shell would try to
   # EXECUTE as a program named "ISOLATED_DOCKER_HOST=..." [OBSERVED] rc=127.
-  out=$(env TOP_LOG="$LOG" PATH="$NARROW_PATH" \
+  #
+  # HERMETIC: the ambient AWS credentials are scrubbed FIRST, so a case that intends
+  # `AWS_ACCESS_KEY_ID` to be absent actually gets it absent. `env` otherwise inherits
+  # the caller's environment, and a developer with real credentials exported would see
+  # `r2-missing-recovery-credential-refused` fail — the helper's `req` would find the
+  # ambient key and proceed. [OBSERVED] with a live `AWS_ACCESS_KEY_ID` in the shell.
+  # Scrubbing before the explicit assignments means a case that DOES set a variable
+  # still wins, so this cannot mask a genuine requirement.
+  out=$(env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
+        -u AWS_PROFILE -u R2_ENDPOINT \
+        TOP_LOG="$LOG" PATH="$NARROW_PATH" \
         ARCHIVE_URI="file://$LOG/$ART" \
         ARCHIVE_KEY=/fake/key STAMP="$TSTAMP" EXPECT_DIGEST="$DIG" \
         ISOLATED_DOCKER_HOST="tcp://isolated:9999" EXPECT_IDS="$API" \
@@ -375,9 +389,13 @@ run_case 'D-age-encrypt-fails-is-scoped-out' 0
 clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/gzip_fails"
 run_case 'C-gzip-fails' 14
 
-# G — the transfer fails.
+# G — the transfer fails. The URI must actually SELECT the ssh path: the default URI is
+# `file://`, so without this override `scp` is never invoked, the marker is never read,
+# and the restore succeeds for a reason unrelated to the transfer. The case would then
+# report a failure that has nothing to do with the guard it names. [OBSERVED] the suite
+# reported `want=14 got=0` for exactly this reason.
 clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/scp_fails"
-run_case 'G-ssh-transfer-fails' 14
+run_case 'G-ssh-transfer-fails' 14 ARCHIVE_URI="ssh://fakehost/srv/arch/$ART"
 
 # J — the digest does not match the out-of-band record.
 clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/digest_bad"
@@ -409,6 +427,29 @@ run_case 'engine-allowlist-absent-refused' 10 ISOLATED_DOCKER_HOST="tcp://isolat
 clear_all; : > "$LOG/KEEP_have_api"
 run_case 'engine-allowlist-mismatch-refused' 11 ISOLATED_DOCKER_HOST="tcp://isolated:9999" \
          ALLOWED_ENGINE_ID="$OTHER_ENGINE" EXPECT_IDS="$API"
+
+# REGRESSION — the allowlist accepts the `sha256:` spelling, and the comparison is
+# symmetric in BOTH places it happens. The pre-load check normalised the allowlist but the
+# POST-load recheck compared raw values, so this exact input was refused with "engine ID
+# changed after load" — a false failure reporting the wrong cause, since the daemon never
+# changed. The happy path must therefore reach rc=0 with a prefixed allowlist; rc=11 here
+# means the post-load recheck regressed.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'engine-allowlist-sha256-prefix-accepted' 0 \
+         ALLOWED_ENGINE_ID="sha256:$TGT_ENGINE" EXPECT_IDS="$API"
+# ...and a prefixed value that is genuinely a DIFFERENT engine is still a mismatch (11),
+# so the normalisation above did not make the comparison vacuous.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'engine-allowlist-sha256-prefix-mismatch-refused' 11 \
+         ALLOWED_ENGINE_ID="sha256:$OTHER_ENGINE" EXPECT_IDS="$API"
+# ...and a non-hex allowlist is malformed input (10), not a mismatch (11).
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'engine-allowlist-malformed-refused' 10 \
+         ALLOWED_ENGINE_ID="engineWRONG" EXPECT_IDS="$API"
+# ...and the expected `sha256:sha256:<digest>` doubled prefix is malformed too.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'engine-allowlist-doubled-prefix-refused' 10 \
+         ALLOWED_ENGINE_ID="sha256:sha256:$TGT_ENGINE" EXPECT_IDS="$API"
 
 printf '=== restore-target isolation ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
@@ -520,11 +561,18 @@ run_case 'id-absent-image-fails-correspondence' 15 EXPECT_IDS="$ABSENT"
 clear_all; : > "$LOG/KEEP_have_api"
 run_case 'id-partial-load-refused' 15 EXPECT_IDS="$API,$ABSENT"
 # Exact correspondence for a multi-ID list, both spellings mixed.
-clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/have_$API"
-# Genuinely MIXED: two different IDs, one bare and one prefixed. The previous form was a
-# duplicate of id-sha256-prefixed-accepted and therefore proved nothing extra.
-clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/have_$ABSENT"
+# Genuinely MIXED: two DIFFERENT ids, one bare and one `sha256:`-prefixed, BOTH present.
+# The previous form was a duplicate of id-sha256-prefixed-accepted and proved nothing extra.
+# The second id needs `KEEP_EXTRA_IDS` rather than a direct `have_` touch, because run_case
+# clears `have_*` before registering markers.
+clear_all; : > "$LOG/KEEP_have_api"
+KEEP_EXTRA_IDS="$ABSENT"
 run_case 'id-mixed-spelling-correspondence' 0 EXPECT_IDS="$API,sha256:$ABSENT"
+KEEP_EXTRA_IDS=""
+# ...and the correspondence check must still FAIL when one of the two mixed-spelling ids is
+# genuinely absent, so the case above is not satisfied by a check that ignores ids.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'id-mixed-spelling-missing-one-refused' 15 EXPECT_IDS="$API,sha256:$ABSENT"
 
 printf '=== required input is validated, never defaulted ===\n'
 clear_all; : > "$LOG/KEEP_have_api"

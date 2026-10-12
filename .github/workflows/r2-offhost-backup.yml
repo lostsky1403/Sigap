@@ -15,11 +15,12 @@ name: r2-offhost-backup
 # It is opt-in twice over, so it cannot fire by accident:
 #   1. the `paths` filter means it runs only when a file it actually exercises changes;
 #   2. the job-level `if` requires the `r2-validation` label, which only the owner applies.
-# A PR without that label runs nothing at all.
+# A PR without that label runs the job zero times — see the ACTIVITY TYPES note below, which
+# is the second half of the gate and was previously missing.
 #
-# PREREQUISITE — the label does not exist yet. As of the current repository state
-# `r2-validation` has never been created, so the gate cannot be satisfied and the job is
-# skipped for every PR. Create it once (owner):
+# PREREQUISITE — the label must EXIST. `r2-validation` is not a default GitHub label; until
+# it is created the `if` can never be satisfied and the job is skipped for every PR. Create
+# it once (owner):
 #   gh label create r2-validation --repo lostsky1403/Sigap \
 #     --description "Owner approval to run the R2 off-host round trip" --color FBCA04
 # See runbook §13g.11 for the full activation procedure and the bounded scope of what a run
@@ -30,6 +31,25 @@ name: r2-offhost-backup
 # prerequisite.
 on:
   pull_request:
+    # ACTIVITY TYPES — required, and the reason the gate was unreachable.
+    #
+    # GitHub's DEFAULT activity types for `pull_request` are `opened`, `synchronize` and
+    # `reopened` ONLY. `labeled` is NOT among them. A run therefore starts when the PR is
+    # opened (without the label, so the job-level `if` skips it) and never starts again when
+    # the owner applies `r2-validation` — the label event produces no run at all, so the
+    # job's `if` is never evaluated and the gate can never open. The gate read as present
+    # while being structurally unreachable, which is the same shape as the fail-open
+    # defects corrected in the helper.
+    #
+    # `labeled` is therefore listed explicitly. `opened`/`synchronize`/`reopened` are kept
+    # because a PR that carries the label already must re-run when new commits arrive —
+    # without `synchronize` a fix pushed to an approved PR would never be re-tested.
+    #
+    # `pull_request_target` is deliberately NOT used: it runs in the base repository's
+    # context with a writable token and access to secrets, which would hand this job
+    # privileges it does not need. `pull_request` gives a read-only token and no secrets,
+    # which is the correct posture for a job that talks only to a disposable local MinIO.
+    types: [opened, synchronize, reopened, labeled]
     branches: [design/ui-ux-overhaul]
     paths:
       - '.github/workflows/r2-offhost-backup.yml'
@@ -150,7 +170,6 @@ jobs:
         run: |
           set -euo pipefail
           ART="sigap-pre-redesign-$STAMP.tar.gz.age"
-          KEY="$RUNNER_TEMP/throwaway.key"
           ST=$(mktemp -d)
 
           # Per-stage status. A plain POSIX pipeline reports ONLY the last command's
@@ -178,6 +197,14 @@ jobs:
           DIGEST=$(sha256sum "$ST/$ART" | cut -d' ' -f1)
           echo "digest: $DIGEST"
           echo "DIGEST=$DIGEST" >> "$GITHUB_ENV"
+
+          # The artifact is ALSO kept where later steps can reach it. `$RUNNER_TEMP` survives
+          # across steps; `$ST` does not. Control A below deliberately overwrites the object
+          # at this key to prove a substituted object is refused, and then restores the
+          # original from here — without that, control A3 (which fetches this same key and
+          # must reach the image-ID validator) would exit 12 on the digest check instead of
+          # 10, and fail for a reason unrelated to the guard it tests.
+          cp "$ST/$ART" "$RUNNER_TEMP/artifact.age"
 
           aws s3api put-object --bucket "$R2_BUCKET" --key "sigap/$ART" \
             --body "$ST/$ART" --endpoint-url "$R2_ENDPOINT" >/dev/null
@@ -220,6 +247,23 @@ jobs:
           done
           ISOLATED_ID=$(docker -H tcp://127.0.0.1:2375 info --format '{{.ID}}')
           [ -n "$ISOLATED_ID" ] || { echo "FAIL: no engine id from the isolated daemon"; exit 1; }
+
+          # NO DOCKER SOCKET — ASSERTED, not merely intended. The `docker run` calls pass no
+          # `-v`, but the recipe is not evidence. A socket bind-mount would let either
+          # container drive the runner's own daemon: a host-compromise primitive, and it
+          # would also collapse the engine-distinctness proof the helper depends on. Inspect
+          # the RUNNING containers so this fails if a mount is ever added.
+          for c in sigap-minio sigap-restore-dind; do
+            mounts=$(docker inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "$c")
+            if printf '%s' "$mounts" | grep -q 'docker\.sock'; then
+              echo "FAIL: $c has a Docker socket mounted:"; printf '%s\n' "$mounts"; exit 1
+            fi
+          done
+          # The disposable endpoint must not be privileged either. Only the nested daemon
+          # needs that, and only because `dockerd` requires it to set up its own storage.
+          priv=$(docker inspect --format '{{.HostConfig.Privileged}}' sigap-minio)
+          [ "$priv" = "false" ] || { echo "FAIL: sigap-minio is privileged ($priv)"; exit 1; }
+          echo "ok: no Docker socket mounted in either container; MinIO is not privileged"
           # Each `run` step is a separate shell, so the engine id must be persisted for the
           # negative-control steps below. A bare shell variable would be empty there and the
           # helper would refuse with rc=10, making those controls pass for the wrong reason.
@@ -241,9 +285,14 @@ jobs:
             bash scripts/ops/sigap-archive-restore.sh
 
           # Independent confirmation on the isolated daemon, scoped to the one ID this job
-          # produced. A daemon-wide listing would prove nothing about the artifact.
-          docker -H tcp://127.0.0.1:2375 image inspect "$API_ID" >/dev/null \
-            || { echo "FAIL: the restored image is absent on the isolated daemon"; exit 1; }
+          # produced. A daemon-wide listing would prove nothing about the artifact, and a
+          # bare `inspect >/dev/null` only proves SOME image exists under that name. Resolve
+          # the ID and COMPARE it, so the assertion is the correspondence the runbook claims.
+          # `docker image inspect` prints the `sha256:` form; compare on the bare digest.
+          got=$(docker -H tcp://127.0.0.1:2375 image inspect --format '{{.Id}}' "$API_ID")
+          want=${API_ID#sha256:}
+          [ "${got#sha256:}" = "$want" ] \
+            || { echo "FAIL: restored image ID $got != preserved $API_ID"; exit 1; }
           echo "ok: restored image ID matches the preserved ID on the isolated daemon"
 
       - name: Negative control A — a substituted object must be refused
@@ -260,8 +309,15 @@ jobs:
           printf 'not-the-artifact' > "$RUNNER_TEMP/wrong.bin"
           aws s3api put-object --bucket "$R2_BUCKET" --key "sigap/$ART" \
             --body "$RUNNER_TEMP/wrong.bin" --endpoint-url "$R2_ENDPOINT" >/dev/null
+          # PRECONDITION — the expected code must be reachable only via the guard under test.
+          # Without this, an empty input (e.g. `$GITHUB_ENV` persistence failing) makes the
+          # helper refuse with 10 for an unrelated reason and the control below would have to
+          # be read as a pass. Assert the inputs exist before asserting the refusal.
+          for v in DIGEST API_ID ISOLATED_ID; do
+            [ -n "${!v:-}" ] || { echo "FAIL: $v is empty — the control would pass for the wrong reason"; exit 1; }
+          done
           set +e
-          ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
+          out=$(ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
           R2_ENDPOINT="$R2_ENDPOINT" \
           ARCHIVE_KEY="$RUNNER_TEMP/throwaway.key" \
           STAMP="$STAMP" \
@@ -269,17 +325,41 @@ jobs:
           ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
           ALLOWED_ENGINE_ID="$ISOLATED_ID" \
           EXPECT_IDS="$API_ID" \
-            bash scripts/ops/sigap-archive-restore.sh >/dev/null 2>&1
+            bash scripts/ops/sigap-archive-restore.sh 2>&1)
           rc=$?
           set -e
-          [ "$rc" -eq 12 ] || { echo "FAIL: substituted object returned $rc, expected 12 (digest mismatch)"; exit 1; }
-          echo "ok: substituted object refused with rc=12"
+          [ "$rc" -eq 12 ] || { echo "FAIL: substituted object returned $rc, expected 12 (digest mismatch)"; printf '%s\n' "$out"; exit 1; }
+          # The CODE alone is not the proof. Assert the REASON: only the digest comparison
+          # produces this message, so the control cannot be satisfied by an unrelated
+          # refusal that happens to exit 12.
+          printf '%s' "$out" | grep -q 'REFUSED: digest mismatch' \
+            || { echo "FAIL: rc=12 for the WRONG reason — the digest guard did not fire"; printf '%s\n' "$out"; exit 1; }
+          echo "ok: substituted object refused with rc=12 (digest mismatch)"
+
+          # RESTORE the original object. Control A3 below fetches this same key, and its
+          # guard (the image-ID validator) runs only AFTER a successful fetch, digest check,
+          # decrypt, decompress and load. Leaving the tampered bytes in place would make A3
+          # exit 12 on the digest check instead of 10, failing for a reason that has nothing
+          # to do with the input validator it exists to exercise. Verified, not assumed:
+          # a restore that silently did nothing would reintroduce exactly that failure.
+          aws s3api put-object --bucket "$R2_BUCKET" --key "sigap/$ART" \
+            --body "$RUNNER_TEMP/artifact.age" --endpoint-url "$R2_ENDPOINT" >/dev/null
+          restored=$(aws s3 cp "s3://$R2_BUCKET/sigap/$ART" - \
+            --endpoint-url "$R2_ENDPOINT" | sha256sum | cut -d' ' -f1)
+          [ "$restored" = "$DIGEST" ] \
+            || { echo "FAIL: restore left digest $restored, expected $DIGEST — control A3 would fail for an unrelated reason"; exit 1; }
+          echo "ok: original object restored ($restored) for the remaining controls"
 
       - name: Negative control A2 — a URI naming another release must be refused
         run: |
           set -euo pipefail
+          # PRECONDITION — see control A. An empty `$DIGEST`/`$API_ID`/`$ISOLATED_ID` makes
+          # the helper refuse with 10 for an unrelated reason, which would read as a pass.
+          for v in DIGEST API_ID ISOLATED_ID; do
+            [ -n "${!v:-}" ] || { echo "FAIL: $v is empty — the control would pass for the wrong reason"; exit 1; }
+          done
           set +e
-          ARCHIVE_URI="r2://$R2_BUCKET/sigap/sigap-pre-redesign-19990101T000000Z.tar.gz.age" \
+          out=$(ARCHIVE_URI="r2://$R2_BUCKET/sigap/sigap-pre-redesign-19990101T000000Z.tar.gz.age" \
           R2_ENDPOINT="$R2_ENDPOINT" \
           ARCHIVE_KEY="$RUNNER_TEMP/throwaway.key" \
           STAMP="$STAMP" \
@@ -287,19 +367,29 @@ jobs:
           ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
           ALLOWED_ENGINE_ID="$ISOLATED_ID" \
           EXPECT_IDS="$API_ID" \
-            bash scripts/ops/sigap-archive-restore.sh >/dev/null 2>&1
+            bash scripts/ops/sigap-archive-restore.sh 2>&1)
           rc=$?
           set -e
-          [ "$rc" -eq 10 ] || { echo "FAIL: wrong-release URI returned $rc, expected 10"; exit 1; }
-          echo "ok: wrong-release URI refused with rc=10"
+          [ "$rc" -eq 10 ] || { echo "FAIL: wrong-release URI returned $rc, expected 10"; printf '%s\n' "$out"; exit 1; }
+          # 10 is ALSO the code for a missing or malformed input, so the code alone does not
+          # isolate the guard. Assert the message: only the basename comparison produces it.
+          printf '%s' "$out" | grep -q 'ARCHIVE_URI names' \
+            || { echo "FAIL: rc=10 for the WRONG reason — the wrong-release URI guard did not fire"; printf '%s\n' "$out"; exit 1; }
+          echo "ok: wrong-release URI refused with rc=10 (basename guard)"
 
       - name: Negative control A3 — a malformed image ID must be refused as input
         run: |
           set -euo pipefail
           ART="sigap-pre-redesign-$STAMP.tar.gz.age"
           # A doubled prefix is the exact shape the earlier unconditional prefixing produced.
+          #
+          # PRECONDITION — see control A. This control depends on the OTHER inputs being
+          # valid, because it must reach the EXPECT_IDS validation rather than fail earlier.
+          for v in DIGEST API_ID ISOLATED_ID; do
+            [ -n "${!v:-}" ] || { echo "FAIL: $v is empty — the control would pass for the wrong reason"; exit 1; }
+          done
           set +e
-          ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
+          out=$(ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
           R2_ENDPOINT="$R2_ENDPOINT" \
           ARCHIVE_KEY="$RUNNER_TEMP/throwaway.key" \
           STAMP="$STAMP" \
@@ -307,18 +397,28 @@ jobs:
           ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
           ALLOWED_ENGINE_ID="$ISOLATED_ID" \
           EXPECT_IDS="sha256:sha256:$API_ID" \
-            bash scripts/ops/sigap-archive-restore.sh >/dev/null 2>&1
+            bash scripts/ops/sigap-archive-restore.sh 2>&1)
           rc=$?
           set -e
-          [ "$rc" -eq 10 ] || { echo "FAIL: doubled-prefix ID returned $rc, expected 10 (malformed input)"; exit 1; }
-          echo "ok: doubled-prefix image ID refused with rc=10"
+          [ "$rc" -eq 10 ] || { echo "FAIL: doubled-prefix ID returned $rc, expected 10 (malformed input)"; printf '%s\n' "$out"; exit 1; }
+          # The EXPECT_IDS validation runs AFTER load, so a message assertion here also
+          # proves the whole fetch/decrypt/untar/load path executed before refusing.
+          printf '%s' "$out" | grep -q 'EXPECT_IDS contains an invalid image ID' \
+            || { echo "FAIL: rc=10 for the WRONG reason — the image-ID validator did not fire"; printf '%s\n' "$out"; exit 1; }
+          echo "ok: doubled-prefix image ID refused with rc=10 (image-ID validator, reached after load)"
 
       - name: Negative control A4 — a loopback target without the opt-in must be refused
         run: |
           set -euo pipefail
           ART="sigap-pre-redesign-$STAMP.tar.gz.age"
+          # PRECONDITION — see control A. The loopback guard fires BEFORE the engine and
+          # digest validations, so 11 here cannot come from a missing input (those exit 10);
+          # asserting the inputs exist makes that reasoning checkable rather than assumed.
+          for v in DIGEST API_ID ISOLATED_ID; do
+            [ -n "${!v:-}" ] || { echo "FAIL: $v is empty — the control would pass for the wrong reason"; exit 1; }
+          done
           set +e
-          env -u SIGAP_ALLOW_LOOPBACK_TARGET \
+          out=$(env -u SIGAP_ALLOW_LOOPBACK_TARGET \
           ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
           R2_ENDPOINT="$R2_ENDPOINT" \
           ARCHIVE_KEY="$RUNNER_TEMP/throwaway.key" \
@@ -327,11 +427,16 @@ jobs:
           ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
           ALLOWED_ENGINE_ID="$ISOLATED_ID" \
           EXPECT_IDS="$API_ID" \
-            bash scripts/ops/sigap-archive-restore.sh >/dev/null 2>&1
+            bash scripts/ops/sigap-archive-restore.sh 2>&1)
           rc=$?
           set -e
-          [ "$rc" -eq 11 ] || { echo "FAIL: loopback without opt-in returned $rc, expected 11"; exit 1; }
-          echo "ok: loopback target refused without SIGAP_ALLOW_LOOPBACK_TARGET=1"
+          [ "$rc" -eq 11 ] || { echo "FAIL: loopback without opt-in returned $rc, expected 11"; printf '%s\n' "$out"; exit 1; }
+          # 11 is also the code for an unreachable or non-allowlisted daemon, and for a
+          # production-string match. Assert the message so only the loopback guard can
+          # satisfy this control.
+          printf '%s' "$out" | grep -q 'is a same-host endpoint' \
+            || { echo "FAIL: rc=11 for the WRONG reason — the loopback guard did not fire"; printf '%s\n' "$out"; exit 1; }
+          echo "ok: loopback target refused without SIGAP_ALLOW_LOOPBACK_TARGET=1 (loopback guard)"
 
       # ---------------------------------------------------------------------------------
       # GROUP B — CLOUDFLARE RETENTION-POLICY BEHAVIOUR. NOT COVERED BY THIS WORKFLOW.

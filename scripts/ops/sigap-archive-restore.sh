@@ -476,11 +476,18 @@ echo "docker load succeeded"
 # Re-read the engine ID AFTER the load closes the verification-to-load TOCTOU window:
 # if the ambient context changed between the check above and this load, the ID differs
 # and the identity assertion below is against a different daemon than the verified one.
+#
+# NORMALISED, like every other engine comparison. This recheck previously compared the RAW
+# probe against the RAW allowlist, so a caller who passed `sha256:<digest>` — accepted by the
+# pre-load check, which normalises — was refused here with "engine ID changed after load".
+# That is a false failure caused by formatting, and it reports the wrong cause: the daemon
+# never changed. `norm_id_strict` also refuses a whitespace-only probe.
 target_engine=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker info --format '{{.ID}}' 2>/dev/null) \
   || die "isolated daemon unreachable after load" 11
-[ -n "$target_engine" ] || die "no engine ID after load" 11
-[ "$target_engine" = "$ALLOWED_ENGINE_ID" ] \
-  || die "engine ID changed after load ($target_engine != $ALLOWED_ENGINE_ID)" 11
+target_engine=$(norm_id_strict "$target_engine") \
+  || die "isolated daemon returned no readable engine ID after load — isolation is UNPROVEN" 11
+[ "$target_engine" = "$ALLOWED_ENGINE_N" ] \
+  || die "engine ID changed after load ($target_engine != $ALLOWED_ENGINE_N)" 11
 
 # ---------------------------------------------------------------------------
 # 7. Identity correspondence — per-image, ON the isolated daemon, with explicit
