@@ -2519,36 +2519,55 @@ which matters because a rollback is exactly when you do not want a metered downl
 pricing is from published R2 rates and is not verified against a live account; it is an estimate,
 not a quote.
 
-**13g.11 — Activating the CI test, and the one prerequisite that does not yet exist.**
-`.github/workflows/r2-offhost-backup.yml` is committed on `design/ui-ux-overhaul`, which is
-**not** the default branch. GitHub registers `workflow_dispatch` entries only from the default
-branch, so as committed the file cannot be dispatched and has no Actions-UI entry. Two
-consequences, both verified:
+**13g.11 — Activating the CI test.** `.github/workflows/r2-offhost-backup.yml` is committed on
+`design/ui-ux-overhaul`, which is **not** the default branch. GitHub registers
+`workflow_dispatch` entries only from the default branch, so as committed the file cannot be
+dispatched and has no Actions-UI entry. The working trigger is therefore `pull_request`, which
+GitHub evaluates from the PR's own merge ref. This is the mechanism already proven by the
+SIGAP-88 validation run (`.github/workflows/ops-sandbox.yml`, run `38163833629`, event
+`pull_request`, conclusion `success`).
 
-- the workflow did **not** trigger on any of the pushes to this branch (it has no `push`
-  trigger; `pull_request` and `workflow_dispatch` only), and
-- the repository has **no `r2-validation` label** — the job-level `if` therefore cannot be
-  satisfied until the owner creates it.
+**The gate has two halves, and the second one was missing.** The `paths` filter and the
+job-level `if` on the `r2-validation` label are only the first half. The second is the
+**activity type**: GitHub's default `pull_request` activity types are `opened`, `synchronize`
+and `reopened` — `labeled` is **not** among them. Without an explicit `types` list, applying
+the label produces **no run at all**: the `if` is never evaluated, so the gate cannot open no
+matter how many times the label is applied. A control that reads as present while being
+structurally unreachable is the same defect class as the fail-open guards corrected in
+`§7d.1`. The workflow therefore declares:
+
+```yaml
+types: [opened, synchronize, reopened, labeled]
+```
+
+`labeled` is what makes the owner's approval action actually start a run. `synchronize` is kept
+because a fix pushed to an already-labelled PR must re-run — without it, a corrected commit on
+an approved PR would never be re-tested. `pull_request_target` is deliberately **not** used: it
+runs in the base repository's context with a write-capable token and access to secrets, which
+this job does not need and must not have.
 
 Activation, in order:
 
-1. **Create the label** (owner, once):
+1. **Create the label** (owner, once) — `r2-validation` is not a default GitHub label, and
+   until it exists the `if` can never be satisfied:
    `gh label create r2-validation --repo lostsky1403/Sigap --description "Owner approval to run the R2 off-host round trip" --color FBCA04`
-   Without this step the job is skipped for every PR and the gate can never open.
 2. **Open a PR whose base is `design/ui-ux-overhaul`** and which touches one of the workflow's
-   `paths` entries. GitHub evaluates a `pull_request` workflow from the PR's own merge ref, so
-   the workflow runs even though it is absent from the default branch. This is the mechanism
-   already proven by the SIGAP-88 validation run (`.github/workflows/ops-sandbox.yml`, run
-   `38163833629`, event `pull_request`, conclusion `success`).
-3. **Apply `r2-validation` to that PR.** Only then does the job run. A PR without the label
-   runs nothing at all.
+   `paths` entries. The PR opening produces a run in which the job is **skipped** (no label).
+3. **Apply `r2-validation` to that PR.** Because `labeled` is now an activity type, this event
+   starts a **second** run in which the job executes. This step is the owner's approval; it is
+   the only action that authorizes execution.
 
 Merging to `main` is **not** a prerequisite, and the workflow must not be merged to `main`
-merely to make it dispatchable. What the run proves is bounded: with a disposable MinIO
-endpoint and a throwaway age key it exercises the **object path and input validation** —
-off-host upload, read-back, restore through the real helper, and four negative controls. It
-does **not** touch the real bucket, does **not** prove retention (§13g.9), and does **not**
-preserve or restore a production image.
+merely to make it dispatchable. What a run proves is bounded: with a disposable MinIO endpoint
+and a throwaway age key it exercises the **object path and input validation** — off-host
+upload, read-back, restore through the real helper, and four negative controls. It does **not**
+touch the real bucket, does **not** prove retention (§13g.9), and does **not** preserve or
+restore a production image.
+
+**Reading the run list.** After step 3 there will be two runs for the PR: the first skipped the
+job, the second executed it. That is expected, not a duplicate-trigger defect. A run whose job
+is skipped is not evidence the workflow is broken, and a run that executed is not evidence the
+gates hold — read the step log.
 
 ---
 
