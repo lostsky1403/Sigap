@@ -1,0 +1,239 @@
+name: r2-offhost-backup
+
+# MANUAL DISPATCH ONLY. There is deliberately NO `push` and NO `pull_request` trigger:
+# this workflow exercises the off-host R2 backup and restore path, and per the Gate A
+# authorization it must not run until the owner approves it. Adding a `push` or
+# `pull_request` trigger here would execute it on every commit.
+#
+# Nothing in this workflow touches production, the production SSH host, the real R2
+# bucket, or any real credential. It stands up a disposable MinIO service container as
+# an S3-compatible endpoint, generates a throwaway age key, and moves a synthetic image
+# through the real `sigap-archive-restore.sh` code path.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_manual_run:
+        description: 'Type RUN to confirm you intend to execute the R2 round-trip'
+        required: true
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  r2-round-trip:
+    name: R2 off-host round trip (disposable MinIO + throwaway age key)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # A disposable endpoint. `minioadmin` is the well-known default for a throwaway
+      # container and is NOT a secret; no real R2 credential appears anywhere in this file.
+      R2_ENDPOINT: http://127.0.0.1:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_DEFAULT_REGION: auto
+      R2_BUCKET: sigap-backup-test
+      STAMP: '20260101T000000Z'
+    steps:
+      - name: Guard — manual confirmation
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.confirm_manual_run }}" != "RUN" ]; then
+            echo "Refusing to run: dispatch this workflow with confirm_manual_run=RUN."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Install age
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+          age --version
+
+      - name: Start disposable MinIO
+        run: |
+          set -euo pipefail
+          docker run -d --name sigap-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
+              echo "minio ready after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "FAIL: minio did not become ready"; docker logs sigap-minio; exit 1
+
+      - name: Create the disposable bucket
+        run: |
+          set -euo pipefail
+          aws s3api create-bucket --bucket "$R2_BUCKET" --endpoint-url "$R2_ENDPOINT"
+          aws s3api head-bucket --bucket "$R2_BUCKET" --endpoint-url "$R2_ENDPOINT"
+
+      - name: Generate a throwaway age key pair
+        run: |
+          set -euo pipefail
+          # A DISPOSABLE key. It is generated here, used here, and destroyed with the
+          # runner. It is never a production key and never leaves this job.
+          umask 077
+          age-keygen -o "$RUNNER_TEMP/throwaway.key" 2>"$RUNNER_TEMP/keygen.err"
+          RECIP=$(age-keygen -y "$RUNNER_TEMP/throwaway.key")
+          echo "::add-mask::$RECIP"
+          echo "RECIP=$RECIP" >> "$GITHUB_ENV"
+          # Prove correspondence WITHOUT printing the private key: `age-keygen -y` emits
+          # public material only. This is the same check runbook §13h.3 specifies.
+          test -n "$RECIP"
+
+      - name: Build a synthetic dummy image
+        run: |
+          set -euo pipefail
+          # Synthetic content only. No production image, no production data, no secret.
+          mkdir -p "$RUNNER_TEMP/ctx"
+          printf 'FROM scratch\nCOPY marker.txt /marker.txt\n' > "$RUNNER_TEMP/ctx/Dockerfile"
+          printf 'sigap-r2-drill\n' > "$RUNNER_TEMP/ctx/marker.txt"
+          docker build -q -t sigap-r2-drill:local "$RUNNER_TEMP/ctx"
+          API_ID=$(docker inspect --format '{{.Id}}' sigap-r2-drill:local)
+          echo "dummy image id: $API_ID"
+          echo "API_ID=$API_ID" >> "$GITHUB_ENV"
+          echo "API_SHORT=${API_ID#sha256:}" >> "$GITHUB_ENV"
+
+      - name: Preserve — save, compress, encrypt off-host, upload, read back
+        run: |
+          set -euo pipefail
+          ART="sigap-pre-redesign-$STAMP.tar.gz.age"
+          KEY="$RUNNER_TEMP/throwaway.key"
+          ST=$(mktemp -d)
+
+          # Per-stage status. A plain POSIX pipeline reports ONLY the last command's
+          # status, so `docker image save <bad-id> | gzip -1` exits 0 and leaves a
+          # 20-byte artifact that PASSES `gzip -t` — gzip of empty input is valid gzip.
+          # PIPESTATUS is read ONCE as an array; reading it twice resets it.
+          set +e
+          set -o pipefail
+          docker image save "$API_ID" | gzip -1 | age -r "$RECIP" > "$ST/$ART"
+          ps=("${PIPESTATUS[@]}")
+          set +o pipefail
+          set -e
+          r_save=${ps[0]:-1}; r_gzip=${ps[1]:-1}; r_age=${ps[2]:-1}
+          echo "stream stages: save=$r_save gzip=$r_gzip age=$r_age"
+          [ "$r_save" -eq 0 ] || { echo "FAIL: docker image save failed"; exit 1; }
+          [ "$r_gzip" -eq 0 ] || { echo "FAIL: gzip failed"; exit 1; }
+          [ "$r_age"  -eq 0 ] || { echo "FAIL: age encrypt failed"; exit 1; }
+
+          # The artifact is age CIPHERTEXT, so `gzip -t` on it would exit 1 and abort a
+          # SUCCESSFUL run. Assert the age header magic instead.
+          head -c 30 "$ST/$ART" | grep -q 'age-encryption.org/v1' \
+            || { echo "FAIL: artifact is not an age file"; exit 1; }
+          [ -s "$ST/$ART" ] || { echo "FAIL: artifact is empty"; exit 1; }
+
+          DIGEST=$(sha256sum "$ST/$ART" | cut -d' ' -f1)
+          echo "digest: $DIGEST"
+          echo "DIGEST=$DIGEST" >> "$GITHUB_ENV"
+
+          aws s3api put-object --bucket "$R2_BUCKET" --key "sigap/$ART" \
+            --body "$ST/$ART" --endpoint-url "$R2_ENDPOINT" >/dev/null
+
+          # READ-BACK. A zero exit from the upload is not proof the object is correct:
+          # verify the recorded length AND that a download reproduces the digest.
+          REMOTE_LEN=$(aws s3api head-object --bucket "$R2_BUCKET" --key "sigap/$ART" \
+            --endpoint-url "$R2_ENDPOINT" --query ContentLength --output text)
+          LOCAL_LEN=$(wc -c < "$ST/$ART" | tr -d ' ')
+          [ "$REMOTE_LEN" = "$LOCAL_LEN" ] \
+            || { echo "FAIL: read-back length mismatch (r2=$REMOTE_LEN local=$LOCAL_LEN)"; exit 1; }
+          READBACK=$(aws s3 cp "s3://$R2_BUCKET/sigap/$ART" - \
+            --endpoint-url "$R2_ENDPOINT" | sha256sum | cut -d' ' -f1)
+          [ "$READBACK" = "$DIGEST" ] \
+            || { echo "FAIL: read-back digest mismatch — the object is NOT the artifact"; exit 1; }
+          echo "ok: uploaded and read back byte-identical ($LOCAL_LEN bytes)"
+
+      - name: Restore — retrieve from R2 through the real helper
+        run: |
+          set -euo pipefail
+          ART="sigap-pre-redesign-$STAMP.tar.gz.age"
+          # A second, isolated Docker daemon for the restore target. The helper proves
+          # isolation by ENGINE IDENTITY, so the target must be a real distinct engine.
+          docker run -d --name sigap-restore-dind --privileged \
+            -e DOCKER_TLS_CERTDIR= \
+            -p 2375:2375 docker:dind >/dev/null
+          for i in $(seq 1 60); do
+            if docker -H tcp://127.0.0.1:2375 info >/dev/null 2>&1; then
+              echo "isolated daemon ready after ${i}s"; break
+            fi
+            sleep 1
+          done
+          ISOLATED_ID=$(docker -H tcp://127.0.0.1:2375 info --format '{{.ID}}')
+          [ -n "$ISOLATED_ID" ] || { echo "FAIL: no engine id from the isolated daemon"; exit 1; }
+          # Each `run` step is a separate shell, so the engine id must be persisted for
+          # the negative-control steps below. A bare shell variable would be empty there
+          # and the helper would refuse with rc=10, making those controls pass for the
+          # wrong reason.
+          echo "ISOLATED_ID=$ISOLATED_ID" >> "$GITHUB_ENV"
+
+          ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
+          R2_ENDPOINT="$R2_ENDPOINT" \
+          ARCHIVE_KEY="$RUNNER_TEMP/throwaway.key" \
+          STAMP="$STAMP" \
+          EXPECT_DIGEST="$DIGEST" \
+          ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
+          ALLOWED_ENGINE_ID="$ISOLATED_ID" \
+          EXPECT_IDS="$API_ID" \
+            bash scripts/ops/sigap-archive-restore.sh
+
+          # Independent confirmation on the isolated daemon, scoped to the one ID this
+          # job produced. A daemon-wide listing would prove nothing about the artifact.
+          docker -H tcp://127.0.0.1:2375 image inspect "$API_ID" >/dev/null \
+            || { echo "FAIL: the restored image is absent on the isolated daemon"; exit 1; }
+          echo "ok: restored image ID matches the preserved ID on the isolated daemon"
+
+      - name: Negative control — a truncated object must be refused
+        run: |
+          set -euo pipefail
+          ART="sigap-pre-redesign-$STAMP.tar.gz.age"
+          # The refusal is only meaningful if a CORRECT object is accepted, which the
+          # previous step proved. Here a substituted object must fail the digest gate.
+          printf 'not-the-artifact' > "$RUNNER_TEMP/wrong.bin"
+          aws s3api put-object --bucket "$R2_BUCKET" --key "sigap/$ART" \
+            --body "$RUNNER_TEMP/wrong.bin" --endpoint-url "$R2_ENDPOINT" >/dev/null
+          set +e
+          ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
+          R2_ENDPOINT="$R2_ENDPOINT" \
+          ARCHIVE_KEY="$RUNNER_TEMP/throwaway.key" \
+          STAMP="$STAMP" \
+          EXPECT_DIGEST="$DIGEST" \
+          ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
+          ALLOWED_ENGINE_ID="$ISOLATED_ID" \
+          EXPECT_IDS="$API_ID" \
+            bash scripts/ops/sigap-archive-restore.sh >/dev/null 2>&1
+          rc=$?
+          set -e
+          [ "$rc" -eq 12 ] || { echo "FAIL: substituted object returned $rc, expected 12 (digest mismatch)"; exit 1; }
+          echo "ok: substituted object refused with rc=12"
+
+      - name: Negative control — a URI naming another release must be refused
+        run: |
+          set -euo pipefail
+          set +e
+          ARCHIVE_URI="r2://$R2_BUCKET/sigap/sigap-pre-redesign-19990101T000000Z.tar.gz.age" \
+          R2_ENDPOINT="$R2_ENDPOINT" \
+          ARCHIVE_KEY="$RUNNER_TEMP/throwaway.key" \
+          STAMP="$STAMP" \
+          EXPECT_DIGEST="$DIGEST" \
+          ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
+          ALLOWED_ENGINE_ID="$ISOLATED_ID" \
+          EXPECT_IDS="$API_ID" \
+            bash scripts/ops/sigap-archive-restore.sh >/dev/null 2>&1
+          rc=$?
+          set -e
+          [ "$rc" -eq 10 ] || { echo "FAIL: wrong-release URI returned $rc, expected 10"; exit 1; }
+          echo "ok: wrong-release URI refused with rc=10"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f sigap-minio sigap-restore-dind 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/throwaway.key" 2>/dev/null || true
+          echo "disposable endpoint, daemon and throwaway key destroyed with the runner"
