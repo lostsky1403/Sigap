@@ -94,6 +94,30 @@ trap cleanup EXIT INT TERM
 "$INITDB" -D "$CL" -U postgres --auth=trust -E UTF8 >"$TMP/initdb.log" 2>&1 \
   || { echo "FAIL: initdb failed"; tail -5 "$TMP/initdb.log"; exit 1; }
 
+# Where the postmaster puts its unix socket. Set EXPLICITLY on Unix, and NOT SET
+# AT ALL on Windows — both halves are load-bearing.
+#
+# Unix: the compiled-in default is `/var/run/postgresql`, which on a GitHub-hosted
+# runner is owned by postgres:postgres and is NOT writable by the runner user, so
+# the cluster dies with
+#   FATAL: could not create lock file "/var/run/postgresql/.s.PGSQL.55451.lock": Permission denied
+# on every port attempt. [OBSERVED] CI run 38343476112. This suite connects only over
+# TCP (`-h 127.0.0.1`), so it has no use for a shared socket directory: it keeps its
+# socket inside its own disposable temp dir, which also makes the suite hermetic
+# rather than dependent on host permissions.
+#
+# Windows: there are no unix sockets, and the GUC is not ignored — the postmaster
+# tries to USE the value as a filesystem path. `mktemp -d` under MSYS returns a POSIX
+# path (`/tmp/tmp.XXXX`), which Windows PostgreSQL cannot resolve, so the cluster died
+# with
+#   FATAL: ... could not create lock file "/tmp/tmp.XXXX/.s.PGSQL.55451.lock": No such file or directory
+# [OBSERVED] locally, PostgreSQL 18.4 on x86_64-windows. Setting nothing lets Windows
+# use its own default, which works.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT|windows*) SOCK_OPT="" ;;
+  *) SOCK_OPT="-c unix_socket_directories=$TMP" ;;
+esac
+
 # A cluster left running by a SIGKILLed earlier invocation (the trap does not
 # fire on SIGKILL) holds the default port and would make pg_ctl fail here,
 # reporting a spurious FAIL for the whole suite. Probe successive ports unless
@@ -111,7 +135,8 @@ start_cluster() {
   attempts=0
   base_port=$PORT
   while [ "$attempts" -lt 8 ]; do
-    if "$PGCTL" -D "$CL" -o "-p $PORT -c listen_addresses=127.0.0.1" \
+    if "$PGCTL" -D "$CL" \
+         -o "-p $PORT -c listen_addresses=127.0.0.1 $SOCK_OPT" \
          -l "$TMP/pg.$attempts.log" -w start >"$TMP/start.$attempts.log" 2>&1; then
       return 0
     fi
