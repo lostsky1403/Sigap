@@ -250,6 +250,22 @@ so it goes:
    file present. A finding here means the constant was NOT actually replaced and the allowlist was
    masking a live string.
 
+**Pre-verified 2026-10-13, before the merge, so the cleanup is a mechanical step rather than a
+gamble.** Simulated the post-squash state in a scratch clone — the PR's final tree applied as ONE
+commit on the base — and confirmed all four facts with gitleaks **8.24.3**, the exact CI version:
+
+| Check | Result |
+|---|---|
+| `9e0d61a` reachable in the simulated post-squash history | **NO** — the `commits` criterion can never match again |
+| The old constant (`43fcbcb3…`) still in the tree | **0 occurrences**; the tree carries the `aaaa…` placeholder |
+| Range scan **without** `.gitleaks.toml` | **no leaks found**, exit 0 |
+| Default rules still fire **without** the config (planted `ghp_…` token) | **caught** — `RuleID: github-pat`, entropy 4.14, exit 1 |
+
+The last row is the one that matters for "without reducing the default detection rules": deleting
+the file does not blind the scanner, it removes a single narrow exception. `9e0d61a` is
+**branch-local** — it is not an ancestor of `design/ui-ux-overhaul` — which is why the file is
+still required *until* the squash lands, and why it must not be removed before then.
+
 Do not "fix" this by widening the allowlist or by lowering the `generic-api-key` entropy
 threshold — either would suppress real secrets across the whole repository.
 
