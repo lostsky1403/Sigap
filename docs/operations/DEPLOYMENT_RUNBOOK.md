@@ -762,7 +762,78 @@ docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml -f docker-
 ```
 </details>
 
-### 7f. Rollback compatibility with the strengthened constraints (BLOCKING — UNKNOWN)
+### 7f. Rollback compatibility with the strengthened constraints (RESOLVED — CONDITIONALLY SAFE)
+
+**Status changed 2026-10-14.** This was `UNKNOWN`; it is now **`CONDITIONALLY SAFE`**, decided
+by observation rather than argument. `J11_ROLLBACK_SAFETY` moves from `UNKNOWN` to
+`CONDITIONALLY_SAFE — a read-only pre-flight is REQUIRED before applying 0011`.
+
+**What was proven, with the real binary against the real post-0011 schema.** An isolated
+disposable PostgreSQL 18.4 (`initdb`/`pg_ctl`, own data dir, non-default port) was migrated
+`0001`–`0011` **through the real migrator**, reproducing exactly the state a rollback would
+meet. The older API was rebuilt from git — both candidate families, because the running
+revision is unproven — and driven over real HTTP:
+
+| path | HTTP | DB result |
+|---|---|---|
+| booking | 200 | row inserted |
+| check-in, `short_code=RSK` | 200 | row inserted |
+| check-in, `short_code=A1234567-89` | 200 | **insert REFUSED, row absent** |
+
+Identical for both candidate revisions. The refusal is real and reproducible:
+
+```
+ERROR: ... violates check constraint notification_outbox_no_raw_phone_in_body_chk (SQLSTATE 23514)
+```
+
+and it is **swallowed by the fire-and-forget enqueue goroutine in `booking.go`**, logged only
+as a `WARN`, so the notification is **lost silently**. An A/B on the same body isolates `0011`
+as the cause: pre-0011 it inserts (`INSERT 0 1`), post-0011 it is refused.
+
+**The exact divergence.** The old Go predicate was `[0-9]{8,}` — byte-identical to SQL
+conjunct 1 and **missing conjunct 2 entirely**, so it was strictly more permissive than the
+strengthened constraint. The release's predicate
+(`apps/api/internal/notification/masking.go:192`, `[0-9]{8,}|[0-9][0-9\-._() ]{10,}[0-9]`)
+is now byte-identical to both conjuncts, so Go and the database agree in this release — on the
+35-value corpus the release produced **0** database rejections, where the old revisions
+produced 13 (weak) and 5 (misaligned).
+
+**THIS IS NOT A ROLLBACK-ONLY PROBLEM — it is a forward risk too.** The old release could
+create a facility whose `short_code` renders a separator-run queue number, because
+`facilities.short_code` has no format CHECK and the old `validateCreateFacility`/
+`validateUpdateFacility` checked only non-emptiness. The **new** release closes the door for
+*new* facilities (`validateShortCode`, `apps/api/internal/handler/admin.go:617`, applied on
+create **and** update, testing the rendered value against `ContainsRawPhoneDigits`), but it
+does **not retroactively validate facilities created by the old release**. A pre-existing
+unsafe `short_code` therefore breaks check-in notifications on the **new** release as well.
+
+**The detector — `scripts/ops/preflight-0011-rollback-safety.sql`.** Read-only by construction:
+`BEGIN; SET TRANSACTION READ ONLY; SET LOCAL statement_timeout='60s';`, SELECT-only, and it
+returns **counts and primary keys only — never subject or body text**, so it cannot surface
+message content or a phone number in a log. It answers the two questions the schema cannot:
+will `0011` apply, and is a rollback safe. `scripts/ops/test-preflight-0011-rollback-safety.sh`
+proves the detector is not vacuous (6 scenarios; with the separator conjunct replaced by a
+never-matching pattern the suite drops to 4 pass / 2 fail, i.e. it flags exactly the databases
+that must be flagged).
+
+**Run it before applying `0011`, and before relying on a rollback.** Interpretation:
+
+| Result | Meaning | Action |
+|---|---|---|
+| `violating_outbox_rows > 0` | `0011` **will fail closed** — `ADD CONSTRAINT` validates existing rows and does not rewrite them | remediate those rows, or accept a no-apply; **never** weaken the constraint |
+| `unsafe_facilities > 0` | those facilities' check-in notifications are **already** refused on the new release and lost silently | correct the `short_code` (a data decision) or accept and record the refusal |
+| `PREFLIGHT_OK` | no existing row blocks `0011`, and no facility renders an unsafe queue number | proceed under the normal authorization gate |
+
+**Why the pre-flight is still required rather than the verdict being an unconditional `SAFE`.**
+Production's seeded `short_code`s are all letter-only (`RSK`, `PKM`, `DEMO`, `RSM`, `PMI`,
+`RSJ`, `PHB`), so the reachable set is currently clean — but that is a fact about *data*, not
+about the code, and it can change without a code change. The pre-flight converts an assumption
+into an observation. `MIGRATION_0011_AUTHORIZATION` remains **`NOT_AUTHORIZED`**; passing the
+pre-flight is **not** authorization.
+
+---
+
+**The original analysis, retained because its reasoning still governs the disposition.**
 
 **The problem.** `0011` (§12b) strengthens two database CHECK constraints. An application
 rollback restores a *previously running image* (§7c) — and **that image's source revision is
@@ -777,25 +848,29 @@ consecutive run (e.g. `0812-3456-789`). If the old API ever writes such a value 
 database**, and rolling the API back does not restore them: the constraint is in the database,
 not in the image.
 
-**Assessment: `ROLLBACK_SAFETY = UNKNOWN`.** It cannot be established from the repository,
-because the running production image has no proven source revision. Two things would settle
-it, and neither is available now:
+**Assessment: `ROLLBACK_SAFETY = CONDITIONALLY SAFE`** (was `UNKNOWN`; resolved 2026-10-14 by
+the observation recorded above). It cannot be established from the repository alone — the
+running production image has no proven source revision — which is why both candidate families
+were rebuilt and tested against a real post-0011 database rather than argued about. The
+residual condition is data, not code: an existing facility whose `short_code` renders a
+separator-run queue number. `scripts/ops/preflight-0011-rollback-safety.sql` detects exactly
+that, and is the required precondition for applying `0011`.
 
-1. the running image's actual source revision, or
-2. a static reading of that revision's outbox write path against the strengthened predicate.
-
-**A claim that this is `SAFE` was made and is WRONG — do not reinstate it.** The argument was
-that the application denylist and the database constraint were "the same predicate", so any
-image would write only values the constraint accepts. **That premise was false `[OBSERVED]`:**
-the Go denylist carried a second alternative,
+**A claim that this was `SAFE` was made and is WRONG — do not reinstate it unconditionally.**
+The argument was that the application denylist and the database constraint were "the same
+predicate", so any image would write only values the constraint accepts. **That premise was
+false `[OBSERVED]`:** the Go denylist carried a second alternative,
 `[0-9]{3,4}[-._() ][0-9]{3,4}[-._() ][0-9]{2,4}`, which the CHECK constraint does not have. Go
 was therefore **more permissive** than the database at that revision, and an image built from
-it could write a body the strengthened constraint rejects. The two predicates agree again in
-this release — Go was aligned to the immutable database predicate — but that repair says
-nothing about the *old* image, whose revision is still unproven. `UNKNOWN` stands.
+it could write a body the strengthened constraint rejects — which is now demonstrated with the
+real binary rather than inferred. The two predicates agree again in this release — Go was
+aligned to the immutable database predicate — but that repair says nothing about the *old*
+image. The verdict is `CONDITIONALLY SAFE`, not `SAFE`, for that reason.
 
-**Consequence: production migration authorization is BLOCKED on this.** Do not apply `0011`
-to production until rollback safety is established or explicitly accepted.
+**Consequence: production migration authorization remains BLOCKED, now on a specific
+precondition rather than on an unknown.** Do not apply `0011` to production until the
+read-only pre-flight has been run and its result dispositioned. `MIGRATION_0011_AUTHORIZATION`
+is still `NOT_AUTHORIZED`.
 
 **Never** treat "drop the strengthened constraint again" as the rollback strategy. Reversing a
 security constraint to make a rollback work converts a deployment problem into a permanent
@@ -1942,6 +2017,25 @@ prevent.
 ---
 
 ### 13f. Off-host image preservation (PLAN ONLY — not executed)
+
+> **IMPLEMENTED ALTERNATIVE — SOURCE-SIDE ENCRYPTION (awaiting owner approval).**
+> `scripts/ops/sigap-preserve-images.sh` implements the whole preservation as a single
+> source-side pipeline — `docker image save <id> | gzip | age -r <PUBLIC_RECIPIENT>` →
+> ciphertext → R2 — and **removes the relay from the trust path entirely**. It is tested
+> (`scripts/ops/test-sigap-preserve-images.sh`, 46/46, real Docker daemon + real `age`
+> against a local MinIO stub) but has **never run against production or real R2**, so
+> `PRODUCTION_IMAGES_PRESERVED` remains **`NO`**.
+>
+> **This changes the custody table below, so it requires explicit approval before adoption.**
+> Under source-side encryption, production holds the **public recipient** (not secret — it
+> cannot decrypt) and an R2 **write** credential, and there is no relay host at all. That is a
+> real widening of production's blast radius: the previous design deliberately kept *both* the
+> recipient and the R2 credentials off production. The mitigation is that Bucket Lock bounds
+> what a write credential can destroy, and the private key still never leaves the recovery
+> side — but the trade-off is the owner's to make, not the agent's.
+>
+> Read §13f as the **current** procedure until that decision is recorded. The relay prerequisite
+> (`F23`) is not retired by the existence of this script.
 
 **Purpose.** Produce an **immutable, identity-verified** copy of the three running application
 images so that (a) a `build` can retag `:latest` without destroying the only copy of the
@@ -3096,6 +3190,68 @@ The rule's **enabled** state is not settable through `lock add` — it is a fiel
 object, settable via `lock set <BUCKET> --file <JSON>` or the REST API, and it is visible in
 `lock list`. A rule that exists but is disabled enforces nothing, which is why §13g.14 Part 2
 asserts `ENABLED` explicitly rather than assuming it from the rule's presence.
+
+---
+
+### 13i. Independent second copy of the archive (mechanism)
+
+`A4` in §13g.4 asks the owner to **decide** the second-copy question, and `F15b` records the
+decision. This section specifies the **mechanism**, which was previously left to the reader.
+
+**Why it exists.** The R2 archive is one copy in one account. Bucket Lock bounds *accidental*
+deletion and is a deterrent against premature deletion, but it is **administratively removable**
+by anyone holding `Admin Read & Write` (§13g.1, §13g.15), and a compromised Cloudflare account
+defeats it. A second copy therefore has to be independent of **the account**, not merely of the
+bucket.
+
+**Recommended approach (owner must approve before adoption).** An **offline encrypted copy**,
+physically separate from production and from the primary recovery-key copy:
+
+| Property | Requirement | Why |
+|---|---|---|
+| Media | Removable/offline, or a second provider in a **different** account | A second bucket in the same account fails the independence test above |
+| Location | Different physical site from production **and** from recovery copy C1 | One event must not be able to destroy both |
+| Content | The **same ciphertext** that is in R2 | It is already encrypted to the recipient; re-encrypting adds a second key to lose |
+| Verification | The §13h.5 drill run **against this copy**, not only against C1/C2 | A copy that has never been read is an assumption |
+| Record | Its location and the archive digest recorded out of band (§13h.6) | A future restore must know which copy and which key |
+
+**The second copy is a copy of the ARCHIVE, not of the key.** These are two separate custody
+problems and both are required: C1/C2 (§13h.2) protect the **identity**, and this copy protects
+the **artifact**. Losing either one alone is recoverable; losing both is not.
+
+**Procedure (owner-only, offline, no production contact).**
+
+```bash
+# 1. Fetch the ciphertext that is actually in R2, using the READ-ONLY recovery credential
+#    (A6). Do not use the uploader token for this: reading is a recovery action.
+aws s3api get-object --bucket sigap-backups \
+  --key "sigap/sigap-pre-redesign-$STAMP.tar.gz.age" \
+  --endpoint-url "$R2_ENDPOINT" "$WORK/archive.age"
+
+# 2. Verify it is the artifact that was recorded, BEFORE it is trusted as a second copy.
+sha256sum "$WORK/archive.age"          # must equal the out-of-band EXPECT_DIGEST
+age -d -i "$C1_IDENTITY" "$WORK/archive.age" | gzip -t \
+  || { echo "FAIL: the fetched ciphertext does not decrypt — do not copy it"; exit 1; }
+
+# 3. Write it to the offline medium, then read it BACK from that medium and verify again.
+#    A copy that was written but never read back is not a copy.
+sha256sum "$OFFLINE_MEDIA/archive.age" # must equal step 2's digest
+age -d -i "$C2_IDENTITY" "$OFFLINE_MEDIA/archive.age" | gzip -t \
+  || { echo "FAIL: the offline copy does not decrypt"; exit 1; }
+
+# 4. Record out of band: copy location, digest, recipient, date. Never the identity.
+```
+
+**What this procedure must NOT do.** It must not decrypt to plaintext on disk — `age -d | gzip -t`
+consumes the stream and writes nothing. It must not copy the private identity to the offline
+medium (that is C2's job, and C2 has its own custody rules). It must not use the uploader token,
+which can write and delete. And it must not be performed with the archive decrypted on the
+production host.
+
+**Status: PROPOSED.** The recommendation above is presented for owner approval and is **not
+adopted**. `F15b` remains `OPERATOR` until the owner either records this approach as chosen, or
+records an explicit accepted risk. Choosing "accepted risk" is a legitimate outcome — it is
+recorded as a decision, not left blank.
 
 ---
 
