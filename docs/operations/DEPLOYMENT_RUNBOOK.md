@@ -2922,8 +2922,35 @@ npx wrangler r2 bucket lock list sigap-backups
 ```
 
 Record the four values in `RELEASE_CHECKLIST.md` and on the Jira gate, alongside the
-disposable-drill result. `BUCKET_LOCK_RULE_VERIFIED` is **PENDING** until Part 2 has been run
-against the real bucket; Part 1 passing does not satisfy it.
+disposable-drill result. `BUCKET_LOCK_BEHAVIOR_PROVEN` stays **PENDING** until Part 2 has
+been run against the real bucket; Part 1 passing does not satisfy it.
+
+**SNAPSHOT BEFORE, COMPARE AFTER — Part 2 is a BEFORE/AFTER pair, not a single read.** The
+production rule's configuration was already verified once (checklist **F14 evidence**, from
+the owner's own inspection). That establishes the *intended* state, so the drill can now prove
+it did not disturb it. Take the snapshot before the drill and compare it byte-for-byte after:
+
+```bash
+# BEFORE the drill — capture the production rule exactly as it stands.
+npx wrangler r2 bucket lock list sigap-backups > lock-before.txt
+cat lock-before.txt          # must show ONLY sigap-retention-90d, no drill rule
+
+# ... run Part 1 (the disposable-prefix drill) ...
+
+# AFTER the drill — the production rule must be byte-identical, and no drill rule may remain.
+npx wrangler r2 bucket lock list sigap-backups > lock-after.txt
+diff lock-before.txt lock-after.txt \
+  && echo "ok: production rule unchanged by the drill" \
+  || { echo "FAIL: the drill changed the lock configuration"; exit 1; }
+grep -qi 'lock-drill' lock-after.txt \
+  && { echo "FAIL: a drill rule survived"; exit 1; } \
+  || echo "ok: no drill rule remains"
+```
+
+Three distinct outcomes, recorded separately: (a) the rule's **configuration** is verified from
+the `lock list`; (b) the rule **enforces** retention, from Part 1's refusal; (c) the drill left
+the production rule **untouched**, from this diff. A green (a) says nothing about (b), and (b)
+says nothing about (c).
 
 **Never attempt this against a real backup object.** The attempt is itself the destructive
 action the rule exists to prevent, and — per the confirmed semantics above — a bucket cannot be
