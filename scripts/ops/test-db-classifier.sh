@@ -98,20 +98,40 @@ trap cleanup EXIT INT TERM
 # fire on SIGKILL) holds the default port and would make pg_ctl fail here,
 # reporting a spurious FAIL for the whole suite. Probe successive ports unless
 # one was requested explicitly.
+#
+# Each attempt records its OWN log. `pg_ctl -l` APPENDS to the same file, so
+# reusing one path across eight attempts interleaves eight postmasters' output
+# and the diagnostic is unreadable. Worse, the failure branch below tailed only
+# `start.log`, which contains `pg_ctl`'s own two lines ("waiting for server to
+# start.... stopped waiting", "pg_ctl: could not start server") and NEVER the
+# postmaster's FATAL — so a hard environment failure (no /dev/shm, a read-only
+# data dir, a restrictive seccomp profile) surfaced as "cluster start failed"
+# with no cause. The reason is in `pg.log`; print it.
 start_cluster() {
   attempts=0
   while [ "$attempts" -lt 8 ]; do
     if "$PGCTL" -D "$CL" -o "-p $PORT -c listen_addresses=127.0.0.1" \
-         -l "$TMP/pg.log" -w start >"$TMP/start.log" 2>&1; then
+         -l "$TMP/pg.$attempts.log" -w start >"$TMP/start.$attempts.log" 2>&1; then
       return 0
     fi
     [ -n "$PORT_OVERRIDE" ] && break
     PORT=$((PORT + 1))
     attempts=$((attempts + 1))
   done
+  # Surface the postmaster's own reason, per attempt, before failing. A suite
+  # that reports only "could not start server" cannot be diagnosed from a CI log.
+  a=0
+  while [ "$a" -lt "$attempts" ]; do
+    [ -s "$TMP/pg.$a.log" ] && {
+      printf '  --- postmaster log, attempt %s (port %s) ---\n' "$((a + 1))" "$((PORT_OVERRIDE:-55451 + a))"
+      tail -15 "$TMP/pg.$a.log"
+    }
+    a=$((a + 1))
+  done
+  [ -s "$TMP/start.0.log" ] && { printf '  --- pg_ctl output, attempt 1 ---\n'; tail -5 "$TMP/start.0.log"; }
   return 1
 }
-start_cluster || { echo "FAIL: cluster start failed"; tail -5 "$TMP/start.log"; exit 1; }
+start_cluster || { echo "FAIL: cluster start failed"; exit 1; }
 
 px() { "$PSQL" -h 127.0.0.1 -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -q -P pager=off "$@"; }
 # Setup must fail LOUDLY: a silently-failed CREATE DATABASE would make the two
