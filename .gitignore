@@ -22,3 +22,9 @@ sigap-restore-plain-*.tar.gz
 sigap-restore-plain-*.tar.gz.age
 sigap-pre-redesign-*.tar.gz.age
 sigap-pre-redesign-*.tar.gz
+
+# Bucket Lock drill evidence (scripts/ops/Drill-BucketLockRetention.ps1). The
+# output is recorded out-of-band on the Jira gate; it must not land in a commit,
+# and it must never contain a credential — which is why the script writes only
+# command output, never its own environment.
+lock-drill-evidence/
