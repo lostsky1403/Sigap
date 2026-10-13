@@ -40,6 +40,8 @@
       0  drill PASSED (all three verdicts PASS)
       1  drill FAILED (an assertion did not hold)
       2  refused before mutating (preflight or guard)
+      3  INTERNAL ERROR in the drill itself -- not a bucket result, and no
+         conclusion about retention may be drawn from it
 #>
 
 [CmdletBinding()]
@@ -59,6 +61,7 @@ if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction Sile
 $EXIT_PASS     = 0
 $EXIT_FAIL     = 1
 $EXIT_REFUSED  = 2
+$EXIT_INTERNAL = 3
 
 # The disposable namespace. Both are asserted below and must never be production values.
 $DRILL_PREFIX   = 'lock-drill'
@@ -127,7 +130,7 @@ function Invoke-Guarded {
         [Parameter(Mandatory)][string]$Purpose
     )
     foreach ($a in $Arguments) {
-        if ($a -eq $PROD_RULE) {
+        if ($a -ceq $PROD_RULE) {
             Refuse "a mutating command ($Purpose) names the production rule '$PROD_RULE'"
         }
         if ($a -like "$PROD_PREFIX*") {
@@ -144,6 +147,146 @@ function Invoke-Guarded {
     return $r
 }
 
+# --- lock-list parsing: one rule record at a time ----------------------------------------
+# Wrangler prints each rule as a block of `key: value` lines, delimited by its `name:` line.
+# The earlier preflight matched NAME, PREFIX and RETENTION independently against the WHOLE
+# output, which cannot tell which rule a value came from: a second rule could supply the
+# retention while the production rule supplied only its name. These functions parse the
+# output into records first, so every attribute is read from the same rule.
+function Get-LockRuleRecords {
+    param([string]$Text)
+    $records = New-Object System.Collections.ArrayList
+    $cur = $null
+    foreach ($line in ($Text -split "`r?`n")) {
+        # A `key: value` line only. Anything else (headers, blank lines) is not a field, so
+        # a stray colon in a human-readable line cannot invent a record.
+        $m = [regex]::Match($line, '^\s*([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$')
+        if (-not $m.Success) { continue }
+        $key = $m.Groups[1].Value.ToLowerInvariant()
+        $val = $m.Groups[2].Value.Trim()
+        if ($key -eq 'name') {
+            $cur = @{}
+            [void]$records.Add($cur)
+        }
+        if ($null -eq $cur) { continue }   # a field before any `name:` belongs to no rule
+        if ($cur.ContainsKey($key)) { $cur[$key] = @($cur[$key]) + @($val) }
+        else                        { $cur[$key] = @($val) }
+    }
+    # Returned without the `,` prefix: PowerShell enumerates the ArrayList into the
+    # pipeline, and the caller's @() normalises it to an array. Using `return ,$records`
+    # here AND @() at the call site double-wraps, so the loop variable becomes the
+    # ArrayList itself and `$rec['name']` tries to index it by string.
+    return $records
+}
+
+# Reads exactly one value for a key, or refuses. A field that appears twice with different
+# values is contradictory and must not be resolved by taking the first one.
+function Get-SingleRuleField {
+    param($Record, [string]$Key, [string]$RuleName)
+    if (-not $Record.ContainsKey($Key)) { return $null }
+    $vals = @($Record[$Key])
+    if ($vals.Count -gt 1) {
+        $distinct = @($vals | Select-Object -Unique)
+        if ($distinct.Count -gt 1) {
+            Refuse "rule '$RuleName' has $($vals.Count) '$Key' fields with differing values ($($distinct -join ' / ')) -- contradictory record"
+        }
+    }
+    return $vals[0]
+}
+
+# Validates the production rule as ONE record: NAME, PREFIX, ENABLED and RETENTION all read
+# from the same rule, with no attribute able to be satisfied by a different one.
+function Assert-ProductionRule {
+    param([string]$Text)
+
+    $records = @(Get-LockRuleRecords -Text $Text)
+
+    # A record with no name cannot be attributed to any rule, so it is refused rather than
+    # silently ignored -- ignoring it could hide the production rule inside a malformed block.
+    foreach ($rec in $records) {
+        if ([string]::IsNullOrWhiteSpace(@($rec['name'])[0])) {
+            Refuse "a rule record in 'lock list' has an empty 'name' field -- malformed output, refusing rather than guessing which rule it is"
+        }
+    }
+
+    $prod = @($records | Where-Object {
+        $_['name'] -and (@($_['name'])[0] -ceq $PROD_RULE)
+    })
+
+    if ($prod.Count -eq 0) {
+        Refuse "the production rule '$PROD_RULE' is not present in 'lock list'. Re-verify the recorded inventory before drilling."
+    }
+    if ($prod.Count -gt 1) {
+        Refuse "found $($prod.Count) rules named '$PROD_RULE' in 'lock list' -- the inventory is ambiguous, so no single rule can be validated"
+    }
+    $r = $prod[0]
+
+    # NAME -- already exact-matched above, but a record whose name is empty is malformed.
+    $name = Get-SingleRuleField -Record $r -Key 'name' -RuleName $PROD_RULE
+    if ([string]::IsNullOrWhiteSpace($name)) {
+        Refuse "the production rule record has an empty 'name' field -- malformed record"
+    }
+
+    # PREFIX -- must be exactly the recorded scope.
+    $prefix = Get-SingleRuleField -Record $r -Key 'prefix' -RuleName $PROD_RULE
+    if ($null -eq $prefix) {
+        Refuse "the production rule '$PROD_RULE' has no 'prefix' field -- cannot confirm it is scoped to '$PROD_PREFIX'"
+    }
+    if ($prefix -ne $PROD_PREFIX) {
+        Refuse "the production rule's prefix is '$prefix', not the recorded '$PROD_PREFIX' -- the archive may be uncovered, or covered differently than recorded"
+    }
+
+    # ENABLED -- a rule that exists but is disabled enforces nothing. This is the defect the
+    # name/prefix/retention-only preflight could not catch.
+    $enabled = Get-SingleRuleField -Record $r -Key 'enabled' -RuleName $PROD_RULE
+    if ($null -eq $enabled) {
+        Refuse "the production rule '$PROD_RULE' has no 'enabled' field -- a rule whose enabled state is unknown cannot be treated as enforcing"
+    }
+    if ($enabled -notmatch '(?i)^(yes|true)$') {
+        Refuse "the production rule '$PROD_RULE' is NOT enabled (enabled: '$enabled') -- a disabled rule enforces nothing, so the drill would prove nothing about the archive"
+    }
+
+    # RETENTION -- a numeric comparison, not a shape match. Exactly one retention field.
+    $retKeys = @(@('condition','retention','retention-days') | Where-Object { $r.ContainsKey($_) })
+    if ($retKeys.Count -eq 0) {
+        Refuse "the production rule '$PROD_RULE' has no retention field ('condition'/'retention') -- cannot confirm >= $PROD_MIN_DAYS days"
+    }
+    if ($retKeys.Count -gt 1) {
+        Refuse "the production rule '$PROD_RULE' has multiple retention fields ($($retKeys -join ', ')) -- ambiguous record"
+    }
+    $retKey = $retKeys[0]
+    $cond = Get-SingleRuleField -Record $r -Key $retKey -RuleName $PROD_RULE
+    if ($cond -match '(?i)indefinite') {
+        Refuse "the production rule's retention is 'indefinite', which is not the recorded >= $PROD_MIN_DAYS-day duration -- reconcile the inventory before drilling"
+    }
+    # Accepted forms: `after N day(s)` and `N day(s)`. Anything else is refused rather than
+    # guessed at -- a date-bounded or unrecognised form would otherwise slip through.
+    #
+    # The match is captured explicitly rather than read from $Matches: $Matches is set by
+    # whatever regex ran last in scope, and the record parser matches on every line, so
+    # reading it here picked up the parser's capture ('name') instead of the duration.
+    $retMatch = [regex]::Match($cond, '(?i)^(?:after\s+)?(\d+)\s+days?$')
+    if (-not $retMatch.Success) {
+        Refuse "could not parse the production rule's retention '$cond' -- expected 'after N days' or 'N days', and an unrecognised form is refused rather than assumed"
+    }
+    $days = [int]$retMatch.Groups[1].Value
+    if ($days -lt $PROD_MIN_DAYS) {
+        Refuse "the production rule's retention is $days days, below the required $PROD_MIN_DAYS -- this is the failure the check exists to catch"
+    }
+
+    return [pscustomobject]@{ Days = $days; Prefix = $prefix; Enabled = $enabled; Condition = $cond }
+}
+
+# A rule named like the drill's must not already exist. Read from the parsed records so a
+# prefix that merely CONTAINS the name cannot be mistaken for a rule.
+function Test-DrillRulePresent {
+    param([string]$Text)
+    $records = @(Get-LockRuleRecords -Text $Text)
+    return @($records | Where-Object {
+        $_['name'] -and (@($_['name'])[0] -ceq $DRILL_RULE)
+    }).Count -gt 0
+}
+
 # =========================================================================================
 Say "================================================================" 'Cyan'
 Say " Sigap Bucket Lock retention drill  (runbook 13g.14 Part 1)" 'Cyan'
@@ -153,7 +296,7 @@ Say "================================================================" 'Cyan'
 # --- Guard 7: every key is confined to the disposable prefix -----------------------------
 if ($DRILL_PREFIX -ne 'lock-drill') { Refuse "drill prefix is '$DRILL_PREFIX', expected 'lock-drill'" }
 if ($DRILL_PREFIX -like 'sigap*')   { Refuse "drill prefix '$DRILL_PREFIX' must never be the archive prefix" }
-if ($DRILL_RULE   -eq $PROD_RULE)   { Refuse "drill rule name collides with the production rule" }
+if ($DRILL_RULE   -ceq $PROD_RULE)   { Refuse "drill rule name collides with the production rule" }
 if ($DRILL_RULE   -like 'sigap*')   { Refuse "drill rule name '$DRILL_RULE' must never be a sigap name" }
 
 # --- Guard 4: credentials must be supplied explicitly, under drill-specific names ---------
@@ -178,17 +321,31 @@ if ($BUCKET -ne 'sigap-backups') {
     Refuse "R2_DRILL_BUCKET is '$BUCKET'; the verified production bucket is 'sigap-backups'"
 }
 
-# --- Guard 6: the endpoint must genuinely be Cloudflare R2 -------------------------------
-$endpoint = $env:R2_DRILL_ENDPOINT
-if ($endpoint -notmatch '^https://[a-z0-9]+\.r2\.cloudflarestorage\.com/?$') {
-    Refuse "R2_DRILL_ENDPOINT is '$endpoint'; it must be https://<accountid>.r2.cloudflarestorage.com"
-}
-$endpoint = $endpoint.TrimEnd('/')
-if ($endpoint -notmatch [regex]::Escape($env:R2_DRILL_ACCOUNT_ID)) {
-    Refuse "the endpoint does not contain R2_DRILL_ACCOUNT_ID -- wrong account or wrong endpoint"
-}
-
+# --- Guard 6: the endpoint must be EXACTLY this account's Cloudflare R2 host -------------
+# A substring test accepts `<id>.evil.example`, `<id>.r2.cloudflarestorage.com.attacker.tld`
+# and a longer id that merely contains this one. The host must be the account id and nothing
+# else, so the comparison is on the parsed host with an exact, case-sensitive equality.
 $accountId = $env:R2_DRILL_ACCOUNT_ID
+# -cnotmatch, not -notmatch: PowerShell's -match is case-INSENSITIVE by default, so
+# `[0-9a-f]{32}` would accept an uppercase id and the strict host comparison below would
+# then reject it for the wrong reason. Cloudflare account ids are lowercase hex.
+if ($accountId -cnotmatch '^[0-9a-f]{32}$') {
+    Refuse "R2_DRILL_ACCOUNT_ID is not a 32-character lowercase hex Cloudflare account id (got '$accountId')"
+}
+$endpoint = $env:R2_DRILL_ENDPOINT.Trim()
+$epMatch = [regex]::Match($endpoint, '^https://([^/]+)/?$')
+if (-not $epMatch.Success) {
+    Refuse "R2_DRILL_ENDPOINT is '$endpoint'; it must be a bare https:// URL with no path, e.g. https://<accountid>.r2.cloudflarestorage.com"
+}
+# Captured from the explicit Match, not from $Matches: the automatic variable is set by
+# whichever regex ran last, so reading it here is fragile in exactly the way that already
+# produced one defect in this file.
+$endpointHost = $epMatch.Groups[1].Value
+$expectedHost = "$accountId.r2.cloudflarestorage.com"
+if ($endpointHost -cne $expectedHost) {
+    Refuse "R2_DRILL_ENDPOINT host is '$endpointHost'; it must be exactly '$expectedHost' for account $accountId -- an extra label, a different domain, or a longer id that merely contains the account id is refused"
+}
+$endpoint = "https://$expectedHost"
 
 # --- resolve the two binaries ------------------------------------------------------------
 function Resolve-Bin {
@@ -274,7 +431,7 @@ function Invoke-Cleanup {
 
     # Remove the drill rule if it is still present. Never the production rule.
     $list = (Invoke-Native -File $npx -Arguments @('wrangler','r2','bucket','lock','list',$BUCKET)).Output
-    if ($list -match [regex]::Escape($DRILL_RULE)) {
+    if (Test-DrillRulePresent -Text $list) {
         $rm = Invoke-Guarded -File $npx -Purpose "remove the drill rule" `
               -Arguments @('wrangler','r2','bucket','lock','remove',$BUCKET,'--name',$DRILL_RULE)
         if ($rm.ExitCode -ne 0) { Warn "drill-rule removal returned rc=$($rm.ExitCode)"; $ok = $false }
@@ -287,7 +444,7 @@ function Invoke-Cleanup {
 
     # Prove absence of both.
     $list2 = (Invoke-Native -File $npx -Arguments @('wrangler','r2','bucket','lock','list',$BUCKET)).Output
-    if ($list2 -match [regex]::Escape($DRILL_RULE)) {
+    if (Test-DrillRulePresent -Text $list2) {
         Fail "the drill rule survived cleanup"; $ok = $false
     } else { Ok "no drill rule remains" }
     Record -Name '07-lock-after-cleanup.txt' -Text $list2
@@ -298,7 +455,7 @@ function Invoke-Cleanup {
         Fail "could not list objects under $DRILL_PREFIX/ (rc=$($objs.ExitCode))"; $ok = $false
     } elseif ($count -eq '0') { Ok "no drill objects remain under $DRILL_PREFIX/" }
     else { Fail "$count drill object(s) remain under $DRILL_PREFIX/"; $ok = $false }
-    Record -Name '08-cleanup.txt' -Text "rule_remains=$($list2 -match [regex]::Escape($DRILL_RULE))`nobject_count=$count"
+    Record -Name '08-cleanup.txt' -Text "rule_remains=$(Test-DrillRulePresent -Text $list2)`nobject_count=$count"
 
     return $ok
 }
@@ -320,22 +477,16 @@ try {
     Record -Name '00-whoami.txt' -Text $who.Output
 
     # Guard 2: the production rule must match the established inventory, BEFORE anything.
+    # Validated as ONE record, so NAME, PREFIX, ENABLED and RETENTION all come from the same
+    # rule and none can be satisfied by a different one.
     $before = Invoke-LockList
     Record -Name '01-lock-before.txt' -Text $before
-    if ($before -notmatch [regex]::Escape($PROD_RULE)) {
-        Refuse "the production rule '$PROD_RULE' is not present in 'lock list'. Re-verify F14 before drilling."
-    }
-    if ($before -notmatch [regex]::Escape($PROD_PREFIX)) {
-        Refuse "the production rule's prefix '$PROD_PREFIX' was not seen in 'lock list'."
-    }
-    if ($before -notmatch '(?i)\b9[0-9]+\b\s*day|\b9[0-9]+\b.*retention|retention.*\b9[0-9]+\b') {
-        Refuse "could not confirm a >=$PROD_MIN_DAYS-day retention in 'lock list'. Inspect the output above; refusing rather than assuming."
-    }
-    Ok "production rule '$PROD_RULE' present, prefix '$PROD_PREFIX', >=$PROD_MIN_DAYS days"
+    $prod = Assert-ProductionRule -Text $before
+    Ok "production rule '$PROD_RULE' present: prefix '$($prod.Prefix)', enabled '$($prod.Enabled)', retention '$($prod.Condition)' (>= $PROD_MIN_DAYS days)"
     $verdicts['BUCKET_LOCK_CONFIG_VERIFIED'] = 'PASS'
 
     # Guard 3: no pre-existing drill rule or object may interfere.
-    if ($before -match [regex]::Escape($DRILL_RULE)) {
+    if (Test-DrillRulePresent -Text $before) {
         Refuse "a rule named '$DRILL_RULE' already exists. Remove it before re-running; the drill will not adopt an unknown rule."
     }
     $pre = Invoke-ListObjects
@@ -451,10 +602,24 @@ try {
     }
 }
 catch {
-    if ($_.Exception.Message -notin @('upload','lock-add','not-locked','wrong-reason','lock-remove','still-locked')) {
-        Fail "unexpected error: $($_.Exception.Message)"
+    # A thrown label is an expected failure path: the assertion ran and failed.
+    # Anything else is a defect in the DRILL, and must not be reported as a drill
+    # failure -- exit 1 means "retention was not proven", which would be a false
+    # statement about the bucket when the real cause is a bug in this script.
+    $known = @('upload','lock-add','not-locked','wrong-reason','lock-remove','still-locked')
+    if ($_.Exception.Message -notin $known) {
+        $line = $_.InvocationInfo.ScriptLineNumber
+        $code = ''
+        if ($_.InvocationInfo.Line) { $code = $_.InvocationInfo.Line.Trim() }
+        Say ""
+        Fail "INTERNAL ERROR in the drill (not a bucket result): $($_.Exception.Message)"
+        Note "at line $line : $code"
+        Note "This is a defect in the script, not evidence about the bucket. Do not read it as a retention failure."
+        Note "No conclusion may be drawn from this run."
+        $exit = $EXIT_INTERNAL
+    } else {
+        $exit = $EXIT_FAIL
     }
-    $exit = $EXIT_FAIL
 }
 finally {
     if ($cleanupRequired) {
