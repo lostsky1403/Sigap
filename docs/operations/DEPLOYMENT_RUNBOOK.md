@@ -2841,23 +2841,58 @@ Prerequisites, all checked before any mutation:
 | `R2_DRILL_ACCESS_KEY_ID` / `R2_DRILL_SECRET_ACCESS_KEY` | the **bucket-scoped Object Read & Write** token (A5). Deliberately *not* named `AWS_*`, so the drill can never silently adopt ambient credentials |
 | `R2_DRILL_BUCKET` | optional; defaults to `sigap-backups` and is refused if set to anything else |
 
-The script exits **0** (all three verdicts `PASS`), **1** (an assertion failed) or **2** (refused
-before mutating). It prints exactly the three verdicts below and writes numbered evidence files
-(`01-lock-before.txt`, `04-delete-refused.txt`, `09-lock-after.txt`, …) to
+The script exits **0** (all three verdicts `PASS`), **1** (an assertion failed), **2** (refused
+before mutating) or **3** (an internal error in the drill itself). Code 3 exists so a defect in
+the script cannot be mistaken for a retention result: exit 1 states *retention was not proven*,
+which would be a false claim about the bucket when the real cause is a bug. No conclusion about
+the bucket may be drawn from a 3. It prints exactly the three verdicts below and writes numbered
+evidence files (`01-lock-before.txt`, `04-delete-refused.txt`, `09-lock-after.txt`, …) to
 `R2_DRILL_EVIDENCE_DIR`. **No evidence file ever contains a credential** — only command output.
 
-It is fail-closed in four ways the Bash form does not make explicit: it refuses if a rule named
+**The production rule is validated as ONE record.** The `lock list` output is parsed into rule
+records first, and NAME, PREFIX, ENABLED and RETENTION are then read **from the same rule**.
+Matching each attribute independently against the whole output cannot tell which rule a value
+came from, and would accept a rule that is `enabled: No` — a disabled rule enforces nothing
+while looking correct in an inventory. The preflight refuses, before any mutation:
+
+| Condition | Why it must refuse |
+|---|---|
+| `enabled` is not `Yes`/`true`, missing, or empty | a disabled rule enforces nothing; the drill would prove nothing |
+| `prefix` is not exactly `sigap/` | the archive may be uncovered, or covered differently than recorded |
+| retention absent, empty, or unparseable | refusing to guess is safer than assuming a bound |
+| retention is a date or `indefinite` | not the recorded ≥90-day duration; reconcile the inventory first |
+| retention parses to **fewer than 90 days** | the failure the check exists to catch |
+| two rules share the production name | no single rule can be validated, so none is |
+| a field appears twice with differing values | a contradictory record must not be resolved by taking the first value |
+| a record has an empty `name` | it cannot be attributed to a rule, and could hide the production rule |
+| the production name appears in **no** record | nothing to validate |
+
+Retention is compared **numerically**, so `100` and `365` days pass while `89` days is refused.
+The pre-fix check was a shape match on `\b9[0-9]+\b`, which matches only 90–99 — it therefore
+**refused a stronger** retention (100 or 365 days) while accepting the recorded band. Accepted
+forms are `after N day(s)` and `N day(s)`; anything else is refused rather than guessed at.
+
+**The endpoint must be exactly `<account-id>.r2.cloudflarestorage.com`.** The account id must be
+32 lowercase hex characters, and the host is compared for exact equality. The pre-fix check used
+a greedy `[a-z0-9]+` plus a substring test, so an id one character longer
+(`<id>00.r2.cloudflarestorage.com`) was accepted and the configuration verdict reported `PASS`.
+An extra label, a prefix label and a trailing dot are now refused too.
+
+It is fail-closed in ways the Bash form does not make explicit: it refuses if a rule named
 `lock-drill` already exists or if any object remains under `lock-drill/` (so a re-run cannot
-adopt or accumulate unknown state); it screens every mutating invocation and refuses if one
-names `sigap-retention-90d` or the `sigap/` prefix, so property 1 is enforced structurally
-rather than by review; it points `AWS_SHARED_CREDENTIALS_FILE` and `AWS_CONFIG_FILE` at an empty
-file so `~/.aws` cannot be consulted even indirectly; and its teardown runs in a `finally` block,
-so a failure part-way through still removes the drill rule and the probe object and reports
-whether it succeeded.
+adopt or accumulate unknown state); it validates the production rule as one coherent record
+rather than matching attributes across the whole output; it screens every mutating invocation
+and refuses if one names `sigap-retention-90d` or the `sigap/` prefix, so property 1 is enforced
+structurally rather than by review; it points `AWS_SHARED_CREDENTIALS_FILE` and `AWS_CONFIG_FILE`
+at an empty file so `~/.aws` cannot be consulted even indirectly, and refuses outright if ambient
+`AWS_*` variables are set; and its teardown runs in a `finally` block, so a failure part-way
+through still removes the drill rule and the probe object and reports whether it succeeded.
 
 `scripts/ops/test-bucket-lock-drill.sh` exercises all of this against a stub executor — the
-happy path, the four failure paths, and the guard refusals — so the drill's assertions stay
-tested without touching a real bucket. It is wired into the `ops-guards` CI job.
+happy path, the failure paths, the guard refusals, and one regression case per preflight
+condition above. Every refusal case asserts the **specific reason** and the **absence of
+mutation**, because a matching exit code alone would pass even if an unrelated guard had fired.
+The suite is wired into the `ops-guards` CI job.
 
 ```bash
 # GUARD: the prefix must be the disposable one. Refuse to continue otherwise.
