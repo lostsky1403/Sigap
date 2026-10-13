@@ -56,12 +56,20 @@ fi
 #
 # Exit codes:
 #   0  every stage succeeded AND identity correspondence verified
+#   1  a command failed under `set -e` before reaching a `die` — an UNGUARDED failure, so
+#      the message is the failing command's own output rather than a refusal this script wrote
 #   10 a required variable was unset, or the URI/inputs are malformed
-#   11 destination/target refused (production or unverifiable)
+#   11 the target daemon was refused or could not be established: a production/denylisted
+#      endpoint, a same-host endpoint without the opt-in, an engine that is unreachable,
+#      unreadable, malformed, not the allowlisted one, the ambient engine, or a recorded
+#      production engine, a daemon holding a `sigap` compose project, or a symlinked path
 #   12 digest mismatch
-#   13 decrypted stream is not a complete gzip
-#   14 a pipeline stage failed (see per-stage report)
+#   13 the decrypted artifact is not a valid docker image archive at ANY structural level:
+#      an empty decrypted stream, a stream that is not a complete gzip, an empty decompressed
+#      TAR, a TAR that is unreadable, or a TAR with no `manifest.json`
+#   14 a pipeline stage failed (see per-stage report); also `die`'s default
 #   15 image identity correspondence failed
+#   99 the script was not run under bash (it needs BASH_VERSION for the guards below)
 
 set -euo pipefail
 
@@ -86,20 +94,51 @@ norm_id() {
   printf '%s' "$_v"
 }
 
-# Strip ALL whitespace, then validate. A value of `' '` is non-empty but is not an
-# identifier, and an earlier `[ -n "$X" ]` test treated it as readable — so a
-# whitespace-returning probe silently neutralised the distinctness comparison instead of
-# being refused. Used for the ambient probe, which is a security-decision input.
-norm_id_strict() {
+# ENGINE IDs are a DIFFERENT type from image IDs, and conflating them was a real defect.
+# `docker info --format '{{.ID}}'` returns a 64-hex digest on older daemons but a RFC-4122
+# UUID — `dca7b900-8462-4e5c-a7e6-6c69faafe428` — on current ones (observed on Docker 29
+# inside CI). Validating an engine ID with `norm_id` therefore refused a perfectly valid
+# isolated daemon:
+#   REFUSED: ALLOWED_ENGINE_ID is not a valid engine ID (need 64 hex, ...)
+#   'dca7b900-8462-4e5c-a7e6-6c69faafe428' 10
+# [OBSERVED] run 38268640704, step "Restore". The guard was not too WEAK; it was too
+# narrow, and it rejected the very daemon it was asked to verify.
+#
+# Two machine-generated forms are accepted and canonicalised to one:
+#   * 64 lowercase hex                       (older daemons)
+#   * 8-4-4-4-12 lowercase hex UUID          (current daemons)
+# Canonical form is lowercase hex with dashes REMOVED, so the two spellings of the same
+# UUID compare equal and the length (32 vs 64) still distinguishes the families. Anything
+# else is still refused: this widens acceptance to the formats a daemon actually emits, it
+# does not make the check permissive. The alias-proof property is unaffected — the value is
+# still the daemon's own reported identity, not a name.
+norm_engine_id() {
+  _v=$1
+  case "$_v" in sha256:*) _v=${_v#sha256:} ;; esac
+  case "$_v" in
+    ''|*[!0-9a-fA-F-]*) return 1 ;;
+  esac
+  _v=$(printf '%s' "$_v" | tr 'A-F' 'a-f' | tr -d '-')
+  case "$_v" in
+    *[!0-9a-f]*) return 1 ;;
+  esac
+  case "${#_v}" in
+    32|64) printf '%s' "$_v" ;;
+    *) return 1 ;;
+  esac
+}
+
+# The engine-ID equivalent, for the ambient probe and the target probe.
+norm_engine_id_strict() {
   _v=$(printf '%s' "$1" | tr -d '[:space:]')
-  norm_id "$_v"
+  norm_engine_id "$_v"
 }
 
 # ---------------------------------------------------------------------------
 # 1. Required inputs — validated, never defaulted.
 # ---------------------------------------------------------------------------
-# Required inputs — validated, never defaulted. Note: `${VAR:?msg}` EXITS the shell
-# with status 1 before `||` can run, so an explicit test is used to return 10.
+# Note: `${VAR:?msg}` EXITS the shell with status 1 before `||` can run, so an explicit test
+# is used to return 10.
 req() { [ -n "${!1:-}" ] || die "$1 is required (see the script header)" 10; }
 for v in ARCHIVE_URI ARCHIVE_KEY STAMP EXPECT_DIGEST \
          ISOLATED_DOCKER_HOST EXPECT_IDS; do req "$v"; done
@@ -126,6 +165,23 @@ _uri_basename=${ARCHIVE_URI##*/}
 #    explicitly allowlisted value; the production engine ID is recorded from the
 #    host so the comparison is meaningful.
 # ---------------------------------------------------------------------------
+# Extract the HOST[:PORT] part of a daemon endpoint, so a matcher never depends on how the
+# caller spelled the scheme, the userinfo, or the trailing slash.
+#
+# WHY THIS EXISTS: docker normalises a SCHEME-LESS DOCKER_HOST to tcp — `DOCKER_HOST=127.0.0.1:2375`
+# reaches the same daemon as `tcp://127.0.0.1:2375` (docker/cli `opts/hosts.go`: it splits on
+# `://` and defaults the protocol to `tcp` when absent). An earlier revision matched only
+# scheme-qualified patterns, so `127.0.0.1:2375`, `localhost:2375` and `127.1:2375` slipped past
+# BOTH string layers and were accepted as an isolated target. [OBSERVED] by running the real
+# matchers over a battery of endpoint spellings.
+_endpoint_host() {
+  _e=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  _e=${_e%/}
+  case "$_e" in *://*) _e=${_e#*://} ;; esac
+  case "$_e" in *@*)   _e=${_e#*@}   ;; esac
+  printf '%s' "$_e"
+}
+
 is_production_string() {
   # Lowercased for MATCHING ONLY: hostnames and schemes are case-insensitive, so
   # `TCP://FIKRISERVER` must not slip past a denylist written in lowercase. Lowercasing can
@@ -134,9 +190,16 @@ is_production_string() {
   _l=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
   _l=${_l%/}
   case "$_l" in
-    ssh://fikriserver*|*@fikriserver|fikriserver|fikriserver:*|tcp://fikriserver*) return 0 ;;
-    unix:///var/run/docker.sock|/var/run/docker.sock|var/run/docker.sock|unix:///run/docker.sock|/run/docker.sock|run/docker.sock) return 0 ;;
     "") return 0 ;;
+    # The canonical production socket paths, in every spelling that reaches the same socket.
+    unix:///var/run/docker.sock|/var/run/docker.sock|var/run/docker.sock|unix:///run/docker.sock|/run/docker.sock|run/docker.sock) return 0 ;;
+  esac
+  # HOST-based, so the scheme, any userinfo and the port cannot disguise the host. The
+  # earlier pattern list required the host to sit immediately after the scheme, so
+  # `tcp://user@fikriserver:2375` matched NOTHING and was accepted.
+  _h=$(_endpoint_host "$_l")
+  case "$_h" in
+    fikriserver|fikriserver:*) return 0 ;;
   esac
   return 1
 }
@@ -154,19 +217,30 @@ is_production_string() {
 # negative costs the isolation guarantee.
 is_loopback_endpoint() {
   _l=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  _l=${_l%/}
+  # A UNIX SOCKET, NAMED PIPE OR SYSTEMD FD IS ALWAYS A LOCAL DAEMON, whatever its path.
+  # Only `/var/run/docker.sock` and `/run/docker.sock` are canonical production paths, but a
+  # socket at ANY path is local by construction — a unix socket cannot be remote. Enumerating
+  # two paths meant `unix:///tmp/local.sock` and a Docker Desktop socket passed both gates.
   case "$_l" in
-    # The WHOLE 127/8 range is loopback, not just 127.0.0.1. `127.1` is the shorthand form.
-    tcp://127.*|tcp://127:*) return 0 ;;
+    unix://*|fd://*|npipe://*) return 0 ;;
+  esac
+  # Scheme-agnostic from here, so `127.0.0.1:2375` is judged the same as
+  # `tcp://127.0.0.1:2375` — which is what docker does with it.
+  _h=$(_endpoint_host "$_l")
+  case "$_h" in
+    # The WHOLE 127/8 range is loopback, not just 127.0.0.1, with or without a port. The
+    # `127.1` shorthand and the bare `127:` form are included.
+    127.*|127:*) return 0 ;;
     # The unspecified address connects to the local daemon on Linux; `::` and `::ffff:127.*`
     # are its IPv6 and IPv4-mapped equivalents. The `[` of an IPv6 literal MUST be escaped —
-    # an unescaped `[` opens a bracket expression in a `case` pattern and is a syntax error.
-    tcp://0.0.0.0*|tcp://\[::1\]*|tcp://\[::\]*|tcp://\[::ffff:127.*|tcp://\[0:0:0:0:0:0:0:1\]*) return 0 ;;
+    # an unescaped `[` opens a BRACKET EXPRESSION, which matches a single character from the
+    # set rather than the literal text. Unescaped, `[::1]*` matched any host starting with
+    # `:` or `1` — so `10.0.0.5:2375` was refused as loopback while the literal `[::1]` was
+    # NOT matched at all. [OBSERVED] by running the matchers over an endpoint battery.
+    0.0.0.0*|\[::1\]*|\[::\]*|\[::ffff:127.*|\[0:0:0:0:0:0:0:1\]*) return 0 ;;
     # Hostname aliases. `case` is case-sensitive and DNS is not, hence the lowercasing above.
-    tcp://localhost*|tcp://ip6-localhost*|tcp://localhost.localdomain*) return 0 ;;
-    ssh://127.*|ssh://localhost*) return 0 ;;
-    # Local-daemon transports that are not TCP at all: systemd socket activation, and the
-    # Windows named pipes this project's runbook names.
-    fd://*|npipe://*) return 0 ;;
+    localhost*|ip6-localhost*|localhost.localdomain*) return 0 ;;
   esac
   return 1
 }
@@ -205,8 +279,8 @@ fi
 # Normalised so the comparison is symmetric: an earlier revision compared the raw target
 # value against the raw allowlist while normalising the OTHER two engine inputs, so a caller
 # who wrote `sha256:<digest>` out of image-ID habit was refused with a misleading message.
-ALLOWED_ENGINE_N=$(norm_id "$ALLOWED_ENGINE_ID") \
-  || die "ALLOWED_ENGINE_ID is not a valid engine ID (need 64 hex, optional sha256: prefix): '$ALLOWED_ENGINE_ID'" 10
+ALLOWED_ENGINE_N=$(norm_engine_id "$ALLOWED_ENGINE_ID") \
+  || die "ALLOWED_ENGINE_ID is not a valid engine ID (need 64 hex or an 8-4-4-4-12 UUID, optional sha256: prefix): '$ALLOWED_ENGINE_ID'" 10
 
 # Reachability and engine identity. `docker info` returns the ENGINE id, which is a
 # property of the daemon itself, so two spellings of the same daemon cannot both pass.
@@ -214,7 +288,7 @@ if ! target_engine=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker info --format '{
   die "isolated daemon unreachable at $ISOLATED_DOCKER_HOST" 11
 fi
 [ -n "$target_engine" ] || die "isolated daemon returned no engine ID" 11
-target_engine=$(norm_id "$target_engine") \
+target_engine=$(norm_engine_id "$target_engine") \
   || die "isolated daemon returned a malformed engine ID: '$target_engine'" 11
 
 [ "$target_engine" = "$ALLOWED_ENGINE_N" ] \
@@ -233,10 +307,21 @@ target_engine=$(norm_id "$target_engine") \
 # in the production engine ID silently disabled the denylist — turning the strongest
 # production control into a no-op with no signal at all. A control that can be switched off
 # by a typo is not a control.
+#
+# AN EMPTY-ONLY VALUE IS ALSO REFUSED. `[ -n ]` is satisfied by whitespace, but the unquoted
+# word-splitting below then yields ZERO words and the loop body never runs — so
+# `PRODUCTION_ENGINE_ID=" "` (or `","`, or `", "`) satisfied the guard and disabled the
+# denylist with no signal. [OBSERVED]: those three inputs produced 0 loop iterations while
+# `""` and `"aa,bb"` produced 0 and 2 respectively. The `set --` form makes the count
+# explicit so "set but empty" is a hard failure instead of a silent pass.
 if [ -n "${PRODUCTION_ENGINE_ID:-}" ]; then
-  for _pe in $(printf '%s' "$PRODUCTION_ENGINE_ID" | tr ',' ' '); do
-    _pen=$(norm_id "$_pe") \
-      || die "PRODUCTION_ENGINE_ID contains an invalid engine ID: '$_pe' — refusing rather than silently disabling the production denylist" 10
+  # shellcheck disable=SC2086
+  set -- $(printf '%s' "$PRODUCTION_ENGINE_ID" | tr ',' ' ')
+  [ "$#" -gt 0 ] \
+    || die "PRODUCTION_ENGINE_ID is set to '$PRODUCTION_ENGINE_ID' but contains no engine ID — refusing rather than silently disabling the production denylist" 10
+  for _pe in "$@"; do
+    _pen=$(norm_engine_id "$_pe") \
+      || die "PRODUCTION_ENGINE_ID contains an invalid engine ID: '$_pe' (need 64 hex or an 8-4-4-4-12 UUID) — refusing rather than silently disabling the production denylist" 10
     [ "$target_engine" = "$_pen" ] \
       && die "target engine $target_engine is a recorded PRODUCTION engine — refusing" 11
   done
@@ -259,7 +344,7 @@ fi
 # therefore honours an exported DOCKER_HOST/DOCKER_CONTEXT, so a caller who exports a decoy
 # can aim the comparison. That is inherent to comparing against the ambient context, and the
 # guard is not defending against the operator themselves.
-AMBIENT_ENGINE=$(norm_id_strict "$(docker info --format '{{.ID}}' 2>/dev/null)") \
+AMBIENT_ENGINE=$(norm_engine_id_strict "$(docker info --format '{{.ID}}' 2>/dev/null)") \
   || AMBIENT_ENGINE=''
 [ -n "$AMBIENT_ENGINE" ] \
   || die "cannot read a valid ambient engine ID — distinctness from the ambient daemon cannot be established, so isolation is UNPROVEN" 11
@@ -304,14 +389,14 @@ cleanup() {
     [ -f "$f" ] && { shred -u "$f" 2>/dev/null || rm -f "$f"; }
   done
   rm -rf -- "$WORK"
-  # Belt and braces: assert nothing plaintext survived in the worktree.
-  [ -n "${worktree_plain:-}" ] && rm -f "$worktree_plain"
-  # Report rather than trust: if a plaintext file survived, say so loudly.
-  if [ -n "${worktree_plain:-}" ] && [ -f "$worktree_plain" ]; then
-    printf 'WARNING: plaintext still present at %s\n' "$worktree_plain" >&2
-  fi
+  # Report rather than trust: if the work directory survived, say so loudly. `$WORK` is the
+  # ONLY path this script writes plaintext to, so asserting its removal is the whole claim.
+  # An earlier revision instead tested `$PWD/sigap-restore-plain-$$.tar.gz`, a path no code
+  # ever created: the `rm -f` was a no-op and the WARNING could never fire, so the check
+  # reported safety unconditionally. A guard that cannot fail is not a guard.
+  [ ! -e "$WORK" ] \
+    || printf 'WARNING: the temporary work directory survived cleanup at %s\n' "$WORK" >&2
 }
-worktree_plain="$PWD/sigap-restore-plain-$$.tar.gz"
 trap cleanup EXIT INT TERM HUP
 
 # ---------------------------------------------------------------------------
@@ -457,11 +542,68 @@ grep -q '^manifest\.json$' "$WORK/listing.txt" 2>/dev/null \
   || die "the decrypted archive is not a docker image tar (no manifest.json)" 13
 
 set +e
-DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load < "$WORK/image.tar"
+DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker load < "$WORK/image.tar" > "$WORK/load.out" 2>&1
 rc_load=$?
 set -e
 [ "$rc_load" -eq 0 ] || die "docker load failed (rc=$rc_load)" 14
+cat "$WORK/load.out"
 echo "docker load succeeded"
+
+# THE IDENTITY OF WHAT THE ARCHIVE RESTORED, taken from the load's own report.
+#
+# `docker load` emits TWO different lines and an earlier revision understood only one of
+# them. From the daemon source (`daemon/internal/image/tarexport/load.go`):
+#
+#     fmt.Fprintf(&imageIDsStr, "Loaded image ID: %s\n", imgID)   // buffered, per image
+#     for _, repoTag := range m.RepoTags {
+#         fmt.Fprintf(outStream, "Loaded image: %s\n", ...)       // streamed, per tag
+#     }
+#     if imageRefCount == 0 { outStream.Write([]byte(imageIDsStr.String())) }
+#
+# So `Loaded image ID:` is written ONLY when the LAST image in the manifest carried no
+# RepoTags. A tar WITH RepoTags prints `Loaded image: <repo:tag>` instead and NO ID line at
+# all. `docker save <repo:tag>` produces RepoTags; `docker save <id>` does not — which is
+# why the synthetic CI fixture (which saves by ID) never exercised the tag form, while a
+# production archive saved by tag would have produced no ID line and been refused with
+# "docker load reported no image ID" (14): a fail-closed refusal, but of a perfectly good
+# restore. [OBSERVED] the daemon source above.
+#
+# BOTH forms are parsed. The tag form is resolved to an ID on the ISOLATED daemon with an
+# explicit DOCKER_HOST, so the result is an image identity and never a name.
+#
+# ALL reported identities are collected, not only the last: the previous `tail -1` meant a
+# multi-image archive had just its FINAL image verified as load-reported, and the production
+# archive is documented as holding three (§7d.1 EXPECT_IDS).
+LOADED_IDS=""
+while IFS= read -r _line; do
+  case "$_line" in
+    'Loaded image ID: '*)
+      _raw=${_line#Loaded image ID: }
+      _nid=$(norm_id "$_raw") \
+        || die "docker load reported a malformed image ID: '$_raw'" 14
+      LOADED_IDS="$LOADED_IDS $_nid" ;;
+    'Loaded image: '*)
+      _tag=${_line#Loaded image: }
+      _nid=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" \
+               docker image inspect --format '{{.Id}}' "$_tag" 2>/dev/null) \
+        || die "docker load reported the tag '$_tag' but it does not resolve on the isolated daemon" 14
+      _nid=$(norm_id "$_nid") \
+        || die "the tag '$_tag' resolved to a malformed image ID: '$_nid'" 14
+      LOADED_IDS="$LOADED_IDS $_nid" ;;
+  esac
+done < "$WORK/load.out"
+
+# Deduplicate: several RepoTags on one image print one `Loaded image:` line each, all
+# resolving to the same ID. `sort -u` also gives a stable order for the checks below.
+LOADED_IDS=$(printf '%s\n' $LOADED_IDS | sort -u | tr '\n' ' ')
+LOADED_IDS=${LOADED_IDS% }
+echo "restored image ID(s) as reported by docker load: ${LOADED_IDS:-<none>}"
+
+# FAIL CLOSED. A load that reported no parseable identity in EITHER form is refused rather
+# than passed on as an empty value, which would report a PARTIAL LOAD for a load that in fact
+# succeeded — the same false failure in a new place.
+[ -n "$LOADED_IDS" ] \
+  || die "docker load reported no image identity in any known form — refusing rather than trusting an unparsed load" 14
 
 # ---- Residual-risk disclosure (Defect A, unavoidable plaintext) ------------------
 # The decompressed image TAR is a temporary plaintext, unavoidable because `docker
@@ -476,15 +618,42 @@ echo "docker load succeeded"
 # Re-read the engine ID AFTER the load closes the verification-to-load TOCTOU window:
 # if the ambient context changed between the check above and this load, the ID differs
 # and the identity assertion below is against a different daemon than the verified one.
+#
+# NORMALISED, like every other engine comparison. This recheck previously compared the RAW
+# probe against the RAW allowlist, so a caller who passed `sha256:<digest>` — accepted by the
+# pre-load check, which normalises — was refused here with "engine ID changed after load".
+# That is a false failure caused by formatting, and it reports the wrong cause: the daemon
+# never changed. `norm_engine_id_strict` also refuses a whitespace-only probe.
 target_engine=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker info --format '{{.ID}}' 2>/dev/null) \
   || die "isolated daemon unreachable after load" 11
-[ -n "$target_engine" ] || die "no engine ID after load" 11
-[ "$target_engine" = "$ALLOWED_ENGINE_ID" ] \
-  || die "engine ID changed after load ($target_engine != $ALLOWED_ENGINE_ID)" 11
+target_engine=$(norm_engine_id_strict "$target_engine") \
+  || die "isolated daemon returned no readable engine ID after load — isolation is UNPROVEN" 11
+[ "$target_engine" = "$ALLOWED_ENGINE_N" ] \
+  || die "engine ID changed after load ($target_engine != $ALLOWED_ENGINE_N)" 11
 
 # ---------------------------------------------------------------------------
-# 7. Identity correspondence — per-image, ON the isolated daemon, with explicit
-#    DOCKER_HOST so this can never read the ambient (possibly production) daemon.
+# 7a. Every identity the load REPORTED must exist on the isolated daemon.
+#
+#    This is the only check that the restored bytes are the archived ones, and it is made
+#    against the daemon rather than against the load's own claim. `docker inspect` on some
+#    other daemon reports a config digest that `docker load` does not necessarily reproduce
+#    ([OBSERVED] run 38272620285, inspect ff59b31e... vs load d88c5ca4...), and reading the
+#    ID out of manifest.json's "Config" field is wrong too because that field is a PATH —
+#    `blobs/sha256/<digest>` — not a reference, which failed validation with 10
+#    (run 38273857530). The load's report, normalised, is the right source; the daemon is
+#    the right place to confirm it.
+#
+#    ALL reported identities are checked, not just the last.
+# ---------------------------------------------------------------------------
+for _lid in $LOADED_IDS; do
+  DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker image inspect "sha256:$_lid" >/dev/null 2>&1 \
+    || die "the identity docker load reported ($_lid) is not present on the isolated daemon" 15
+  echo "  present $_lid (reported by docker load)"
+done
+
+# ---------------------------------------------------------------------------
+# 7b. Identity correspondence against the out-of-band record — per-image, ON the isolated
+#    daemon, with explicit DOCKER_HOST so this can never read the ambient daemon.
 #
 #    IDs are NORMALISED ONCE, here. `docker inspect --format '{{.Id}}'` returns the
 #    `sha256:<digest>` form, while `docker image inspect` accepts either form — but an
@@ -497,15 +666,44 @@ target_engine=$(DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker info --format '{{.ID}
 #    lowercase hex characters, with an optional single `sha256:` prefix. Anything else is
 #    refused as malformed input (10), distinct from a genuinely absent image (15), so a
 #    typo cannot masquerade as a partial load.
+#
+#    THE TWO QUESTIONS ARE SEPARATE AND BOTH ARE ASKED.
+#      7a  did the archive restore what it contains?  (reported ⊆ daemon)
+#      7b  is that what the operator expected?        (EXPECT_IDS ⊆ daemon, reported ⊆ EXPECT_IDS)
+#    A run that satisfies 7a but not 7b has restored a genuine archive of the WRONG release,
+#    which is exactly what the out-of-band record exists to catch, so it stays a hard failure.
+#
+#    RESIDUAL GAP, stated rather than hidden: `reported ⊆ EXPECT_IDS` is sound — incomplete
+#    load output can only REMOVE a reported ID, never add one, so it cannot cause a false
+#    refusal. The reverse direction cannot be closed the same way: the daemon source buffers
+#    `Loaded image ID:` lines and writes them only when the LAST image had no RepoTags, so a
+#    mixed multi-image archive can under-report. Requiring `EXPECT_IDS ⊆ reported` would
+#    therefore refuse a legitimate multi-image restore. What is NOT proved is that every
+#    EXPECT_ID came from THIS archive rather than already being on the daemon. The caller must
+#    supply a clean daemon for that; the CI workflow asserts it by removing the image its own
+#    record step loaded and verifying the removal. A production drill must do the same.
 # ---------------------------------------------------------------------------
+# A NEWLINE IS REFUSED. `read -ra` reads ONE line, so a newline-joined EXPECT_IDS yields only
+# its FIRST id: the remaining expected images are never checked for presence, `missing` stays
+# 0, and the run reports "identity correspondence VERIFIED for all 1 image(s)" for an archive
+# that should have restored several. That is a silent under-verification, so it fails closed
+# with a message that names the separator rather than reinterpreting the value.
+_nl='
+'
+case "$EXPECT_IDS" in
+  *"$_nl"*)
+    die "EXPECT_IDS contains a newline; supply ONE comma-separated line (a newline silently drops every ID after the first)" 10 ;;
+esac
 IFS=',' read -ra IDS <<< "$EXPECT_IDS"
 missing=0; present=0; seen=0
+EXPECT_NORM=""
 for id in "${IDS[@]}"; do
   id="${id//[[:space:]]/}"
   [ -n "$id" ] || continue
   nid=$(norm_id "$id") \
     || die "EXPECT_IDS contains an invalid image ID: '$id' (need 64 hex chars, optional sha256: prefix)" 10
   seen=$((seen+1))
+  EXPECT_NORM="$EXPECT_NORM $nid"
   # Normalised to exactly one `sha256:` prefix for the lookup.
   if DOCKER_HOST="$ISOLATED_DOCKER_HOST" docker image inspect "sha256:$nid" >/dev/null 2>&1; then
     present=$((present+1)); printf '  present %s\n' "$nid"
@@ -516,6 +714,19 @@ done
 [ "$seen" -gt 0 ] || die "EXPECT_IDS listed no usable image ID" 10
 [ "$present" -gt 0 ] || die "no expected image present after load — PARTIAL LOAD not accepted" 15
 [ "$missing" -eq 0 ] || die "$missing expected image(s) absent after load — identity correspondence FAILED" 15
+
+# NO UNEXPECTED IMAGE. Every identity the load reported must be one the operator expected.
+# Without this, an archive carrying an EXTRA image would load it silently: 7a would confirm
+# it exists and 7b would confirm the expected ones exist, and nothing would notice the
+# addition. Reported-only-in-this-direction, so it cannot false-refuse on under-reporting.
+for _lid in $LOADED_IDS; do
+  _known=0
+  for _eid in $EXPECT_NORM; do
+    [ "$_lid" = "$_eid" ] && { _known=1; break; }
+  done
+  [ "$_known" -eq 1 ] \
+    || die "docker load restored image $_lid, which is NOT in EXPECT_IDS — the archive carries an unexpected image" 15
+done
 
 echo "identity correspondence VERIFIED for all $present image(s) on engine $target_engine"
 exit 0

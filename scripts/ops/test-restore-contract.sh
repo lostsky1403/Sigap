@@ -125,16 +125,35 @@ printf 'selftest' > "$TOP/.selftest"
 rm -f "$TOP/.selftest"
 printf 'delegating to: gzip=%s sha256sum=%s\n' "${REAL_GZIP:-<self-implemented>}" "$REAL_SUM"
 
-API=43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f
+# A SYNTHETIC 64-hex placeholder, deliberately low-entropy. The previous value was a
+# realistic-looking digest and gitleaks flagged it as a generic API key (entropy 3.86)
+# in `API=<hex>` shape — a false positive, since it is a test constant and not a
+# secret. The fix is to make the fixture OBVIOUSLY a placeholder rather than to
+# allowlist the scanner: an allowlist entry would also hide a real secret added to
+# this file later, so the scanner keeps full strength and the constant changes.
+# The format is what the tests exercise; the value's realism was never load-bearing.
+API=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
-# Engine IDs the fake docker returns. Real engine IDs are 64 lowercase hex, and the helper
-# validates that shape before trusting the ambient value, so these must be realistic.
+# Engine IDs the fake docker returns. Real engine IDs come in TWO machine-generated forms —
+# 64 lowercase hex on older daemons, and an 8-4-4-4-12 UUID on current ones (Docker 29
+# returns the UUID form; [OBSERVED] in CI, where the isolated daemon reported
+# `dca7b900-8462-4e5c-a7e6-6c69faafe428`). The helper validates the shape before trusting the
+# ambient value, so these must be realistic. The hex form is the default here; a marker
+# switches the target to the UUID form so both spellings are covered.
 # `TGT_ENGINE` is what the ISOLATED target answers with (DOCKER_HOST pinned);
 # `AMB_ENGINE` is what the AMBIENT probe answers with (DOCKER_HOST unset). They differ,
 # which is the normal, correctly-isolated case.
 TGT_ENGINE=1111111111111111111111111111111111111111111111111111111111111111
 AMB_ENGINE=2222222222222222222222222222222222222222222222222222222222222222
 OTHER_ENGINE=3333333333333333333333333333333333333333333333333333333333333333
+# The SAME isolated daemon as TGT_ENGINE, written the way current Docker reports it. The
+# dashless hex MUST differ from AMBIENT_ENGINE: distinctness from the ambient daemon is
+# asserted, and an ID equal to the ambient one is refused as "not an isolated target" —
+# which is correct behaviour, so the fixture must not trip it.
+TGT_ENGINE_UUID=11111111-1111-4111-8111-999999999999
+OTHER_ENGINE_UUID=33333333-3333-3333-3333-333333333333
+# An image the operator did NOT expect to find in the archive.
+EXTRA_IMAGE=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 
 # ---------------------------------------------------------------------------
 # The fake toolchain. Behaviour is selected by marker files in $LOG, so one binary
@@ -169,12 +188,22 @@ while [ $# -gt 0 ]; do
   case "$1" in
     info|ps|context|load) [ -z "$sub" ] && sub=$1 ;;
     image) sub=image ;;
+    # SUBCOMMAND WORDS ARE NOT REFERENCES. `docker image inspect --format X Y` puts
+    # `inspect` in $2, and an earlier version of this loop treated the first bare
+    # positional as the ref — so it captured the literal string `inspect` and never saw
+    # the tag, making the tag-form cases fail for a fixture reason rather than a helper
+    # one. Listed explicitly so no other subcommand can be mistaken for a reference.
+    inspect|rmi|tag|save|history|ls) ;;
     # A flag plus its value. Under dash (/bin/sh on Ubuntu) `shift 2` is a FATAL
     # error when fewer than two positional parameters remain, so it must be
     # guarded explicitly — `shift 2 2>/dev/null || shift` still fails there,
     # because the error is not suppressible that way.
     -*) if [ $# -ge 2 ]; then shift; fi ;;
     sha256:*|sha256) ref=$1 ;;
+    # Any other bare positional is a reference too — a TAG, not a digest. The
+    # helper resolves a `Loaded image: <repo:tag>` line by inspecting that tag,
+    # so the fake must accept one.
+    *) [ -z "$ref" ] && ref=$1 ;;
   esac
   shift
 done
@@ -186,18 +215,30 @@ case "$sub" in
   # indistinguishable and the distinctness assertion untestable — and would in fact make
   # it fail, since equal IDs are refused.
   info)    [ -f "$TOP_LOG/no_engine" ] && exit 1              # N: no identity
-           # Real Docker engine IDs are 64 lowercase hex characters, and the helper now
-           # VALIDATES that shape before trusting the ambient value as a security-decision
-           # input — a whitespace or short string is treated as unreadable and refused. The
-           # fake must therefore return realistic IDs, or the happy path would be refused
-           # for the wrong reason.
+           # Real Docker engine IDs are 64 lowercase hex OR an 8-4-4-4-12 UUID, and the
+           # helper VALIDATES that shape before trusting the ambient value as a
+           # security-decision input — a whitespace or short string is treated as unreadable
+           # and refused. The fake must therefore return realistic IDs, or the happy path
+           # would be refused for the wrong reason.
+           #
+           # `uuid_engine` makes the TARGET report the UUID spelling of the SAME daemon the
+           # allowlist describes, proving the helper accepts the format current Docker emits.
            #
            # `same_engine` models a misconfigured run where the allowlisted ID IS the
            # ambient engine's — the case the distinctness assertion exists to catch.
            # `ambient_fails` models a target that answers while the ambient probe does not,
            # which is the only way to reach the ambient-unreadable refusal: the target probe
            # runs first, so `no_engine` alone never gets there.
+           # Hardcoded rather than interpolated: the fake is generated from a QUOTED heredoc,
+           # so shell variables are not expanded when it is written — and it must stay
+           # self-contained to remain a faithful stub.
+           # Scoped INSIDE the DOCKER_HOST branch: only the TARGET probe is pinned, so the
+           # marker changes the target's answer without touching the ambient probe. Before
+           # this, the marker also changed what the ambient probe reported, which made the
+           # UUID daemon "the same" as ambient and tripped the distinctness refusal — a
+           # fixture bug, not a helper defect.
            if [ -f "$TOP_LOG/same_engine" ]; then echo "1111111111111111111111111111111111111111111111111111111111111111"
+           elif [ -n "${DOCKER_HOST:-}" ] && [ -f "$TOP_LOG/uuid_engine" ]; then echo "11111111-1111-4111-8111-999999999999"
            elif [ -n "${DOCKER_HOST:-}" ]; then echo "1111111111111111111111111111111111111111111111111111111111111111"
            elif [ -f "$TOP_LOG/ambient_fails" ]; then exit 1
            elif [ -f "$TOP_LOG/ambient_whitespace" ]; then printf '   \n'
@@ -211,10 +252,40 @@ case "$sub" in
            if [ -f "$TOP_LOG/sigap_project" ]; then printf 'sigap\n'; fi
            exit 0 ;;
   context) echo "unix:///var/run/docker.sock" ;;
+  # FIDELITY: real `docker load` prints the ID it assigned, and the helper now READS that
+  # line rather than inferring the identity from the live daemon — `docker inspect` reports a
+  # config digest that `docker load` does not necessarily reproduce ([OBSERVED] run
+  # 38272620285, inspect ff59b31e... vs load d88c5ca4...). The old fake drained stdin and
+  # exited 0 with NO output, which would have made the new fail-closed check reject every
+  # happy-path case with "docker load reported no image ID" — a fixture failing, not a
+  # helper. The literal is the bare-hex form of `API`, matching what the fake's `image`
+  # branch resolves. `LOADED_IMAGE_ID` overrides it from the environment for cases that must
+  # exercise a load reporting a DIFFERENT ID than the one being looked up.
   load)    cat >/dev/null 2>/dev/null || true                 # drain stdin, never block
            [ -f "$TOP_LOG/load_fails" ] && { echo "load failed" >&2; exit 1; }  # K
-           exit 0 ;;                                          # L: succeeds silently
-  image)   id=$(printf '%s' "$ref" | sed 's/^sha256://; s/[^0-9a-f]//g')
+           # `load_no_id` models a load that SUCCEEDS but reports no ID — the shape that must be
+           # refused rather than trusted. `${VAR:-default}` cannot express "empty" because an
+           # empty assignment is indistinguishable from unset, so a marker is used.
+           [ -f "$TOP_LOG/load_no_id" ] && exit 0
+           # `load_tag_form` models a tar WITH RepoTags: the daemon then prints
+           # `Loaded image: <repo:tag>` and NO `Loaded image ID:` line at all, because
+           # the ID lines are buffered and written only when the last image had no
+           # RepoTags. An earlier helper parser understood only the ID form.
+           if [ -f "$TOP_LOG/load_tag_form" ]; then
+             echo "Loaded image: sigap-drill:local"
+           else
+             echo "Loaded image ID: ${LOADED_IMAGE_ID:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+           fi
+           # `load_extra_id` models an archive carrying an image the operator did not
+           # list — it must be refused, not loaded silently.
+           [ -f "$TOP_LOG/load_extra_id" ] && echo "Loaded image ID: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+           exit 0 ;;
+  image)   # `load_tag_form` makes the load report `Loaded image: sigap-drill:local`,
+           # so that tag must resolve to the SAME image the ID form names.
+           case "$ref" in
+             sigap-drill:local) ref="sha256:${LOADED_IMAGE_ID:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" ;;
+           esac
+           id=$(printf '%s' "$ref" | sed 's/^sha256://; s/[^0-9a-f]//g')
            [ -n "$id" ] && [ -f "$TOP_LOG/have_$id" ] && { printf 'sha256:%s\n' "$id"; exit 0; }
            echo "Error: No such image" >&2; exit 1 ;;
 esac
@@ -328,10 +399,24 @@ run_case() {  # run_case <desc> <want-rc> [VAR=val ...] — markers pre-set by c
   desc=$1; want=$2; shift 2
   rm -f "$LOG"/have_*
   [ -f "$LOG/KEEP_have_api" ] && : > "$LOG/have_$API"
+  # Additional images that must be PRESENT, space-separated. A case that lists two
+  # DIFFERENT ids — one bare, one `sha256:`-prefixed — needs both registered, and it
+  # cannot do that by touching `have_$ID` itself: the `rm -f have_*` above wipes it.
+  for _xid in ${KEEP_EXTRA_IDS:-}; do : > "$LOG/have_$_xid"; done
   # Extra arguments are ENVIRONMENT ASSIGNMENTS, so they are passed to `env` as
   # separate arguments — never appended as shell words, which the shell would try to
   # EXECUTE as a program named "ISOLATED_DOCKER_HOST=..." [OBSERVED] rc=127.
-  out=$(env TOP_LOG="$LOG" PATH="$NARROW_PATH" \
+  #
+  # HERMETIC: the ambient AWS credentials are scrubbed FIRST, so a case that intends
+  # `AWS_ACCESS_KEY_ID` to be absent actually gets it absent. `env` otherwise inherits
+  # the caller's environment, and a developer with real credentials exported would see
+  # `r2-missing-recovery-credential-refused` fail — the helper's `req` would find the
+  # ambient key and proceed. [OBSERVED] with a live `AWS_ACCESS_KEY_ID` in the shell.
+  # Scrubbing before the explicit assignments means a case that DOES set a variable
+  # still wins, so this cannot mask a genuine requirement.
+  out=$(env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
+        -u AWS_PROFILE -u R2_ENDPOINT \
+        TOP_LOG="$LOG" PATH="$NARROW_PATH" \
         ARCHIVE_URI="file://$LOG/$ART" \
         ARCHIVE_KEY=/fake/key STAMP="$TSTAMP" EXPECT_DIGEST="$DIG" \
         ISOLATED_DOCKER_HOST="tcp://isolated:9999" EXPECT_IDS="$API" \
@@ -349,7 +434,8 @@ clear_all() { rm -f "$LOG"/dec_fail_first "$LOG"/dec_then_fail "$LOG"/enc_fails 
                    "$LOG"/load_fails "$LOG"/no_engine "$LOG"/KEEP_have_api \
                    "$LOG"/aws_fails "$LOG"/aws_truncated "$LOG"/same_engine \
                    "$LOG"/ambient_fails "$LOG"/ambient_whitespace "$LOG"/sigap_project \
-                   "$LOG"/ps_fails; }
+                   "$LOG"/ps_fails "$LOG"/uuid_engine "$LOG"/load_no_id \
+                   "$LOG"/load_tag_form "$LOG"/load_extra_id; }
 
 printf '=== the happy path first, so every refusal is a genuine refusal ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
@@ -375,9 +461,13 @@ run_case 'D-age-encrypt-fails-is-scoped-out' 0
 clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/gzip_fails"
 run_case 'C-gzip-fails' 14
 
-# G — the transfer fails.
+# G — the transfer fails. The URI must actually SELECT the ssh path: the default URI is
+# `file://`, so without this override `scp` is never invoked, the marker is never read,
+# and the restore succeeds for a reason unrelated to the transfer. The case would then
+# report a failure that has nothing to do with the guard it names. [OBSERVED] the suite
+# reported `want=14 got=0` for exactly this reason.
 clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/scp_fails"
-run_case 'G-ssh-transfer-fails' 14
+run_case 'G-ssh-transfer-fails' 14 ARCHIVE_URI="ssh://fakehost/srv/arch/$ART"
 
 # J — the digest does not match the out-of-band record.
 clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/digest_bad"
@@ -398,6 +488,50 @@ run_case 'L-load-succeeds-image-missing' 15
 clear_all; : > "$LOG/KEEP_have_api"
 run_case 'L2-image-present-accepted' 0
 
+# REGRESSION — a load that reports NO image ID must be refused, not trusted. `docker load`
+# printing the ID it assigned is the archive's own identity, and the helper now reads that
+# line rather than inferring the ID from a live `docker inspect` (which reports a config
+# digest `docker load` does not necessarily reproduce — [OBSERVED] run 38272620285, inspect
+# ff59b31e... vs load d88c5ca4...). An unparsable load must therefore be a hard failure (14),
+# because passing an empty value on would report a PARTIAL LOAD for a load that succeeded.
+# `LOADED_IMAGE_ID=` empty makes the fake print the prefix with nothing after it.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/load_no_id"
+run_case 'load-reports-no-image-id-refused' 14
+# ...and a load reporting a DIFFERENT ID than the one archived is a real correspondence
+# failure (15), not a crash — the archive restored something, just not what was recorded.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'load-reports-foreign-image-refused' 15 \
+         LOADED_IMAGE_ID="sha256:$(printf 'f%.0s' $(seq 1 64))" EXPECT_IDS="$API"
+
+# REGRESSION — the TAG output form. `docker load` prints `Loaded image: <repo:tag>` and NO
+# `Loaded image ID:` line when the tar carries RepoTags, which is what `docker save
+# <repo:tag>` produces. An earlier parser matched only the ID form and refused a perfectly
+# good restore with 14. [OBSERVED] daemon/internal/image/tarexport/load.go buffers the ID
+# lines and writes them only when the last image had no RepoTags. The tag must be RESOLVED
+# to an image identity, not accepted as a name.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/load_tag_form"
+run_case 'load-tag-form-accepted' 0 EXPECT_IDS="$API"
+# ...and the tag form must still fail correspondence when the tag resolves to an image the
+# operator did not expect, so accepting the form did not make the check vacuous.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/load_tag_form"
+KEEP_EXTRA_IDS="$EXTRA_IMAGE"
+run_case 'load-tag-form-wrong-image-refused' 15 EXPECT_IDS="$EXTRA_IMAGE"
+KEEP_EXTRA_IDS=""
+
+# UNEXPECTED IMAGE — an archive carrying an EXTRA image must be refused rather than loaded
+# silently. Before this check, 7a confirmed the extra image existed and 7b confirmed the
+# expected one existed, and nothing noticed the addition.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/load_extra_id"
+KEEP_EXTRA_IDS="$EXTRA_IMAGE"
+run_case 'load-unexpected-image-refused' 15 EXPECT_IDS="$API"
+KEEP_EXTRA_IDS=""
+# ...and an archive whose reported images are ALL expected is accepted, so the new check
+# does not refuse a correct multi-image restore.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/load_extra_id"
+KEEP_EXTRA_IDS="$EXTRA_IMAGE"
+run_case 'load-multi-image-all-expected-accepted' 0 EXPECT_IDS="$API,$EXTRA_IMAGE"
+KEEP_EXTRA_IDS=""
+
 # N — the engine reports no identity.
 clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/no_engine"
 run_case 'N-missing-engine-identity' 11
@@ -409,6 +543,53 @@ run_case 'engine-allowlist-absent-refused' 10 ISOLATED_DOCKER_HOST="tcp://isolat
 clear_all; : > "$LOG/KEEP_have_api"
 run_case 'engine-allowlist-mismatch-refused' 11 ISOLATED_DOCKER_HOST="tcp://isolated:9999" \
          ALLOWED_ENGINE_ID="$OTHER_ENGINE" EXPECT_IDS="$API"
+
+# REGRESSION — the allowlist accepts the `sha256:` spelling, and the comparison is
+# symmetric in BOTH places it happens. The pre-load check normalised the allowlist but the
+# POST-load recheck compared raw values, so this exact input was refused with "engine ID
+# changed after load" — a false failure reporting the wrong cause, since the daemon never
+# changed. The happy path must therefore reach rc=0 with a prefixed allowlist; rc=11 here
+# means the post-load recheck regressed.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'engine-allowlist-sha256-prefix-accepted' 0 \
+         ALLOWED_ENGINE_ID="sha256:$TGT_ENGINE" EXPECT_IDS="$API"
+# ...and a prefixed value that is genuinely a DIFFERENT engine is still a mismatch (11),
+# so the normalisation above did not make the comparison vacuous.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'engine-allowlist-sha256-prefix-mismatch-refused' 11 \
+         ALLOWED_ENGINE_ID="sha256:$OTHER_ENGINE" EXPECT_IDS="$API"
+# ...and a non-hex allowlist is malformed input (10), not a mismatch (11).
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'engine-allowlist-malformed-refused' 10 \
+         ALLOWED_ENGINE_ID="engineWRONG" EXPECT_IDS="$API"
+# ...and the expected `sha256:sha256:<digest>` doubled prefix is malformed too.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'engine-allowlist-doubled-prefix-refused' 10 \
+         ALLOWED_ENGINE_ID="sha256:sha256:$TGT_ENGINE" EXPECT_IDS="$API"
+
+# REGRESSION — the UUID spelling of the SAME daemon must be accepted, not refused.
+# `docker info --format '{{.ID}}'` returns an 8-4-4-4-12 UUID on current daemons, and the
+# earlier image-ID normaliser required exactly 64 hex, so a real isolated daemon was refused
+# before the round trip could run. [OBSERVED] run 38268640704, step "Restore":
+#   REFUSED: ALLOWED_ENGINE_ID is not a valid engine ID (need 64 hex, ...)
+#   'dca7b900-8462-4e5c-a7e6-6c69faafe428' 10
+# The allowlist is the SAME daemon as TGT_ENGINE_UUID written WITHOUT dashes — this proves
+# the normaliser makes the two spellings interchangeable. If UUID and hex did not
+# canonicalise to one value, this would be refused as a mismatch (11) instead of accepted.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/uuid_engine"
+run_case 'engine-uuid-spelling-accepted' 0          ALLOWED_ENGINE_ID="11111111111141118111999999999999" EXPECT_IDS="$API"
+# ...and a UUID naming a DIFFERENT daemon is still refused, so the widening is not vacuous.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/uuid_engine"
+run_case 'engine-uuid-mismatch-refused' 11          ALLOWED_ENGINE_ID="$OTHER_ENGINE_UUID" EXPECT_IDS="$API"
+# ...and the two spellings of the SAME daemon must be interchangeable in the denylist too.
+clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/uuid_engine"
+# ...and the DENYLIST still works in the UUID family: the target's own UUID spelling is
+# listed as a recorded PRODUCTION engine, so the strongest control refuses it even though the
+# allowlist describes the same daemon. Listing an unrelated UUID would prove nothing — it
+# would be refused by the allowlist before the denylist is ever consulted.
+run_case 'engine-uuid-in-production-denylist-refused' 11 \
+         ALLOWED_ENGINE_ID="11111111111141118111999999999999" \
+         PRODUCTION_ENGINE_ID="$TGT_ENGINE_UUID" EXPECT_IDS="$API"
 
 printf '=== restore-target isolation ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
@@ -489,6 +670,73 @@ clear_all; : > "$LOG/KEEP_have_api"
 run_case 'production-host-case-variant-refused' 11 ISOLATED_DOCKER_HOST="tcp://FIKRISERVER:2375"
 run_case 'production-socket-trailing-slash-refused' 11 ISOLATED_DOCKER_HOST="unix:///var/run/docker.sock/"
 
+printf '=== a SCHEME-LESS endpoint is the same endpoint, and a socket is local at any path ===\n'
+# `docker` normalises a scheme-less DOCKER_HOST to `tcp` (docker/cli `opts/hosts.go` splits
+# on `://` and defaults the protocol to `tcp` when it is absent), so `127.0.0.1:2375` reaches
+# the same daemon as `tcp://127.0.0.1:2375`. An earlier matcher required the scheme to be
+# present and therefore accepted every one of these as an isolated target. [OBSERVED] before
+# the fix: all five below passed BOTH the production and the loopback gate.
+clear_all; : > "$LOG/KEEP_have_api"
+for ep in "127.0.0.1:2375" "localhost:2375" "127.1:2375" "0.0.0.0:2375" "[::1]:2375"; do
+  run_case "scheme-less-same-host-refused[$ep]" 11 ISOLATED_DOCKER_HOST="$ep"
+done
+# The opt-in must still admit them, so the fix is a tightening and not a blanket refusal.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'scheme-less-loopback-accepted-with-optin' 0 \
+  ISOLATED_DOCKER_HOST="127.0.0.1:2375" SIGAP_ALLOW_LOOPBACK_TARGET=1
+# A UNIX SOCKET IS LOCAL AT ANY PATH — it cannot be remote by construction. Only the two
+# canonical production paths were enumerated, so these two passed both gates. [OBSERVED].
+clear_all; : > "$LOG/KEEP_have_api"
+for ep in "unix:///tmp/local.sock" "unix:///home/u/.docker/desktop/docker.sock"; do
+  run_case "non-canonical-unix-socket-refused[$ep]" 11 ISOLATED_DOCKER_HOST="$ep"
+done
+# THE OTHER DIRECTION: a genuinely REMOTE endpoint must not be over-refused as same-host.
+# The loopback patterns are deliberately broad, so this pins their bound. An unescaped
+# `[::1]*` is a BRACKET EXPRESSION matching one character from `{:,1}`, so it matched the
+# leading `1` of `10.0.0.5` and refused a remote daemon as loopback. [OBSERVED].
+#
+# The assertion is rc=0, i.e. the endpoint PASSED both gates and the restore ran to
+# completion. That is the strongest available proof of no over-refusal: the fake `docker`
+# answers for any host, so a same-host false positive would have refused here with 11.
+clear_all; : > "$LOG/KEEP_have_api"
+out=$(env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
+      -u AWS_PROFILE -u R2_ENDPOINT \
+      TOP_LOG="$LOG" PATH="$NARROW_PATH" \
+      ARCHIVE_URI="file://$LOG/$ART" \
+      ARCHIVE_KEY=/fake/key STAMP="$TSTAMP" EXPECT_DIGEST="$DIG" \
+      ISOLATED_DOCKER_HOST="10.0.0.5:2375" EXPECT_IDS="$API" \
+      ALLOWED_ENGINE_ID="$TGT_ENGINE" \
+      timeout 60 "$BASH_BIN" "$HELPER" 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && ! printf '%s' "$out" | grep -q 'same-host endpoint'; then
+  ok 'scheme-less-remote-not-over-refused' 'rc=0 (remote accepted, not same-host)'
+else
+  bad 'scheme-less-remote-not-over-refused' \
+      "want=0 without same-host got=$rc :: $(printf '%s' "$out" | tail -1)"
+fi
+
+printf '=== a SET-BUT-EMPTY production denylist is refused, never silently disabled ===\n'
+# `[ -n "$PRODUCTION_ENGINE_ID" ]` is satisfied by whitespace, but the unquoted
+# word-splitting that followed yielded ZERO entries, so the loop body never ran and the
+# strongest production control became a no-op with no signal at all. [OBSERVED] 0 loop
+# iterations for " ", "," and ", " while "" and "aa,bb" gave 0 and 2.
+for pe in " " "," ", "; do
+  clear_all; : > "$LOG/KEEP_have_api"
+  run_case "empty-production-engine-refused[$pe]" 10 \
+    ISOLATED_DOCKER_HOST="tcp://isolated:9999" PRODUCTION_ENGINE_ID="$pe"
+done
+
+printf '=== a newline in EXPECT_IDS is refused, never silently truncated ===\n'
+# `read -ra` reads ONE line, so a newline-joined EXPECT_IDS yielded only its FIRST id: the
+# remaining expected images were never checked for presence, `missing` stayed 0, and the run
+# reported "identity correspondence VERIFIED for all 1 image(s)" for an archive that should
+# have restored several. A silent under-verification, so it fails closed. [OBSERVED].
+# The second id is written as a literal: this block runs BEFORE the `ABSENT` constant is
+# defined below, and `set -u` turns a forward reference into an abort.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'newline-expect-ids-refused' 10 EXPECT_IDS="$API
+0000000000000000000000000000000000000000000000000000000000000000"
+
 printf '=== image IDs: one canonical form, normalised once, no doubled prefix ===\n'
 # `docker inspect --format '{{.Id}}'` returns `sha256:<digest>`, while `docker image
 # inspect` accepts either form. An earlier revision prefixed unconditionally, so a
@@ -509,10 +757,10 @@ run_case 'id-doubled-prefix-refused-as-invalid' 10 EXPECT_IDS="sha256:sha256:$AP
 clear_all; : > "$LOG/KEEP_have_api"
 run_case 'id-non-hex-refused' 10 EXPECT_IDS="notahash"
 clear_all; : > "$LOG/KEEP_have_api"
-run_case 'id-wrong-length-refused' 10 EXPECT_IDS="43fcbcb3"
+run_case 'id-wrong-length-refused' 10 EXPECT_IDS="aaaaaaaa"
 clear_all; : > "$LOG/KEEP_have_api"
 run_case 'id-uppercase-refused-as-non-canonical' 10 \
-  EXPECT_IDS="43FCBCB35ED276B33327FA4A9AD8D9D909DE6875CDE185E2360BBC7374794C8F"
+  EXPECT_IDS="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 # A valid but ABSENT digest is a correspondence failure (15), distinct from malformed (10).
 clear_all
 run_case 'id-absent-image-fails-correspondence' 15 EXPECT_IDS="$ABSENT"
@@ -520,11 +768,18 @@ run_case 'id-absent-image-fails-correspondence' 15 EXPECT_IDS="$ABSENT"
 clear_all; : > "$LOG/KEEP_have_api"
 run_case 'id-partial-load-refused' 15 EXPECT_IDS="$API,$ABSENT"
 # Exact correspondence for a multi-ID list, both spellings mixed.
-clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/have_$API"
-# Genuinely MIXED: two different IDs, one bare and one prefixed. The previous form was a
-# duplicate of id-sha256-prefixed-accepted and therefore proved nothing extra.
-clear_all; : > "$LOG/KEEP_have_api"; : > "$LOG/have_$ABSENT"
+# Genuinely MIXED: two DIFFERENT ids, one bare and one `sha256:`-prefixed, BOTH present.
+# The previous form was a duplicate of id-sha256-prefixed-accepted and proved nothing extra.
+# The second id needs `KEEP_EXTRA_IDS` rather than a direct `have_` touch, because run_case
+# clears `have_*` before registering markers.
+clear_all; : > "$LOG/KEEP_have_api"
+KEEP_EXTRA_IDS="$ABSENT"
 run_case 'id-mixed-spelling-correspondence' 0 EXPECT_IDS="$API,sha256:$ABSENT"
+KEEP_EXTRA_IDS=""
+# ...and the correspondence check must still FAIL when one of the two mixed-spelling ids is
+# genuinely absent, so the case above is not satisfied by a check that ignores ids.
+clear_all; : > "$LOG/KEEP_have_api"
+run_case 'id-mixed-spelling-missing-one-refused' 15 EXPECT_IDS="$API,sha256:$ABSENT"
 
 printf '=== required input is validated, never defaulted ===\n'
 clear_all; : > "$LOG/KEEP_have_api"
