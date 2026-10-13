@@ -109,21 +109,33 @@ trap cleanup EXIT INT TERM
 # with no cause. The reason is in `pg.log`; print it.
 start_cluster() {
   attempts=0
+  base_port=$PORT
   while [ "$attempts" -lt 8 ]; do
     if "$PGCTL" -D "$CL" -o "-p $PORT -c listen_addresses=127.0.0.1" \
          -l "$TMP/pg.$attempts.log" -w start >"$TMP/start.$attempts.log" 2>&1; then
       return 0
     fi
+    # Count the FAILED attempt BEFORE the break, so `attempts` is the number of logs
+    # that actually exist. Incrementing it after the break left `attempts=0` when
+    # PORT_OVERRIDE was set, so the loop that prints the postmaster logs never ran —
+    # the explicit-port case, which is exactly when a diagnostic is wanted.
+    attempts=$((attempts + 1))
     [ -n "$PORT_OVERRIDE" ] && break
     PORT=$((PORT + 1))
-    attempts=$((attempts + 1))
   done
   # Surface the postmaster's own reason, per attempt, before failing. A suite
   # that reports only "could not start server" cannot be diagnosed from a CI log.
+  #
+  # NOTE the arithmetic uses a pre-computed base and plain variables. `$((X:-Y + a))`
+  # is a dash SYNTAX ERROR ("arithmetic expression: expecting EOF"), because the
+  # parameter-expansion operator is not valid inside an arithmetic expression without
+  # braces. [OBSERVED] CI run 38342525930 exited 2 on that line, replacing the real
+  # failure with a parse error — a diagnostic that breaks the thing it diagnoses.
   a=0
   while [ "$a" -lt "$attempts" ]; do
     [ -s "$TMP/pg.$a.log" ] && {
-      printf '  --- postmaster log, attempt %s (port %s) ---\n' "$((a + 1))" "$((PORT_OVERRIDE:-55451 + a))"
+      p=$((base_port + a))
+      printf '  --- postmaster log, attempt %s (port %s) ---\n' "$((a + 1))" "$p"
       tail -15 "$TMP/pg.$a.log"
     }
     a=$((a + 1))
