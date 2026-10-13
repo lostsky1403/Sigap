@@ -112,7 +112,8 @@ Rehearsal only; see `DEPLOYMENT_RUNBOOK.md` §4a. All checks are in
 | F18 | **Artifact URI and SHA-256 recorded out-of-band** (checklist + Jira gate, never a co-located sidecar in R2) | runbook §13g.7 | **OPERATOR** — `PRODUCTION_IMAGES_PRESERVED = NO` |
 | F19 | **Isolated restore from R2 exercised with the REAL image IDs** via `sigap-archive-restore.sh` with `ARCHIVE_URI=r2://…` | runbook §7d.1, §13f step 3 | **OPERATOR** — `REAL_ISOLATED_RESTORE = NOT_RUN` |
 | F20 | **`J11_ROLLBACK_SAFETY` resolved** — preserved binary tested against the post-`0011` schema (§7g), **not** inferred from image IDs | runbook §7f/§7g | **OPERATOR** — currently `UNKNOWN`, which BLOCKS J10 |
-| F21 | **Bucket Lock retention behaviour verified on the real service**, using a throwaway object — **not** by the MinIO CI test, which cannot prove it. **THREE things, recorded separately:** (1) the production rule's *configuration* is now **VERIFIED** from the operator's live `lock list` (F14 evidence); (2) **Part 1** = the mechanism on a disposable `lock-drill/<STAMP>/` prefix (deletion refused **for the retention reason**, then permitted once the rule is removed, then cleanup proven); (3) **Part 2** = re-reading the live `lock list` afterwards to confirm the production rule is **unchanged** by the drill. A verified configuration and a green Part 1 do **not** prove the rule *enforces* retention against a real object | runbook **§13g.14** | **OPERATOR** — `BUCKET_LOCK_BEHAVIOR_TEST = NOT_RUN`, `BUCKET_LOCK_BEHAVIOR_PROVEN = PENDING`. Requires separate authorization: the drill mutates a real bucket |
+| F21 | **Bucket Lock retention behaviour verified on the real service**, using a throwaway object — **not** by the MinIO CI test, which cannot prove it. **THREE things, recorded separately:** (1) the production rule's *configuration* is now **VERIFIED** from the operator's live `lock list` (F14 evidence); (2) **`DISPOSABLE_LOCK_MECHANISM_TEST`** — the mechanism on a disposable `lock-drill/<STAMP>/` prefix (deletion refused **for the retention reason**, then permitted once the rule is removed, then cleanup proven); (3) **`PRODUCTION_RULE_UNCHANGED_AFTER_DRILL`** — re-reading the live `lock list` afterwards to confirm the production rule is byte-identical and no drill rule remains. A verified configuration and a green mechanism test do **not** prove the rule *enforces* retention against a real object. **Operator-executable as `scripts/ops/Drill-BucketLockRetention.ps1`** (PowerShell-native, `-DryRun` first; the Bash block in §13g.14 is the annotated reference) | runbook **§13g.14** | **OPERATOR** — `BUCKET_LOCK_CONFIG_VERIFIED = PASS`, `DISPOSABLE_LOCK_MECHANISM_TEST = NOT_RUN`, `PRODUCTION_RULE_UNCHANGED_AFTER_DRILL = NOT_RUN`. Requires separate authorization: the drill mutates a real bucket |
+| F21a | **The drill's own assertions are tested** — `scripts/ops/test-bucket-lock-drill.sh` runs it against a stub executor: the happy path; the failure paths (deletable locked object, refusal without a retention reason, rule that never applied, production rule changed); the guard refusals (ambient AWS credentials, non-R2 endpoint, extra host label, longer id, trailing dot, endpoint with path, malformed account id, wrong bucket, pre-existing drill state); and **one regression case per preflight condition** — disabled rule, missing/empty `enabled`, wrong/empty/missing prefix, retention 89/1/100/365/plain/`N day`, retention missing/empty/malformed/date/indefinite, duplicate rule, contradictory record, empty rule name, mixed-rule attributes, differently-cased and superstring names. Every refusal asserts the **specific reason** and the **absence of mutation**, not just the exit code. Wired into the `ops-guards` CI job | `scripts/ops/test-bucket-lock-drill.sh` | **DONE** — 129/129 checks pass locally under pwsh 7.6 and Windows PowerShell 5.1; no real bucket contacted |
 | F21c | **CI test EXECUTED and PASSING** — the **latest** successful drill is run `38289010467` on **`d06a9a7`**, all 19 steps, including all four negative controls at their expected exit codes and refusal *reasons*. Earlier passing runs (`38281214221` on `c4afc1c`, `38280297031` on `89f9bcf`) are superseded by it. The drill **no longer re-runs on push**: the `r2-validation` label was removed once validation completed, so the job correctly reports *skipped* | runbook §13g.12 | **DONE** — `R2_MINIO_ROUND_TRIP = PASS`, `R2_NEGATIVE_CONTROLS = PASS` (MinIO only; **not** retention). The result is **historical**: it was produced on `d06a9a7`, which is no longer the branch head, and it is evidence that the gate is reachable and the round trip executes end to end — **not** a claim about any later commit |
 | F21b | **CI test activated** — the `r2-validation` label created, a PR opened with base `design/ui-ux-overhaul`, and the label **applied** (the `labeled` activity type is what starts the run; without it the gate is unreachable) | runbook §13g.11 | **OPERATOR** — `GITHUB_TEST_ACTIVATION = READY`, `R2_RUNTIME_TEST = NOT_RUN` |
 | F22 | **`PRODUCTION_ENGINE_ID` recorded** (`docker info .ID` on the production daemon) and exported for every restore | runbook §7d.1, §13f | **OPERATOR** — Gate D. The only alias-proof production control; without it an SSH tunnel or DNS alias of production defeats the string denylist |
@@ -232,6 +233,57 @@ limit is this environment's SSH path, not any of the three machines. So no relay
 (age/aws/ssh presence, `umask`, key absence) could be checked here, and none was assumed.
 The runbook's checks remain the operative procedure; this record only narrows the choice.
 
+**F23b — relay versus source-side encryption (RECOMMENDATION ONLY — not adopted).** Two
+concrete options, assessed on the criteria that matter. **No change is made to §13f**; this
+needs owner approval before anything is rewritten.
+
+*Option A — retain the relay* (`production | gzip | ssh RELAY "age -r RECIP"`, relay uploads).
+*Option B — encrypt on production* with the age **public recipient**, upload with the `aws` CLI
+production already has, and delete the relay from the path.
+
+| Criterion | A — relay (zenith) | B — source-side encryption |
+|---|---|---|
+| Host independence | needs a **third** host; `zenith`/`vps-nagoya` are candidates but **unverified** — neither could be reached from the agent environment | **removes** a host; production and R2 only |
+| SSH trust | adds a production→relay edge, and production must hold a key authorised on the relay | **no SSH hop at all** |
+| Plaintext exposure | plaintext (gzip) transits to the relay and exists in the `age` process's memory there; only *disk* is kept clean | plaintext never leaves the host that already holds it |
+| Upload credentials | the bucket-scoped **Object Read & Write** token must live on the relay | the same token lives on production — which **already** holds S3 credentials for the AUDIT-701 upload path |
+| Resource consumption | an entire extra host: disk for `RELAY_STAGE`, CPU for `age`, patching, monitoring | one static `age` binary (~5 MB) plus CPU/disk already present |
+| Failure recovery | more hops, so more independent ways for the preservation run to fail | fewer moving parts on the critical path |
+| Script compatibility | §13f works **unchanged** | §13f's `stream_offhost` must be edited — the `ssh` hop is removed and `age` runs locally |
+
+**Recommendation: Option B**, and the decisive point is that A's central stated benefit does not
+hold. §13f says "no unencrypted archive is ever persisted on the relay" — true of **disk**, but
+the relay *must* receive the gzip stream on stdin to encrypt it, so the plaintext passes through
+the relay's memory on every run. A therefore adds a host, a trust edge and a second location for
+the bucket write token **without removing the plaintext exposure it exists to prevent**. B has
+plaintext only where it already is, and keeps the property that actually protects the archive:
+`age` public-key encryption needs only the **recipient**, so the **private key stays off
+production** exactly as it does today.
+
+The counter-argument is that B grants production write access to the archive bucket. It does —
+but A grants the *same* access to the relay, so compromising either host yields it, and Bucket
+Lock is the control that limits what write access can destroy (a 90-day floor on deletion). B
+removes one of the two credential locations rather than adding a third.
+
+**Acceptance criteria, if B is approved** — all must hold before §13f is rewritten:
+1. `age` installed on production and recorded as **present**, replacing the "ABSENT — not
+   required" row; the binary's version and checksum recorded.
+2. **Only** the public recipient exists on production: a check that no `age` identity file is
+   present, and that the recipient string matches the one the recovery side holds.
+3. The R2 token on production is **Object Read & Write scoped to `sigap-backups` only** (A5) —
+   not account-wide, and not `Admin Read & Write`.
+4. A real end-to-end preservation run produces an object whose digest matches the local
+   computation, and `R2_REAL_UPLOAD_READBACK` is exercised against it.
+5. The recovery path decrypts that object with the private identity **off-host**.
+6. §13f's `stream_offhost` is edited to drop the `ssh` hop, and its per-stage `PIPESTATUS`
+   handling re-verified — that logic is subtle and was corrected twice (see §13f's notes).
+7. The relay requirement (F23) is **removed** from the checklist, and `ARCHIVE_RELAY` retires
+   rather than sitting `NOT_IDENTIFIED` forever.
+
+**Do not act on this yet.** F23 remains `NOT_IDENTIFIED` and §13f remains as written until the
+owner chooses; if A is chosen instead, F23a's `zenith` preference and the relay acceptance
+checks apply unchanged.
+
 > **Gate A verdicts.** `OFFHOST_STORAGE_DESIGN = READY` · `R2_BUCKET = CONFIGURATION_VERIFIED` ·
 > `R2_CONTRACT_ACCURACY = PASS` (corrected against the platform's published semantics — see
 > below) · `ENCRYPTION_DESIGN = READY` · `PRODUCTION_PRIVATE_KEY = NOT_GENERATED_BY_AGENT` ·
@@ -246,8 +298,10 @@ The runbook's checks remain the operative procedure; this record only narrows th
 > `BUCKET_LOCK_CONFIG_VERIFIED = PASS` (**configuration inventory only** — the rule exists,
 > is enabled, is scoped to `sigap/`, and is 90 days) ·
 > `MULTIPART_LIFECYCLE_VERIFIED = PASS` · `BUCKET_LOCK_BEHAVIOR_TEST = NOT_RUN` ·
-> `R2_REAL_UPLOAD_READBACK = NOT_RUN` · `BUCKET_LOCK_BEHAVIOR_PROVEN = PENDING` (F21) ·
-> `ARCHIVE_RELAY = NOT_IDENTIFIED` (F23 — blocks §13f) ·
+> `R2_REAL_UPLOAD_READBACK = NOT_RUN` ·
+> `DISPOSABLE_LOCK_MECHANISM_TEST = NOT_RUN` (F21 — the mechanism on a throwaway prefix) ·
+> `PRODUCTION_RULE_UNCHANGED_AFTER_DRILL = NOT_RUN` (F21 — the production rule survives the
+> drill) · `ARCHIVE_RELAY = NOT_IDENTIFIED` (F23 — blocks §13f) ·
 > `J11_ROLLBACK_SAFETY = UNKNOWN` · `MIGRATION_0011 = NOT_AUTHORIZED` ·
 > `PRODUCTION_DEPLOYMENT = BLOCKED`. The design is complete. **Nothing in production has been
 > created, read or executed**, and no approval transfers between gates. What *has* now run is
