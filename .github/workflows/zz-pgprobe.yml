@@ -1,0 +1,29 @@
+name: pgprobe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          ls -d /usr/lib/postgresql/*/bin/initdb
+      - name: probe
+        run: |
+          set -x
+          T=$(mktemp -d)
+          PGVER=$(ls -d /usr/lib/postgresql/*/bin | head -1)
+          export PATH="$PGVER:$PATH"
+          pg_lsclusters 2>&1 || true
+          echo "--- initdb ---"
+          "$PGVER/initdb" -D "$T/cl" -U postgres --auth=trust -E UTF8 >"$T/initdb.log" 2>&1; echo "initdb rc=$?"
+          echo "--- pg_ctl start ---"
+          "$PGVER/pg_ctl" -D "$T/cl" -o "-p 55451 -c listen_addresses=127.0.0.1" -l "$T/pg.log" -w start 2>&1; echo "start rc=$?"
+          echo "--- pg.log ---"
+          cat "$T/pg.log" 2>&1 | head -30
+          echo "--- start attempt 2 with -s ---"
+          "$PGVER/pg_ctl" -D "$T/cl" -o "-p 55452 -c listen_addresses=127.0.0.1 -c shared_buffers=32MB" -l "$T/pg2.log" -w start 2>&1 | tail -5
+          cat "$T/pg2.log" 2>&1 | head -20
+          rm -rf "$T"
