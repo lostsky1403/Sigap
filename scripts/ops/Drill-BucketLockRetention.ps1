@@ -416,10 +416,139 @@ function Invoke-LockList {
     return $r.Output
 }
 
-function Invoke-ListObjects {
-    $r = Invoke-Native -File $aws -Arguments @('s3api','list-objects-v2','--bucket',$BUCKET,
-        '--prefix',"$DRILL_PREFIX/",'--endpoint-url',$endpoint,'--query','KeyCount','--output','text')
-    return $r
+# --- listing the drill prefix without trusting KeyCount -----------------------------------
+# `--query KeyCount --output text` renders a MISSING key as the literal string `None`, which
+# is not `0`. On a real empty prefix R2 omits KeyCount entirely, so the old form refused a
+# correct bucket with "None pre-existing object(s)". The count is now taken from the
+# response's `Contents` -- the actual keys -- and every uncertain case is reported rather
+# than read as "empty".
+#
+# Returns a result object rather than calling Refuse directly, because it is also used from
+# the teardown path, where a refusal must be a drill FAILURE and not a pre-mutation refusal.
+function Get-DrillObjectKeys {
+    $keys = New-Object System.Collections.ArrayList
+    $token = $null
+    $page = 0
+    $maxPages = 100
+    while ($true) {
+        $page++
+        if ($page -gt $maxPages) {
+            return [pscustomobject]@{ Ok = $false; Keys = @()
+                Error = "listing $DRILL_PREFIX/ exceeded $maxPages pages -- refusing rather than reporting an incomplete count" }
+        }
+        # --no-paginate stops the CLI merging pages, so IsTruncated and
+        # NextContinuationToken are meaningful and the page boundary is ours to control.
+        $awsArgs = @('s3api','list-objects-v2','--bucket',$BUCKET,'--prefix',"$DRILL_PREFIX/",
+                     '--endpoint-url',$endpoint,'--output','json','--no-paginate')
+        if ($token) { $awsArgs += @('--continuation-token',$token) }
+        $r = Invoke-Native -File $aws -Arguments $awsArgs
+        if ($r.ExitCode -ne 0) {
+            return [pscustomobject]@{ Ok = $false; Keys = @()
+                Error = "could not list $DRILL_PREFIX/ (rc=$($r.ExitCode)): $($r.Output)" }
+        }
+
+        $text = ($r.Output).Trim()
+        # An empty body, or the CLI's literal `None`/`null`, is NOT an empty result. This is
+        # the exact value that produced the false refusal, so it is called out by name.
+        if ([string]::IsNullOrWhiteSpace($text) -or $text -eq 'None' -or $text -eq 'null') {
+            return [pscustomobject]@{ Ok = $false; Keys = @()
+                Error = "list-objects-v2 returned no usable output for $DRILL_PREFIX/ ('$text') -- refusing rather than assuming the prefix is empty" }
+        }
+
+        $doc = $null
+        try { $doc = ConvertFrom-Json -InputObject $text } catch {
+            $preview = $text.Substring(0, [Math]::Min(120, $text.Length))
+            return [pscustomobject]@{ Ok = $false; Keys = @()
+                Error = "list-objects-v2 returned output that is not valid JSON -- refusing rather than assuming the prefix is empty. Output began: $preview" }
+        }
+        if ($null -eq $doc -or $doc -is [string] -or $doc -is [array]) {
+            return [pscustomobject]@{ Ok = $false; Keys = @()
+                Error = "list-objects-v2 returned a JSON value that is not an object -- malformed response, refusing" }
+        }
+        $names = @(Get-JsonFieldNames -Object $doc)
+
+        # Contents is the authoritative list of keys. Its absence means there are none.
+        $pageKeys = @()
+        if ($names -contains 'Contents') {
+            $contents = $doc.Contents
+            if ($null -ne $contents) {
+                foreach ($c in @($contents)) {
+                    if ($null -eq $c -or -not (Test-JsonHasField -Object $c -Field 'Key')) {
+                        return [pscustomobject]@{ Ok = $false; Keys = @()
+                            Error = "a Contents entry in list-objects-v2 has no Key field -- malformed response, refusing" }
+                    }
+                    $k = [string]$c.Key
+                    if ([string]::IsNullOrWhiteSpace($k)) {
+                        return [pscustomobject]@{ Ok = $false; Keys = @()
+                            Error = "a Contents entry in list-objects-v2 has an empty Key -- malformed response, refusing" }
+                    }
+                    $pageKeys += $k
+                }
+            }
+        }
+
+        # KeyCount is a HINT, not the count -- the keys above are. It is still validated when
+        # present, because a malformed or contradictory value means the response cannot be
+        # trusted at all. It is deliberately NOT compared for equality against the page size:
+        # its exact semantics (page vs total) are not guaranteed, and a false mismatch here
+        # would re-break a correct bucket, which is the failure being fixed.
+        if ($names -contains 'KeyCount') {
+            $kc = $doc.KeyCount
+            if ($null -ne $kc) {
+                $kcInt = 0
+                if (-not [int]::TryParse([string]$kc, [ref]$kcInt) -or $kcInt -lt 0) {
+                    return [pscustomobject]@{ Ok = $false; Keys = @()
+                        Error = "list-objects-v2 returned a non-numeric KeyCount ('$kc') -- malformed response, refusing" }
+                }
+                if ($pageKeys.Count -eq 0 -and $kcInt -gt 0) {
+                    return [pscustomobject]@{ Ok = $false; Keys = @()
+                        Error = "list-objects-v2 reported KeyCount=$kcInt but listed no Contents -- contradictory response, refusing rather than guessing" }
+                }
+            }
+        }
+
+        foreach ($k in $pageKeys) { [void]$keys.Add($k) }
+
+        $truncated = $false
+        if ($names -contains 'IsTruncated') { $truncated = [bool]$doc.IsTruncated }
+        if (-not $truncated) { break }
+        $next = $null
+        if ($names -contains 'NextContinuationToken') { $next = [string]$doc.NextContinuationToken }
+        if ([string]::IsNullOrWhiteSpace($next)) {
+            return [pscustomobject]@{ Ok = $false; Keys = @()
+                Error = "list-objects-v2 reported IsTruncated with no NextContinuationToken -- refusing rather than reporting a partial count" }
+        }
+        $token = $next
+    }
+    return [pscustomobject]@{ Ok = $true; Keys = @($keys); Error = '' }
+}
+
+# Field names of a JSON object, as an array. Explicit iteration rather than
+# `$obj.PSObject.Properties.Name`: under Set-StrictMode an object with ZERO properties makes
+# that member-enumeration form throw, and an empty JSON object `{}` is exactly that case --
+# a valid "no objects" response that must not be reported as an internal error.
+function Get-JsonFieldNames {
+    param($Object)
+    $names = New-Object System.Collections.ArrayList
+    if ($null -ne $Object) {
+        foreach ($p in $Object.PSObject.Properties) { [void]$names.Add($p.Name) }
+    }
+    return $names
+}
+
+function Test-JsonHasField {
+    param($Object, [string]$Field)
+    foreach ($n in @(Get-JsonFieldNames -Object $Object)) {
+        if ($n -ceq $Field) { return $true }
+    }
+    return $false
+}
+
+# Used from the preflight, where uncertainty must stop the run before any mutation.
+function Get-DrillObjectKeysOrRefuse {
+    $res = Get-DrillObjectKeys
+    if (-not $res.Ok) { Refuse $res.Error }
+    return $res.Keys
 }
 
 function Invoke-Cleanup {
@@ -449,12 +578,22 @@ function Invoke-Cleanup {
     } else { Ok "no drill rule remains" }
     Record -Name '07-lock-after-cleanup.txt' -Text $list2
 
-    $objs = Invoke-ListObjects
-    $count = ($objs.Output).Trim()
-    if ($objs.ExitCode -ne 0) {
-        Fail "could not list objects under $DRILL_PREFIX/ (rc=$($objs.ExitCode))"; $ok = $false
-    } elseif ($count -eq '0') { Ok "no drill objects remain under $DRILL_PREFIX/" }
-    else { Fail "$count drill object(s) remain under $DRILL_PREFIX/"; $ok = $false }
+    $objs = Get-DrillObjectKeys
+    if (-not $objs.Ok) {
+        # Teardown cannot prove the prefix is clean, so it reports a drill FAILURE rather
+        # than a pre-mutation refusal -- nothing was refused, the drill ran and could not
+        # confirm its own cleanup.
+        Fail "could not confirm $DRILL_PREFIX/ is empty: $($objs.Error)"
+        $ok = $false
+        $count = 'unknown'
+    } elseif ($objs.Keys.Count -eq 0) {
+        Ok "no drill objects remain under $DRILL_PREFIX/"
+        $count = '0'
+    } else {
+        Fail "$($objs.Keys.Count) drill object(s) remain under $DRILL_PREFIX/: $($objs.Keys -join ', ')"
+        $ok = $false
+        $count = [string]$objs.Keys.Count
+    }
     Record -Name '08-cleanup.txt' -Text "rule_remains=$(Test-DrillRulePresent -Text $list2)`nobject_count=$count"
 
     return $ok
@@ -489,10 +628,9 @@ try {
     if (Test-DrillRulePresent -Text $before) {
         Refuse "a rule named '$DRILL_RULE' already exists. Remove it before re-running; the drill will not adopt an unknown rule."
     }
-    $pre = Invoke-ListObjects
-    if ($pre.ExitCode -ne 0) { Refuse "could not list $DRILL_PREFIX/ (rc=$($pre.ExitCode)): $($pre.Output)" }
-    if (($pre.Output).Trim() -ne '0') {
-        Refuse "$(($pre.Output).Trim()) pre-existing object(s) under $DRILL_PREFIX/. Clear them before drilling."
+    $preKeys = @(Get-DrillObjectKeysOrRefuse)
+    if ($preKeys.Count -gt 0) {
+        Refuse "$($preKeys.Count) pre-existing object(s) under $DRILL_PREFIX/: $($preKeys -join ', '). Clear them before drilling."
     }
     Ok "no pre-existing drill rule or object"
 
@@ -504,7 +642,7 @@ try {
         Note "3. delete-object $KEY            (expect REFUSAL naming lock/retention)"
         Note "4. lock remove $BUCKET --name $DRILL_RULE"
         Note "5. delete-object $KEY            (expect SUCCESS)"
-        Note "6. lock list -> no '$DRILL_RULE'; list $DRILL_PREFIX/ -> KeyCount 0"
+        Note "6. lock list -> no '$DRILL_RULE'; list $DRILL_PREFIX/ -> no keys"
         Note "7. diff 01-lock-before.txt against 07-lock-after-cleanup.txt"
         Say ""
         Say "DRY RUN complete. Re-run without -DryRun to execute (owner authorization required)." 'Yellow'

@@ -142,9 +142,63 @@ if ($Tool -eq 'aws') {
         Write-Output '{"ETag":"stub"}'; exit 0
     }
     if ($key -match 's3api list-objects-v2') {
-        $n = 0
-        if (Test-Path $objFile) { $n = @(Get-Content $objFile | Where-Object { $_ -ne '' }).Count }
-        Write-Output ([string]$n); exit 0
+        # Emits the REAL R2 shape. R2 omits KeyCount entirely when the prefix is empty --
+        # the response that made `--query KeyCount --output text` print `None` and caused a
+        # correct bucket to be refused. Modes below reproduce that and the other shapes.
+        switch ($mode) {
+            'lo-none'           { Write-Output 'None'; exit 0 }
+            'lo-empty-out'      { Write-Output ''; exit 0 }
+            'lo-malformed'      { Write-Output 'this is not json at all'; exit 0 }
+            'lo-json-string'    { Write-Output '"just-a-string"'; exit 0 }
+            'lo-json-array'     { Write-Output '["a","b"]'; exit 0 }
+            'lo-empty-json'     { Write-Output '{}'; exit 0 }
+            'lo-contents-null'  { Write-Output '{"Name":"sigap-backups","Contents":null,"IsTruncated":false}'; exit 0 }
+            'lo-no-key'         { Write-Output '{"Contents":[{"Size":10}],"IsTruncated":false}'; exit 0 }
+            'lo-empty-key'      { Write-Output '{"Contents":[{"Key":""}],"IsTruncated":false}'; exit 0 }
+            'lo-bad-keycount'   { Write-Output '{"KeyCount":"many","Contents":[{"Key":"lock-drill/x/a.txt"}],"IsTruncated":false}'; exit 0 }
+            'lo-contradiction'  { Write-Output '{"KeyCount":3,"IsTruncated":false}'; exit 0 }
+            'lo-trunc-no-token' { Write-Output '{"KeyCount":1,"Contents":[{"Key":"lock-drill/x/a.txt"}],"IsTruncated":true}'; exit 0 }
+            'lo-paginated' {
+                $tok = ''
+                if ($key -match '--continuation-token\s+(\S+)') { $tok = $Matches[1] }
+                if ($tok -eq 'PAGE2') {
+                    Write-Output '{"Contents":[{"Key":"lock-drill/x/b.txt"}],"IsTruncated":false}'
+                } else {
+                    Write-Output '{"KeyCount":1,"Contents":[{"Key":"lock-drill/x/a.txt"}],"IsTruncated":true,"NextContinuationToken":"PAGE2"}'
+                }
+                exit 0
+            }
+            'lo-fail-after-first' {
+                # Valid on the preflight listing, malformed on every later one, so the
+                # TEARDOWN path is exercised: it must report a drill FAILURE, not a
+                # pre-mutation refusal.
+                $c = Join-Path $dir 'locount'
+                $n = 0
+                if (Test-Path $c) { $n = [int](Get-Content $c) }
+                Set-Content -Path $c -Value ($n + 1)
+                if ($n -ge 1) { Write-Output 'not json'; exit 0 }
+                Write-Output '{"Name":"sigap-backups","Prefix":"lock-drill/","IsTruncated":false}'
+                exit 0
+            }
+        }
+        $objs = @()
+        if (Test-Path $objFile) { $objs = @(Get-Content $objFile | Where-Object { $_ -ne '' }) }
+        if ($objs.Count -eq 0) {
+            # No KeyCount, no Contents -- exactly what R2 returns for an empty prefix.
+            $json = '{"Name":"sigap-backups","Prefix":"lock-drill/","MaxKeys":1000,"IsTruncated":false}'
+        } else {
+            $items = ($objs | ForEach-Object { '{"Key":"' + $_ + '","Size":10}' }) -join ','
+            $json = '{"Name":"sigap-backups","Prefix":"lock-drill/","KeyCount":' + $objs.Count + ',"Contents":[' + $items + '],"IsTruncated":false}'
+        }
+        # Emulate the CLI's --query/--output text, so the PRE-FIX drill can be reproduced
+        # faithfully: a missing KeyCount renders as the literal string `None`, not `0`.
+        if ($key -match '--query\s+KeyCount' -and $key -match '--output\s+text') {
+            if ($json -match '"KeyCount"\s*:\s*(\d+)') { Write-Output $Matches[1] }
+            else { Write-Output 'None' }
+            exit 0
+        }
+        Write-Output $json
+        exit 0
     }
     if ($key -match 's3api delete-object') {
         if (Have-Rule) {
@@ -187,9 +241,11 @@ out=''
 rc=0
 
 # invoke_drill <mode> [env assignments...] ; sets $out and $rc, fresh stub state
+# KEEP_STATE=1 preserves the stub state directory, for seeding a pre-existing object.
 invoke_drill() {
     mode=$1; shift
-    rm -rf "$TMP/state"; mkdir -p "$TMP/state"
+    if [ "${KEEP_STATE:-0}" != "1" ]; then rm -rf "$TMP/state"; fi
+    mkdir -p "$TMP/state"
     out=$(
         env -u AWS_PROFILE -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY \
             -u AWS_SESSION_TOKEN -u AWS_SHARED_CREDENTIALS_FILE -u AWS_CONFIG_FILE \
@@ -348,6 +404,57 @@ refusal "non-hex endpoint host refused"  normal "32-character"     R2_DRILL_ACCO
 # A trailing slash on an otherwise exact endpoint is the one accepted variant.
 invoke_drill normal R2_DRILL_ENDPOINT="$ENDPOINT/"
 check_exit 0 "endpoint with trailing slash accepted"
+
+echo "=== the drill-prefix listing must not trust KeyCount (real R2 shape) ==="
+# The regression that broke the operator's real dry run: `--query KeyCount --output text`
+# renders a MISSING key as the literal string `None`, which is not `0`, so a correct empty
+# prefix was refused with "None pre-existing object(s)". The default stub response for an
+# empty prefix omits KeyCount entirely, exactly as R2 does -- so this case IS the regression.
+invoke_drill normal
+if check_exit 0 "empty prefix with NO KeyCount accepted (real R2 shape)"; then
+    check_reason "empty prefix with NO KeyCount" "no pre-existing drill rule or object"
+fi
+
+# Non-empty: the keys must come from Contents.
+rm -rf "$TMP/state"; mkdir -p "$TMP/state"
+printf 'lock-drill/old/probe.txt\n' > "$TMP/state/objects"
+KEEP_STATE=1 invoke_drill normal
+unset KEEP_STATE
+if check_exit 2 "non-empty prefix refused"; then
+    check_reason "non-empty prefix" "1 pre-existing object\(s\).*lock-drill/old/probe\.txt"
+fi
+
+# Pagination: the object is on page 2, so a single-page read would undercount.
+KEEP_STATE=1 invoke_drill lo-paginated
+unset KEEP_STATE
+if check_exit 2 "paginated listing followed"; then
+    check_reason "paginated listing" "2 pre-existing object\(s\)"
+fi
+
+# Every uncertain response must REFUSE, never be read as "empty".
+refusal "literal None refused"          lo-none          "no usable output"
+refusal "empty output refused"          lo-empty-out     "no usable output"
+refusal "malformed JSON refused"        lo-malformed     "not valid JSON"
+refusal "JSON string refused"           lo-json-string   "not an object"
+refusal "JSON array refused"            lo-json-array    "not an object"
+refusal "Contents entry without Key"    lo-no-key        "no Key field"
+refusal "Contents entry with empty Key" lo-empty-key     "empty Key"
+refusal "non-numeric KeyCount refused"  lo-bad-keycount  "non-numeric KeyCount"
+refusal "KeyCount without Contents"     lo-contradiction "contradictory response"
+refusal "truncated without a token"     lo-trunc-no-token "no NextContinuationToken"
+
+# A response that simply has no Contents is a valid empty result, not an error.
+invoke_drill lo-empty-json
+check_exit 0 "bare {} treated as empty (no Contents)"
+invoke_drill lo-contents-null
+check_exit 0 "Contents:null treated as empty"
+
+# Teardown cannot prove the prefix is clean: that is a drill FAILURE, not a refusal.
+invoke_drill lo-fail-after-first
+if check_exit 1 "unverifiable cleanup is a drill FAILURE, not a refusal"; then
+    check_not_internal "unverifiable cleanup"
+    check_reason "unverifiable cleanup" "could not confirm .* is empty"
+fi
 
 echo "=== credentials and bucket ==="
 refusal "ambient AWS credentials refused"  normal "ambient AWS credential"  AWS_ACCESS_KEY_ID=AKIAAMBIENT
