@@ -15,11 +15,12 @@ name: r2-offhost-backup
 # It is opt-in twice over, so it cannot fire by accident:
 #   1. the `paths` filter means it runs only when a file it actually exercises changes;
 #   2. the job-level `if` requires the `r2-validation` label, which only the owner applies.
-# A PR without that label runs nothing at all.
+# A PR without that label runs the job zero times — see the ACTIVITY TYPES note below, which
+# is the second half of the gate and was previously missing.
 #
-# PREREQUISITE — the label does not exist yet. As of the current repository state
-# `r2-validation` has never been created, so the gate cannot be satisfied and the job is
-# skipped for every PR. Create it once (owner):
+# PREREQUISITE — the label must EXIST. `r2-validation` is not a default GitHub label; until
+# it is created the `if` can never be satisfied and the job is skipped for every PR. Create
+# it once (owner):
 #   gh label create r2-validation --repo lostsky1403/Sigap \
 #     --description "Owner approval to run the R2 off-host round trip" --color FBCA04
 # See runbook §13g.11 for the full activation procedure and the bounded scope of what a run
@@ -30,6 +31,25 @@ name: r2-offhost-backup
 # prerequisite.
 on:
   pull_request:
+    # ACTIVITY TYPES — required, and the reason the gate was unreachable.
+    #
+    # GitHub's DEFAULT activity types for `pull_request` are `opened`, `synchronize` and
+    # `reopened` ONLY. `labeled` is NOT among them. A run therefore starts when the PR is
+    # opened (without the label, so the job-level `if` skips it) and never starts again when
+    # the owner applies `r2-validation` — the label event produces no run at all, so the
+    # job's `if` is never evaluated and the gate can never open. The gate read as present
+    # while being structurally unreachable, which is the same shape as the fail-open
+    # defects corrected in the helper.
+    #
+    # `labeled` is therefore listed explicitly. `opened`/`synchronize`/`reopened` are kept
+    # because a PR that carries the label already must re-run when new commits arrive —
+    # without `synchronize` a fix pushed to an approved PR would never be re-tested.
+    #
+    # `pull_request_target` is deliberately NOT used: it runs in the base repository's
+    # context with a writable token and access to secrets, which would hand this job
+    # privileges it does not need. `pull_request` gives a read-only token and no secrets,
+    # which is the correct posture for a job that talks only to a disposable local MinIO.
+    types: [opened, synchronize, reopened, labeled]
     branches: [design/ui-ux-overhaul]
     paths:
       - '.github/workflows/r2-offhost-backup.yml'
@@ -56,7 +76,11 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.pull_request.labels.*.name, 'r2-validation')
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 25 minutes was budgeted for pulling a small image. The MinIO image is now BUILT from
+    # upstream source in a separate step, which is a network-clone plus a `go build` of a
+    # large module — minutes, not seconds. 40 minutes leaves the round trip itself the same
+    # budget it always had, with the build given room it did not need before.
+    timeout-minutes: 40
     env:
       # A DISPOSABLE endpoint. `minioadmin` is the well-known default for a throwaway
       # container and is NOT a secret. No real R2 credential appears anywhere in this file,
@@ -73,15 +97,24 @@ jobs:
       SIGAP_ALLOW_LOOPBACK_TARGET: '1'
     steps:
       - name: Guard — explicit opt-in
+        # EVERY context value reaches the shell through `env:`, never by `${{ }}` interpolation
+        # into the script body. `inputs.confirm_manual_run` is operator-supplied text; pasted
+        # into the script it is arbitrary shell, so a dispatch of `RUN"; <command>; "` would
+        # have executed before the guard could refuse. Passed as an environment variable it is
+        # only ever data.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CONFIRM_MANUAL_RUN: ${{ inputs.confirm_manual_run }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ "${{ inputs.confirm_manual_run }}" != "RUN" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$CONFIRM_MANUAL_RUN" != "RUN" ]; then
               echo "Refusing to run: dispatch this workflow with confirm_manual_run=RUN."
               exit 1
             fi
           else
-            echo "Opt-in satisfied by the 'r2-validation' label on PR #${{ github.event.pull_request.number }}."
+            echo "Opt-in satisfied by the 'r2-validation' label on PR #$PR_NUMBER."
           fi
 
       - uses: actions/checkout@v4
@@ -93,6 +126,82 @@ jobs:
           sudo apt-get install -y -qq age
           age --version
 
+      - name: Build the disposable MinIO image from pinned upstream source
+        run: |
+          set -euo pipefail
+          # WHY BUILD RATHER THAN PULL: `minio/minio` no longer exists as a published image.
+          # The upstream repository was archived on 2026-04-25 and its README states the
+          # community edition is "distributed as source code only. We will no longer provide
+          # pre-compiled binary releases". The Docker Hub repo is ARCHIVED, and the release
+          # download endpoints return HTTP 410 Gone.
+          #
+          # Neither upstream Dockerfile can be used as-is:
+          #   * Dockerfile            — `FROM minio/minio:latest`, i.e. it needs the SAME
+          #                            archived image, so it fails immediately.
+          #                          [OBSERVED] run 38220464666 step "Start disposable MinIO"
+          #                          exit 125 pulling `minio/minio:latest`; run 38223688099
+          #                          step "Build the disposable MinIO image" exit 1 with
+          #                          `failed to resolve source metadata for
+          #                          docker.io/minio/minio:latest ... insufficient_scope`.
+          #   * Dockerfile.release    — downloads the pre-built binary from dl.min.io, which
+          #                            now returns HTTP 410 Gone.
+          # So the binary is COMPILED from source and placed in a small image. That is the
+          # documented upstream path ("Install from source using go install
+          # github.com/minio/minio@latest"), and the module resolves from the Go proxy.
+          #
+          # The ref is the last upstream security release, which fixes the service-account
+          # policy-bypass CVE (GHSA-jjjj-jwhf-8rgr). A PSEUDO-VERSION is used rather than the
+          # tag name because `go install` resolves tags only when the module proxy publishes
+          # one; the pseudo-version is the tag's own commit (9e49d5e7a648, the detached-HEAD
+          # commit the cloned tag produced) and is stable for as long as that commit exists.
+          # `@latest` is deliberately NOT used: it would make the result of this test a
+          # function of upstream state on the day it happens to run.
+          MINIO_REF=v0.0.0-20251015172955-9e49d5e7a648
+          BUILD=$(mktemp -d)
+          # A Pinned compile, in a layer the runner can discard. CGO is off so the result is
+          # a static binary that runs in any Linux image. `go install` writes to GOBIN.
+          # shellcheck disable=SC2016  # `$MINIO_REF` IS expanded — by the shell, before go
+          # sees it. Go's own module syntax uses `@version`, so shellcheck reads the single
+          # quotes as an intentional literal. The quoting is required so the `@` is not
+          # misparsed; the warning is a false positive, not a defect.
+          GOBIN="$BUILD/bin" CGO_ENABLED=0 \
+            go install "github.com/minio/minio@$MINIO_REF"
+          # `go install` prints nothing on success, so assert the BINARY is there AND that it
+          # is an ELF executable for linux/amd64. A silently empty GOBIN would otherwise
+          # produce an image that starts and immediately exits, and the failure would surface
+          # as "minio did not become ready" — the right symptom for the wrong cause.
+          MINIO_BIN="$BUILD/bin/minio"
+          [ -x "$MINIO_BIN" ] || { echo "FAIL: go install produced no minio binary"; exit 1; }
+          file "$MINIO_BIN" | grep -q 'ELF 64-bit.*x86-64' \
+            || { echo "FAIL: minio is not a linux/amd64 ELF binary"; file "$MINIO_BIN"; exit 1; }
+          # The health endpoint the round trip depends on, proved before the image is built.
+          #
+          # NO SHELL WRAPPER. An earlier revision copied a `#!/bin/sh` entrypoint into a
+          # `FROM scratch` image, which cannot work: `scratch` has no `/bin/sh`, so the
+          # kernel cannot resolve the shebang and reports ENOENT — surfacing as
+          #   exec /usr/bin/docker-entrypoint.sh: no such file or directory
+          # which reads as a missing SCRIPT when the file is present and the INTERPRETER is
+          # what is missing. [OBSERVED] run 38228084236, step "Start disposable MinIO".
+          #
+          # Upstream's entrypoint only exists to prepend `minio` when the first argument is
+          # not already the subcommand. Making the BINARY the entrypoint achieves the same
+          # thing with no interpreter at all: the workflow passes `server /data`, so the
+          # process is `/usr/bin/minio server /data`.
+          printf 'FROM scratch\nCOPY minio /usr/bin/minio\nEXPOSE 9000\nVOLUME ["/data"]\nENTRYPOINT ["/usr/bin/minio"]\nCMD ["server", "/data"]\n' > "$BUILD/Dockerfile"
+          cp "$MINIO_BIN" "$BUILD/minio"
+          docker build -q -t sigap-minio:local "$BUILD" >/dev/null
+          rm -rf "$BUILD"
+          # Assert the IMAGE exists, not just the build's exit code.
+          docker image inspect sigap-minio:local >/dev/null \
+            || { echo "FAIL: the built MinIO image is absent"; exit 1; }
+          # And assert the entrypoint RESOLVES, which is the failure that cost a run: a
+          # `FROM scratch` image with no interpreter starts and dies with a misleading ENOENT.
+          # `--version` overrides CMD, so this executes `/usr/bin/minio --version` through the
+          # real ENTRYPOINT — the same exec path the server will use.
+          docker run --rm sigap-minio:local --version | grep -q 'minio' \
+            || { echo "FAIL: the built image cannot execute its entrypoint"; exit 1; }
+          echo "disposable MinIO built from upstream $MINIO_REF"
+
       - name: Start disposable MinIO
         run: |
           set -euo pipefail
@@ -102,7 +211,7 @@ jobs:
             -p 127.0.0.1:9000:9000 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:latest server /data
+            sigap-minio:local server /data
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
               echo "minio ready after ${i}s"; exit 0
@@ -114,7 +223,19 @@ jobs:
       - name: Create the disposable bucket
         run: |
           set -euo pipefail
-          aws s3api create-bucket --bucket "$R2_BUCKET" --endpoint-url "$R2_ENDPOINT"
+          # The image is built in a SEPARATE step above, so this one is a pure bucket setup.
+          # A transient container-scheduling delay does not consume the timeout budget of the
+          # round trip itself, and `--wait` avoids a race where the endpoint answers before
+          # the S3 API is ready.
+          for i in $(seq 1 30); do
+            if aws s3api create-bucket --bucket "$R2_BUCKET" --endpoint-url "$R2_ENDPOINT" \
+                 >/dev/null 2>&1; then
+              echo "bucket ready after ${i} attempt(s)"; break
+            fi
+            sleep 1
+          done
+          # Assert rather than trust: without this, a bucket that never formed would make the
+          # upload fail later as an opaque S3 error instead of the real cause.
           aws s3api head-bucket --bucket "$R2_BUCKET" --endpoint-url "$R2_ENDPOINT"
 
       - name: Generate a throwaway age key pair
@@ -139,9 +260,9 @@ jobs:
           printf 'FROM scratch\nCOPY marker.txt /marker.txt\n' > "$RUNNER_TEMP/ctx/Dockerfile"
           printf 'sigap-r2-drill\n' > "$RUNNER_TEMP/ctx/marker.txt"
           docker build -q -t sigap-r2-drill:local "$RUNNER_TEMP/ctx"
-          # `docker inspect --format '{{.Id}}'` yields the `sha256:<digest>` form. The helper
-          # normalises it, so either spelling would work; it is passed as produced, which is
-          # exactly what a real operator would paste.
+          # `docker inspect --format '{{.Id}}'` yields the `sha256:<digest>` form. Kept as the
+          # ID of the BUILT image; note that the expected RESTORED ID is taken from the
+          # archive in the next step, which is what an operator restoring it actually gets.
           API_ID=$(docker inspect --format '{{.Id}}' sigap-r2-drill:local)
           echo "dummy image id: $API_ID"
           echo "API_ID=$API_ID" >> "$GITHUB_ENV"
@@ -150,22 +271,42 @@ jobs:
         run: |
           set -euo pipefail
           ART="sigap-pre-redesign-$STAMP.tar.gz.age"
-          KEY="$RUNNER_TEMP/throwaway.key"
           ST=$(mktemp -d)
+
+          # The tar is the artifact's payload. It is kept in $RUNNER_TEMP because each `run`
+          # step is a separate shell and the out-of-band record is established in a LATER
+          # step, on the ISOLATED daemon.
+          #
+          # WHY NOT RECORD THE ID HERE: `docker inspect` on the built image reports a config
+          # digest, and `docker load` assigns the ID from what the tar carries — the two
+          # differ ([OBSERVED] run 38272620285: inspect ff59b31e..., load d88c5ca4...). Worse,
+          # loading the tar on a daemon that ALREADY holds the image reports that pre-existing
+          # ID rather than the ID a clean load produces ([OBSERVED] run 38276467207: runner
+          # load c1d7f34b..., isolated load 864c7a42... for the SAME bytes). A record taken
+          # here would therefore never match the isolated daemon's load, and the drill would
+          # fail for a reason that has nothing to do with the archive.
+          docker image save "$API_ID" -o "$RUNNER_TEMP/image.tar"
+          [ -s "$RUNNER_TEMP/image.tar" ] \
+            || { echo "FAIL: docker image save produced no tar"; exit 1; }
 
           # Per-stage status. A plain POSIX pipeline reports ONLY the last command's
           # status, so `docker image save <bad-id> | gzip -1` exits 0 and leaves a 20-byte
           # artifact that PASSES `gzip -t` — gzip of empty input is valid gzip. PIPESTATUS
           # is read ONCE as an array; reading it twice resets it.
+          # The tar produced above is the SAME bytes that get archived, so the recorded
+          # expected ID and the artifact describe one artifact. The save stage is now the
+          # `-o` file write above, whose status is checked directly; gzip and age are piped
+          # from that file, each judged on its own exit so neither can mask the other — the
+          # defect §7d.1 records, where `{ age | gzip; echo $? }` reported gzip's status and
+          # a wrong key passed.
           set +e
           set -o pipefail
-          docker image save "$API_ID" | gzip -1 | age -r "$RECIP" > "$ST/$ART"
+          gzip -1 -c "$RUNNER_TEMP/image.tar" | age -r "$RECIP" > "$ST/$ART"
           ps=("${PIPESTATUS[@]}")
           set +o pipefail
           set -e
-          r_save=${ps[0]:-1}; r_gzip=${ps[1]:-1}; r_age=${ps[2]:-1}
-          echo "stream stages: save=$r_save gzip=$r_gzip age=$r_age"
-          [ "$r_save" -eq 0 ] || { echo "FAIL: docker image save failed"; exit 1; }
+          r_gzip=${ps[0]:-1}; r_age=${ps[1]:-1}
+          echo "stream stages: gzip=$r_gzip age=$r_age"
           [ "$r_gzip" -eq 0 ] || { echo "FAIL: gzip failed"; exit 1; }
           [ "$r_age"  -eq 0 ] || { echo "FAIL: age encrypt failed"; exit 1; }
 
@@ -178,6 +319,14 @@ jobs:
           DIGEST=$(sha256sum "$ST/$ART" | cut -d' ' -f1)
           echo "digest: $DIGEST"
           echo "DIGEST=$DIGEST" >> "$GITHUB_ENV"
+
+          # The artifact is ALSO kept where later steps can reach it. `$RUNNER_TEMP` survives
+          # across steps; `$ST` does not. Control A below deliberately overwrites the object
+          # at this key to prove a substituted object is refused, and then restores the
+          # original from here — without that, control A3 (which fetches this same key and
+          # must reach the image-ID validator) would exit 12 on the digest check instead of
+          # 10, and fail for a reason unrelated to the guard it tests.
+          cp "$ST/$ART" "$RUNNER_TEMP/artifact.age"
 
           aws s3api put-object --bucket "$R2_BUCKET" --key "sigap/$ART" \
             --body "$ST/$ART" --endpoint-url "$R2_ENDPOINT" >/dev/null
@@ -209,9 +358,15 @@ jobs:
           # NO DOCKER SOCKET IS MOUNTED. `/var/run/docker.sock` is deliberately absent from
           # every `docker run` in this workflow, so neither container can drive the runner's
           # own daemon.
+          #
+          # `docker:29-dind` is pinned, not `:latest`. The runner's own Docker version is
+          # not something this workflow controls, so an unpinned nested daemon makes the
+          # result of the test a function of upstream state on the day it runs. The tag was
+          # verified to exist on Docker Hub before being used (the `dind` family has 144
+          # published tags, including `29-dind`).
           docker run -d --name sigap-restore-dind --privileged \
             -e DOCKER_TLS_CERTDIR= \
-            -p 127.0.0.1:2375:2375 docker:dind >/dev/null
+            -p 127.0.0.1:2375:2375 docker:29-dind >/dev/null
           for i in $(seq 1 90); do
             if docker -H tcp://127.0.0.1:2375 info >/dev/null 2>&1; then
               echo "isolated daemon ready after ${i}s"; break
@@ -220,6 +375,77 @@ jobs:
           done
           ISOLATED_ID=$(docker -H tcp://127.0.0.1:2375 info --format '{{.ID}}')
           [ -n "$ISOLATED_ID" ] || { echo "FAIL: no engine id from the isolated daemon"; exit 1; }
+
+          # THE OUT-OF-BAND RECORD, established where it is meaningful: a load of the archive's
+          # own bytes onto this CLEAN daemon. That is the identity an operator restoring the
+          # archive would record, and the identity this same daemon will report when the
+          # helper loads it — the load ID is content-derived, so the same bytes on the same
+          # empty daemon give the same answer.
+          #
+          # The image is then REMOVED. Without that, the helper's correspondence check would
+          # pass on an image that was already present, so a `docker load` that silently did
+          # nothing would go undetected — the check would be satisfied by this step's own
+          # load rather than by the restore under test.
+          #
+          # EVERY reported identity is recorded and removed, in BOTH output forms. An earlier
+          # revision ended the parse with `tail -1`, so a multi-image archive had only its
+          # FINAL image recorded and removed; the production archive is documented as holding
+          # three (§7d.1 EXPECT_IDS). The other two would have been left on the daemon, and
+          # the restore below would then have been measured against a daemon that already
+          # held them — precisely the false pass this removal exists to prevent. And because
+          # `docker load` buffers `Loaded image ID:` and writes it only when the LAST image
+          # carried no RepoTags, a tar saved by tag prints no ID line at all; the tag form is
+          # therefore parsed too, and resolved to an ID on this daemon.
+          docker -H tcp://127.0.0.1:2375 load < "$RUNNER_TEMP/image.tar" \
+            > "$RUNNER_TEMP/load.out" 2>&1 || { cat "$RUNNER_TEMP/load.out"; exit 1; }
+          cat "$RUNNER_TEMP/load.out"
+          EXPECTED_IDS=""
+          while IFS= read -r line; do
+            case "$line" in
+              'Loaded image ID: '*)
+                id=${line#Loaded image ID: } ;;
+              'Loaded image: '*)
+                tag=${line#Loaded image: }
+                id=$(docker -H tcp://127.0.0.1:2375 image inspect --format '{{.Id}}' "$tag") \
+                  || { echo "FAIL: docker load reported the tag '$tag' but it does not resolve on the isolated daemon"; exit 1; } ;;
+              *) continue ;;
+            esac
+            EXPECTED_IDS="$EXPECTED_IDS ${id#sha256:}"
+          done < "$RUNNER_TEMP/load.out"
+          # Comma-separated and deduplicated: several RepoTags on one image print one
+          # `Loaded image:` line each, all resolving to the same ID.
+          EXPECTED_IDS=$(printf '%s\n' $EXPECTED_IDS | sort -u | tr '\n' ',')
+          EXPECTED_IDS=${EXPECTED_IDS%,}
+          [ -n "$EXPECTED_IDS" ] \
+            || { echo "FAIL: the archive yielded no image ID on a clean daemon"; exit 1; }
+          echo "out-of-band record (from a clean load of the archive): $EXPECTED_IDS"
+          # Remove and ASSERT the removal of every one, so the restore below is measured on
+          # an empty daemon rather than on the record step's leftovers.
+          for id in $(printf '%s' "$EXPECTED_IDS" | tr ',' ' '); do
+            docker -H tcp://127.0.0.1:2375 rmi -f "sha256:$id" >/dev/null 2>&1 || true
+            if docker -H tcp://127.0.0.1:2375 image inspect "sha256:$id" >/dev/null 2>&1; then
+              echo "FAIL: the record step's image sha256:$id is still present; the restore would not be independent"
+              exit 1
+            fi
+          done
+          echo "EXPECTED_IDS=$EXPECTED_IDS" >> "$GITHUB_ENV"
+
+          # NO DOCKER SOCKET — ASSERTED, not merely intended. The `docker run` calls pass no
+          # `-v`, but the recipe is not evidence. A socket bind-mount would let either
+          # container drive the runner's own daemon: a host-compromise primitive, and it
+          # would also collapse the engine-distinctness proof the helper depends on. Inspect
+          # the RUNNING containers so this fails if a mount is ever added.
+          for c in sigap-minio sigap-restore-dind; do
+            mounts=$(docker inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "$c")
+            if printf '%s' "$mounts" | grep -q 'docker\.sock'; then
+              echo "FAIL: $c has a Docker socket mounted:"; printf '%s\n' "$mounts"; exit 1
+            fi
+          done
+          # The disposable endpoint must not be privileged either. Only the nested daemon
+          # needs that, and only because `dockerd` requires it to set up its own storage.
+          priv=$(docker inspect --format '{{.HostConfig.Privileged}}' sigap-minio)
+          [ "$priv" = "false" ] || { echo "FAIL: sigap-minio is privileged ($priv)"; exit 1; }
+          echo "ok: no Docker socket mounted in either container; MinIO is not privileged"
           # Each `run` step is a separate shell, so the engine id must be persisted for the
           # negative-control steps below. A bare shell variable would be empty there and the
           # helper would refuse with rc=10, making those controls pass for the wrong reason.
@@ -237,14 +463,29 @@ jobs:
           EXPECT_DIGEST="$DIGEST" \
           ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
           ALLOWED_ENGINE_ID="$ISOLATED_ID" \
-          EXPECT_IDS="$API_ID" \
+          EXPECT_IDS="$EXPECTED_IDS" \
             bash scripts/ops/sigap-archive-restore.sh
 
-          # Independent confirmation on the isolated daemon, scoped to the one ID this job
-          # produced. A daemon-wide listing would prove nothing about the artifact.
-          docker -H tcp://127.0.0.1:2375 image inspect "$API_ID" >/dev/null \
-            || { echo "FAIL: the restored image is absent on the isolated daemon"; exit 1; }
-          echo "ok: restored image ID matches the preserved ID on the isolated daemon"
+          # Independent confirmation on the isolated daemon, scoped to the IDs this job
+          # produced. A daemon-wide listing would prove nothing about the artifact, and a
+          # bare `inspect >/dev/null` only proves SOME image exists under that name. Resolve
+          # each ID and COMPARE it, so the assertion is the correspondence the runbook claims.
+          # `docker image inspect` prints the `sha256:` form; compare on the bare digest.
+          #
+          # EVERY id is compared, not just the first. EXPECTED_IDS is comma-separated and can
+          # hold several (the production archive holds three, §7d.1), so the previous single
+          # comparison would have passed on a partial restore.
+          n_verified=0
+          for want in $(printf '%s' "$EXPECTED_IDS" | tr ',' ' '); do
+            want=${want#sha256:}
+            got=$(docker -H tcp://127.0.0.1:2375 image inspect --format '{{.Id}}' "sha256:$want")
+            [ "${got#sha256:}" = "$want" ] \
+              || { echo "FAIL: restored image ID $got != archived sha256:$want"; exit 1; }
+            n_verified=$((n_verified + 1))
+          done
+          [ "$n_verified" -gt 0 ] \
+            || { echo "FAIL: EXPECTED_IDS was empty, so nothing was verified"; exit 1; }
+          echo "ok: all $n_verified restored image ID(s) match the preserved ID(s) on the isolated daemon"
 
       - name: Negative control A — a substituted object must be refused
         run: |
@@ -260,65 +501,116 @@ jobs:
           printf 'not-the-artifact' > "$RUNNER_TEMP/wrong.bin"
           aws s3api put-object --bucket "$R2_BUCKET" --key "sigap/$ART" \
             --body "$RUNNER_TEMP/wrong.bin" --endpoint-url "$R2_ENDPOINT" >/dev/null
+          # PRECONDITION — the expected code must be reachable only via the guard under test.
+          # Without this, an empty input (e.g. `$GITHUB_ENV` persistence failing) makes the
+          # helper refuse with 10 for an unrelated reason and the control below would have to
+          # be read as a pass. Assert the inputs exist before asserting the refusal.
+          for v in DIGEST API_ID ISOLATED_ID; do
+            [ -n "${!v:-}" ] || { echo "FAIL: $v is empty — the control would pass for the wrong reason"; exit 1; }
+          done
           set +e
-          ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
+          out=$(ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
           R2_ENDPOINT="$R2_ENDPOINT" \
           ARCHIVE_KEY="$RUNNER_TEMP/throwaway.key" \
           STAMP="$STAMP" \
           EXPECT_DIGEST="$DIGEST" \
           ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
           ALLOWED_ENGINE_ID="$ISOLATED_ID" \
-          EXPECT_IDS="$API_ID" \
-            bash scripts/ops/sigap-archive-restore.sh >/dev/null 2>&1
+          EXPECT_IDS="$EXPECTED_IDS" \
+            bash scripts/ops/sigap-archive-restore.sh 2>&1)
           rc=$?
           set -e
-          [ "$rc" -eq 12 ] || { echo "FAIL: substituted object returned $rc, expected 12 (digest mismatch)"; exit 1; }
-          echo "ok: substituted object refused with rc=12"
+          [ "$rc" -eq 12 ] || { echo "FAIL: substituted object returned $rc, expected 12 (digest mismatch)"; printf '%s\n' "$out"; exit 1; }
+          # The CODE alone is not the proof. Assert the REASON: only the digest comparison
+          # produces this message, so the control cannot be satisfied by an unrelated
+          # refusal that happens to exit 12.
+          printf '%s' "$out" | grep -q 'REFUSED: digest mismatch' \
+            || { echo "FAIL: rc=12 for the WRONG reason — the digest guard did not fire"; printf '%s\n' "$out"; exit 1; }
+          echo "ok: substituted object refused with rc=12 (digest mismatch)"
+
+          # RESTORE the original object. Control A3 below fetches this same key, and its
+          # guard (the image-ID validator) runs only AFTER a successful fetch, digest check,
+          # decrypt, decompress and load. Leaving the tampered bytes in place would make A3
+          # exit 12 on the digest check instead of 10, failing for a reason that has nothing
+          # to do with the input validator it exists to exercise. Verified, not assumed:
+          # a restore that silently did nothing would reintroduce exactly that failure.
+          aws s3api put-object --bucket "$R2_BUCKET" --key "sigap/$ART" \
+            --body "$RUNNER_TEMP/artifact.age" --endpoint-url "$R2_ENDPOINT" >/dev/null
+          restored=$(aws s3 cp "s3://$R2_BUCKET/sigap/$ART" - \
+            --endpoint-url "$R2_ENDPOINT" | sha256sum | cut -d' ' -f1)
+          [ "$restored" = "$DIGEST" ] \
+            || { echo "FAIL: restore left digest $restored, expected $DIGEST — control A3 would fail for an unrelated reason"; exit 1; }
+          echo "ok: original object restored ($restored) for the remaining controls"
 
       - name: Negative control A2 — a URI naming another release must be refused
         run: |
           set -euo pipefail
+          # PRECONDITION — see control A. An empty `$DIGEST`/`$API_ID`/`$ISOLATED_ID` makes
+          # the helper refuse with 10 for an unrelated reason, which would read as a pass.
+          for v in DIGEST API_ID ISOLATED_ID; do
+            [ -n "${!v:-}" ] || { echo "FAIL: $v is empty — the control would pass for the wrong reason"; exit 1; }
+          done
           set +e
-          ARCHIVE_URI="r2://$R2_BUCKET/sigap/sigap-pre-redesign-19990101T000000Z.tar.gz.age" \
+          out=$(ARCHIVE_URI="r2://$R2_BUCKET/sigap/sigap-pre-redesign-19990101T000000Z.tar.gz.age" \
           R2_ENDPOINT="$R2_ENDPOINT" \
           ARCHIVE_KEY="$RUNNER_TEMP/throwaway.key" \
           STAMP="$STAMP" \
           EXPECT_DIGEST="$DIGEST" \
           ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
           ALLOWED_ENGINE_ID="$ISOLATED_ID" \
-          EXPECT_IDS="$API_ID" \
-            bash scripts/ops/sigap-archive-restore.sh >/dev/null 2>&1
+          EXPECT_IDS="$EXPECTED_IDS" \
+            bash scripts/ops/sigap-archive-restore.sh 2>&1)
           rc=$?
           set -e
-          [ "$rc" -eq 10 ] || { echo "FAIL: wrong-release URI returned $rc, expected 10"; exit 1; }
-          echo "ok: wrong-release URI refused with rc=10"
+          [ "$rc" -eq 10 ] || { echo "FAIL: wrong-release URI returned $rc, expected 10"; printf '%s\n' "$out"; exit 1; }
+          # 10 is ALSO the code for a missing or malformed input, so the code alone does not
+          # isolate the guard. Assert the message: only the basename comparison produces it.
+          printf '%s' "$out" | grep -q 'ARCHIVE_URI names' \
+            || { echo "FAIL: rc=10 for the WRONG reason — the wrong-release URI guard did not fire"; printf '%s\n' "$out"; exit 1; }
+          echo "ok: wrong-release URI refused with rc=10 (basename guard)"
 
       - name: Negative control A3 — a malformed image ID must be refused as input
         run: |
           set -euo pipefail
           ART="sigap-pre-redesign-$STAMP.tar.gz.age"
           # A doubled prefix is the exact shape the earlier unconditional prefixing produced.
+          #
+          # PRECONDITION — see control A. This control depends on the OTHER inputs being
+          # valid, because it must reach the EXPECT_IDS validation rather than fail earlier.
+          for v in DIGEST API_ID ISOLATED_ID; do
+            [ -n "${!v:-}" ] || { echo "FAIL: $v is empty — the control would pass for the wrong reason"; exit 1; }
+          done
           set +e
-          ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
+          out=$(ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
           R2_ENDPOINT="$R2_ENDPOINT" \
           ARCHIVE_KEY="$RUNNER_TEMP/throwaway.key" \
           STAMP="$STAMP" \
           EXPECT_DIGEST="$DIGEST" \
           ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
           ALLOWED_ENGINE_ID="$ISOLATED_ID" \
-          EXPECT_IDS="sha256:sha256:$API_ID" \
-            bash scripts/ops/sigap-archive-restore.sh >/dev/null 2>&1
+          EXPECT_IDS="sha256:sha256:$EXPECTED_IDS" \
+            bash scripts/ops/sigap-archive-restore.sh 2>&1)
           rc=$?
           set -e
-          [ "$rc" -eq 10 ] || { echo "FAIL: doubled-prefix ID returned $rc, expected 10 (malformed input)"; exit 1; }
-          echo "ok: doubled-prefix image ID refused with rc=10"
+          [ "$rc" -eq 10 ] || { echo "FAIL: doubled-prefix ID returned $rc, expected 10 (malformed input)"; printf '%s\n' "$out"; exit 1; }
+          # The EXPECT_IDS validation runs AFTER load, so a message assertion here also
+          # proves the whole fetch/decrypt/untar/load path executed before refusing.
+          printf '%s' "$out" | grep -q 'EXPECT_IDS contains an invalid image ID' \
+            || { echo "FAIL: rc=10 for the WRONG reason — the image-ID validator did not fire"; printf '%s\n' "$out"; exit 1; }
+          echo "ok: doubled-prefix image ID refused with rc=10 (image-ID validator, reached after load)"
 
       - name: Negative control A4 — a loopback target without the opt-in must be refused
         run: |
           set -euo pipefail
           ART="sigap-pre-redesign-$STAMP.tar.gz.age"
+          # PRECONDITION — see control A. The loopback guard fires BEFORE the engine and
+          # digest validations, so 11 here cannot come from a missing input (those exit 10);
+          # asserting the inputs exist makes that reasoning checkable rather than assumed.
+          for v in DIGEST API_ID ISOLATED_ID; do
+            [ -n "${!v:-}" ] || { echo "FAIL: $v is empty — the control would pass for the wrong reason"; exit 1; }
+          done
           set +e
-          env -u SIGAP_ALLOW_LOOPBACK_TARGET \
+          out=$(env -u SIGAP_ALLOW_LOOPBACK_TARGET \
           ARCHIVE_URI="r2://$R2_BUCKET/sigap/$ART" \
           R2_ENDPOINT="$R2_ENDPOINT" \
           ARCHIVE_KEY="$RUNNER_TEMP/throwaway.key" \
@@ -326,12 +618,17 @@ jobs:
           EXPECT_DIGEST="$DIGEST" \
           ISOLATED_DOCKER_HOST="tcp://127.0.0.1:2375" \
           ALLOWED_ENGINE_ID="$ISOLATED_ID" \
-          EXPECT_IDS="$API_ID" \
-            bash scripts/ops/sigap-archive-restore.sh >/dev/null 2>&1
+          EXPECT_IDS="$EXPECTED_IDS" \
+            bash scripts/ops/sigap-archive-restore.sh 2>&1)
           rc=$?
           set -e
-          [ "$rc" -eq 11 ] || { echo "FAIL: loopback without opt-in returned $rc, expected 11"; exit 1; }
-          echo "ok: loopback target refused without SIGAP_ALLOW_LOOPBACK_TARGET=1"
+          [ "$rc" -eq 11 ] || { echo "FAIL: loopback without opt-in returned $rc, expected 11"; printf '%s\n' "$out"; exit 1; }
+          # 11 is also the code for an unreachable or non-allowlisted daemon, and for a
+          # production-string match. Assert the message so only the loopback guard can
+          # satisfy this control.
+          printf '%s' "$out" | grep -q 'is a same-host endpoint' \
+            || { echo "FAIL: rc=11 for the WRONG reason — the loopback guard did not fire"; printf '%s\n' "$out"; exit 1; }
+          echo "ok: loopback target refused without SIGAP_ALLOW_LOOPBACK_TARGET=1 (loopback guard)"
 
       # ---------------------------------------------------------------------------------
       # GROUP B — CLOUDFLARE RETENTION-POLICY BEHAVIOUR. NOT COVERED BY THIS WORKFLOW.
@@ -351,6 +648,9 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
+          # The MinIO image is now BUILT rather than pulled, so it must be removed explicitly;
+          # the runner's own cleanup reclaims pulled-image layers but not a locally built tag.
           docker rm -f sigap-minio sigap-restore-dind 2>/dev/null || true
-          rm -f "$RUNNER_TEMP/throwaway.key" 2>/dev/null || true
-          echo "disposable endpoint, daemon and throwaway key destroyed with the runner"
+          docker rmi -f sigap-minio:local sigap-r2-drill:local 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/throwaway.key" "$RUNNER_TEMP/artifact.age" 2>/dev/null || true
+          echo "disposable endpoint, daemon, built images and throwaway key destroyed with the runner"

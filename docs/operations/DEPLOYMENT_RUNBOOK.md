@@ -581,19 +581,32 @@ ALLOWED_ENGINE_ID="$ISOLATED_ENGINE_ID" \
 PRODUCTION_ENGINE_ID="$PRODUCTION_ENGINE_ID" \
 EXPECT_IDS="sha256:43fcbcb35ed276b33327fa4a9ad8d9d909de6875cde185e2360bbc7374794c8f,sha256:2a81c86258fb79c8bd9d49dcb7672234de4a962d07011dd75b6ffeae82ef7a0c,sha256:8ce2200fabf3e31f3be2290ac3749210c49267ecf8696231aa3cfa86e6f4a7e4" \
   bash scripts/ops/sigap-archive-restore.sh
-# 0 = every stage verified; 10 unset or malformed var; 11 target refused; 12 digest mismatch;
-# 13 not a complete gzip; 14 a stage failed; 15 identity correspondence failed
+# 0 = every stage verified; 1 an unguarded command failed under `set -e`;
+# 10 unset or malformed var; 11 the target was refused or could not be established;
+# 12 digest mismatch; 13 the decrypted artifact is not a valid docker image archive;
+# 14 a stage failed; 15 identity correspondence failed; 99 not run under bash
 ```
+
+`EXPECT_IDS` is **ONE comma-separated line**. A newline-separated list is refused with **10**,
+because `read -ra` reads a single line: the IDs after the first would be silently dropped, the
+absent-image count would stay zero, and the run would report correspondence as verified for
+fewer images than the archive actually holds.
 
 `PRODUCTION_ENGINE_ID` is the **production** daemon's `docker info .ID`, recorded during the
 Gate D reinspection. Set it whenever it is known: it is the only production control that
 cannot be defeated by aliasing, because an engine ID is a property of the daemon rather than
 a name. `ALLOWED_ENGINE_ID` is the **isolated** target's ID and must differ from it. It accepts
 a comma-separated list, and a **malformed** entry exits **10** rather than being skipped — a
-typo must not be able to disable the denylist.
+typo must not be able to disable the denylist. A value that is set but holds **no** engine ID
+(`" "`, `","`, `", "`) is also refused with **10**, for the same reason: it would otherwise
+split into zero entries and leave the denylist silently inactive.
 
 A **loopback** target is refused by default, because production reached through an SSH tunnel
-looks exactly like a local daemon. `SIGAP_ALLOW_LOOPBACK_TARGET=1` is the narrow opt-in for the
+looks exactly like a local daemon. The check is **scheme-agnostic**: `127.0.0.1:2375` and
+`tcp://127.0.0.1:2375` are the same endpoint to docker (a scheme-less `DOCKER_HOST` is
+normalised to `tcp`), and a `unix://` socket is local at **any** path, so both are refused. A
+genuinely remote endpoint (`10.0.0.5:2375`) is not affected. `SIGAP_ALLOW_LOOPBACK_TARGET=1` is
+the narrow opt-in for the
 one legitimate case (a disposable daemon running as a container on the same CI runner). It
 relaxes **only** the loopback refusal: the engine allowlist, the ambient-distinctness check and
 the production denylist all still apply.
@@ -633,9 +646,20 @@ as "identity unknown, proceed".
 
 **Engine IDs are compared in one canonical form.** All four engine inputs — the allowlist, the
 target, the ambient probe and the production denylist — pass through the same normaliser, which
-accepts 64 lowercase hex with at most one optional `sha256:` prefix. Comparison is therefore
-symmetric: `sha256:<digest>` and `<digest>` are the same engine, and no input is normalised on
-one side of a comparison but not the other.
+accepts two machine-generated forms: **64 lowercase hex** (older daemons) and an **8-4-4-4-12
+UUID** (current daemons), with dashes removed in the canonical form and at most one optional
+`sha256:` prefix. Comparison is therefore symmetric: the UUID and its dashless spelling are the
+same engine, `sha256:<digest>` and `<digest>` are the same engine, and no input is normalised
+on one side of a comparison but not the other.
+
+**Engine IDs are a different type from image IDs, and conflating them was a real defect.**
+`docker info --format '{{.ID}}'` returns an 8-4-4-4-12 UUID on current daemons — observed in
+CI, where the isolated daemon reported `dca7b900-8462-4e5c-a7e6-6c69faafe428`. An earlier
+revision validated engine IDs with the image-ID normaliser, which requires exactly 64 hex, and
+refused a perfectly valid isolated daemon with `REFUSED: ALLOWED_ENGINE_ID is not a valid
+engine ID (need 64 hex, ...)`, exit **10**. The guard was not too weak; it was too **narrow**,
+and it rejected the very daemon it existed to verify. Image IDs remain strictly 64 hex: only
+the engine normaliser accepts the UUID family.
 
 **A typo cannot disable the production denylist.** `PRODUCTION_ENGINE_ID` is a comma-separated
 list of engine IDs recorded from the production daemon (Gate D). A **malformed** entry exits
@@ -2258,6 +2282,57 @@ plaintext outside its `0700` work directory.
 Note the decoder order in step 3 is the exact inverse of step 1 — `age -d` **then**
 `gzip -d`, in that order. Getting it backwards is a silent no-op on a `docker save` tar.
 
+**Step 3b — record the expected image identity, and record it from the ARCHIVE.** This is a
+required part of the preservation record, not an optional nicety, and it must happen before the
+archive is relied upon.
+
+**Do not record `docker inspect --format '{{.Id}}'`.** On a BuildKit-built image that reports
+the image's *config digest*, which `docker load` does not necessarily reproduce. Two values that
+look authoritative disagree:
+
+| Source | Value | What it actually is |
+|---|---|---|
+| `docker inspect --format '{{.Id}}'` on the built image | the config digest | the image's identity **on the daemon that built it** |
+| `docker load` on a **clean** daemon | the ID it reports | the identity **the archive restores** — the only value an operator can compare against |
+
+[OBSERVED] in CI: the same archive gave `inspect ff59b31e…` and `load d88c5ca4…`; a second run
+gave a *different* load ID again because the image was already present on the daemon. The
+load-reported value is **content-derived and therefore reproducible on a clean daemon**, which
+is exactly what makes it recordable.
+
+Record it like this, on the recovery host, from the artifact itself:
+
+```bash
+# On a CLEAN isolated daemon — one that does not already hold the image. A load onto a
+# daemon that already has it reports the PRE-EXISTING id and the record would be wrong.
+DEST="sigap-pre-redesign-$STAMP.tar.gz.age"
+docker -H "$ISOLATED_DOCKER_HOST" load < <(age -d -i "$RECOVERY_AGE_IDENTITY" "$DEST" | gzip -d) \
+  | tee /tmp/load-report.txt
+# One `Loaded image ID:` line per image whose tar carried no RepoTags; `Loaded image:
+# <repo:tag>` instead when it did. The helper resolves both forms, so record what the
+# load reported, not a name:
+grep -E '^Loaded image (ID:)?' /tmp/load-report.txt
+# REMOVE the images again, and verify the removal. The drill's correspondence check must be
+# satisfied by the archive's own load, not by this recording step's leftovers.
+docker -H "$ISOLATED_DOCKER_HOST" rmi -f <the ids above>
+```
+
+Then record **out-of-band**, i.e. anywhere that is not the bucket and not the archive:
+
+1. the artifact URI and its SHA-256 (`§13g.7`), and
+2. the expected image IDs **as reported by the load above**, and
+3. `PRODUCTION_ENGINE_ID` — the production daemon's `docker info .ID` (`§13f`, Gate D).
+
+**Why the identity record is independently verifiable.** The digest proves the *ciphertext* is
+the artifact that was uploaded; the load-reported IDs prove *what that artifact restores*. They
+are independent facts about the same object, and the helper checks both: the digest against the
+out-of-band record, and the restored IDs against the out-of-band ID list. A mismatch in either
+is a hard failure (12 and 15 respectively), so a corrupted transfer and a wrong-release archive
+cannot both be reported as success.
+
+**`PRODUCTION_IMAGES_PRESERVED` stays `NO` until step 1 has actually run** against production.
+Writing this procedure does not preserve anything.
+
 **Destination — `ARCHIVE_DESTINATION = UNCONFIRMED`. Three options evaluated, none verified.**
 
 No candidate is reachable from the workstation without production credentials, so none could
@@ -2428,12 +2503,12 @@ Neither credential is in Git, CI, Jira or the repo.
 | # | Action | Notes |
 |---|---|---|
 | A1 | Create the **private** bucket | No creation-time lock constraint; Bucket Lock is added separately in A2 |
-| A2 | Add a **Bucket Lock rule** with ≥90-day retention (optionally prefix-scoped to `sigap/`) | Added to the existing bucket; **administratively removable**, so it is a retention control, not an immutable guarantee |
-| A3 | Add the **abort-incomplete-multipart** lifecycle rule (3 days) | Prevents silent part accumulation |
+| A2 | Add a **Bucket Lock rule** with ≥90-day retention (optionally prefix-scoped to `sigap/`) | Added to the existing bucket; **administratively removable**, so it is a retention control, not an immutable guarantee. NAME and PREFIX are **positional** on `lock add` — see §13g.15 |
+| A3 | **Confirm or override the incomplete-multipart rule.** R2 ships a **default** lifecycle rule that expires multipart uploads **7 days** after initiation — verify it is active, and override to 3 days only if the shorter window is wanted | The default means "add the rule" was wrong: there is nothing to add unless you want a different window. A rule that is assumed present and is not leaves billed parts invisible to a plain listing |
 | A4 | Decide the **second-copy question** (§13g.1) | Second provider, offline copy, or an explicitly accepted risk |
 | A5 | Create the **Object Read & Write** token, **scoped to this bucket** | For the relay. Treat as read+write+delete, not write-only |
-| A6 | Create the **Object Read** token, **scoped to this bucket** | For the recovery host |
-| A7 | Keep the **bucket-configuration** capability interactive and separate | Never issued to the relay, the recovery host, or CI |
+| A6 | Create the **bucket-scoped read-only** token (`Object Read only`) | For the recovery host. The docs use two spellings for the same permission: the **permissions table** names it `Object Read only`, while the **token-creation step** calls it `Object Read`. Both are the same preset — do not go looking for a third one |
+| A7 | Keep the **bucket-configuration** capability interactive and separate (`Admin Read & Write`, or the dashboard) | Never issued to the relay, the recovery host, or CI. This is the capability that can *remove the lock rule* |
 | A8 | Record the bucket name, endpoint and the **public recipient** in `RELEASE_CHECKLIST.md` and on the Jira gate | These are not secrets |
 | A9 | Store both object credentials in the operator's secret store — **never** in the repo, CI, Jira, or a transcript | — |
 
@@ -2519,36 +2594,306 @@ which matters because a rollback is exactly when you do not want a metered downl
 pricing is from published R2 rates and is not verified against a live account; it is an estimate,
 not a quote.
 
-**13g.11 — Activating the CI test, and the one prerequisite that does not yet exist.**
-`.github/workflows/r2-offhost-backup.yml` is committed on `design/ui-ux-overhaul`, which is
-**not** the default branch. GitHub registers `workflow_dispatch` entries only from the default
-branch, so as committed the file cannot be dispatched and has no Actions-UI entry. Two
-consequences, both verified:
+**13g.11 — Activating the CI test.** `.github/workflows/r2-offhost-backup.yml` is committed on
+`design/ui-ux-overhaul`, which is **not** the default branch. GitHub registers
+`workflow_dispatch` entries only from the default branch, so as committed the file cannot be
+dispatched and has no Actions-UI entry. The working trigger is therefore `pull_request`, which
+GitHub evaluates from the PR's own merge ref. This is the mechanism already proven by the
+SIGAP-88 validation run (`.github/workflows/ops-sandbox.yml`, run `38163833629`, event
+`pull_request`, conclusion `success`).
 
-- the workflow did **not** trigger on any of the pushes to this branch (it has no `push`
-  trigger; `pull_request` and `workflow_dispatch` only), and
-- the repository has **no `r2-validation` label** — the job-level `if` therefore cannot be
-  satisfied until the owner creates it.
+**The gate has two halves, and the second one was missing.** The `paths` filter and the
+job-level `if` on the `r2-validation` label are only the first half. The second is the
+**activity type**: GitHub's default `pull_request` activity types are `opened`, `synchronize`
+and `reopened` — `labeled` is **not** among them. Without an explicit `types` list, applying
+the label produces **no run at all**: the `if` is never evaluated, so the gate cannot open no
+matter how many times the label is applied. A control that reads as present while being
+structurally unreachable is the same defect class as the fail-open guards corrected in
+`§7d.1`. The workflow therefore declares:
+
+```yaml
+types: [opened, synchronize, reopened, labeled]
+```
+
+`labeled` is what makes the owner's approval action actually start a run. `synchronize` is kept
+because a fix pushed to an already-labelled PR must re-run — without it, a corrected commit on
+an approved PR would never be re-tested. `pull_request_target` is deliberately **not** used: it
+runs in the base repository's context with a write-capable token and access to secrets, which
+this job does not need and must not have.
 
 Activation, in order:
 
-1. **Create the label** (owner, once):
+1. **Create the label** (owner, once) — `r2-validation` is not a default GitHub label, and
+   until it exists the `if` can never be satisfied:
    `gh label create r2-validation --repo lostsky1403/Sigap --description "Owner approval to run the R2 off-host round trip" --color FBCA04`
-   Without this step the job is skipped for every PR and the gate can never open.
 2. **Open a PR whose base is `design/ui-ux-overhaul`** and which touches one of the workflow's
-   `paths` entries. GitHub evaluates a `pull_request` workflow from the PR's own merge ref, so
-   the workflow runs even though it is absent from the default branch. This is the mechanism
-   already proven by the SIGAP-88 validation run (`.github/workflows/ops-sandbox.yml`, run
-   `38163833629`, event `pull_request`, conclusion `success`).
-3. **Apply `r2-validation` to that PR.** Only then does the job run. A PR without the label
-   runs nothing at all.
+   `paths` entries. The PR opening produces a run in which the job is **skipped** (no label).
+3. **Apply `r2-validation` to that PR.** Because `labeled` is now an activity type, this event
+   starts a **second** run in which the job executes. This step is the owner's approval; it is
+   the only action that authorizes execution.
+
+   The `paths` and `branches` filters do not obstruct this step: GitHub evaluates them against
+   the PR's changed-file list, which is fixed at label time, so an event type that passes them
+   once passes them on every later activity. That the filters are satisfied for this PR is
+   **[OBSERVED]** — the PR's `opened` event produced run `38215167401` (job skipped, no label).
+   That the `labeled` event then produces a second, executing run is **[INFERENCE]** from the
+   documented activity-type behaviour plus that same observation; it is deliberately left
+   unexercised, because applying the label is the owner's approval action and no agent may
+   take it.
 
 Merging to `main` is **not** a prerequisite, and the workflow must not be merged to `main`
-merely to make it dispatchable. What the run proves is bounded: with a disposable MinIO
-endpoint and a throwaway age key it exercises the **object path and input validation** —
-off-host upload, read-back, restore through the real helper, and four negative controls. It
-does **not** touch the real bucket, does **not** prove retention (§13g.9), and does **not**
-preserve or restore a production image.
+merely to make it dispatchable. What a run proves is bounded: with a disposable MinIO endpoint
+and a throwaway age key it exercises the **object path and input validation** — off-host
+upload, read-back, restore through the real helper, and four negative controls. It does **not**
+touch the real bucket, does **not** prove retention (§13g.9), and does **not** preserve or
+restore a production image.
+
+**The disposable endpoint is built from pinned upstream source, not pulled.** `minio/minio`
+was archived and the community edition is now distributed **source code only**: the upstream
+README states *"We will no longer provide pre-compiled binary releases"*, the Docker Hub
+repository is archived, and the release download endpoints return **HTTP 410 Gone**. The
+workflow therefore clones `minio/minio` at a pinned security release and builds the image
+itself, in a separate networked step. `[OBSERVED]` the first labelled run (38220464666) failed
+at the "Start disposable MinIO" step with `pull access denied for minio/minio, repository does
+not exist`, exit code 125 — an environmental failure that stopped the round trip before any
+part of the contract under test was reached.
+
+Two consequences worth knowing when reading a run's duration:
+
+- the build step is where the minutes go — a module of that size is not a fast `go build`;
+- `:latest` is never used. Both the MinIO ref and the nested `docker:29-dind` daemon tag are
+  pinned, so the result of a run is not a function of upstream state on the day it happens.
+
+**Reading the run list.** After step 3 there will be two runs for the PR: the first skipped the
+job, the second executed it. That is expected, not a duplicate-trigger defect. A run whose job
+is skipped is not evidence the workflow is broken, and a run that executed is not evidence the
+gates hold — read the step log.
+
+**13g.12 — The CI test has been executed and PASSES.** Run
+`https://github.com/lostsky1403/Sigap/actions/runs/38280297031` on commit `89f9bcf`, event
+`pull_request` (the `labeled` activity type), conclusion **success** — all 19 steps. This is
+the first executing run; every earlier attempt failed at a step that is now fixed, and the
+failures are recorded below because each one is a real defect that static review did not catch.
+
+What the run **proves**:
+
+| Step | Observed |
+|---|---|
+| Disposable MinIO | built from pinned upstream `v0.0.0-20251015172955-9e49d5e7a648`; ready after 2s |
+| Bucket | created on the first attempt |
+| Preserve | save → gzip → age → upload → read-back **byte-identical (1480 bytes)** |
+| Isolated daemon | ready after 17s; **no Docker socket mounted** in either container |
+| Restore | fetched from `r2://…` with read-back length verified; digest verified against the out-of-band record; `docker load` succeeded |
+| Identity | out-of-band record `sha256:7ca4290a…` **equals** the restored ID reported by `docker load`; `identity correspondence VERIFIED` |
+| Engine distinctness | target `cfcc9ab8…` ≠ ambient `07f0e779…` |
+| Control A | substituted object refused, **rc=12**, digest-mismatch message |
+| Control A2 | wrong-release URI refused, **rc=10**, basename-guard message |
+| Control A3 | doubled-prefix image ID refused, **rc=10**, image-ID-validator message (reached *after* load) |
+| Control A4 | loopback without the opt-in refused, **rc=11**, same-host-endpoint message |
+
+Each control also asserts the refusal **reason**, not only the exit code, and asserts its inputs
+are non-empty — so a control cannot pass because an unrelated input was missing.
+
+**What the run does NOT prove**, unchanged and important: MinIO is S3-compatible but does **not**
+implement R2 Bucket Lock, so nothing here speaks to retention (§13g.9); no real Cloudflare
+credential or bucket was involved; and no production image was preserved or restored
+(`PRODUCTION_IMAGES_PRESERVED = NO`, `J11_ROLLBACK_SAFETY = UNKNOWN`).
+
+**Defects that only execution found.** Static review passed all of these. They are recorded
+because each would have blocked the drill indefinitely, and each looked correct on paper:
+
+1. `minio/minio:latest` no longer exists — the upstream repo was archived and the community
+   edition is source-only. Fixed by compiling the pinned module.
+2. Neither upstream `Dockerfile` is usable: the default is `FROM minio/minio:latest`, and
+   `Dockerfile.release` downloads from `dl.min.io`, which returns **410 Gone**.
+3. A `#!/bin/sh` entrypoint cannot run in `FROM scratch` — no interpreter, so the kernel
+   reports ENOENT and the message reads as a missing *script*.
+4. Engine IDs are **UUIDs** on current Docker, not 64 hex; the helper's image-ID normaliser
+   refused a valid isolated daemon (rc=10). Engine and image IDs are now separate types.
+5. `docker inspect` on a BuildKit-built image reports a config digest that `docker load` does
+   not reproduce, and the load-reported ID also depends on whether the image was already
+   present. The out-of-band record is therefore taken from a **clean** load of the archive.
+
+**13g.13 — Bucket Lock semantics confirmed against the platform, and the Gate A procedure.**
+Verified against the current Cloudflare R2 documentation rather than carried over from AWS
+assumptions. Four properties change what the operator should expect:
+
+| Property | What the documentation states | Consequence for this design |
+|---|---|---|
+| Coverage | A rule **without a prefix applies to all objects**, and rules apply to **new and existing** objects | A prefix-scoped `sigap/` rule protects only that prefix; a rule with no prefix protects everything. Choose deliberately — the default is the broader one |
+| Precedence | **Bucket lock rules take precedence over lifecycle rules.** A 30-day lifecycle delete does not fire before a 90-day lock requirement is met | A lifecycle rule is not a backdoor around retention. It also means a retention mistake cannot be corrected by shortening a lifecycle rule |
+| Emptiability | **A bucket cannot be emptied while any lock rules are configured**; all rules must be removed first. This also applies to deleting folders from the dashboard | The rule protects the archive against a bulk delete, which is the property worth having. It is also why "test retention by deleting" is the wrong test |
+| Limit | Up to **1,000 rules**; where several apply, the **strictest (longest)** wins | No practical constraint at this scale; record the rule NAME, since removal is by that name (`--id` is its alias) |
+
+**The retention rule remains administratively removable.** `wrangler r2 bucket lock remove
+<BUCKET> --name <RULE_NAME>` (alias `--id`) removes it, and the Cloudflare REST API exposes the
+same operation. Anyone holding **`Admin Read & Write`** — which the documentation defines as
+"create, list, and delete buckets, edit bucket configuration, read, write, and list objects" —
+can therefore remove the rule and then the object. Bucket Lock is a **retention control**, not
+an immutability guarantee, and a compromised Cloudflare administrator defeats it. That is why A4
+(the second-copy decision) is not optional. `--retention-indefinite` (§13g.15) removes the time
+bound but not this control, so it does not change the conclusion.
+
+**Procedure — A1 to A9, in order.**
+
+```bash
+# --- A1. Private bucket. Bucket Lock is NOT a creation-time property. ---------------
+npx wrangler r2 bucket create sigap-backups
+
+# --- A2. Bucket Lock, >= 90 days. Record the rule NAME for removal/audit. -----------
+# SYNTAX, verified against the Wrangler `r2` command reference: the rule NAME and
+# PREFIX are POSITIONAL. The command is
+#     r2 bucket lock add <BUCKET> [NAME] [PREFIX] [options]
+# There is NO `--prefix` flag, and NAME's alias is `--id`, not `--name`. The earlier
+# form here (`--name X --prefix Y`) was wrong and would have been rejected.
+# [VERIFIED] https://developers.cloudflare.com/workers/wrangler/commands/r2/
+#   #r2-bucket-lock-add
+# Prefix-scoped to sigap/ so the rule covers the archive prefix and nothing else.
+# For a rule covering EVERY object, pass an empty PREFIX ("") — see §13g.15.
+npx wrangler r2 bucket lock add sigap-backups sigap-retention-90d 'sigap/' \
+  --retention-days 90
+npx wrangler r2 bucket lock list sigap-backups      # confirm, and record the RULE NAME
+
+# --- A3. Multipart. R2 already ships a 7-day default; CONFIRM it, do not assume. ---
+npx wrangler r2 bucket lifecycle list sigap-backups
+# Override only if a 3-day window is wanted; the default needs no action. NAME and
+# PREFIX are positional here too:
+#   npx wrangler r2 bucket lifecycle add sigap-backups sigap-abort-multipart 'sigap/' \
+#     --abort-multipart-days 3
+
+# --- A4. Second copy. Owner decision, recorded in RELEASE_CHECKLIST.md (F15b). -----
+# Second provider / offline encrypted copy / explicitly accepted risk. No default.
+
+# --- A5/A6. Bucket-scoped object credentials, in the Cloudflare dashboard. ----------
+#   Relay (upload):    Object Read & Write  -> can READ, write and list. No write-only
+#                      preset exists; confidentiality rests on age, not on the token.
+#   Recovery host:     Object Read only     -> can read and list.
+# Both are scoped to sigap-backups. Neither can edit bucket configuration.
+# NOTE: these two presets are supported by the S3-compatible API only, not the
+# Cloudflare REST API.
+
+# --- A7. Bucket administration stays interactive and separate. ---------------------
+# Admin Read & Write (or the dashboard) is held by the owner alone. It is the only
+# capability that can remove the lock rule. Never issue it to the relay, the recovery
+# host, or CI.
+
+# --- A8/A9. Record, then store. ----------------------------------------------------
+# Bucket name, endpoint and the age PUBLIC recipient are NOT secrets: record them in
+# RELEASE_CHECKLIST.md and on the Jira gate.
+# The two object credentials and the age PRIVATE key are secrets: operator secret store
+# only, never in the repo, CI, Jira, a shell history, or an agent transcript.
+```
+
+**13g.14 — Verifying Bucket Lock without touching a real backup.** The retention property is
+the one thing the CI drill cannot prove (§13g.9, §13g.12: MinIO does not implement Bucket
+Lock). It must be verified on the real service, and the verification must not endanger the
+archive.
+
+**TWO SEPARATE VERIFICATIONS — do not conflate them.** The disposable drill below proves the
+*mechanism* (that a lock rule refuses deletion); the inventory check after it proves the
+*production rule itself* is present, correctly scoped and correctly sized. A passing drill says
+nothing about the 90-day rule, and the 90-day rule is the thing that actually protects the
+archive. Record both, separately.
+
+**Part 1 — the mechanism, on a disposable prefix.**
+
+```bash
+# A DISPOSABLE object under a THROWAWAY prefix. Never a real backup key.
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+printf 'lock-drill' > /tmp/lock-drill.txt
+aws s3api put-object --bucket sigap-backups --key "lock-drill/$STAMP/probe.txt" \
+  --body /tmp/lock-drill.txt --endpoint-url "$R2_ENDPOINT"
+
+# Apply a SHORT rule to that prefix ONLY. NAME and PREFIX are POSITIONAL.
+npx wrangler r2 bucket lock add sigap-backups lock-drill "lock-drill/$STAMP/" \
+  --retention-days 1
+
+# ASSERT deletion is refused for the window. A refusal is the expected result, so a
+# non-zero exit here is SUCCESS; treat a zero exit as the failure.
+if aws s3api delete-object --bucket sigap-backups \
+     --key "lock-drill/$STAMP/probe.txt" --endpoint-url "$R2_ENDPOINT" 2>/dev/null; then
+  echo "FAIL: a locked object was deletable — retention is not in force"; exit 1
+else
+  echo "ok: deletion refused while the lock rule is active"
+fi
+
+# Remove the drill rule, then confirm deletion SUCCEEDS — which is also the observation
+# that the rule is administratively removable, recorded as behaviour rather than assumed.
+npx wrangler r2 bucket lock remove sigap-backups --id lock-drill
+aws s3api delete-object --bucket sigap-backups \
+  --key "lock-drill/$STAMP/probe.txt" --endpoint-url "$R2_ENDPOINT"
+echo "ok: rule removable by an administrator — RETENTION = ADMINISTRATIVELY_REMOVABLE"
+```
+
+This drill's rule is `--retention-days 1` and prefix-scoped to `lock-drill/<STAMP>/`. It is
+**not** the production rule and must not be recorded as evidence of one. It is removed
+immediately, and it never covers `sigap/`.
+
+**Part 2 — the production rule, verified by inventory.** Assert all four attributes of the
+rule that will actually protect the archive, from the live service:
+
+```bash
+npx wrangler r2 bucket lock list sigap-backups
+# Record from the output, and compare against what was intended:
+#   * NAME      — the rule identifier used by `lock remove --id`
+#   * PREFIX    — must be `sigap/` (or "" for the whole bucket); a typo here silently
+#                 leaves the archive uncovered
+#   * ENABLED   — a disabled rule enforces nothing
+#   * RETENTION — must be >= 90 days. A `--retention-days` value that is too small is
+#                 the failure this check exists to catch
+#
+# The same four fields via the REST API, which is the authoritative form:
+#   GET /accounts/<ACCOUNT_ID>/r2/buckets/<BUCKET_NAME>/lock
+#   (requires the Admin Read & Write capability — see A7)
+```
+
+Record the four values in `RELEASE_CHECKLIST.md` and on the Jira gate, alongside the
+disposable-drill result. `BUCKET_LOCK_RULE_VERIFIED` is **PENDING** until Part 2 has been run
+against the real bucket; Part 1 passing does not satisfy it.
+
+**Never attempt this against a real backup object.** The attempt is itself the destructive
+action the rule exists to prevent, and — per the confirmed semantics above — a bucket cannot be
+emptied while lock rules are configured, so a "test" of that kind risks the archive it is meant
+to protect. The drill above touches only a throwaway prefix.
+
+**13g.15 — Wrangler syntax, verified against the command reference.** These signatures were
+read from the Wrangler `r2` command reference rather than recalled, because the flag names are
+not what they appear to be. Source:
+`https://developers.cloudflare.com/workers/wrangler/commands/r2/`
+
+| Command | Verified signature |
+|---|---|
+| `r2 bucket create` | `create <NAME>` |
+| `r2 bucket lock add` | `add <BUCKET> [NAME] [PREFIX]` |
+| `r2 bucket lock list` | `list <BUCKET>` |
+| `r2 bucket lock remove` | `remove <BUCKET> --name <NAME>` (alias `--id`) |
+| `r2 bucket lifecycle add` | `add <BUCKET> [NAME] [PREFIX]` |
+| `r2 bucket lifecycle list` | `list <BUCKET>` |
+
+**The trap: NAME and PREFIX are POSITIONAL on `add`, but NAME is a FLAG on `remove`.**
+
+* `lock add` — `[NAME]` and `[PREFIX]` are positional arguments. There is **no `--prefix`
+  flag**, and `NAME`'s alias is **`--id`, not `--name`**. Writing
+  `lock add <BUCKET> --name X --prefix Y` is wrong and is rejected.
+* `lock remove` — takes the rule name as a **flag**: `--name <NAME>` (alias `--id`). The name
+  is the same string passed positionally to `add`.
+* An empty `PREFIX` (`""`) means **all objects** in the bucket; omitting the prefix argument
+  is not the same as scoping it.
+
+`lock add` retention is expressed by exactly one of `--retention-days <N>`,
+`--retention-date <YYYY-MM-DD>`, or `--retention-indefinite`. `lifecycle add` uses
+`--expire-days` / `--expire-date` / `--ia-transition-days` / `--ia-transition-date` /
+`--abort-multipart-days`. Both `add` commands accept `--force` (alias `--y`) to skip the
+confirmation prompt, which is what a scripted owner run needs.
+
+**`--retention-indefinite` is still not immutability.** It removes the time bound, not the
+administrative control: the rule remains removable by anyone holding `Admin Read & Write`
+(A7), so the second-copy decision (A4) is unchanged by choosing it.
+
+The rule's **enabled** state is not settable through `lock add` — it is a field of the rule
+object, settable via `lock set <BUCKET> --file <JSON>` or the REST API, and it is visible in
+`lock list`. A rule that exists but is disabled enforces nothing, which is why §13g.14 Part 2
+asserts `ENABLED` explicitly rather than assuming it from the rule's presence.
 
 ---
 
