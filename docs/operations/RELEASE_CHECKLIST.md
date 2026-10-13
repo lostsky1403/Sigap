@@ -190,6 +190,48 @@ production access, no relay"), which is why the relay is a *preservation* prereq
 but it is a hard one. A relay that turns out to be production itself collapses the separation
 the design rests on, so it must be a genuinely separate host.
 
+**F23a — relay candidates, evaluated, and why none is adopted.** Three SSH entries are
+configured on the workstation. Only one of them is a *genuinely separate host*, and it was
+nearly the wrong answer:
+
+| Alias | Resolves to | Verdict |
+|---|---|---|
+| `fikriserver` | `103.47.225.64` (user `fikri`) | **production itself** — using it as the relay collapses the separation this exists to enforce (§13f) |
+| `wg` | **`103.47.225.64` — the identical address**, user `fikri`, adding only `LocalForward 51821 → 127.0.0.1:51821` | **same host as production, not a relay.** It is a WireGuard tunnel to the production server, so it reads like a separate entry while being the same machine. A relay chosen this way would silently defeat the design while every check still looked satisfied |
+| `zenith` | `139.59.251.34` (user `root`, dedicated key `id_ed25519_zenith`) | remote, distinct — **candidate** |
+| `vps-nagoya` | `43.156.93.105` (user `root`, key **`~/.ssh/id_ed25519`**) | remote, distinct — **candidate, with a caveat below** |
+
+`ARCHIVE_RELAY = NOT_IDENTIFIED` stands, and it is an **operator** decision, because the
+remaining acceptance checks are things only the owner's network position can prove: that
+**production can reach the relay on 22** (the relay must accept an SSH connection *from*
+`fikriserver`, which is the direction §13f uses), that `age`, `aws` and `shred` are present on
+it, that `$RELAY_STAGE` is writable under `umask 077`, and that **no age private key exists on
+it** — F16's whole point is that the relay holds only the public recipient.
+
+**Recommendation: `zenith` (`139.59.251.34`) over `vps-nagoya`, on host-identity grounds.**
+`zenith` authenticates with its **own** key file (`id_ed25519_zenith`); `vps-nagoya` uses
+`~/.ssh/id_ed25519` — the **same** private key that authenticates to production. Reusing one
+private key across production and a backup-path host means one key compromise reaches both,
+which is precisely the separation §13f is built on. This is an architectural criterion, not a
+performance one, so it holds regardless of which host is faster or has more disk. Nothing else
+was observed, so this is a preference and not a finding about either host's suitability — the
+acceptance checks above still have to pass.
+
+**Why the relay is not simply deleted.** §13f's chain is
+`docker image save | gzip | ssh RELAY "age -r RECIP > STAGE/$DEST"` because `age` is
+**absent** on production and deliberately **not required** there. The relay is the only reason
+production carries no encryption tool. So it is load-bearing, and the alternative — installing
+`age` on production and dropping the relay — is a design change, not a configuration change;
+it must be approved rather than assumed. See §13f's note that a relay which turns out to be
+production itself collapses the separation.
+
+**Verification performed.** Both candidates were probed **from this agent workstation**: TCP
+connected, then SSH stalled at *banner exchange* and timed out — on `zenith`, on `vps-nagoya`,
+and on `fikriserver` **alike**. Since the known-good production host fails identically, the
+limit is this environment's SSH path, not any of the three machines. So no relay property
+(age/aws/ssh presence, `umask`, key absence) could be checked here, and none was assumed.
+The runbook's checks remain the operative procedure; this record only narrows the choice.
+
 > **Gate A verdicts.** `OFFHOST_STORAGE_DESIGN = READY` · `R2_BUCKET = CONFIGURATION_VERIFIED` ·
 > `R2_CONTRACT_ACCURACY = PASS` (corrected against the platform's published semantics — see
 > below) · `ENCRYPTION_DESIGN = READY` · `PRODUCTION_PRIVATE_KEY = NOT_GENERATED_BY_AGENT` ·
