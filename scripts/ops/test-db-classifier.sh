@@ -94,24 +94,81 @@ trap cleanup EXIT INT TERM
 "$INITDB" -D "$CL" -U postgres --auth=trust -E UTF8 >"$TMP/initdb.log" 2>&1 \
   || { echo "FAIL: initdb failed"; tail -5 "$TMP/initdb.log"; exit 1; }
 
+# Where the postmaster puts its unix socket. Set EXPLICITLY on Unix, and NOT SET
+# AT ALL on Windows — both halves are load-bearing.
+#
+# Unix: the compiled-in default is `/var/run/postgresql`, which on a GitHub-hosted
+# runner is owned by postgres:postgres and is NOT writable by the runner user, so
+# the cluster dies with
+#   FATAL: could not create lock file "/var/run/postgresql/.s.PGSQL.55451.lock": Permission denied
+# on every port attempt. [OBSERVED] CI run 38343476112. This suite connects only over
+# TCP (`-h 127.0.0.1`), so it has no use for a shared socket directory: it keeps its
+# socket inside its own disposable temp dir, which also makes the suite hermetic
+# rather than dependent on host permissions.
+#
+# Windows: there are no unix sockets, and the GUC is not ignored — the postmaster
+# tries to USE the value as a filesystem path. `mktemp -d` under MSYS returns a POSIX
+# path (`/tmp/tmp.XXXX`), which Windows PostgreSQL cannot resolve, so the cluster died
+# with
+#   FATAL: ... could not create lock file "/tmp/tmp.XXXX/.s.PGSQL.55451.lock": No such file or directory
+# [OBSERVED] locally, PostgreSQL 18.4 on x86_64-windows. Setting nothing lets Windows
+# use its own default, which works.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT|windows*) SOCK_OPT="" ;;
+  *) SOCK_OPT="-c unix_socket_directories=$TMP" ;;
+esac
+
 # A cluster left running by a SIGKILLed earlier invocation (the trap does not
 # fire on SIGKILL) holds the default port and would make pg_ctl fail here,
 # reporting a spurious FAIL for the whole suite. Probe successive ports unless
 # one was requested explicitly.
+#
+# Each attempt records its OWN log. `pg_ctl -l` APPENDS to the same file, so
+# reusing one path across eight attempts interleaves eight postmasters' output
+# and the diagnostic is unreadable. Worse, the failure branch below tailed only
+# `start.log`, which contains `pg_ctl`'s own two lines ("waiting for server to
+# start.... stopped waiting", "pg_ctl: could not start server") and NEVER the
+# postmaster's FATAL — so a hard environment failure (no /dev/shm, a read-only
+# data dir, a restrictive seccomp profile) surfaced as "cluster start failed"
+# with no cause. The reason is in `pg.log`; print it.
 start_cluster() {
   attempts=0
+  base_port=$PORT
   while [ "$attempts" -lt 8 ]; do
-    if "$PGCTL" -D "$CL" -o "-p $PORT -c listen_addresses=127.0.0.1" \
-         -l "$TMP/pg.log" -w start >"$TMP/start.log" 2>&1; then
+    if "$PGCTL" -D "$CL" \
+         -o "-p $PORT -c listen_addresses=127.0.0.1 $SOCK_OPT" \
+         -l "$TMP/pg.$attempts.log" -w start >"$TMP/start.$attempts.log" 2>&1; then
       return 0
     fi
+    # Count the FAILED attempt BEFORE the break, so `attempts` is the number of logs
+    # that actually exist. Incrementing it after the break left `attempts=0` when
+    # PORT_OVERRIDE was set, so the loop that prints the postmaster logs never ran —
+    # the explicit-port case, which is exactly when a diagnostic is wanted.
+    attempts=$((attempts + 1))
     [ -n "$PORT_OVERRIDE" ] && break
     PORT=$((PORT + 1))
-    attempts=$((attempts + 1))
   done
+  # Surface the postmaster's own reason, per attempt, before failing. A suite
+  # that reports only "could not start server" cannot be diagnosed from a CI log.
+  #
+  # NOTE the arithmetic uses a pre-computed base and plain variables. `$((X:-Y + a))`
+  # is a dash SYNTAX ERROR ("arithmetic expression: expecting EOF"), because the
+  # parameter-expansion operator is not valid inside an arithmetic expression without
+  # braces. [OBSERVED] CI run 38342525930 exited 2 on that line, replacing the real
+  # failure with a parse error — a diagnostic that breaks the thing it diagnoses.
+  a=0
+  while [ "$a" -lt "$attempts" ]; do
+    [ -s "$TMP/pg.$a.log" ] && {
+      p=$((base_port + a))
+      printf '  --- postmaster log, attempt %s (port %s) ---\n' "$((a + 1))" "$p"
+      tail -15 "$TMP/pg.$a.log"
+    }
+    a=$((a + 1))
+  done
+  [ -s "$TMP/start.0.log" ] && { printf '  --- pg_ctl output, attempt 1 ---\n'; tail -5 "$TMP/start.0.log"; }
   return 1
 }
-start_cluster || { echo "FAIL: cluster start failed"; tail -5 "$TMP/start.log"; exit 1; }
+start_cluster || { echo "FAIL: cluster start failed"; exit 1; }
 
 px() { "$PSQL" -h 127.0.0.1 -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -q -P pager=off "$@"; }
 # Setup must fail LOUDLY: a silently-failed CREATE DATABASE would make the two
