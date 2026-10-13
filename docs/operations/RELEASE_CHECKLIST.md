@@ -104,7 +104,7 @@ Rehearsal only; see `DEPLOYMENT_RUNBOOK.md` §4a. All checks are in
 | F11 | **Rollback restore exercised/verified** (re-tag or load, `up -d --no-deps rust-engine api web`, exact-ID match) | runbook §7d steps 1–6 | **OPERATOR** |
 | F12 | **Postgres NOT restarted during rollback** | runbook §7d step 4 (`up -d --no-deps`, no `postgres`) | **OPERATOR** |
 | F13 | **Compose identity preserved** (project `sigap`; volumes `sigap_pgdata`/`sigap_pgcerts`; networks `sigap_default`/`traefik`; loopback-only `18080`/`5433`/`50051`/`3005`) | runbook §7d; evidence bundle | **OPERATOR** |
-| F14 | **Gate A — R2 bucket created and secured** (private; **Bucket Lock rule** with ≥90-day retention added post-creation; incomplete-multipart abort rule) | runbook §13g.1, §13g.4 A1–A3 | **OPERATOR** — `R2_BUCKET = OWNER_SETUP_PENDING` |
+| F14 | **Gate A — R2 bucket created and secured** (private; **Bucket Lock rule** with ≥90-day retention added post-creation; incomplete-multipart abort rule) | runbook §13g.1, §13g.4 A1–A3 | **VERIFIED (configuration only)** 2026-10-13 — see **F14 evidence** below. `R2_BUCKET = OWNER_SETUP_PENDING` → **`CONFIGURATION_VERIFIED`** · `R2_BUCKET_EXISTS = PASS` · `R2_PRIVATE_ACCESS_CONFIGURATION = PASS` · `BUCKET_LOCK_RULE_VERIFIED = PASS` (inventory only) · `MULTIPART_LIFECYCLE_VERIFIED = PASS` |
 | F15 | **Gate A — object credentials scoped to the bucket** (uploader = **Object Read & Write**, recovery = **Object Read**; bucket-configuration capability kept interactive and separate) | runbook §13g.3, §13g.4 A5–A7, A9 | **OPERATOR** |
 | F15b | **Gate A — second-copy decision recorded** (second provider / offline copy / explicitly accepted risk) | runbook §13g.1 | **OPERATOR** |
 | F16 | **Gate A — age key pair generated off-host and two recovery copies secured** (neither in Git, CI, R2, Jira or on the relay) | runbook §13h.2, §13h.4 C1–C6 | **OPERATOR** — `PRODUCTION_PRIVATE_KEY = NOT_GENERATED_BY_AGENT` |
@@ -112,11 +112,72 @@ Rehearsal only; see `DEPLOYMENT_RUNBOOK.md` §4a. All checks are in
 | F18 | **Artifact URI and SHA-256 recorded out-of-band** (checklist + Jira gate, never a co-located sidecar in R2) | runbook §13g.7 | **OPERATOR** — `PRODUCTION_IMAGES_PRESERVED = NO` |
 | F19 | **Isolated restore from R2 exercised with the REAL image IDs** via `sigap-archive-restore.sh` with `ARCHIVE_URI=r2://…` | runbook §7d.1, §13f step 3 | **OPERATOR** — `REAL_ISOLATED_RESTORE = NOT_RUN` |
 | F20 | **`J11_ROLLBACK_SAFETY` resolved** — preserved binary tested against the post-`0011` schema (§7g), **not** inferred from image IDs | runbook §7f/§7g | **OPERATOR** — currently `UNKNOWN`, which BLOCKS J10 |
-| F21 | **Bucket Lock retention behaviour verified on the real service**, using a throwaway object — **not** by the MinIO CI test, which cannot prove it. **TWO parts, recorded separately:** Part 1 = the mechanism on a disposable `lock-drill/<STAMP>/` prefix (deletion refused **for the retention reason**, then permitted once the rule is removed, then cleanup proven); Part 2 = the production rule's **NAME / PREFIX / ENABLED / ≥90-day RETENTION** from a live `lock list`. A green Part 1 does **not** satisfy Part 2 | runbook **§13g.14** | **OPERATOR** — requires separate authorization. `BUCKET_LOCK_RULE_VERIFIED = PENDING` until Part 2 |
+| F21 | **Bucket Lock retention behaviour verified on the real service**, using a throwaway object — **not** by the MinIO CI test, which cannot prove it. **THREE things, recorded separately:** (1) the production rule's *configuration* is now **VERIFIED** from the operator's live `lock list` (F14 evidence); (2) **Part 1** = the mechanism on a disposable `lock-drill/<STAMP>/` prefix (deletion refused **for the retention reason**, then permitted once the rule is removed, then cleanup proven); (3) **Part 2** = re-reading the live `lock list` afterwards to confirm the production rule is **unchanged** by the drill. A verified configuration and a green Part 1 do **not** prove the rule *enforces* retention against a real object | runbook **§13g.14** | **OPERATOR** — `BUCKET_LOCK_BEHAVIOR_TEST = NOT_RUN`, `BUCKET_LOCK_BEHAVIOR_PROVEN = PENDING`. Requires separate authorization: the drill mutates a real bucket |
 | F21c | **CI test EXECUTED and PASSING** — the **latest** successful drill is run `38289010467` on **`d06a9a7`**, all 19 steps, including all four negative controls at their expected exit codes and refusal *reasons*. Earlier passing runs (`38281214221` on `c4afc1c`, `38280297031` on `89f9bcf`) are superseded by it. The drill **no longer re-runs on push**: the `r2-validation` label was removed once validation completed, so the job correctly reports *skipped* | runbook §13g.12 | **DONE** — `R2_MINIO_ROUND_TRIP = PASS`, `R2_NEGATIVE_CONTROLS = PASS` (MinIO only; **not** retention). The result is **historical**: it was produced on `d06a9a7`, which is no longer the branch head, and it is evidence that the gate is reachable and the round trip executes end to end — **not** a claim about any later commit |
 | F21b | **CI test activated** — the `r2-validation` label created, a PR opened with base `design/ui-ux-overhaul`, and the label **applied** (the `labeled` activity type is what starts the run; without it the gate is unreachable) | runbook §13g.11 | **OPERATOR** — `GITHUB_TEST_ACTIVATION = READY`, `R2_RUNTIME_TEST = NOT_RUN` |
 | F22 | **`PRODUCTION_ENGINE_ID` recorded** (`docker info .ID` on the production daemon) and exported for every restore | runbook §7d.1, §13f | **OPERATOR** — Gate D. The only alias-proof production control; without it an SSH tunnel or DNS alias of production defeats the string denylist |
 | F23 | **A trusted relay host identified and reachable** — the `ARCHIVE_RELAY` that §13f streams through. It must have `age` (to encrypt with the **public** recipient), `aws` (to upload to R2) and `ssh` from production, plus `$RELAY_STAGE` writable under `umask 077`. It must **not** hold the private key | runbook §13f (prerequisites and step 1) | **OPERATOR** — `ARCHIVE_RELAY = NOT_IDENTIFIED`. **This is a hard prerequisite of §13f**: the preservation procedure streams `production → gzip → ssh → relay(age) → R2`, so with no relay there is no §13f run. It was previously implicit — the procedure references `$ARCHIVE_RELAY` throughout but no item listed it, so the handoff was not executable as written |
+
+**F14 evidence — accepted 2026-10-13, configuration inventory only.** Operator-provided
+command output, obtained directly from the owner's Cloudflare account with **Wrangler 4.100.0**
+on Windows. Reproduced verbatim; **no credential, token or key is recorded anywhere in this
+file**.
+
+*Bucket listing:*
+
+```
+BUCKET_NAME = sigap-backups
+BUCKET_EXISTS = YES
+```
+
+*Bucket lock inventory:*
+
+```
+name:       sigap-retention-90d
+enabled:    Yes
+prefix:     sigap/
+condition:  after 90 days
+```
+
+*Lifecycle inventory:*
+
+```
+name:     Default Multipart Abort Rule
+enabled:  Yes
+prefix:   (all prefixes)
+action:   Abort incomplete multipart uploads after 7 days
+```
+
+*Public-access inspection:*
+
+```
+r2.dev URL: disabled
+Custom domains: none connected
+```
+
+**Each required attribute, checked against what the runbook asks for:**
+
+| Attribute | Required | Observed | Verdict |
+|---|---|---|---|
+| Bucket name | `sigap-backups` | `sigap-backups` | **PASS** |
+| Bucket exists | yes | YES | **PASS** |
+| Rule NAME | `sigap-retention-90d` | `sigap-retention-90d` | **PASS** |
+| Rule PREFIX | `sigap/` | `sigap/` | **PASS** |
+| Rule ENABLED | true | `Yes` | **PASS** |
+| Rule RETENTION | ≥ 90 days | `after 90 days` | **PASS** — exactly 90, not below |
+| Multipart abort | 7-day default active | `Default Multipart Abort Rule`, enabled, all prefixes, 7 days | **PASS** |
+| Private access | no public URL | `r2.dev URL: disabled`, no custom domains | **PASS** |
+
+**What this proves and what it does not.** These are *configuration* facts read from the live
+service: the rule exists, is enabled, is scoped to `sigap/`, and is 90 days. It does **not**
+prove the rule **enforces** retention, and it does **not** prove a real artifact round-trips.
+`BUCKET_LOCK_BEHAVIOR_TEST = NOT_RUN` and `R2_REAL_UPLOAD_READBACK = NOT_RUN` both stay —
+see **F21**. The lifecycle rule's presence is likewise confirmed, not its effect.
+
+**Recording note.** This block is the durable record of an inspection the owner performed; no
+agent executed a Wrangler command against the real account. A1–A3 are therefore **not** to be
+re-run. If any of these values later changes — in particular `enabled` flipping to `No`, or the
+prefix drifting off `sigap/` — this row is stale and must be re-verified before relying on it.
 
 **F23 — why the relay is a listed prerequisite and not an implementation detail.** §13f's
 preservation path is `docker image save | gzip | ssh RELAY "age -r RECIP > STAGE/$DEST"`, then
@@ -129,14 +190,63 @@ production access, no relay"), which is why the relay is a *preservation* prereq
 but it is a hard one. A relay that turns out to be production itself collapses the separation
 the design rests on, so it must be a genuinely separate host.
 
-> **Gate A verdicts.** `OFFHOST_STORAGE_DESIGN = READY` · `R2_BUCKET = OWNER_SETUP_PENDING` ·
+**F23a — relay candidates, evaluated, and why none is adopted.** Three SSH entries are
+configured on the workstation. Only one of them is a *genuinely separate host*, and it was
+nearly the wrong answer:
+
+| Alias | Resolves to | Verdict |
+|---|---|---|
+| `fikriserver` | `103.47.225.64` (user `fikri`) | **production itself** — using it as the relay collapses the separation this exists to enforce (§13f) |
+| `wg` | **`103.47.225.64` — the identical address**, user `fikri`, adding only `LocalForward 51821 → 127.0.0.1:51821` | **same host as production, not a relay.** It is a WireGuard tunnel to the production server, so it reads like a separate entry while being the same machine. A relay chosen this way would silently defeat the design while every check still looked satisfied |
+| `zenith` | `139.59.251.34` (user `root`, dedicated key `id_ed25519_zenith`) | remote, distinct — **candidate** |
+| `vps-nagoya` | `43.156.93.105` (user `root`, key **`~/.ssh/id_ed25519`**) | remote, distinct — **candidate, with a caveat below** |
+
+`ARCHIVE_RELAY = NOT_IDENTIFIED` stands, and it is an **operator** decision, because the
+remaining acceptance checks are things only the owner's network position can prove: that
+**production can reach the relay on 22** (the relay must accept an SSH connection *from*
+`fikriserver`, which is the direction §13f uses), that `age`, `aws` and `shred` are present on
+it, that `$RELAY_STAGE` is writable under `umask 077`, and that **no age private key exists on
+it** — F16's whole point is that the relay holds only the public recipient.
+
+**Recommendation: `zenith` (`139.59.251.34`) over `vps-nagoya`, on host-identity grounds.**
+`zenith` authenticates with its **own** key file (`id_ed25519_zenith`); `vps-nagoya` uses
+`~/.ssh/id_ed25519` — the **same** private key that authenticates to production. Reusing one
+private key across production and a backup-path host means one key compromise reaches both,
+which is precisely the separation §13f is built on. This is an architectural criterion, not a
+performance one, so it holds regardless of which host is faster or has more disk. Nothing else
+was observed, so this is a preference and not a finding about either host's suitability — the
+acceptance checks above still have to pass.
+
+**Why the relay is not simply deleted.** §13f's chain is
+`docker image save | gzip | ssh RELAY "age -r RECIP > STAGE/$DEST"` because `age` is
+**absent** on production and deliberately **not required** there. The relay is the only reason
+production carries no encryption tool. So it is load-bearing, and the alternative — installing
+`age` on production and dropping the relay — is a design change, not a configuration change;
+it must be approved rather than assumed. See §13f's note that a relay which turns out to be
+production itself collapses the separation.
+
+**Verification performed.** Both candidates were probed **from this agent workstation**: TCP
+connected, then SSH stalled at *banner exchange* and timed out — on `zenith`, on `vps-nagoya`,
+and on `fikriserver` **alike**. Since the known-good production host fails identically, the
+limit is this environment's SSH path, not any of the three machines. So no relay property
+(age/aws/ssh presence, `umask`, key absence) could be checked here, and none was assumed.
+The runbook's checks remain the operative procedure; this record only narrows the choice.
+
+> **Gate A verdicts.** `OFFHOST_STORAGE_DESIGN = READY` · `R2_BUCKET = CONFIGURATION_VERIFIED` ·
 > `R2_CONTRACT_ACCURACY = PASS` (corrected against the platform's published semantics — see
 > below) · `ENCRYPTION_DESIGN = READY` · `PRODUCTION_PRIVATE_KEY = NOT_GENERATED_BY_AGENT` ·
 > `PRODUCTION_IMAGES_PRESERVED = NO` · `REAL_ISOLATED_RESTORE = NOT_RUN` ·
 > `GITHUB_TEST_ACTIVATION = PASS` (label created and applied; the `labeled` event executed the
 > run) · `R2_MINIO_ROUND_TRIP = PASS` · `R2_NEGATIVE_CONTROLS = PASS` ·
-> `REAL_CLOUDFLARE_R2_PROOF = PENDING` (no real-bucket evidence exists yet; **`PENDING` supersedes the earlier `NONE`** — `NONE` read as terminal, whereas the owner actions below are the specific steps that discharge it. It stays non-`PASS` until §13g.14 Part 2 runs against the real bucket) ·
-> `BUCKET_LOCK_RULE_VERIFIED = PENDING` (F21 Part 2) ·
+> `REAL_CLOUDFLARE_R2_PROOF = PENDING` — **configuration verified, behaviour not.** The four
+> configuration controls below are `PASS` from the operator's own live inspection (F14
+> evidence); `BUCKET_LOCK_BEHAVIOR_TEST = NOT_RUN` and `R2_REAL_UPLOAD_READBACK = NOT_RUN` are
+> still open, so this stays **non-`PASS`** until §13g.14 Part 2 and a real round-trip execute ·
+> `R2_BUCKET_EXISTS = PASS` · `R2_PRIVATE_ACCESS_CONFIGURED = PASS` ·
+> `BUCKET_LOCK_CONFIG_VERIFIED = PASS` (**configuration inventory only** — the rule exists,
+> is enabled, is scoped to `sigap/`, and is 90 days) ·
+> `MULTIPART_LIFECYCLE_VERIFIED = PASS` · `BUCKET_LOCK_BEHAVIOR_TEST = NOT_RUN` ·
+> `R2_REAL_UPLOAD_READBACK = NOT_RUN` · `BUCKET_LOCK_BEHAVIOR_PROVEN = PENDING` (F21) ·
 > `ARCHIVE_RELAY = NOT_IDENTIFIED` (F23 — blocks §13f) ·
 > `J11_ROLLBACK_SAFETY = UNKNOWN` · `MIGRATION_0011 = NOT_AUTHORIZED` ·
 > `PRODUCTION_DEPLOYMENT = BLOCKED`. The design is complete. **Nothing in production has been
