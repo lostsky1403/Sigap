@@ -2675,6 +2675,16 @@ gates hold — read the step log.
 the first executing run; every earlier attempt failed at a step that is now fixed, and the
 failures are recorded below because each one is a real defect that static review did not catch.
 
+> **Later runs also passed, and the evidence below is from the FIRST one.** The latest
+> successful drill is `https://github.com/lostsky1403/Sigap/actions/runs/38289010467` on
+> commit `d06a9a7` — same 19 steps, `success`. Per-run values legitimately differ (the
+> read-back byte count and the reported engine and image IDs are new every run), so the
+> figures quoted below belong to `89f9bcf` and must not be compared against another run's.
+> Treat this section as the record of the first execution, and **F21c** in
+> `RELEASE_CHECKLIST.md` as the current pointer. The drill no longer re-runs on push: the
+> `r2-validation` label was removed once validation completed, so the job now reports
+> *skipped* by design.
+
 What the run **proves**:
 
 | Step | Observed |
