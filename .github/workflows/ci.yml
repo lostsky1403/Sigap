@@ -202,6 +202,22 @@ jobs:
           run_suite sh scripts/ops/test-migration-0011.sh
           run_suite sh scripts/ops/test-notification-contract.sh
 
+      # The Bucket Lock retention drill's value is entirely in its assertions, and
+      # every one of them is a negative: a deletion that must be refused, a refusal
+      # that must name the retention reason, a production rule that must survive.
+      # This runs it against a stub executor so those paths stay tested WITHOUT
+      # touching a real bucket. pwsh is present on ubuntu-latest; a 2 here would
+      # mean the runner lost it, which is a misconfiguration, not a skip.
+      - name: Bucket Lock drill assertions (stub executor)
+        run: |
+          if sh scripts/ops/test-bucket-lock-drill.sh; then
+            echo "PASS: bucket-lock drill assertions"
+          else
+            rc=$?
+            echo "FAIL: bucket-lock drill assertions (exit $rc)"
+            exit "$rc"
+          fi
+
   security-go:
     name: Go Vulnerability Scan
     runs-on: ubuntu-latest

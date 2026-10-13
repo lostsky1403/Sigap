@@ -2815,6 +2815,50 @@ archive. Record both, separately.
 
 Run this **only** with owner authorization. It mutates a real bucket — it creates a real lock rule and a real object, then deletes them. That is why it uses a throwaway prefix and a 1-day window rather than the production rule.
 
+**Operator-executable procedure — `scripts/ops/Drill-BucketLockRetention.ps1`.** The owner's
+host is Windows PowerShell, so the procedure is shipped as a PowerShell script rather than the
+Bash below, which does not run in a PowerShell session. The Bash block that follows is the
+annotated reference implementation — it documents *why* each step is shaped as it is; the script
+is what is executed.
+
+```powershell
+# 1. Rehearse. Runs every preflight guard and prints the plan; mutates nothing.
+pwsh -NoProfile -File scripts/ops/Drill-BucketLockRetention.ps1 -DryRun
+
+# 2. Execute, once authorized.
+pwsh -NoProfile -File scripts/ops/Drill-BucketLockRetention.ps1
+```
+
+Prerequisites, all checked before any mutation:
+
+| Requirement | Why |
+|---|---|
+| `aws` CLI on PATH | performs the object operations; override with `R2_DRILL_AWS_BIN` |
+| `npx` on PATH | reaches `wrangler`; override with `R2_DRILL_NPX_BIN` |
+| `npx wrangler whoami` already authenticated | the script refuses if the account does not match `R2_DRILL_ACCOUNT_ID` |
+| `R2_DRILL_ACCOUNT_ID` | ties the run to the intended account |
+| `R2_DRILL_ENDPOINT` | must match `https://<accountid>.r2.cloudflarestorage.com`; anything else is refused so the drill cannot be pointed at real AWS |
+| `R2_DRILL_ACCESS_KEY_ID` / `R2_DRILL_SECRET_ACCESS_KEY` | the **bucket-scoped Object Read & Write** token (A5). Deliberately *not* named `AWS_*`, so the drill can never silently adopt ambient credentials |
+| `R2_DRILL_BUCKET` | optional; defaults to `sigap-backups` and is refused if set to anything else |
+
+The script exits **0** (all three verdicts `PASS`), **1** (an assertion failed) or **2** (refused
+before mutating). It prints exactly the three verdicts below and writes numbered evidence files
+(`01-lock-before.txt`, `04-delete-refused.txt`, `09-lock-after.txt`, …) to
+`R2_DRILL_EVIDENCE_DIR`. **No evidence file ever contains a credential** — only command output.
+
+It is fail-closed in four ways the Bash form does not make explicit: it refuses if a rule named
+`lock-drill` already exists or if any object remains under `lock-drill/` (so a re-run cannot
+adopt or accumulate unknown state); it screens every mutating invocation and refuses if one
+names `sigap-retention-90d` or the `sigap/` prefix, so property 1 is enforced structurally
+rather than by review; it points `AWS_SHARED_CREDENTIALS_FILE` and `AWS_CONFIG_FILE` at an empty
+file so `~/.aws` cannot be consulted even indirectly; and its teardown runs in a `finally` block,
+so a failure part-way through still removes the drill rule and the probe object and reports
+whether it succeeded.
+
+`scripts/ops/test-bucket-lock-drill.sh` exercises all of this against a stub executor — the
+happy path, the four failure paths, and the guard refusals — so the drill's assertions stay
+tested without touching a real bucket. It is wired into the `ops-guards` CI job.
+
 ```bash
 # GUARD: the prefix must be the disposable one. Refuse to continue otherwise.
 DRILL_PREFIX="lock-drill"
