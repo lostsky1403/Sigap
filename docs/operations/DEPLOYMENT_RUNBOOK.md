@@ -2878,6 +2878,19 @@ a greedy `[a-z0-9]+` plus a substring test, so an id one character longer
 (`<id>00.r2.cloudflarestorage.com`) was accepted and the configuration verdict reported `PASS`.
 An extra label, a prefix label and a trailing dot are now refused too.
 
+**The drill prefix is listed from the response's `Contents`, never from `KeyCount`.** The
+earlier form asked for `--query KeyCount --output text`, and the AWS CLI renders a **missing**
+`KeyCount` as the literal string `None` — which is not `0`. R2 omits `KeyCount` entirely for an
+empty prefix, so a correct, empty bucket was refused with *"None pre-existing object(s)"*. The
+listing is now read as structured JSON and the keys come from `Contents`, which is the
+authoritative list. `KeyCount` is treated as a hint: when present it must be a non-negative
+integer, and a positive value with no `Contents` is a contradiction. Refused, rather than read
+as "empty": empty output, the literal `None`/`null`, invalid JSON, a non-object JSON value, a
+`Contents` entry with no `Key` or an empty one, a non-numeric `KeyCount`, and `IsTruncated`
+without a `NextContinuationToken`. Pagination is followed explicitly (`--no-paginate`, then the
+continuation token) with a page cap, so a large prefix cannot be undercounted. A response with
+no `Contents` at all — including a bare `{}` — is a valid empty result.
+
 It is fail-closed in ways the Bash form does not make explicit: it refuses if a rule named
 `lock-drill` already exists or if any object remains under `lock-drill/` (so a re-run cannot
 adopt or accumulate unknown state); it validates the production rule as one coherent record
@@ -2967,10 +2980,19 @@ npx wrangler r2 bucket lock list sigap-backups 2>/dev/null \
   | grep -qi 'lock-drill' \
   && { echo "FAIL: the drill rule survived cleanup"; exit 1; } \
   || echo "ok: no drill rule remains"
-aws s3api list-objects-v2 --bucket sigap-backups --prefix "$DRILL_PREFIX/" \
-  --endpoint-url "$R2_ENDPOINT" --query 'KeyCount' --output text \
-  | grep -qx 0 && echo "ok: no drill objects remain" \
-  || { echo "FAIL: drill objects remain under $DRILL_PREFIX/"; exit 1; }
+# List the KEYS, and never `--query KeyCount --output text`. The CLI renders a MISSING
+# KeyCount as the literal string `None`, and R2 omits KeyCount for an empty prefix, so that
+# form reports a false failure on a correct, empty bucket. An empty key list is genuinely
+# empty; `Contents[].Key` yields no lines when there is no Contents.
+if ! keys=$(aws s3api list-objects-v2 --bucket sigap-backups --prefix "$DRILL_PREFIX/" \
+     --endpoint-url "$R2_ENDPOINT" --output text --query 'Contents[].Key'); then
+  echo "FAIL: could not list $DRILL_PREFIX/ -- refusing rather than assuming it is empty"; exit 1
+fi
+n=$(printf '%s\n' "$keys" | grep -c . || true)
+[ "$n" -eq 0 ] && echo "ok: no drill objects remain" \
+  || { echo "FAIL: $n drill object(s) remain under $DRILL_PREFIX/"; exit 1; }
+# This reference reads the first page only; the drill prefix holds at most one object. The
+# PowerShell script paginates explicitly (--no-paginate plus the continuation token).
 
 # Record, out-of-band, the OUTPUTS of both parts — never a credential:
 #   Part 1: the refusal text, the post-removal success, and this cleanup output.
