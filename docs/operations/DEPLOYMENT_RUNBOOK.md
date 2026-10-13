@@ -2675,6 +2675,16 @@ gates hold — read the step log.
 the first executing run; every earlier attempt failed at a step that is now fixed, and the
 failures are recorded below because each one is a real defect that static review did not catch.
 
+> **Later runs also passed, and the evidence below is from the FIRST one.** The latest
+> successful drill is `https://github.com/lostsky1403/Sigap/actions/runs/38289010467` on
+> commit `d06a9a7` — same 19 steps, `success`. Per-run values legitimately differ (the
+> read-back byte count and the reported engine and image IDs are new every run), so the
+> figures quoted below belong to `89f9bcf` and must not be compared against another run's.
+> Treat this section as the record of the first execution, and **F21c** in
+> `RELEASE_CHECKLIST.md` as the current pointer. The drill no longer re-runs on push: the
+> `r2-validation` label was removed once validation completed, so the job now reports
+> *skipped* by design.
+
 What the run **proves**:
 
 | Step | Observed |
@@ -2797,32 +2807,96 @@ archive. Record both, separately.
 
 **Part 1 — the mechanism, on a disposable prefix.**
 
+**Three safety properties this drill must satisfy, asserted rather than assumed:**
+
+1. **It never touches `sigap/`.** Every key it writes is under `lock-drill/<STAMP>/`, and every rule it adds is prefix-scoped to that same path. The production retention rule is **not modified, not removed and not re-created** — if any command below would affect it, the drill is wrong.
+2. **Both directions are observed.** The rule's *presence* must refuse the delete, and its *removal* must permit it. Only the pair proves the refusal came from the rule rather than from a permission or endpoint problem.
+3. **It cleans up after itself.** The rule and the probe object are both removed by the end, so a re-run produces no accumulating state and no orphaned lock rule.
+
+Run this **only** with owner authorization. It mutates a real bucket — it creates a real lock rule and a real object, then deletes them. That is why it uses a throwaway prefix and a 1-day window rather than the production rule.
+
 ```bash
+# GUARD: the prefix must be the disposable one. Refuse to continue otherwise.
+DRILL_PREFIX="lock-drill"
+[ "$DRILL_PREFIX" = "lock-drill" ] || { echo "refusing: wrong drill prefix"; exit 1; }
+case "$DRILL_PREFIX" in sigap*) echo "refusing: drill prefix must never be the archive prefix"; exit 1;; esac
+
 # A DISPOSABLE object under a THROWAWAY prefix. Never a real backup key.
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 printf 'lock-drill' > /tmp/lock-drill.txt
-aws s3api put-object --bucket sigap-backups --key "lock-drill/$STAMP/probe.txt" \
+aws s3api put-object --bucket sigap-backups --key "$DRILL_PREFIX/$STAMP/probe.txt" \
   --body /tmp/lock-drill.txt --endpoint-url "$R2_ENDPOINT"
 
 # Apply a SHORT rule to that prefix ONLY. NAME and PREFIX are POSITIONAL.
-npx wrangler r2 bucket lock add sigap-backups lock-drill "lock-drill/$STAMP/" \
+npx wrangler r2 bucket lock add sigap-backups lock-drill "$DRILL_PREFIX/$STAMP/" \
   --retention-days 1
 
 # ASSERT deletion is refused for the window. A refusal is the expected result, so a
-# non-zero exit here is SUCCESS; treat a zero exit as the failure.
-if aws s3api delete-object --bucket sigap-backups \
-     --key "lock-drill/$STAMP/probe.txt" --endpoint-url "$R2_ENDPOINT" 2>/dev/null; then
-  echo "FAIL: a locked object was deletable — retention is not in force"; exit 1
+# non-zero exit here is SUCCESS — but ONLY if it failed for the right reason. The reason is
+# captured and matched, because a bare non-zero exit is ALSO what you get from an expired
+# credential, a wrong --bucket, or an unreachable endpoint: all three would read as
+# "retention is working" when in fact nothing was tested. Asserting only `if ... then` is the
+# same vacuous-pass shape the CI negative controls were corrected for.
+#
+# The earlier form piped stderr to /dev/null, which threw the reason away. It is kept now.
+del_out=$(aws s3api delete-object --bucket sigap-backups \
+  --key "lock-drill/$STAMP/probe.txt" --endpoint-url "$R2_ENDPOINT" 2>&1)
+del_rc=$?
+printf '%s\n' "$del_out" > "lock-drill-$STAMP.out"   # evidence, never a secret
+if [ "$del_rc" -eq 0 ]; then
+  echo "FAIL: a locked object was deletable — retention is not in force"
+  echo "  output was: $del_out"
+  exit 1
+fi
+# The retention refusal must name the bucket-lock condition. An AccessDenied that says
+# nothing about lock/retention means the object was not refused FOR THE RIGHT REASON.
+if printf '%s' "$del_out" | grep -qiE 'lock|retention|ObjectLock'; then
+  echo "ok: deletion refused for the retention reason — $del_out"
 else
-  echo "ok: deletion refused while the lock rule is active"
+  echo "FAIL: deletion failed (rc=$del_rc) but NOT for a retention reason"
+  echo "  output was: $del_out"
+  echo "  An expired credential, a wrong bucket, or an unreachable endpoint also exits non-zero."
+  echo "  This is a failed drill, not a passing one — re-run with valid access."
+  exit 1
 fi
 
 # Remove the drill rule, then confirm deletion SUCCEEDS — which is also the observation
 # that the rule is administratively removable, recorded as behaviour rather than assumed.
+# BOTH directions are asserted: the rule's presence refused the delete, and its removal
+# permitted it. Without the second half, a rule that silently never applied would look
+# identical to a rule that worked and was then removed.
 npx wrangler r2 bucket lock remove sigap-backups --id lock-drill
-aws s3api delete-object --bucket sigap-backups \
-  --key "lock-drill/$STAMP/probe.txt" --endpoint-url "$R2_ENDPOINT"
+
+if del2_out=$(aws s3api delete-object --bucket sigap-backups \
+     --key "lock-drill/$STAMP/probe.txt" --endpoint-url "$R2_ENDPOINT" 2>&1); then
+  echo "ok: after rule removal the object IS deletable — the refusal above was caused by the"
+  echo "    rule, not by a permission or endpoint problem (both directions observed)"
+else
+  echo "FAIL: the object is still not deletable after removing the rule"
+  echo "  output was: $del2_out"
+  echo "  Either the rule was not removed, or the refusal above had an unrelated cause."
+  exit 1
+fi
 echo "ok: rule removable by an administrator — RETENTION = ADMINISTRATIVELY_REMOVABLE"
+
+# PROVE the drill left nothing behind. A drill that leaves an orphaned lock rule would
+# accumulate rules on every re-run (up to the 1000-rule limit) and could later refuse the
+# deletion of unrelated objects. Assert the rule list and the prefix are both clean.
+echo "--- post-drill state (must show the production rule ONLY) ---"
+npx wrangler r2 bucket lock list sigap-backups
+npx wrangler r2 bucket lock list sigap-backups 2>/dev/null \
+  | grep -qi 'lock-drill' \
+  && { echo "FAIL: the drill rule survived cleanup"; exit 1; } \
+  || echo "ok: no drill rule remains"
+aws s3api list-objects-v2 --bucket sigap-backups --prefix "$DRILL_PREFIX/" \
+  --endpoint-url "$R2_ENDPOINT" --query 'KeyCount' --output text \
+  | grep -qx 0 && echo "ok: no drill objects remain" \
+  || { echo "FAIL: drill objects remain under $DRILL_PREFIX/"; exit 1; }
+
+# Record, out-of-band, the OUTPUTS of both parts — never a credential:
+#   Part 1: the refusal text, the post-removal success, and this cleanup output.
+#   Part 2: the `lock list` inventory, asserting NAME/PREFIX/ENABLED/RETENTION.
+# A drill that passed but was not recorded is not evidence.
 ```
 
 This drill's rule is `--retention-days 1` and prefix-scoped to `lock-drill/<STAMP>/`. It is
