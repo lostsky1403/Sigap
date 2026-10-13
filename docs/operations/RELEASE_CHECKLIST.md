@@ -112,10 +112,22 @@ Rehearsal only; see `DEPLOYMENT_RUNBOOK.md` §4a. All checks are in
 | F18 | **Artifact URI and SHA-256 recorded out-of-band** (checklist + Jira gate, never a co-located sidecar in R2) | runbook §13g.7 | **OPERATOR** — `PRODUCTION_IMAGES_PRESERVED = NO` |
 | F19 | **Isolated restore from R2 exercised with the REAL image IDs** via `sigap-archive-restore.sh` with `ARCHIVE_URI=r2://…` | runbook §7d.1, §13f step 3 | **OPERATOR** — `REAL_ISOLATED_RESTORE = NOT_RUN` |
 | F20 | **`J11_ROLLBACK_SAFETY` resolved** — preserved binary tested against the post-`0011` schema (§7g), **not** inferred from image IDs | runbook §7f/§7g | **OPERATOR** — currently `UNKNOWN`, which BLOCKS J10 |
-| F21 | **Bucket Lock retention behaviour verified on the real service**, using a throwaway object — **not** by the MinIO CI test, which cannot prove it | runbook §13g.9 | **OPERATOR** — requires separate authorization |
-| F21c | **CI test EXECUTED and PASSING** — run `38280297031` on `89f9bcf`, all 19 steps, including all four negative controls at their expected exit codes and refusal reasons | runbook §13g.12 | **DONE** — `R2_MINIO_ROUND_TRIP = PASS`, `R2_NEGATIVE_CONTROLS = PASS` (MinIO only; **not** retention) |
+| F21 | **Bucket Lock retention behaviour verified on the real service**, using a throwaway object — **not** by the MinIO CI test, which cannot prove it. **TWO parts, recorded separately:** Part 1 = the mechanism on a disposable `lock-drill/<STAMP>/` prefix (deletion refused **for the retention reason**, then permitted once the rule is removed, then cleanup proven); Part 2 = the production rule's **NAME / PREFIX / ENABLED / ≥90-day RETENTION** from a live `lock list`. A green Part 1 does **not** satisfy Part 2 | runbook **§13g.14** | **OPERATOR** — requires separate authorization. `BUCKET_LOCK_RULE_VERIFIED = PENDING` until Part 2 |
+| F21c | **CI test EXECUTED and PASSING** — the **latest** successful drill is run `38289010467` on **`d06a9a7`**, all 19 steps, including all four negative controls at their expected exit codes and refusal *reasons*. Earlier passing runs (`38281214221` on `c4afc1c`, `38280297031` on `89f9bcf`) are superseded by it. The drill **no longer re-runs on push**: the `r2-validation` label was removed once validation completed, so the job correctly reports *skipped* | runbook §13g.12 | **DONE** — `R2_MINIO_ROUND_TRIP = PASS`, `R2_NEGATIVE_CONTROLS = PASS` (MinIO only; **not** retention). The result is **historical**: it was produced on `d06a9a7`, which is no longer the branch head, and it is evidence that the gate is reachable and the round trip executes end to end — **not** a claim about any later commit |
 | F21b | **CI test activated** — the `r2-validation` label created, a PR opened with base `design/ui-ux-overhaul`, and the label **applied** (the `labeled` activity type is what starts the run; without it the gate is unreachable) | runbook §13g.11 | **OPERATOR** — `GITHUB_TEST_ACTIVATION = READY`, `R2_RUNTIME_TEST = NOT_RUN` |
 | F22 | **`PRODUCTION_ENGINE_ID` recorded** (`docker info .ID` on the production daemon) and exported for every restore | runbook §7d.1, §13f | **OPERATOR** — Gate D. The only alias-proof production control; without it an SSH tunnel or DNS alias of production defeats the string denylist |
+| F23 | **A trusted relay host identified and reachable** — the `ARCHIVE_RELAY` that §13f streams through. It must have `age` (to encrypt with the **public** recipient), `aws` (to upload to R2) and `ssh` from production, plus `$RELAY_STAGE` writable under `umask 077`. It must **not** hold the private key | runbook §13f (prerequisites and step 1) | **OPERATOR** — `ARCHIVE_RELAY = NOT_IDENTIFIED`. **This is a hard prerequisite of §13f**: the preservation procedure streams `production → gzip → ssh → relay(age) → R2`, so with no relay there is no §13f run. It was previously implicit — the procedure references `$ARCHIVE_RELAY` throughout but no item listed it, so the handoff was not executable as written |
+
+**F23 — why the relay is a listed prerequisite and not an implementation detail.** §13f's
+preservation path is `docker image save | gzip | ssh RELAY "age -r RECIP > STAGE/$DEST"`, then
+the relay uploads the ciphertext to R2 and digests it. That ordering is deliberate: the private
+key is absent from production **and** from the relay, no unencrypted archive is ever persisted
+on the relay, and production needs no `age` installation (§13f records `age` as **ABSENT** on
+the production host and **not required**). Every one of those properties depends on the relay
+existing as a distinct host. The **recovery** path deliberately does not need it (§13g.8: "no
+production access, no relay"), which is why the relay is a *preservation* prerequisite only —
+but it is a hard one. A relay that turns out to be production itself collapses the separation
+the design rests on, so it must be a genuinely separate host.
 
 > **Gate A verdicts.** `OFFHOST_STORAGE_DESIGN = READY` · `R2_BUCKET = OWNER_SETUP_PENDING` ·
 > `R2_CONTRACT_ACCURACY = PASS` (corrected against the platform's published semantics — see
@@ -123,7 +135,9 @@ Rehearsal only; see `DEPLOYMENT_RUNBOOK.md` §4a. All checks are in
 > `PRODUCTION_IMAGES_PRESERVED = NO` · `REAL_ISOLATED_RESTORE = NOT_RUN` ·
 > `GITHUB_TEST_ACTIVATION = PASS` (label created and applied; the `labeled` event executed the
 > run) · `R2_MINIO_ROUND_TRIP = PASS` · `R2_NEGATIVE_CONTROLS = PASS` ·
-> `REAL_CLOUDFLARE_R2_PROOF = NONE` (disposable MinIO only — see §13g.9/§13g.12) ·
+> `REAL_CLOUDFLARE_R2_PROOF = PENDING` (no real-bucket evidence exists yet; **`PENDING` supersedes the earlier `NONE`** — `NONE` read as terminal, whereas the owner actions below are the specific steps that discharge it. It stays non-`PASS` until §13g.14 Part 2 runs against the real bucket) ·
+> `BUCKET_LOCK_RULE_VERIFIED = PENDING` (F21 Part 2) ·
+> `ARCHIVE_RELAY = NOT_IDENTIFIED` (F23 — blocks §13f) ·
 > `J11_ROLLBACK_SAFETY = UNKNOWN` · `MIGRATION_0011 = NOT_AUTHORIZED` ·
 > `PRODUCTION_DEPLOYMENT = BLOCKED`. The design is complete. **Nothing in production has been
 > created, read or executed**, and no approval transfers between gates. What *has* now run is
