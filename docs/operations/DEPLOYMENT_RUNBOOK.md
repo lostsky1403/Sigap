@@ -2503,11 +2503,11 @@ Neither credential is in Git, CI, Jira or the repo.
 | # | Action | Notes |
 |---|---|---|
 | A1 | Create the **private** bucket | No creation-time lock constraint; Bucket Lock is added separately in A2 |
-| A2 | Add a **Bucket Lock rule** with ≥90-day retention (optionally prefix-scoped to `sigap/`) | Added to the existing bucket; **administratively removable**, so it is a retention control, not an immutable guarantee |
+| A2 | Add a **Bucket Lock rule** with ≥90-day retention (optionally prefix-scoped to `sigap/`) | Added to the existing bucket; **administratively removable**, so it is a retention control, not an immutable guarantee. NAME and PREFIX are **positional** on `lock add` — see §13g.15 |
 | A3 | **Confirm or override the incomplete-multipart rule.** R2 ships a **default** lifecycle rule that expires multipart uploads **7 days** after initiation — verify it is active, and override to 3 days only if the shorter window is wanted | The default means "add the rule" was wrong: there is nothing to add unless you want a different window. A rule that is assumed present and is not leaves billed parts invisible to a plain listing |
 | A4 | Decide the **second-copy question** (§13g.1) | Second provider, offline copy, or an explicitly accepted risk |
 | A5 | Create the **Object Read & Write** token, **scoped to this bucket** | For the relay. Treat as read+write+delete, not write-only |
-| A6 | Create the **Object Read only** token, **scoped to this bucket** | For the recovery host. The preset is literally named "Object Read only"; `Object Read` is a common misnomer for it |
+| A6 | Create the **bucket-scoped read-only** token (`Object Read only`) | For the recovery host. The docs use two spellings for the same permission: the **permissions table** names it `Object Read only`, while the **token-creation step** calls it `Object Read`. Both are the same preset — do not go looking for a third one |
 | A7 | Keep the **bucket-configuration** capability interactive and separate (`Admin Read & Write`, or the dashboard) | Never issued to the relay, the recovery host, or CI. This is the capability that can *remove the lock rule* |
 | A8 | Record the bucket name, endpoint and the **public recipient** in `RELEASE_CHECKLIST.md` and on the Jira gate | These are not secrets |
 | A9 | Store both object credentials in the operator's secret store — **never** in the repo, CI, Jira, or a transcript | — |
@@ -2723,15 +2723,16 @@ assumptions. Four properties change what the operator should expect:
 | Coverage | A rule **without a prefix applies to all objects**, and rules apply to **new and existing** objects | A prefix-scoped `sigap/` rule protects only that prefix; a rule with no prefix protects everything. Choose deliberately — the default is the broader one |
 | Precedence | **Bucket lock rules take precedence over lifecycle rules.** A 30-day lifecycle delete does not fire before a 90-day lock requirement is met | A lifecycle rule is not a backdoor around retention. It also means a retention mistake cannot be corrected by shortening a lifecycle rule |
 | Emptiability | **A bucket cannot be emptied while any lock rules are configured**; all rules must be removed first. This also applies to deleting folders from the dashboard | The rule protects the archive against a bulk delete, which is the property worth having. It is also why "test retention by deleting" is the wrong test |
-| Limit | Up to **1,000 rules**; where several apply, the **strictest (longest)** wins | No practical constraint at this scale; record the rule id, since removal is by id |
+| Limit | Up to **1,000 rules**; where several apply, the **strictest (longest)** wins | No practical constraint at this scale; record the rule NAME, since removal is by that name (`--id` is its alias) |
 
 **The retention rule remains administratively removable.** `wrangler r2 bucket lock remove
-<BUCKET> --id <RULE_ID>` removes it, and the Cloudflare REST API exposes the same operation.
-Anyone holding **`Admin Read & Write`** — which the documentation defines as "create, list, and
-delete buckets, edit bucket configuration, read, write, and list objects" — can therefore
-remove the rule and then the object. Bucket Lock is a **retention control**, not an
-immutability guarantee, and a compromised Cloudflare administrator defeats it. That is why A4
-(the second-copy decision) is not optional.
+<BUCKET> --name <RULE_NAME>` (alias `--id`) removes it, and the Cloudflare REST API exposes the
+same operation. Anyone holding **`Admin Read & Write`** — which the documentation defines as
+"create, list, and delete buckets, edit bucket configuration, read, write, and list objects" —
+can therefore remove the rule and then the object. Bucket Lock is a **retention control**, not
+an immutability guarantee, and a compromised Cloudflare administrator defeats it. That is why A4
+(the second-copy decision) is not optional. `--retention-indefinite` (§13g.15) removes the time
+bound but not this control, so it does not change the conclusion.
 
 **Procedure — A1 to A9, in order.**
 
@@ -2739,15 +2740,26 @@ immutability guarantee, and a compromised Cloudflare administrator defeats it. T
 # --- A1. Private bucket. Bucket Lock is NOT a creation-time property. ---------------
 npx wrangler r2 bucket create sigap-backups
 
-# --- A2. Bucket Lock, >= 90 days. Record the returned rule id for removal/audit. ----
+# --- A2. Bucket Lock, >= 90 days. Record the rule NAME for removal/audit. -----------
+# SYNTAX, verified against the Wrangler `r2` command reference: the rule NAME and
+# PREFIX are POSITIONAL. The command is
+#     r2 bucket lock add <BUCKET> [NAME] [PREFIX] [options]
+# There is NO `--prefix` flag, and NAME's alias is `--id`, not `--name`. The earlier
+# form here (`--name X --prefix Y`) was wrong and would have been rejected.
+# [VERIFIED] https://developers.cloudflare.com/workers/wrangler/commands/r2/
+#   #r2-bucket-lock-add
 # Prefix-scoped to sigap/ so the rule covers the archive prefix and nothing else.
-npx wrangler r2 bucket lock add sigap-backups \
-  --name sigap-retention-90d --prefix 'sigap/' --retention-days 90
-npx wrangler r2 bucket lock list sigap-backups      # confirm, and record the RULE_ID
+# For a rule covering EVERY object, pass an empty PREFIX ("") — see §13g.15.
+npx wrangler r2 bucket lock add sigap-backups sigap-retention-90d 'sigap/' \
+  --retention-days 90
+npx wrangler r2 bucket lock list sigap-backups      # confirm, and record the RULE NAME
 
 # --- A3. Multipart. R2 already ships a 7-day default; CONFIRM it, do not assume. ---
 npx wrangler r2 bucket lifecycle list sigap-backups
-# Override only if a 3-day window is wanted; the default needs no action.
+# Override only if a 3-day window is wanted; the default needs no action. NAME and
+# PREFIX are positional here too:
+#   npx wrangler r2 bucket lifecycle add sigap-backups sigap-abort-multipart 'sigap/' \
+#     --abort-multipart-days 3
 
 # --- A4. Second copy. Owner decision, recorded in RELEASE_CHECKLIST.md (F15b). -----
 # Second provider / offline encrypted copy / explicitly accepted risk. No default.
@@ -2777,6 +2789,14 @@ the one thing the CI drill cannot prove (§13g.9, §13g.12: MinIO does not imple
 Lock). It must be verified on the real service, and the verification must not endanger the
 archive.
 
+**TWO SEPARATE VERIFICATIONS — do not conflate them.** The disposable drill below proves the
+*mechanism* (that a lock rule refuses deletion); the inventory check after it proves the
+*production rule itself* is present, correctly scoped and correctly sized. A passing drill says
+nothing about the 90-day rule, and the 90-day rule is the thing that actually protects the
+archive. Record both, separately.
+
+**Part 1 — the mechanism, on a disposable prefix.**
+
 ```bash
 # A DISPOSABLE object under a THROWAWAY prefix. Never a real backup key.
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
@@ -2784,10 +2804,9 @@ printf 'lock-drill' > /tmp/lock-drill.txt
 aws s3api put-object --bucket sigap-backups --key "lock-drill/$STAMP/probe.txt" \
   --body /tmp/lock-drill.txt --endpoint-url "$R2_ENDPOINT"
 
-# Apply a SHORT rule to that prefix ONLY, and record its id.
-npx wrangler r2 bucket lock add sigap-backups \
-  --name lock-drill --prefix "lock-drill/$STAMP/" --retention-days 1
-RULE_ID=<from the output>
+# Apply a SHORT rule to that prefix ONLY. NAME and PREFIX are POSITIONAL.
+npx wrangler r2 bucket lock add sigap-backups lock-drill "lock-drill/$STAMP/" \
+  --retention-days 1
 
 # ASSERT deletion is refused for the window. A refusal is the expected result, so a
 # non-zero exit here is SUCCESS; treat a zero exit as the failure.
@@ -2800,16 +2819,81 @@ fi
 
 # Remove the drill rule, then confirm deletion SUCCEEDS — which is also the observation
 # that the rule is administratively removable, recorded as behaviour rather than assumed.
-npx wrangler r2 bucket lock remove sigap-backups --id "$RULE_ID"
+npx wrangler r2 bucket lock remove sigap-backups --id lock-drill
 aws s3api delete-object --bucket sigap-backups \
   --key "lock-drill/$STAMP/probe.txt" --endpoint-url "$R2_ENDPOINT"
 echo "ok: rule removable by an administrator — RETENTION = ADMINISTRATIVELY_REMOVABLE"
 ```
 
+This drill's rule is `--retention-days 1` and prefix-scoped to `lock-drill/<STAMP>/`. It is
+**not** the production rule and must not be recorded as evidence of one. It is removed
+immediately, and it never covers `sigap/`.
+
+**Part 2 — the production rule, verified by inventory.** Assert all four attributes of the
+rule that will actually protect the archive, from the live service:
+
+```bash
+npx wrangler r2 bucket lock list sigap-backups
+# Record from the output, and compare against what was intended:
+#   * NAME      — the rule identifier used by `lock remove --id`
+#   * PREFIX    — must be `sigap/` (or "" for the whole bucket); a typo here silently
+#                 leaves the archive uncovered
+#   * ENABLED   — a disabled rule enforces nothing
+#   * RETENTION — must be >= 90 days. A `--retention-days` value that is too small is
+#                 the failure this check exists to catch
+#
+# The same four fields via the REST API, which is the authoritative form:
+#   GET /accounts/<ACCOUNT_ID>/r2/buckets/<BUCKET_NAME>/lock
+#   (requires the Admin Read & Write capability — see A7)
+```
+
+Record the four values in `RELEASE_CHECKLIST.md` and on the Jira gate, alongside the
+disposable-drill result. `BUCKET_LOCK_RULE_VERIFIED` is **PENDING** until Part 2 has been run
+against the real bucket; Part 1 passing does not satisfy it.
+
 **Never attempt this against a real backup object.** The attempt is itself the destructive
 action the rule exists to prevent, and — per the confirmed semantics above — a bucket cannot be
 emptied while lock rules are configured, so a "test" of that kind risks the archive it is meant
 to protect. The drill above touches only a throwaway prefix.
+
+**13g.15 — Wrangler syntax, verified against the command reference.** These signatures were
+read from the Wrangler `r2` command reference rather than recalled, because the flag names are
+not what they appear to be. Source:
+`https://developers.cloudflare.com/workers/wrangler/commands/r2/`
+
+| Command | Verified signature |
+|---|---|
+| `r2 bucket create` | `create <NAME>` |
+| `r2 bucket lock add` | `add <BUCKET> [NAME] [PREFIX]` |
+| `r2 bucket lock list` | `list <BUCKET>` |
+| `r2 bucket lock remove` | `remove <BUCKET> --name <NAME>` (alias `--id`) |
+| `r2 bucket lifecycle add` | `add <BUCKET> [NAME] [PREFIX]` |
+| `r2 bucket lifecycle list` | `list <BUCKET>` |
+
+**The trap: NAME and PREFIX are POSITIONAL on `add`, but NAME is a FLAG on `remove`.**
+
+* `lock add` — `[NAME]` and `[PREFIX]` are positional arguments. There is **no `--prefix`
+  flag**, and `NAME`'s alias is **`--id`, not `--name`**. Writing
+  `lock add <BUCKET> --name X --prefix Y` is wrong and is rejected.
+* `lock remove` — takes the rule name as a **flag**: `--name <NAME>` (alias `--id`). The name
+  is the same string passed positionally to `add`.
+* An empty `PREFIX` (`""`) means **all objects** in the bucket; omitting the prefix argument
+  is not the same as scoping it.
+
+`lock add` retention is expressed by exactly one of `--retention-days <N>`,
+`--retention-date <YYYY-MM-DD>`, or `--retention-indefinite`. `lifecycle add` uses
+`--expire-days` / `--expire-date` / `--ia-transition-days` / `--ia-transition-date` /
+`--abort-multipart-days`. Both `add` commands accept `--force` (alias `--y`) to skip the
+confirmation prompt, which is what a scripted owner run needs.
+
+**`--retention-indefinite` is still not immutability.** It removes the time bound, not the
+administrative control: the rule remains removable by anyone holding `Admin Read & Write`
+(A7), so the second-copy decision (A4) is unchanged by choosing it.
+
+The rule's **enabled** state is not settable through `lock add` — it is a field of the rule
+object, settable via `lock set <BUCKET> --file <JSON>` or the REST API, and it is visible in
+`lock list`. A rule that exists but is disabled enforces nothing, which is why §13g.14 Part 2
+asserts `ENABLED` explicitly rather than assuming it from the rule's presence.
 
 ---
 
