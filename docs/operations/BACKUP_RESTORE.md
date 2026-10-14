@@ -18,7 +18,7 @@
 
 ## 3. Schedule
 
-- `deploy/systemd/sigap-postgres-backup.timer`: `OnCalendar=daily 03:00` UTC, `Persistent=true`, `RandomizedDelaySec=600`.
+- `deploy/systemd/sigap-postgres-backup.timer`: `OnCalendar=*-*-* 03:00:00 UTC`, `Persistent=true`, `RandomizedDelaySec=600`. **Exactly one `OnCalendar=` directive** — systemd ORs multiple lines, so a second one fires the backup again (the unit previously carried `daily` *and* `03:00`, i.e. 00:00 **and** 03:00). The trailing `UTC` is load-bearing: an `OnCalendar` expression is evaluated in the **host's** local timezone unless it names one, so without it "03:00 UTC" silently becomes "03:00 local".
 - Install: copy scripts + units, create `/etc/sigap/backup.env` (see §Credentials), `systemctl daemon-reload && systemctl enable --now sigap-postgres-backup.timer`.
 
 ## 4. Retention

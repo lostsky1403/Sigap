@@ -157,6 +157,11 @@ jobs:
         run: |
           sh scripts/ops/test-preflight-production-env.sh
           sh scripts/ops/test-production-deploy-guards.sh
+          # Static unit-file guards. The AUDIT-701 backup timer carried two OnCalendar
+          # directives, which systemd ORs — so the database backup fired twice a day
+          # while the unit's own description claimed one 03:00 run. These checks are
+          # pure text inspection: no systemd, no host, no container, no network.
+          sh scripts/ops/test-systemd-units.sh
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -201,6 +206,12 @@ jobs:
           run_suite sh scripts/ops/test-db-classifier.sh
           run_suite sh scripts/ops/test-migration-0011.sh
           run_suite sh scripts/ops/test-notification-contract.sh
+          # The 0011 rollback-safety pre-flight. J11 is no longer UNKNOWN: the older
+          # release CAN attempt a write the strengthened constraint refuses (a facility
+          # whose short_code renders a separator-run queue number), and that failure is
+          # swallowed by the fire-and-forget enqueue, so the notification is lost
+          # silently. This suite proves the read-only detector is not vacuous.
+          run_suite sh scripts/ops/test-preflight-0011-rollback-safety.sh
 
       # The Bucket Lock retention drill's value is entirely in its assertions, and
       # every one of them is a negative: a deletion that must be refused, a refusal

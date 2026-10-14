@@ -111,8 +111,8 @@ Rehearsal only; see `DEPLOYMENT_RUNBOOK.md` §4a. All checks are in
 | F17 | **Gate A — public recipient recorded and matched to the recovery identity** via `age-keygen -y` and a round-trip drill | runbook §13h.3, §13h.5 | **OPERATOR** |
 | F18 | **Artifact URI and SHA-256 recorded out-of-band** (checklist + Jira gate, never a co-located sidecar in R2) | runbook §13g.7 | **OPERATOR** — `PRODUCTION_IMAGES_PRESERVED = NO` |
 | F19 | **Isolated restore from R2 exercised with the REAL image IDs** via `sigap-archive-restore.sh` with `ARCHIVE_URI=r2://…` | runbook §7d.1, §13f step 3 | **OPERATOR** — `REAL_ISOLATED_RESTORE = NOT_RUN` |
-| F20 | **`J11_ROLLBACK_SAFETY` resolved** — preserved binary tested against the post-`0011` schema (§7g), **not** inferred from image IDs | runbook §7f/§7g | **OPERATOR** — currently `UNKNOWN`, which BLOCKS J10 |
-| F21 | **Bucket Lock retention behaviour verified on the real service**, using a throwaway object — **not** by the MinIO CI test, which cannot prove it. **THREE things, recorded separately:** (1) the production rule's *configuration* is now **VERIFIED** from the operator's live `lock list` (F14 evidence); (2) **`DISPOSABLE_LOCK_MECHANISM_TEST`** — the mechanism on a disposable `lock-drill/<STAMP>/` prefix (deletion refused **for the retention reason**, then permitted once the rule is removed, then cleanup proven); (3) **`PRODUCTION_RULE_UNCHANGED_AFTER_DRILL`** — re-reading the live `lock list` afterwards to confirm the production rule is byte-identical and no drill rule remains. A verified configuration and a green mechanism test do **not** prove the rule *enforces* retention against a real object. **Operator-executable as `scripts/ops/Drill-BucketLockRetention.ps1`** (PowerShell-native, `-DryRun` first; the Bash block in §13g.14 is the annotated reference) | runbook **§13g.14** | **OPERATOR** — `BUCKET_LOCK_CONFIG_VERIFIED = PASS`, `DISPOSABLE_LOCK_MECHANISM_TEST = NOT_RUN`, `PRODUCTION_RULE_UNCHANGED_AFTER_DRILL = NOT_RUN`. Requires separate authorization: the drill mutates a real bucket |
+| F20 | **`J11_ROLLBACK_SAFETY` resolved** — preserved binary tested against the post-`0011` schema (§7g), **not** inferred from image IDs | runbook §7f/§7g | **RESOLVED 2026-10-14 — `CONDITIONALLY_SAFE`, not `UNKNOWN`.** The older API was rebuilt from git (both candidate families, since the running revision is unproven) and driven over real HTTP against an isolated post-`0011` database. It writes fine for letter-only `short_code`s, but a facility whose `short_code` renders a separator-run queue number (e.g. `A1234567-89`) makes the check-in insert **refused by the strengthened CHECK** and the notification **lost silently**. That class also affects the **new** release, since `validateShortCode` guards create/update but does not retroactively validate facilities the old release created. **`scripts/ops/preflight-0011-rollback-safety.sql` is a REQUIRED read-only precondition before applying `0011` or relying on a rollback** | runbook **§7f** | **DONE (verdict)** — `MIGRATION_0011_AUTHORIZATION` remains `NOT_AUTHORIZED`; passing the pre-flight is **not** authorization |
+| F21 | **Bucket Lock retention behaviour verified on the real service**, using a throwaway object — **not** by the MinIO CI test, which cannot prove it. **THREE things, recorded separately:** (1) `BUCKET_LOCK_CONFIG_VERIFIED = PASS` — the production rule's configuration, from the operator's live `lock list` (F14 evidence); (2) `DISPOSABLE_LOCK_MECHANISM_TEST = PASS` — **executed live 2026-10-13**, script exit **0**: a real disposable object was uploaded, a temporary 1-day rule created, `DeleteObject` rejected with `ObjectLockedByBucketPolicy`, the temporary rule removed, deletion then succeeded, no drill rule or object remained; (3) `PRODUCTION_RULE_UNCHANGED_AFTER_DRILL = PASS` — the production rule was unchanged before and after. **A verified configuration and a green mechanism test do NOT prove the rule *enforces* retention against a real archive: no object under `sigap/` was deleted or tested, and this must never be claimed.** Evidence dir `lock-drill-evidence/20261013T172242Z-29924d` | runbook **§13g.14** | **DONE** — all three verdicts `PASS`. The temporary drill credential should be **revoked by the owner** once evidence custody is complete; it must NOT become the production uploader identity |
 | F21a | **The drill's own assertions are tested** — `scripts/ops/test-bucket-lock-drill.sh` runs it against a stub executor: the happy path; the failure paths (deletable locked object, refusal without a retention reason, rule that never applied, production rule changed); the guard refusals (ambient AWS credentials, non-R2 endpoint, extra host label, longer id, trailing dot, endpoint with path, malformed account id, wrong bucket, pre-existing drill state); **one regression case per preflight condition** — disabled rule, missing/empty `enabled`, wrong/empty/missing prefix, retention 89/1/100/365/plain/`N day`, retention missing/empty/malformed/date/indefinite, duplicate rule, contradictory record, empty rule name, mixed-rule attributes, differently-cased and superstring names; and **the drill-prefix listing** — the real R2 empty shape that omits `KeyCount`, a non-empty prefix, a paginated response whose object is on page 2, and refusal of `None`, empty output, malformed JSON, a JSON string/array, a `Contents` entry with no/empty `Key`, a non-numeric `KeyCount`, a `KeyCount` with no `Contents`, and `IsTruncated` without a token. Every refusal asserts the **specific reason** and the **absence of mutation**, not just the exit code. Wired into the `ops-guards` CI job | `scripts/ops/test-bucket-lock-drill.sh` | **DONE** — 169/169 checks pass locally under pwsh 7.6 and Windows PowerShell 5.1; no real bucket contacted |
 | F21c | **CI test EXECUTED and PASSING** — the **latest** successful drill is run `38289010467` on **`d06a9a7`**, all 19 steps, including all four negative controls at their expected exit codes and refusal *reasons*. Earlier passing runs (`38281214221` on `c4afc1c`, `38280297031` on `89f9bcf`) are superseded by it. The drill **no longer re-runs on push**: the `r2-validation` label was removed once validation completed, so the job correctly reports *skipped* | runbook §13g.12 | **DONE** — `R2_MINIO_ROUND_TRIP = PASS`, `R2_NEGATIVE_CONTROLS = PASS` (MinIO only; **not** retention). The result is **historical**: it was produced on `d06a9a7`, which is no longer the branch head, and it is evidence that the gate is reachable and the round trip executes end to end — **not** a claim about any later commit |
 | F21b | **CI test activated** — the `r2-validation` label created, a PR opened with base `design/ui-ux-overhaul`, and the label **applied** (the `labeled` activity type is what starts the run; without it the gate is unreachable) | runbook §13g.11 | **OPERATOR** — `GITHUB_TEST_ACTIVATION = READY`, `R2_RUNTIME_TEST = NOT_RUN` |
@@ -290,25 +290,40 @@ checks apply unchanged.
 > `PRODUCTION_IMAGES_PRESERVED = NO` · `REAL_ISOLATED_RESTORE = NOT_RUN` ·
 > `GITHUB_TEST_ACTIVATION = PASS` (label created and applied; the `labeled` event executed the
 > run) · `R2_MINIO_ROUND_TRIP = PASS` · `R2_NEGATIVE_CONTROLS = PASS` ·
-> `REAL_CLOUDFLARE_R2_PROOF = PENDING` — **configuration verified, behaviour not.** The four
-> configuration controls below are `PASS` from the operator's own live inspection (F14
-> evidence); `BUCKET_LOCK_BEHAVIOR_TEST = NOT_RUN` and `R2_REAL_UPLOAD_READBACK = NOT_RUN` are
-> still open, so this stays **non-`PASS`** until §13g.14 Part 2 and a real round-trip execute ·
+> `REAL_CLOUDFLARE_R2_PROOF = PENDING` — **configuration verified, behaviour partially
+> proven.** The configuration controls below are `PASS` from the operator's own live inspection
+> (F14 evidence). On **2026-10-13** the owner then executed the **real** disposable retention
+> drill against the live bucket (§13g.14, runbook procedure, script exit **0**), which is the
+> first behavioural evidence this release has. `R2_REAL_UPLOAD_READBACK = NOT_RUN` remains open,
+> so a real *artifact* round-trip is still unproven and this stays **non-`PASS`** ·
 > `R2_BUCKET_EXISTS = PASS` · `R2_PRIVATE_ACCESS_CONFIGURED = PASS` ·
 > `BUCKET_LOCK_CONFIG_VERIFIED = PASS` (**configuration inventory only** — the rule exists,
 > is enabled, is scoped to `sigap/`, and is 90 days) ·
-> `MULTIPART_LIFECYCLE_VERIFIED = PASS` · `BUCKET_LOCK_BEHAVIOR_TEST = NOT_RUN` ·
-> `R2_REAL_UPLOAD_READBACK = NOT_RUN` ·
-> `DISPOSABLE_LOCK_MECHANISM_TEST = NOT_RUN` (F21 — the mechanism on a throwaway prefix) ·
-> `PRODUCTION_RULE_UNCHANGED_AFTER_DRILL = NOT_RUN` (F21 — the production rule survives the
-> drill) · `ARCHIVE_RELAY = NOT_IDENTIFIED` (F23 — blocks §13f) ·
-> `J11_ROLLBACK_SAFETY = UNKNOWN` · `MIGRATION_0011 = NOT_AUTHORIZED` ·
-> `PRODUCTION_DEPLOYMENT = BLOCKED`. The design is complete. **Nothing in production has been
-> created, read or executed**, and no approval transfers between gates. What *has* now run is
-> the CI drill only: a disposable MinIO endpoint, a throwaway age key, a synthetic image and an
-> isolated daemon on a GitHub runner (§13g.12). That is a statement about the *contract*, not
-> about production, and it does not make the bucket, the key, the retention rules or the
-> rollback path any less outstanding.
+> `MULTIPART_LIFECYCLE_VERIFIED = PASS` ·
+> `DISPOSABLE_LOCK_MECHANISM_TEST = PASS` (**live, 2026-10-13** — a real throwaway object under
+> `lock-drill/<STAMP>/` was refused deletion with `ObjectLockedByBucketPolicy` while a temporary
+> 1-day rule applied, then deleted once the rule was removed; no drill rule or object survived.
+> This proves the **mechanism on a disposable prefix**, NOT enforcement over a real archive:
+> no object under `sigap/` was deleted or tested) ·
+> `PRODUCTION_RULE_UNCHANGED_AFTER_DRILL = PASS` (**live, 2026-10-13** — the production rule
+> was byte-identical before and after) ·
+> `ARCHIVE_RELAY = NOT_IDENTIFIED` (F23 — blocks §13f) ·
+> `J11_ROLLBACK_SAFETY = CONDITIONALLY_SAFE` (**resolved 2026-10-14** — the older release was
+> rebuilt from git and driven over real HTTP against an isolated post-`0011` database: it is
+> compatible for letter-only `short_code`s, but a facility whose `short_code` renders a
+> separator-run queue number makes the check-in insert refused by the strengthened CHECK and
+> the notification **lost silently**. `scripts/ops/preflight-0011-rollback-safety.sql` is a
+> required read-only precondition. See §7f) ·
+> `MIGRATION_0011 = NOT_AUTHORIZED` ·
+> `PRODUCTION_DEPLOYMENT = BLOCKED`. The design is complete. **No production image has been
+> exported, no production database has been touched, and no deployment has occurred**, and no
+> approval transfers between gates. What has run is (a) the CI drill — a disposable MinIO
+> endpoint, a throwaway age key, a synthetic image and an isolated daemon on a GitHub runner
+> (§13g.12) — and (b) the owner's **live** disposable retention drill on 2026-10-13. The CI
+> result is a statement about the *contract*; the live drill is a statement about the *lock
+> mechanism on a throwaway prefix*. **Neither says anything about a real archive under
+> `sigap/`**, and neither makes the age key, the preserved images or the rollback path any
+> less outstanding.
 >
 > **Two corrections that weaken earlier claims, recorded deliberately.** Bucket Lock is **not**
 > AWS S3 Object Lock and is **administratively removable** — it is a retention control, not an
