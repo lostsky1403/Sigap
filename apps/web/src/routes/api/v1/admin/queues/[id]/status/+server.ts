@@ -21,5 +21,5 @@ async function proxy(request: Request, path: string, event: RequestEvent, method
 }
 
 export const PATCH: RequestHandler = async (event) => {
-	return proxy(event.request, '/api/v1/admin/queues/ID/status', event);
+	return proxy(event.request, `/api/v1/admin/queues/${encodeURIComponent(event.params.id ?? '')}/status`, event);
 };

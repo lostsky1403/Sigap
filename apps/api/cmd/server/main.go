@@ -70,6 +70,60 @@ func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// registerAdminRoutes registers every /api/v1/admin route on the mux.
+//
+// It is a named function rather than inline registration in main() for one
+// reason: the facility routing below is a SHADOWING hazard that only exists at
+// the ServeMux level, and a test cannot reach a statement buried inside main().
+// Extracting the registrations is what lets facilities_routing_test.go assert
+// against the real wiring rather than a hand-built imitation of it — an earlier
+// version of that test built its own mux and passed even with the bug
+// reintroduced, which proved nothing about the code it claimed to protect.
+//
+// Authorization is unaffected by this extraction: RequirePermission still runs
+// upstream of these handlers, and each handler still authorizes independently.
+func registerAdminRoutes(mux *http.ServeMux, adminH *handler.AdminHandler) {
+	// BOTH facilities paths go to FacilitiesRouter, which dispatches on method
+	// and already handles the bare path for GET.
+	//
+	// Registering ListFacilities on the bare path as well (as this once did) is
+	// NOT a harmless duplicate. net/http resolves patterns by specificity, not by
+	// method, so the more specific pattern "/api/v1/admin/facilities" matches
+	// EVERY method — it shadowed the dispatcher for POST, CreateFacility became
+	// unreachable, and the create answered 200 with the facility LIST. That is
+	// the worst shape of failure available: a create that reports success,
+	// returns rows, and persists nothing.
+	//
+	// Found by the Phase 3B5 real mutation E2E rather than by a unit test: the
+	// handler was correct and the route manifest (internal/router) already
+	// declared POST, so nothing except the mux registration was wrong.
+	//
+	// Every sibling below uses one dispatcher for both the bare and the
+	// prefixed path, which is the arrangement that cannot shadow.
+	mux.HandleFunc("/api/v1/admin/facilities", enableCORS(adminH.FacilitiesRouter))
+	mux.HandleFunc("/api/v1/admin/facilities/", enableCORS(adminH.FacilitiesRouter))
+	mux.HandleFunc("/api/v1/admin/queues", enableCORS(adminH.QueuesRouter))
+	mux.HandleFunc("/api/v1/admin/queues/", enableCORS(adminH.QueuesRouter))
+	mux.HandleFunc("/api/v1/admin/service-units", enableCORS(adminH.ServiceUnitsRouter))
+	mux.HandleFunc("/api/v1/admin/service-units/", enableCORS(adminH.ServiceUnitsRouter))
+	mux.HandleFunc("/api/v1/admin/schedules", enableCORS(adminH.SchedulesRouter))
+	mux.HandleFunc("/api/v1/admin/schedules/", enableCORS(adminH.SchedulesRouter))
+	mux.HandleFunc("/api/v1/admin/appointments", enableCORS(adminH.AppointmentsRouter))
+	mux.HandleFunc("/api/v1/admin/appointments/", enableCORS(adminH.AppointmentsRouter))
+	slog.Info("admin routes registered", "paths", []string{
+		"/api/v1/admin/facilities",
+		"/api/v1/admin/facilities/",
+		"/api/v1/admin/queues",
+		"/api/v1/admin/queues/",
+		"/api/v1/admin/service-units",
+		"/api/v1/admin/service-units/",
+		"/api/v1/admin/schedules",
+		"/api/v1/admin/schedules/",
+		"/api/v1/admin/appointments",
+		"/api/v1/admin/appointments/",
+	})
+}
+
 // main wires the production-ready (for scaffold) queue endpoint with
 // early anti-spam rate limiting + service layer.
 // The real heavy logic will be delegated to the Rust gRPC engine in later phases.
@@ -219,6 +273,43 @@ func main() {
 	} else {
 		provider = auth.NewProvider(authCfg)
 	}
+
+	// Phase 3B5.0: the local DB-backed test identity selector.
+	//
+	// This is NOT a fallback and NOT a weakening of the provider above. It is
+	// a separate, explicitly armed provider that resolves a named subject
+	// through the SAME real RBAC resolver the JWT path uses, so local E2E can
+	// exercise genuine facility-scoped schedule.manage without the dev
+	// identity gaining a permission it deliberately lacks.
+	//
+	// Two independent gates keep it out of production, and both must open:
+	// SIGAP_ENV=local (checked inside the constructor) and
+	// SIGAP_LOCAL_RBAC_TEST_IDENTITY=true (also registered with
+	// GuardDevCapabilities above, so a non-local deploy with the flag set
+	// refuses to start rather than running armed).
+	//
+	// It takes precedence when armed, because a request that names a local
+	// test subject is a test request by definition. In every other case the
+	// configured provider stands unchanged.
+	if armed := os.Getenv("SIGAP_LOCAL_RBAC_TEST_IDENTITY") == "true"; armed {
+		if dbPool == nil {
+			// Fail closed and loudly. Without the pool there is no resolver,
+			// and a selector with no resolver could not report anything
+			// trustworthy — so it authenticates nobody.
+			slog.Warn("local RBAC test identity requested but no DB pool is available; " +
+				"the selector stays disarmed and will authenticate nobody")
+		} else {
+			localProvider := auth.NewLocalRBACTestIdentityProvider(auth.NewRBACResolver(dbPool))
+			if localProvider.Armed() {
+				provider = localProvider
+				slog.Warn("local RBAC test identity SELECTOR ACTIVE — requests may choose a " +
+					"DB-seeded identity via X-Sigap-Local-Test-Subject. Local only.")
+			} else {
+				slog.Warn("local RBAC test identity requested outside SIGAP_ENV=local; " +
+					"the selector stays disarmed")
+			}
+		}
+	}
 	slog.Info("auth provider configured", "mode", authCfg.Mode)
 
 	mux := http.NewServeMux()
@@ -287,28 +378,8 @@ func main() {
 
 	// Admin endpoints: protected by facility.read and facility.manage permissions via RequirePermission
 	if adminH != nil {
-		mux.HandleFunc("/api/v1/admin/facilities", enableCORS(adminH.ListFacilities))
-		mux.HandleFunc("/api/v1/admin/facilities/", enableCORS(adminH.FacilitiesRouter))
-		mux.HandleFunc("/api/v1/admin/queues", enableCORS(adminH.QueuesRouter))
-		mux.HandleFunc("/api/v1/admin/queues/", enableCORS(adminH.QueuesRouter))
-		mux.HandleFunc("/api/v1/admin/service-units", enableCORS(adminH.ServiceUnitsRouter))
-		mux.HandleFunc("/api/v1/admin/service-units/", enableCORS(adminH.ServiceUnitsRouter))
-		mux.HandleFunc("/api/v1/admin/schedules", enableCORS(adminH.SchedulesRouter))
-		mux.HandleFunc("/api/v1/admin/schedules/", enableCORS(adminH.SchedulesRouter))
-		mux.HandleFunc("/api/v1/admin/appointments", enableCORS(adminH.AppointmentsRouter))
-		mux.HandleFunc("/api/v1/admin/appointments/", enableCORS(adminH.AppointmentsRouter))
-		slog.Info("admin routes registered", "paths", []string{
-			"/api/v1/admin/facilities",
-			"/api/v1/admin/facilities/",
-			"/api/v1/admin/queues",
-			"/api/v1/admin/queues/",
-			"/api/v1/admin/service-units",
-			"/api/v1/admin/service-units/",
-			"/api/v1/admin/schedules",
-			"/api/v1/admin/schedules/",
-			"/api/v1/admin/appointments",
-			"/api/v1/admin/appointments/",
-		})
+		registerAdminRoutes(mux, adminH)
+
 		// Public booking endpoint (no auth required)
 		bookingH := handler.NewBookingHandler(dbPool, rl)
 		bookingH.WithAudit(auditSvc)

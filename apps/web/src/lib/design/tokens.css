@@ -1,0 +1,52 @@
+/**
+ * SIGAP frozen design tokens — CSS custom property source.
+ *
+ * These values are fixed by design/DESIGN.md. The legacy `--accent: #059669`
+ * emerald token has been REMOVED: the single brand color is now
+ * `--sigap-primary: #0F766E`. Nothing in the system may reintroduce an
+ * emerald/slate palette.
+ *
+ * tokens.test.ts asserts every declaration below against
+ * src/lib/design/tokens.ts, so the two files cannot drift.
+ */
+
+:root {
+	/* Brand */
+	--sigap-primary: #0f766e;
+	--sigap-primary-hover: #0b6b63;
+	--sigap-primary-active: #084f49;
+
+	/* Surfaces and text */
+	--sigap-canvas: #f7f6f3;
+	--sigap-surface: #ffffff;
+	--sigap-foreground: #1c1b1a;
+	--sigap-muted: #57534e;
+	--sigap-border: #e0ddd8;
+
+	/* Semantic status */
+	--sigap-success: #2f7d32;
+	--sigap-warning: #b45309;
+	--sigap-danger: #c4322a;
+	--sigap-info: #1d6bb5;
+
+	/* Radii: exactly three steps */
+	--sigap-radius-control: 6px;
+	--sigap-radius-panel: 8px;
+	--sigap-radius-dialog: 12px;
+
+	/* Control heights: citizen 44px, admin 36/40px */
+	--sigap-control-citizen: 44px;
+	--sigap-control-admin-compact: 36px;
+	--sigap-control-admin-comfortable: 40px;
+
+	/* 8px spacing rhythm */
+	--sigap-space-1: 8px;
+	--sigap-space-2: 16px;
+	--sigap-space-3: 24px;
+	--sigap-space-4: 32px;
+	--sigap-space-5: 40px;
+	--sigap-space-6: 48px;
+
+	/* Single standardized icon stroke width */
+	--sigap-icon-stroke: 1.75;
+}

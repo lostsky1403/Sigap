@@ -1,0 +1,342 @@
+#!/bin/sh
+# test-production-deploy-guards.sh — negative controls for the production deploy guards.
+# Verifies the fail-closed mechanisms WITHOUT touching any host or container:
+# only `docker compose config` (pure interpolation) and the preflight script are run.
+# REDACTION RULE: this script runs `docker compose config` ONLY as an exit-status oracle
+# (`>/dev/null 2>&1`) or with `--format json` piped to a targeted field probe — a bare
+# `docker compose config` prints POSTGRES_PASSWORD in cleartext and is never used here,
+# and its output must never be captured into a log or transcript. See the runbook §7c
+# redaction rule.
+# Exit 0 iff every guard fails in the bad case and passes in the good case.
+pass=0; failed=0
+ok()   { pass=$((pass + 1)); }
+bad()  { printf 'GUARD FAIL: %s\n' "$1"; failed=$((failed + 1)); }
+
+CFG="docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml -f docker-compose.prod-edge.yml config"
+EDGE_CFG="docker compose -f docker-compose.yml -f docker-compose.prod-edge.yml config"
+PORTS_CFG="docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml config"
+BASE_CREDS="POSTGRES_PASSWORD=x SIGAP_AUTH_MODE=jwt SIGAP_AUTH_ISSUER=i SIGAP_AUTH_AUDIENCE=a"
+export SIGAP_DEPLOY_DIR=.   # preflight script requires the directory contract
+
+# 1. Missing SIGAP_ENV through the production overlay set must refuse (before any container starts).
+if env -u SIGAP_ENV $BASE_CREDS $CFG >/dev/null 2>&1; then bad "missing SIGAP_ENV was accepted by the prod overlay set"; else ok; fi
+
+# 2. Empty SIGAP_ENV must refuse.
+if env SIGAP_ENV= $BASE_CREDS $CFG >/dev/null 2>&1; then bad "empty SIGAP_ENV was accepted by the prod overlay set"; else ok; fi
+
+# 2b. A PARTIAL overlay set (base + prod-edge, omitting prod-ports) must ALSO refuse.
+#     Otherwise that subset inherits the base file's SIGAP_ENV=local default and
+#     leaves the base public port mappings in force.
+if env -u SIGAP_ENV $BASE_CREDS $EDGE_CFG >/dev/null 2>&1; then bad "missing SIGAP_ENV was accepted by base+prod-edge"; else ok; fi
+
+# 3. SIGAP_ENV=staging resolves through the whole overlay set (incl. !override files).
+if env SIGAP_ENV=staging $BASE_CREDS $CFG >/dev/null 2>&1; then ok; else bad "SIGAP_ENV=staging was rejected by the prod overlay set"; fi
+
+# 4. SIGAP_ENV=local resolves (overlay is value-agnostic) but the preflight script rejects it.
+env SIGAP_ENV=local SIGAP_AUTH_MODE=jwt sh scripts/ops/preflight-production-env.sh >/dev/null 2>&1
+if [ $? -eq 0 ]; then bad "SIGAP_ENV=local passed preflight-production-env.sh"; else ok; fi
+
+# 5. Production env gate rejects every non-jwt auth mode.
+for m in dev disabled weird ""; do
+  if [ -z "$m" ]; then
+    env -u SIGAP_AUTH_MODE SIGAP_ENV=staging sh scripts/ops/preflight-production-env.sh >/dev/null 2>&1
+  else
+    env SIGAP_ENV=staging SIGAP_AUTH_MODE="$m" sh scripts/ops/preflight-production-env.sh >/dev/null 2>&1
+  fi
+  if [ $? -eq 0 ]; then bad "SIGAP_AUTH_MODE='${m:-<unset>}' passed preflight-production-env.sh"; else ok; fi
+done
+
+# 6. Unsupported compose is detectable: the runbook floor is 2.24.4 (!override tag).
+#    Only the version can be checked repo-locally; the operator runs the same command.
+#    NOTE: implemented in pure shell (no external `sort`) — `sort` is a shadowed builtin
+#    in some restricted shells, and `sort -V` is not POSIX. The comparison itself is
+#    self-tested below so it cannot silently pass everything.
+_norm_ver() (
+  set -f
+  IFS=.
+  set -- $1
+  IFS=' '
+  printf '%d%02d%02d' "${1:-0}" "${2:-0}" "${3:-0}"
+)
+ver_ge() { [ "$(_norm_ver "${1%%-*}")" -ge "$(_norm_ver "$2")" ]; }
+
+# 6a. The comparator itself must discriminate (otherwise test 6 is vacuous).
+if ver_ge 2.24.4 2.24.4 && ver_ge 2.25.0 2.24.4 && ! ver_ge 2.24.3 2.24.4 && ! ver_ge 1.29.2 2.24.4; then
+  ok
+else
+  bad "version comparator is broken (it must accept >=floor and reject <floor)"
+fi
+
+have=$(docker compose version --short 2>/dev/null || echo "?")
+if [ "$have" = "?" ]; then
+  printf 'GUARD SKIP: docker compose unavailable locally (operator checks on host)\n'
+else
+  if ver_ge "$have" "2.24.4"; then ok; else bad "local compose $have < 2.24.4"; fi
+fi
+# 7. The overlays all parse together (no YAML/!override drift) with a valid env.
+if env SIGAP_ENV=staging $BASE_CREDS $CFG >/dev/null 2>&1; then ok; else bad "prod overlay set does not parse"; fi
+
+# 7b. Edge binding is REAL, not vacuous: web must be loopback-only AND on the edge
+#     network WITH the overlay, and NOT on the edge network WITHOUT it. (An unscoped
+#     grep matched prod-ports' own host_ip lines and could never fail.)
+if command -v python3 >/dev/null 2>&1; then
+  wprobe='import json,sys;w=json.load(sys.stdin)["services"]["web"];print(sorted({p.get("host_ip") for p in w.get("ports",[])}),sorted(w.get("networks",{})))'
+  with=$(env SIGAP_ENV=staging $BASE_CREDS $CFG --format json 2>/dev/null | python3 -c "$wprobe" 2>/dev/null)
+  without=$(env SIGAP_ENV=staging $BASE_CREDS $PORTS_CFG --format json 2>/dev/null | python3 -c "$wprobe" 2>/dev/null)
+  case "$with" in
+    "['127.0.0.1']"*"edge"*) ok ;;
+    *) bad "web is not loopback+edge-bound with the overlay: $with" ;;
+  esac
+  case "$without" in
+    *"'edge'"*) bad "web is on the edge network WITHOUT the edge overlay: $without" ;;
+    *) ok ;;
+  esac
+else
+  printf 'GUARD SKIP: python3 unavailable (edge-binding check skipped)\n'
+fi
+
+# 7c. EVERY published port must be loopback-bound in the FULL production set — not just
+#     web's. Measured 2026-10-14: with the correct three-file set all four services bind
+#     127.0.0.1, but the protection comes from docker-compose.prod-ports.yml, and 7b only
+#     ever asserted `web`. So if prod-ports.yml lost a host_ip for api, postgres or
+#     rust-engine, every existing guard would still pass while Postgres 5433, the API 8080
+#     and the Rust engine 50051 were published on ALL interfaces.
+#
+#     That is not hypothetical: `base + prod-edge` (omitting prod-ports, a plausible
+#     operator mistake — prod-edge is the file named "edge") binds api, postgres AND
+#     rust-engine to all interfaces today. This check pins the invariant for all of them.
+if command -v python3 >/dev/null 2>&1; then
+  # The probe is written to a file rather than inlined: it contains both quote styles and
+  # a nested f-string, and an inlined `python3 -c "..."` version is one shell-quoting
+  # mistake away from silently probing nothing.
+  APROBE=$(mktemp 2>/dev/null || echo "/tmp/sigap-portprobe-$$")
+  cat > "$APROBE" <<'PYPROBE'
+import json, sys
+d = json.load(sys.stdin)["services"]
+leaks = []
+seen = 0
+for name, svc in sorted(d.items()):
+    for p in svc.get("ports", []) or []:
+        seen += 1
+        hip = p.get("host_ip")
+        if hip not in ("127.0.0.1", "::1"):
+            leaks.append("%s %s->%s host_ip=%r" % (name, p.get("published"), p.get("target"), hip))
+# A response with NO published ports would make the loopback check vacuous, so say so.
+if seen == 0:
+    print("NONE")
+elif leaks:
+    print("LEAK")
+    print("; ".join(leaks))
+else:
+    print("OK")
+PYPROBE
+  portstate=$(env SIGAP_ENV=staging $BASE_CREDS $CFG --format json 2>/dev/null | python3 "$APROBE" 2>/dev/null)
+  case "$portstate" in
+    OK)   ok ;;
+    LEAK*) bad "a published port is not loopback-bound in the full production set: $(printf '%s' "$portstate" | tail -n +2)" ;;
+    NONE) bad "the full production set publishes no ports at all, so the loopback check proves nothing" ;;
+    *)    bad "could not determine port bindings from the full production set" ;;
+  esac
+  # The invariant must be non-vacuous: the BASE file alone publishes on all interfaces, so
+  # a passing full-set check is real evidence rather than an empty result.
+  basestate=$(env SIGAP_ENV=staging $BASE_CREDS docker compose -f docker-compose.yml config --format json 2>/dev/null | python3 "$APROBE" 2>/dev/null)
+  case "$basestate" in
+    LEAK*) ok ;;
+    OK)    bad "the base file is already loopback-only, so check 7c cannot distinguish a missing overlay" ;;
+    *)     bad "could not determine base-file port bindings, so check 7c is unproven" ;;
+  esac
+  rm -f "$APROBE"
+else
+  printf 'GUARD SKIP: python3 unavailable (loopback-binding check skipped)\n'
+fi
+
+# 8. SIGAP_AUTH_MODE remains required-without-default in the API service (no silent fallback).
+if grep -q 'SIGAP_AUTH_MODE: ${SIGAP_AUTH_MODE:?' docker-compose.yml; then ok; else bad "SIGAP_AUTH_MODE lost its :? guard in docker-compose.yml"; fi
+
+# 9. The dev-only flags are NOT forwarded by any compose file (safety rests on absence).
+if grep -E '^\s*SIGAP_(DEV_IDENTITY|LOCAL_RBAC_TEST_IDENTITY|LOCAL_E2E_ACTOR|ENGINE_FALLBACK):' docker-compose.yml docker-compose.prod-ports.yml docker-compose.prod-edge.yml 2>/dev/null; then
+  bad "a dev-only flag is forwarded by a compose file"
+else
+  ok
+fi
+
+# 10. Rollback target contract is present in the runbook (blocked-on-external evidence).
+if grep -q "CURRENT_PRODUCTION_IMAGE_ID" docs/operations/DEPLOYMENT_RUNBOOK.md \
+   && grep -q "PRESERVED_ROLLBACK_IMAGE_REF" docs/operations/DEPLOYMENT_RUNBOOK.md \
+   && grep -q "SIGAP_DEPLOY_DIR" docs/operations/DEPLOYMENT_RUNBOOK.md \
+   && grep -q "OPERATOR_EVIDENCE_BUNDLE" docs/operations/DEPLOYMENT_RUNBOOK.md; then
+  ok
+else
+  bad "rollback-target / deploy-dir / evidence-bundle contract missing from the runbook"
+fi
+
+# ---------------------------------------------------------------------------
+# 11-16: negative controls for the NEW blocking gates.
+# ---------------------------------------------------------------------------
+RB=docs/operations/DEPLOYMENT_RUNBOOK.md
+CL=docs/operations/RELEASE_CHECKLIST.md
+
+# 11. A NON-EMPTY historical migration diff must NOT be treated as a blocker, and the
+#     release migration inventory must be EXACT.
+#     Negative control: the old runbook claimed "migration diff empty" for 6d7f940..HEAD
+#     (it is NOT empty). It also claimed origin/main..HEAD was empty; that stopped being
+#     true when the redesign shipped its own 0011, so the guard now pins the EXACT set
+#     instead of asserting emptiness — a stronger check, since an unexpected extra
+#     migration now fails rather than slipping through as "still non-empty".
+EXPECTED_MIGRATION_DIFF="packages/db/migrations/0011_notification_outbox_phone_constraints.sql"
+
+# A missing base ref and an EMPTY diff are different failures and must not be
+# reported as the same thing. At actions/checkout's default fetch-depth of 1 on a
+# pull_request event, origin/main does not exist; `git diff origin/main..HEAD`
+# then writes to stderr (discarded) and prints nothing, so the guard used to fail
+# with a misleading "diff is EMPTY" on every PR. Both refs are therefore verified
+# first, and the message names the fix.
+for ref in origin/main 6d7f940; do
+  if ! git rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1; then
+    bad "base ref '$ref' is not available in this checkout — the migration inventory cannot be verified"
+    printf '  fix: fetch full history (actions/checkout with fetch-depth: 0), or fetch the ref explicitly\n'
+    missing_base_ref=1
+  fi
+done
+
+if [ "${missing_base_ref:-0}" -eq 0 ]; then
+  # On the default branch, HEAD IS origin/main, so `origin/main..HEAD` is
+  # necessarily empty and asserting "exactly 0011" would fail on the first push
+  # after this branch merges. The inventory check only means something on a
+  # release branch, where the diff against main IS the release.
+  if [ "$(git rev-parse origin/main)" = "$(git rev-parse HEAD)" ]; then
+    printf '  on the default branch (HEAD == origin/main); no release migration inventory to verify\n'
+    ok
+  else
+    hist=$(git diff --stat 6d7f940..HEAD -- packages/db/migrations)
+    maindiff=$(git diff --name-only origin/main..HEAD -- packages/db/migrations)
+    if [ -z "$maindiff" ]; then
+      bad "origin/main..HEAD migration diff is EMPTY — expected the redesign's 0011 migration"
+    elif [ "$maindiff" != "$EXPECTED_MIGRATION_DIFF" ]; then
+      bad "release migration inventory differs from the declared set"
+      printf '  got : %s\n  want: %s\n' "$(printf '%s' "$maindiff" | tr '\n' ' ')" "$EXPECTED_MIGRATION_DIFF"
+    elif [ -z "$hist" ]; then
+      bad "6d7f940..HEAD migration diff is empty — expected the inherited 0006 hardening plus 0011"
+    elif grep -q "6d7f940..HEAD" "$RB" && grep -qi "non-empty by design" "$RB"; then
+      ok
+    else
+      bad "runbook does not document the non-empty 6d7f940..HEAD diff as expected/classified"
+    fi
+  fi
+fi
+
+# 12. An UNKNOWN DB schema can never be a PASS.
+#     Assert the inspection package exists, that the classification enum is documented,
+#     and that UNKNOWN is explicitly marked blocking / never a PASS.
+if [ ! -f scripts/ops/db-metadata-inspection.sql ]; then
+  bad "scripts/ops/db-metadata-inspection.sql is missing"
+elif ! grep -q "BEGIN READ ONLY" scripts/ops/db-metadata-inspection.sql; then
+  bad "db-metadata-inspection.sql is not wrapped in a read-only transaction"
+elif grep -q "UNKNOWN" "$RB" \
+  && grep -qi "never a PASS" "$RB" \
+  && grep -q "DATABASE_SCHEMA_COMPATIBILITY = UNKNOWN" "$RB"; then
+  ok
+else
+  bad "runbook does not establish that UNKNOWN DB schema is blocking and never a PASS"
+fi
+
+# 12b. The inspection must be SELECT-only: no DDL/DML keywords anywhere in the file.
+if grep -Eiq '^[[:space:]]*(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE|GRANT|COPY)[[:space:]]' scripts/ops/db-metadata-inspection.sql; then
+  bad "db-metadata-inspection.sql contains a mutating statement"
+else
+  ok
+fi
+
+# 13. A MISSING rollback archive must fail CLOSED.
+#     The documented restore step must abort non-zero when the checksum check fails.
+if grep -q "sha256sum -c" "$RB" && grep -q "ABORT: archive checksum failed" "$RB"; then
+  ok
+else
+  bad "rollback restore does not fail closed on a failed archive checksum"
+fi
+
+# 14. An UNKNOWN current image ID must fail CLOSED (abort before build/up).
+#     Scoped to the §7a rollback-target table: the `CURRENT_PRODUCTION_IMAGE_ID` row
+#     itself must list "unknown" as a reject value. A whole-file grep would be vacuous
+#     (the phrase also appears in §2.9 and §11).
+sec7a=$(sed -n '/^### 7a\./,/^### 7b\./p' "$RB")
+if printf '%s' "$sec7a" | grep -q "CURRENT_PRODUCTION_IMAGE_ID.*unknown" \
+  && printf '%s' "$sec7a" | grep -q "ABORT before \`build\`/\`up\`"; then
+  ok
+else
+  bad "an unknown current image ID does not fail closed in the §7a rollback contract"
+fi
+
+# 15. An UNSAFE .env staging must be DETECTABLE.
+#     Functional: the ignore rules must match the sensitive backup and must NOT match
+#     the tracked template. (A blanket `*.env*` rule would break the second assertion.)
+if git check-ignore -q .env.bak-phase5; then
+  ok
+else
+  bad ".env.bak-phase5 is NOT ignored — it could be staged into a public remote"
+fi
+if git check-ignore -q .env.example; then
+  bad ".env.example is ignored — the tracked template would become untrackable"
+else
+  ok
+fi
+
+# 16. A MISSING edge overlay must be DETECTED in the ROLLBACK path.
+#     The rollback COMPOSE definition must name all three files (a subset detaches web
+#     from Traefik), and the restore must run through it with --no-deps.
+sec7c=$(sed -n '/^### 7c\./,/^### 7d\./p' "$RB")
+sec7d=$(sed -n '/^### 7d\./,/^### 7e\./p' "$RB")
+c7c=$(printf '%s\n' "$sec7c" | grep -m1 '^COMPOSE=')
+c7d=$(printf '%s\n' "$sec7d" | grep -m1 '^COMPOSE=')
+if [ -z "$c7c" ] || [ -z "$c7d" ]; then
+  bad "the rollback path does not define a COMPOSE overlay set"
+elif printf '%s' "$c7c" | grep -q 'docker-compose.yml.*prod-ports.yml.*prod-edge.yml' \
+  && printf '%s' "$c7d" | grep -q 'docker-compose.yml.*prod-ports.yml.*prod-edge.yml'; then
+  if printf '%s' "$sec7d" | grep -q '\$COMPOSE up -d --no-deps rust-engine api web'; then
+    ok
+  else
+    bad "the rollback path does not document a --no-deps application-only restore"
+  fi
+else
+  bad "a rollback COMPOSE definition omits the prod-edge overlay (web would leave Traefik)"
+fi
+
+# 17. §7d must be SELF-CONTAINED: it runs in a fresh shell days after §7c, so it must
+#     define STAMP and ARCHIVE_DIR (or abort), not silently inherit them.
+if printf '%s' "$sec7d" | grep -q 'STAMP:?' && printf '%s' "$sec7d" | grep -q 'ARCHIVE_DIR:?'; then
+  ok
+else
+  bad "§7d consumes STAMP/ARCHIVE_DIR without defining or requiring them (not executable standalone)"
+fi
+
+# 18. §13a must NOT ADVISE pruning before preservation is verified (§13b forbids it).
+#     After a build retags :latest, the orphaned running release IS a dangling image.
+#
+#     The assertion is scoped to the SENTENCE, not the section. A section-wide
+#     "does any of 'only after'/'do not run' appear anywhere" test would keep
+#     passing after an edit that actually advised pruning first, because some
+#     unrelated sentence elsewhere in §13a contains the phrase.
+#
+#     Lines are JOINED before matching, because markdown wraps: a prohibition and
+#     the command it prohibits routinely sit on different lines, and a per-line
+#     test would flag the wrapped continuation as an unguarded mention.
+sec13a=$(sed -n '/^### 13a\./,/^### 13b\./p' "$RB")
+unguarded=$(printf '%s' "$sec13a" | tr '\n' ' ' \
+  | grep -oE '.{0,80}(docker image prune|docker system prune|docker rmi).{0,80}' \
+  | grep -viE 'do not|never|only after|permitted|forbid|anti-pattern|do NOT')
+if [ -n "$unguarded" ]; then
+  bad "§13a mentions pruning without an ordering constraint nearby (§13b forbids it)"
+  printf '  %s\n' "$unguarded"
+else
+  ok
+fi
+
+# 19. The §6b anchor must not claim 6d7f940 is NOT an ancestor of origin/main (it is).
+if grep -q 'not an ancestor of' "$RB"; then
+  bad "runbook still claims a commit is 'not an ancestor' (verify with git merge-base --is-ancestor)"
+else
+  ok
+fi
+
+printf 'deploy-guard tests: %s pass, %s fail\n' "$pass" "$failed"
+exit "$([ "$failed" -eq 0 ] && echo 0 || echo 1)"

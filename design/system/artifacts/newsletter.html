@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sigap Civic Health — Newsletter</title>
+    
+    <style>
+    :root {
+      --brand-color-primary: #0f766e;
+      --brand-color-primary-bg: #a8b5b2;
+      --brand-color-primary-bg-hover: #82a8a0;
+      --brand-color-primary-border: #5f9c91;
+      --brand-color-primary-border-hover: #408f83;
+      --brand-color-primary-hover: #268278;
+      --brand-color-primary-active: #064f4c;
+      --brand-color-primary-text: #000203;
+      --brand-color-success: #2f7d32;
+      --brand-color-success-bg: #b3bdb1;
+      --brand-color-success-border: #8ea38c;
+      --brand-color-success-hover: #4a8a4b;
+      --brand-color-success-active: #1d5721;
+      --brand-color-warning: #b45309;
+      --brand-color-warning-bg: #f5ebdc;
+      --brand-color-warning-border: #dbab74;
+      --brand-color-warning-hover: #c27029;
+      --brand-color-warning-active: #8f3900;
+      --brand-color-error: #c4322a;
+      --brand-color-error-bg: #fff3f0;
+      --brand-color-error-border: #ebada2;
+      --brand-color-error-hover: #d1594d;
+      --brand-color-error-active: #9e1c19;
+      --brand-color-info: #1d6bb5;
+      --brand-color-info-bg: #e6f0f5;
+      --brand-color-info-border: #8cbddb;
+      --brand-color-link: #0f766e;
+      --brand-color-link-hover: #268278;
+      --brand-color-link-active: #064f4c;
+      --brand-color-text: #363534;
+      --brand-color-text-secondary: #696866;
+      --brand-color-text-tertiary: #949391;
+      --brand-color-text-quaternary: #c0bfbd;
+      --brand-color-fill: #d6d5d2;
+      --brand-color-fill-secondary: #eae9e6;
+      --brand-color-fill-tertiary: #eeedea;
+      --brand-color-fill-quaternary: #f3f2ef;
+      --brand-color-bg-layout: #eeedea;
+      --brand-color-bg-container: #f7f6f3;
+      --brand-color-bg-elevated: #f7f6f3;
+      --brand-color-border: #d6d5d2;
+      --brand-color-border-secondary: #eae9e6;
+      --brand-font-family: Inter, system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+      --brand-font-family-code: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+      --brand-font-size: 14px;
+      --brand-font-size-sm: 12px;
+      --brand-font-size-lg: 18px;
+      --brand-font-size-xl: 22px;
+      --brand-font-size-heading-1: 38px;
+      --brand-font-size-heading-2: 32px;
+      --brand-font-size-heading-3: 26px;
+      --brand-font-size-heading-4: 22px;
+      --brand-font-size-heading-5: 18px;
+      --brand-line-height: 1.5714285714285714;
+      --brand-line-height-heading: 1.25;
+      --brand-font-weight-strong: 600;
+      --brand-size-xxs: 4px;
+      --brand-size-xs: 8px;
+      --brand-size-sm: 12px;
+      --brand-size: 16px;
+      --brand-size-md: 20px;
+      --brand-size-lg: 24px;
+      --brand-size-xl: 32px;
+      --brand-size-xxl: 48px;
+      --brand-border-radius-xs: 3px;
+      --brand-border-radius-sm: 5px;
+      --brand-border-radius: 8px;
+      --brand-border-radius-lg: 10px;
+      --brand-line-width: 1px;
+      --brand-control-height-xs: 16px;
+      --brand-control-height-sm: 24px;
+      --brand-control-height: 32px;
+      --brand-control-height-lg: 40px;
+      --brand-motion-duration-fast: 0.1s;
+      --brand-motion-duration-mid: 0.2s;
+      --brand-motion-duration-slow: 0.3s;
+      --brand-motion-ease-in-out: cubic-bezier(0.645, 0.045, 0.355, 1);
+      --brand-motion-ease-out: cubic-bezier(0.215, 0.61, 0.355, 1);
+      --brand-primary-palette-1: #a8b5b2;
+      --brand-primary-palette-2: #82a8a0;
+      --brand-primary-palette-3: #5f9c91;
+      --brand-primary-palette-4: #408f83;
+      --brand-primary-palette-5: #268278;
+      --brand-primary-palette-6: #0f766e;
+      --brand-primary-palette-7: #064f4c;
+      --brand-primary-palette-8: #012928;
+      --brand-primary-palette-9: #000203;
+      --brand-primary-palette-10: #000000;
+      --brand-presets-red-1: #fff1f0;
+      --brand-presets-red-2: #ffcbc7;
+      --brand-presets-red-3: #ffa39e;
+      --brand-presets-red-4: #ff7775;
+      --brand-presets-red-5: #ff4d50;
+      --brand-presets-red-6: #f5222d;
+      --brand-presets-red-7: #cf1323;
+      --brand-presets-red-8: #a8071a;
+      --brand-presets-red-9: #820014;
+      --brand-presets-red-10: #5c0011;
+      --brand-presets-volcano-1: #fff2e8;
+      --brand-presets-volcano-2: #ffd8bf;
+      --brand-presets-volcano-3: #ffbb96;
+      --brand-presets-volcano-4: #ff9c6e;
+      --brand-presets-volcano-5: #ff7a45;
+      --brand-presets-volcano-6: #fa541c;
+      --brand-presets-volcano-7: #d4380d;
+      --brand-presets-volcano-8: #ad2202;
+      --brand-presets-volcano-9: #871500;
+      --brand-presets-volcano-10: #610c00;
+      --brand-presets-orange-1: #fff7e6;
+      --brand-presets-orange-2: #ffe7ba;
+      --brand-presets-orange-3: #ffd591;
+      --brand-presets-orange-4: #ffc069;
+      --brand-presets-orange-5: #ffa940;
+      --brand-presets-orange-6: #fa8c16;
+      --brand-presets-orange-7: #d46b08;
+      --brand-presets-orange-8: #ad4e00;
+      --brand-presets-orange-9: #873800;
+      --brand-presets-orange-10: #612500;
+      --brand-presets-gold-1: #fffbe6;
+      --brand-presets-gold-2: #fff1b8;
+      --brand-presets-gold-3: #ffe58f;
+      --brand-presets-gold-4: #ffd666;
+      --brand-presets-gold-5: #ffc53d;
+      --brand-presets-gold-6: #faad14;
+      --brand-presets-gold-7: #d48806;
+      --brand-presets-gold-8: #ad6800;
+      --brand-presets-gold-9: #874c00;
+      --brand-presets-gold-10: #613400;
+      --brand-presets-yellow-1: #feffe6;
+      --brand-presets-yellow-2: #ffffb8;
+      --brand-presets-yellow-3: #fffb8f;
+      --brand-presets-yellow-4: #fff566;
+      --brand-presets-yellow-5: #ffeb3d;
+      --brand-presets-yellow-6: #fadb14;
+      --brand-presets-yellow-7: #d4b106;
+      --brand-presets-yellow-8: #ad8a00;
+      --brand-presets-yellow-9: #876700;
+      --brand-presets-yellow-10: #614700;
+      --brand-presets-lime-1: #fcffe6;
+      --brand-presets-lime-2: #f4ffb8;
+      --brand-presets-lime-3: #eaff8f;
+      --brand-presets-lime-4: #d3f261;
+      --brand-presets-lime-5: #bae637;
+      --brand-presets-lime-6: #a0d911;
+      --brand-presets-lime-7: #7bb305;
+      --brand-presets-lime-8: #5b8c00;
+      --brand-presets-lime-9: #3f6600;
+      --brand-presets-lime-10: #254000;
+      --brand-presets-green-1: #f6ffed;
+      --brand-presets-green-2: #d9f7be;
+      --brand-presets-green-3: #b6eb8f;
+      --brand-presets-green-4: #94de64;
+      --brand-presets-green-5: #72d13d;
+      --brand-presets-green-6: #52c41a;
+      --brand-presets-green-7: #389e0d;
+      --brand-presets-green-8: #227804;
+      --brand-presets-green-9: #135200;
+      --brand-presets-green-10: #092b00;
+      --brand-presets-cyan-1: #e6fffb;
+      --brand-presets-cyan-2: #b5f5ec;
+      --brand-presets-cyan-3: #87e8de;
+      --brand-presets-cyan-4: #5cdbd3;
+      --brand-presets-cyan-5: #36cfc9;
+      --brand-presets-cyan-6: #13c2c2;
+      --brand-presets-cyan-7: #08979c;
+      --brand-presets-cyan-8: #006d75;
+      --brand-presets-cyan-9: #00474f;
+      --brand-presets-cyan-10: #002329;
+      --brand-presets-blue-1: #e6f4ff;
+      --brand-presets-blue-2: #bae0ff;
+      --brand-presets-blue-3: #91caff;
+      --brand-presets-blue-4: #69b1ff;
+      --brand-presets-blue-5: #4096ff;
+      --brand-presets-blue-6: #1677ff;
+      --brand-presets-blue-7: #0958d9;
+      --brand-presets-blue-8: #003eb3;
+      --brand-presets-blue-9: #002c8c;
+      --brand-presets-blue-10: #001d66;
+      --brand-presets-geekblue-1: #f0f5ff;
+      --brand-presets-geekblue-2: #d6e4ff;
+      --brand-presets-geekblue-3: #adc6ff;
+      --brand-presets-geekblue-4: #85a5ff;
+      --brand-presets-geekblue-5: #597df7;
+      --brand-presets-geekblue-6: #2f54eb;
+      --brand-presets-geekblue-7: #1d39c4;
+      --brand-presets-geekblue-8: #10229e;
+      --brand-presets-geekblue-9: #061178;
+      --brand-presets-geekblue-10: #030852;
+      --brand-presets-purple-1: #f9f0ff;
+      --brand-presets-purple-2: #efdbff;
+      --brand-presets-purple-3: #d4adf7;
+      --brand-presets-purple-4: #b37feb;
+      --brand-presets-purple-5: #9254de;
+      --brand-presets-purple-6: #722ed1;
+      --brand-presets-purple-7: #531dab;
+      --brand-presets-purple-8: #391085;
+      --brand-presets-purple-9: #22075e;
+      --brand-presets-purple-10: #120338;
+      --brand-presets-magenta-1: #fff0f6;
+      --brand-presets-magenta-2: #ffd6e7;
+      --brand-presets-magenta-3: #ffadd2;
+      --brand-presets-magenta-4: #ff85bf;
+      --brand-presets-magenta-5: #f759aa;
+      --brand-presets-magenta-6: #eb2f96;
+      --brand-presets-magenta-7: #c41d7e;
+      --brand-presets-magenta-8: #9e1067;
+      --brand-presets-magenta-9: #780650;
+      --brand-presets-magenta-10: #520339;
+      --brand-presets-grey-1: #a6a6a6;
+      --brand-presets-grey-2: #999999;
+      --brand-presets-grey-3: #8c8c8c;
+      --brand-presets-grey-4: #808080;
+      --brand-presets-grey-5: #737373;
+      --brand-presets-grey-6: #666666;
+      --brand-presets-grey-7: #404040;
+      --brand-presets-grey-8: #1a1a1a;
+      --brand-presets-grey-9: #000000;
+      --brand-presets-grey-10: #000000;
+    }
+      :root { --display-family: Inter, system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif, var(--brand-font-family); }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        font-family: var(--brand-font-family);
+        font-size: var(--brand-font-size);
+        line-height: var(--brand-line-height);
+        color: var(--brand-color-text);
+        background: var(--brand-color-bg-layout);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      a { color: var(--brand-color-link); text-decoration: none; }
+      h1, h2, h3, h4 {
+        margin: 0;
+        font-family: var(--display-family);
+        line-height: var(--brand-line-height-heading);
+        font-weight: var(--brand-font-weight-strong);
+        color: var(--brand-color-text);
+        overflow-wrap: break-word;
+      }
+      p { margin: 0; overflow-wrap: break-word; }
+      img, svg { max-width: 100%; display: block; }
+      .wrap { max-width: 1120px; margin: 0 auto; padding-left: clamp(20px, 4vw, 40px); padding-right: clamp(20px, 4vw, 40px); }
+      .kicker {
+        display: block;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        font-size: var(--brand-font-size-sm);
+        font-weight: var(--brand-font-weight-strong);
+        color: var(--brand-color-primary);
+        margin-bottom: var(--brand-size-sm);
+      }
+      .clamp-2, .clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+      .clamp-2 { -webkit-line-clamp: 2; }
+      .clamp-3 { -webkit-line-clamp: 3; }
+      a[role="button"]{transition:filter .15s ease,transform .15s ease}
+a[role="button"]:hover{filter:brightness(1.07)}
+a[role="button"]:active{filter:brightness(.95);transform:translateY(0.5px)}
+input:focus,textarea:focus,select:focus{border-color:var(--brand-color-primary)!important;box-shadow:0 0 0 3px var(--brand-color-primary-bg);outline:none}
+details.kit-acc>summary{list-style:none;cursor:pointer}
+details.kit-acc>summary::-webkit-details-marker{display:none}
+details.kit-acc .kit-acc-icon{transition:transform .18s ease}
+details.kit-acc[open] .kit-acc-icon{transform:rotate(45deg)}
+      
+    </style>
+  </head>
+  <body>
+    <div style="padding:var(--brand-size-xl) var(--brand-size-md);">
+      <div style="max-width:600px;margin:0 auto;background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);overflow:hidden;">
+      <!-- preheader: shown in the inbox preview, hidden in body -->
+      <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:var(--brand-color-bg-container);">Layanan kesehatan warga yang cepat, tenang, dan tepercaya</div>
+
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">
+        <!-- masthead -->
+        <tr><td style="padding:var(--brand-size-xl) var(--brand-size-xxl) var(--brand-size-lg);text-align:center;border-bottom:var(--brand-line-width) solid var(--brand-color-border);">
+          <div style="display:inline-block;width:32px;height:var(--brand-line-width);background:var(--brand-color-primary);margin-bottom:var(--brand-size-md);"></div>
+          <div style="font-family:var(--display-family);font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-heading-3);letter-spacing:-0.02em;color:var(--brand-color-text);">Sigap Civic Health</div>
+          <div style="margin-top:var(--brand-size-xs);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);text-transform:uppercase;letter-spacing:0.2em;">Trustworthy reads · Issue 01</div>
+        </td></tr>
+
+        <!-- lede: inverted pyramid — core line + why-relevant, above the fold -->
+        <tr><td style="padding:var(--brand-size-xl) var(--brand-size-xxl) var(--brand-size-md);">
+          <p style="margin:0 0 var(--brand-size-xs);text-transform:uppercase;letter-spacing:0.16em;font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-primary);">In this issue</p>
+          <h1 style="font-size:var(--brand-font-size-heading-2);line-height:1.18;letter-spacing:-0.015em;margin:0 0 var(--brand-size-sm);color:var(--brand-color-text);">Indonesian civic-health service for citizens, patients, and facility operators.</h1>
+          <p style="margin:0;color:var(--brand-color-text-secondary);font-size:var(--brand-font-size-lg);line-height:1.6;">Sigap is an Indonesian civic-health digital service for citizens, patients, and healthcare facility operators.
+
+The product helps citizens find healthcare facilities, make appointments, check in, and track visit/queue status. Facility staff use it to manage queues, appointments, schedules, facilities, and operational notifications.
+
+The redesign must feel trustworthy, calm, precise, accessible, modern, and suitable for a real public-health digital service.
+
+Avoid generic SaaS aesthetics, AI-generated visual patterns, gradients, glassmorphism, excessive cards, excessive rounded corners, huge hero sections, fake metrics, decorative illustrations, and startup-style marketing UI.
+
+Citizen-facing interfaces should be friendly and task-oriented. Admin interfaces should be operational, information-dense, fast to scan, and desktop-first.
+
+All UI copy should use natural Indonesian.</p>
+        </td></tr>
+
+        <!-- primary CTA, surfaced above the fold (one job) -->
+        <tr><td style="padding:0 var(--brand-size-xxl) var(--brand-size-xl);text-align:center;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
+            <tr><td style="border-radius:var(--brand-border-radius);"><a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height-lg);padding:0 var(--brand-size-lg);font-size:var(--brand-font-size-lg);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-primary);color:#fff;border-color:var(--brand-color-primary);box-shadow:0 2px 0 var(--brand-color-primary-bg)">Read this issue</a></td></tr>
+          </table>
+        </td></tr>
+
+        <tr><td><div style="height:var(--brand-line-width);background:var(--brand-color-border-secondary);margin:0 var(--brand-size-xxl);"></div></td></tr>
+
+        <!-- numbered stories -->
+      <tr><td style="padding:var(--brand-size-xl) var(--brand-size-xxl) var(--brand-size-lg);">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+          <tr>
+            <td valign="top" style="width:54px;padding-right:var(--brand-size-md);">
+              <div style="font-family:var(--display-family);font-size:var(--brand-font-size-heading-3);font-weight:var(--brand-font-weight-strong);line-height:1;color:var(--brand-color-primary);letter-spacing:-0.02em;">01</div>
+              <div style="margin-top:var(--brand-size-xs);width:24px;height:var(--brand-line-width);background:var(--brand-color-primary-border);"></div>
+            </td>
+            <td valign="top">
+              <h2 style="font-size:var(--brand-font-size-heading-4);line-height:1.25;letter-spacing:-0.01em;margin:0 0 var(--brand-size-xs);color:var(--brand-color-text);">Indonesian civic-health service for citizens, patients, and facility operators.</h2>
+              <p style="margin:0 0 var(--brand-size-md);color:var(--brand-color-text-secondary);font-size:var(--brand-font-size);line-height:var(--brand-line-height);">Trustworthy by design — and built into every surface Sigap Civic Health ships.</p>
+              <a href="#" style="font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size);color:var(--brand-color-link);text-decoration:none;">Read the full story &rarr;</a>
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+      <tr><td><div style="height:var(--brand-line-width);background:var(--brand-color-border-secondary);margin:0 var(--brand-size-xxl);"></div></td></tr>
+      <tr><td style="padding:var(--brand-size-xl) var(--brand-size-xxl) var(--brand-size-lg);">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+          <tr>
+            <td valign="top" style="width:54px;padding-right:var(--brand-size-md);">
+              <div style="font-family:var(--display-family);font-size:var(--brand-font-size-heading-3);font-weight:var(--brand-font-weight-strong);line-height:1;color:var(--brand-color-primary);letter-spacing:-0.02em;">02</div>
+              <div style="margin-top:var(--brand-size-xs);width:24px;height:var(--brand-line-width);background:var(--brand-color-primary-border);"></div>
+            </td>
+            <td valign="top">
+              <h2 style="font-size:var(--brand-font-size-heading-4);line-height:1.25;letter-spacing:-0.01em;margin:0 0 var(--brand-size-xs);color:var(--brand-color-text);">Citizens find facilities, book appointments, check in, and track visit and queue status.</h2>
+              <p style="margin:0 0 var(--brand-size-md);color:var(--brand-color-text-secondary);font-size:var(--brand-font-size);line-height:var(--brand-line-height);">Calm by design — and built into every surface Sigap Civic Health ships.</p>
+              <a href="#" style="font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size);color:var(--brand-color-link);text-decoration:none;">See how it works &rarr;</a>
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+      <tr><td><div style="height:var(--brand-line-width);background:var(--brand-color-border-secondary);margin:0 var(--brand-size-xxl);"></div></td></tr>
+      <tr><td style="padding:var(--brand-size-xl) var(--brand-size-xxl) var(--brand-size-lg);">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+          <tr>
+            <td valign="top" style="width:54px;padding-right:var(--brand-size-md);">
+              <div style="font-family:var(--display-family);font-size:var(--brand-font-size-heading-3);font-weight:var(--brand-font-weight-strong);line-height:1;color:var(--brand-color-primary);letter-spacing:-0.02em;">03</div>
+              <div style="margin-top:var(--brand-size-xs);width:24px;height:var(--brand-line-width);background:var(--brand-color-primary-border);"></div>
+            </td>
+            <td valign="top">
+              <h2 style="font-size:var(--brand-font-size-heading-4);line-height:1.25;letter-spacing:-0.01em;margin:0 0 var(--brand-size-xs);color:var(--brand-color-text);">Facility staff manage queues, appointments, schedules, facilities, and operational notifications.</h2>
+              <p style="margin:0 0 var(--brand-size-md);color:var(--brand-color-text-secondary);font-size:var(--brand-font-size);line-height:var(--brand-line-height);">Precise by design — and built into every surface Sigap Civic Health ships.</p>
+              <a href="#" style="font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size);color:var(--brand-color-link);text-decoration:none;">Get the details &rarr;</a>
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+
+        <tr><td><div style="height:var(--brand-line-width);background:var(--brand-color-border-secondary);margin:0 var(--brand-size-xxl);"></div></td></tr>
+
+        <!-- closing CTA: same action, echoed once (email.md) -->
+        <tr><td style="padding:var(--brand-size-xl) var(--brand-size-xxl) var(--brand-size-xxl);text-align:center;">
+          <p style="margin:0 0 var(--brand-size-md);color:var(--brand-color-text-secondary);font-size:var(--brand-font-size);">That's the issue. Sigap Civic Health lands in your inbox next week.</p>
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
+            <tr><td style="border-radius:var(--brand-border-radius);"><a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height-lg);padding:0 var(--brand-size-lg);font-size:var(--brand-font-size-lg);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-primary);color:#fff;border-color:var(--brand-color-primary);box-shadow:0 2px 0 var(--brand-color-primary-bg)">Read this issue</a></td></tr>
+          </table>
+        </td></tr>
+      </table>
+<div style="padding:var(--brand-size-lg) var(--brand-size-xl);background:var(--brand-color-fill-quaternary);color:var(--brand-color-text-tertiary);font-size:var(--brand-font-size-sm);border-top:var(--brand-line-width) solid var(--brand-color-border-secondary);text-align:center;">
+        <p style="margin-bottom:var(--brand-size-xs);">You're receiving this because you follow Sigap Civic Health.</p>
+        <p><a href="#" style="color:var(--brand-color-text-tertiary);text-decoration:underline;">View in browser</a> &nbsp;&middot;&nbsp; <a href="#" style="color:var(--brand-color-text-tertiary);text-decoration:underline;">Preferences</a> &nbsp;&middot;&nbsp; <a href="#" style="color:var(--brand-color-text-tertiary);text-decoration:underline;">Unsubscribe</a></p>
+        <p style="margin-top:var(--brand-size-xs);">&copy; Sigap Civic Health &middot; sigap-civic-health</p>
+      </div>
+      </div>
+    </div>
+
+  </body>
+</html>

@@ -169,6 +169,59 @@ func TestGuardDevCapabilities(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		// Phase 3B5.0: the local DB-backed test identity selector must be
+		// refused at BOOT outside local, not merely inert at request time.
+		// Inert-at-request is not sufficient on its own: a process that
+		// believes it is running with a test selector and is silently running
+		// without one is a confusing failure, and one that assumes the flag
+		// is inert is a worse one. Failing fast is the honest behaviour.
+		{
+			name: "production + local RBAC test identity",
+			env: map[string]string{
+				"SIGAP_ENV":                    "production",
+				"SIGAP_LOCAL_RBAC_TEST_IDENTITY": "true",
+			},
+			wantErr: true,
+			errMsg:  "SIGAP_LOCAL_RBAC_TEST_IDENTITY is only allowed when SIGAP_ENV=local",
+		},
+		{
+			name: "staging + local RBAC test identity",
+			env: map[string]string{
+				"SIGAP_ENV":                    "staging",
+				"SIGAP_LOCAL_RBAC_TEST_IDENTITY": "true",
+			},
+			wantErr: true,
+			errMsg:  "SIGAP_LOCAL_RBAC_TEST_IDENTITY is only allowed when SIGAP_ENV=local",
+		},
+		{
+			// GuardDevCapabilities treats SIGAP_ENV case-insensitively, so
+			// "Local" satisfies it while the provider's own exact-match check
+			// keeps the selector disarmed. Both behaviours are intentional and
+			// safe: the guard is the permissive one and the provider is the
+			// strict one.
+			name: "SIGAP_ENV=Local + local RBAC test identity passes the boot guard",
+			env: map[string]string{
+				"SIGAP_ENV":                    "Local",
+				"SIGAP_LOCAL_RBAC_TEST_IDENTITY": "true",
+			},
+			wantErr: false,
+		},
+		{
+			name: "local + local RBAC test identity is allowed",
+			env: map[string]string{
+				"SIGAP_ENV":                    "local",
+				"SIGAP_LOCAL_RBAC_TEST_IDENTITY": "true",
+			},
+			wantErr: false,
+		},
+		{
+			name: "production + local RBAC test identity disabled is fine",
+			env: map[string]string{
+				"SIGAP_ENV":                    "production",
+				"SIGAP_LOCAL_RBAC_TEST_IDENTITY": "false",
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -176,7 +229,7 @@ func TestGuardDevCapabilities(t *testing.T) {
 			// Clear all relevant env vars first
 			envVars := []string{
 				"SIGAP_ENV", "SIGAP_AUTH_MODE", "SIGAP_DEV_IDENTITY",
-				"SIGAP_ENGINE_FALLBACK",
+				"SIGAP_ENGINE_FALLBACK", "SIGAP_LOCAL_RBAC_TEST_IDENTITY",
 			}
 			for _, k := range envVars {
 				t.Setenv(k, "")

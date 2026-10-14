@@ -122,10 +122,22 @@ seeded.**
 | `created_at` / `updated_at`   | TIMESTAMPTZ | |
 
 Two CHECK constraints enforce the denylist at the database layer as
-defence-in-depth (the Go service also enforces it before INSERT):
+defence-in-depth (the Go service also enforces it before INSERT). Each carries
+**both** conjuncts — an 8-consecutive-digit run, and a separator-joined run that
+would otherwise slip past it:
 
-- `subject !~ '[0-9]{8,}'`
-- `body_template !~ '[0-9]{8,}'`
+- `subject !~ '[0-9]{8,}' AND subject !~ '[0-9][0-9\-._() ]{10,}[0-9]'`
+- `body_template !~ '[0-9]{8,}' AND body_template !~ '[0-9][0-9\-._() ]{10,}[0-9]'`
+
+The second conjunct is what catches a **formatted** number such as
+`0812-3456-7890`, where no single run reaches 8 digits. Production was found
+carrying only the first conjunct (the pre-`9d4e68e` form); migration
+`0011_notification_outbox_phone_constraints.sql` converges both constraints onto
+the full predicate above. The Go predicate in
+`apps/api/internal/notification/masking.go` is the same expression, and the two
+layers are held in step by a live-database agreement test — a divergence means
+the service accepts a value the database rejects, and because `Enqueue` is
+fire-and-forget the notification is lost with only a log line.
 
 Indexes:
 

@@ -14,6 +14,7 @@ import (
 	"github.com/sigap/sigap/apps/api/internal/audit"
 	"github.com/sigap/sigap/apps/api/internal/auth"
 	"github.com/sigap/sigap/apps/api/internal/identity"
+	"github.com/sigap/sigap/apps/api/internal/notification"
 )
 
 // AdminHandler handles administration endpoints gated by the RBAC permission
@@ -23,6 +24,7 @@ type AdminHandler struct {
 	pool          *pgxpool.Pool
 	audit         *audit.Service
 	scopeResolver auth.FacilityScope
+	grantResolver auth.FacilityGrantResolver
 }
 
 // NewAdminHandler creates an admin handler backed by a pgx pool.
@@ -37,30 +39,44 @@ func (h *AdminHandler) WithAudit(a *audit.Service) *AdminHandler {
 }
 
 // WithFacilityScopeResolver attaches the facility scope resolver. When nil,
-// facility scope resolution is skipped (backward compatible — callers must wire
-// the resolver for production safety).
+// non-dev requests fail closed; callers must wire the resolver in production.
 func (h *AdminHandler) WithFacilityScopeResolver(r auth.FacilityScope) *AdminHandler {
 	h.scopeResolver = r
+	// Provenance must be as live as scope. When the scope resolver is the
+	// production DB-backed one, wire the matching live grant resolver so
+	// facility-scoped read authorization observes role grants and revocations
+	// immediately instead of a stale authentication-time snapshot.
+	if _, ok := r.(auth.DBFacilityScopeMarker); ok {
+		h.grantResolver = auth.NewDBFacilityGrantResolver(h.pool)
+	}
+	return h
+}
+
+// WithFacilityGrantResolver attaches a live facility grant resolver. When nil,
+// read authorization falls back to the actor's authentication-time grants,
+// which is correct but not immediate. Callers should wire it in production.
+func (h *AdminHandler) WithFacilityGrantResolver(r auth.FacilityGrantResolver) *AdminHandler {
+	h.grantResolver = r
 	return h
 }
 
 // --- Facility response types ---
 
 type facilityResponse struct {
-	ID             string     `json:"id"`
-	Name           string     `json:"name"`
-	Type           string     `json:"type"`
-	Address        string     `json:"address"`
-	Kecamatan      string     `json:"kecamatan"`
-	KabupatenKota  string     `json:"kabupaten_kota"`
-	Provinsi       string     `json:"provinsi"`
-	Phone          string     `json:"phone"`
-	TotalBeds      int        `json:"total_beds"`
-	AvailableBeds  int        `json:"available_beds"`
-	IsActive       bool       `json:"is_active"`
-	ShortCode      string     `json:"short_code"`
-	CreatedAt      *time.Time `json:"created_at,omitempty"`
-	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
+	ID            string     `json:"id"`
+	Name          string     `json:"name"`
+	Type          string     `json:"type"`
+	Address       string     `json:"address"`
+	Kecamatan     string     `json:"kecamatan"`
+	KabupatenKota string     `json:"kabupaten_kota"`
+	Provinsi      string     `json:"provinsi"`
+	Phone         string     `json:"phone"`
+	TotalBeds     int        `json:"total_beds"`
+	AvailableBeds int        `json:"available_beds"`
+	IsActive      bool       `json:"is_active"`
+	ShortCode     string     `json:"short_code"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
 }
 
 // CreateFacilityRequest is the JSON body for facility creation.
@@ -93,45 +109,92 @@ type UpdateFacilityRequest struct {
 
 // --- Facility handlers ---
 
+// beginFacilityRead performs phase one of a facility-scoped detail read.
+//
+// It resolves the actor's scope, intersects it with LIVE permission provenance,
+// and reports whether the actor is authorized for the permission at ANY
+// facility. When it is not, the handler must return 404 immediately WITHOUT
+// querying the resource. That ordering is deliberate and load-bearing:
+//
+//   - it preserves the fail-closed contract that an actor with no authorized
+//     facility never reaches the resource row at all; and
+//   - it keeps the existence of an out-of-provenance row unobservable, because
+//     no lookup is issued for it.
+//
+// Phase two (see the call sites) resolves the stored facility_id and applies
+// auth.AuthorizeFacilityRead at that exact facility, which is what stops a
+// permission granted at one facility from authorizing a read at another.
+//
+// The returned actor carries the refreshed grants, so the phase-two decision
+// uses the same live provenance rather than the request snapshot.
+func (h *AdminHandler) beginFacilityRead(r *http.Request, actor identity.Actor, permission string) (identity.Actor, auth.FacilityScopeResult, auth.FacilityReadSet, bool) {
+	live, err := auth.ActorWithLiveGrants(r.Context(), actor, h.grantResolver)
+	if err != nil {
+		scope := auth.FacilityScopeResult{Err: err}
+		return actor, scope, auth.FacilityReadSet{Err: err}, false
+	}
+	scope := auth.FacilityScopeForActor(r.Context(), live, h.scopeResolver)
+	readSet := auth.AuthorizedFacilityIDsForPermission(live, scope, permission)
+	return live, scope, readSet, readSet.Err == nil && readSet.HasFacilities()
+}
+
+// listFacilityReadSet resolves the authorized facility set for a facility-scoped
+// LIST read using live provenance, mirroring beginFacilityRead for lists.
+//
+// Lists must never filter on scope.IDs alone: that union is what leaked
+// cross-facility rows whenever a permission was granted at one facility and the
+// actor's scope spanned several.
+func (h *AdminHandler) listFacilityReadSet(r *http.Request, actor identity.Actor, permission string) (auth.FacilityReadSet, error) {
+	live, err := auth.ActorWithLiveGrants(r.Context(), actor, h.grantResolver)
+	if err != nil {
+		return auth.FacilityReadSet{Err: err}, err
+	}
+	scope := auth.FacilityScopeForActor(r.Context(), live, h.scopeResolver)
+	return auth.AuthorizedFacilityIDsForPermission(live, scope, permission), nil
+}
+
 // ListFacilities handles GET /api/v1/admin/facilities.
-// Requires the facility.read permission (enforced by RequirePermission middleware).
+//
+// Two independent gates apply. The route-level facility.read check is COARSE:
+// it only asks "does this actor hold facility.read anywhere?". This handler
+// then narrows to the facilities where facility.read is actually GRANTED, so a
+// facility.read granted at facility A cannot be used to enumerate facility B.
 func (h *AdminHandler) ListFacilities(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, unrestricted, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	readSet, _ := h.listFacilityReadSet(r, actor, "facility.read")
+	if readSet.Err != nil || !readSet.HasFacilities() {
+		detail := "no facilities authorized for facility.read"
+		status := "ok"
+		if readSet.Err != nil {
+			detail = "scope resolution failed"
+			status = "error"
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"data":    []facilityResponse{},
 		})
-		h.logAccess(r, actor, "facility.list", "error", "scope resolution failed")
+		h.logAccess(r, actor, "facility.list", status, detail)
 		return
 	}
 
 	var rows pgx.Rows
 	var err error
-	if actor.IsDev || unrestricted {
+	if readSet.Unrestricted {
 		rows, err = h.pool.Query(ctx,
 			`SELECT id, name, type, kecamatan, kabupaten_kota, provinsi,
 				phone, total_beds, available_beds, is_active, short_code
 			 FROM facilities ORDER BY name`)
-	} else if len(allowedFacilities) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"success": true,
-			"data":    []facilityResponse{},
-		})
-		h.logAccess(r, actor, "facility.list", "ok", "no facilities in scope")
-		return
 	} else {
 		rows, err = h.pool.Query(ctx,
 			`SELECT id, name, type, kecamatan, kabupaten_kota, provinsi,
 				phone, total_beds, available_beds, is_active, short_code
 			 FROM facilities
 			 WHERE id = ANY($1)
-			 ORDER BY name`, allowedFacilities)
+			 ORDER BY name`, readSet.IDs)
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Gagal mengambil data fasilitas.")
@@ -160,7 +223,12 @@ func (h *AdminHandler) ListFacilities(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetFacility handles GET /api/v1/admin/facilities/{id}.
-// Requires the facility.read permission.
+//
+// The route-level facility.read check is COARSE (it asks only whether the key
+// exists anywhere). The resource decision below authorizes facility.read AT
+// the target facility itself, so facility.read granted at facility A does not
+// authorize reading facility B. An unauthorized or out-of-scope target returns
+// 404 so existence is not leaked.
 func (h *AdminHandler) GetFacility(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 	id := extractFacilityID(r.URL.Path)
@@ -173,32 +241,39 @@ func (h *AdminHandler) GetFacility(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	var f facilityResponse
-	query := `SELECT id, name, type, address, kecamatan, kabupaten_kota, provinsi,
-			phone, total_beds, available_beds, is_active, short_code,
-			created_at, updated_at
-		 FROM facilities WHERE id = $1`
-	args := []any{id}
-
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(r.Context(), actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
-			h.logAccess(r, actor, "facility.get", "error", "scope resolution failed")
-			return
-		}
-		if len(allowedFacilities) > 0 {
-			query = `SELECT id, name, type, address, kecamatan, kabupaten_kota, provinsi,
-			phone, total_beds, available_beds, is_active, short_code,
-			created_at, updated_at
-		 FROM facilities WHERE id = $1 AND id = ANY($2)`
-			args = []any{id, allowedFacilities}
-		}
+	// A facility IS its own facility scope, so the stored target id is both
+	// the lookup key and the facility the permission must be held at.
+	target, err := uuid.Parse(id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ID fasilitas tidak valid.")
+		h.logAccess(r, actor, "facility.get", "error", "invalid id")
+		return
 	}
 
-	err := h.pool.QueryRow(ctx, query, args...).Scan(&f.ID, &f.Name, &f.Type, &f.Address, &f.Kecamatan,
-		&f.KabupatenKota, &f.Provinsi, &f.Phone, &f.TotalBeds,
-		&f.AvailableBeds, &f.IsActive, &f.ShortCode, &f.CreatedAt, &f.UpdatedAt)
+	// A facility IS its own facility scope, so the target id is both the lookup
+	// key and the facility the permission must be held at. Authorization runs
+	// before any query, so an unauthorized target is never read from the DB.
+	liveActor, scope, _, authorized := h.beginFacilityRead(r, actor, "facility.read")
+	if !authorized {
+		writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
+		h.logAccess(r, actor, "facility.get", "not_found", "no facility.read facility authorized")
+		return
+	}
+	if decision := auth.AuthorizeFacilityRead(liveActor, scope, "facility.read", &target); !decision.Allowed {
+		writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
+		h.logAccess(r, actor, "facility.get", "not_found", decision.Reason)
+		return
+	}
+
+	var f facilityResponse
+	err = h.pool.QueryRow(ctx,
+		`SELECT id, name, type, address, kecamatan, kabupaten_kota, provinsi,
+			phone, total_beds, available_beds, is_active, short_code,
+			created_at, updated_at
+		 FROM facilities WHERE id = $1`, id).
+		Scan(&f.ID, &f.Name, &f.Type, &f.Address, &f.Kecamatan, &f.KabupatenKota,
+			&f.Provinsi, &f.Phone, &f.TotalBeds, &f.AvailableBeds, &f.IsActive,
+			&f.ShortCode, &f.CreatedAt, &f.UpdatedAt)
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -237,6 +312,17 @@ func (h *AdminHandler) CreateFacility(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || !scope.Unrestricted {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
+		writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
+		h.logAccess(r, actor, "facility.created", "error", detail)
+		return
+	}
 
 	var id string
 	err := h.pool.QueryRow(ctx,
@@ -350,18 +436,34 @@ func (h *AdminHandler) UpdateFacility(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
 		writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
-		h.logAccess(r, actor, "facility.updated", "error", "scope resolution failed")
+		h.logAccess(r, actor, "facility.updated", "error", detail)
+		return
+	}
+
+	targetFacility, err := uuid.Parse(id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ID fasilitas tidak valid.")
+		h.logAccess(r, actor, "facility.updated", "error", "invalid facility id")
+		return
+	}
+	if decision := auth.AuthorizeFacilityMutation(actor, scope, "facility.manage", targetFacility); !decision.Allowed {
+		writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
+		h.logAccess(r, actor, "facility.updated", "not_found", decision.Reason)
 		return
 	}
 
 	query := fmt.Sprintf("UPDATE facilities SET %s WHERE id = $%d", strings.Join(setClauses, ", "), argIdx)
 	args = append(args, id)
-	if !actor.IsDev && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		query += fmt.Sprintf(" AND id = ANY($%d)", argIdx+1)
-		args = append(args, allowedFacilities)
+		args = append(args, scope.IDs)
 	}
 
 	res, err := h.pool.Exec(ctx, query, args...)
@@ -397,18 +499,34 @@ func (h *AdminHandler) DeactivateFacility(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
 		writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
-		h.logAccess(r, actor, "facility.deactivated", "error", "scope resolution failed")
+		h.logAccess(r, actor, "facility.deactivated", "error", detail)
+		return
+	}
+
+	targetFacility, err := uuid.Parse(id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ID fasilitas tidak valid.")
+		h.logAccess(r, actor, "facility.deactivated", "error", "invalid facility id")
+		return
+	}
+	if decision := auth.AuthorizeFacilityMutation(actor, scope, "facility.manage", targetFacility); !decision.Allowed {
+		writeError(w, http.StatusNotFound, "Fasilitas tidak ditemukan.")
+		h.logAccess(r, actor, "facility.deactivated", "not_found", decision.Reason)
 		return
 	}
 
 	query := `UPDATE facilities SET is_active = false, updated_at = NOW() WHERE id = $1`
 	args := []any{id}
-	if !actor.IsDev && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		query += " AND id = ANY($2)"
-		args = append(args, allowedFacilities)
+		args = append(args, scope.IDs)
 	}
 
 	res, err := h.pool.Exec(ctx, query, args...)
@@ -459,6 +577,76 @@ var validFacilityTypes = map[string]bool{
 	"puskesmas":   true,
 }
 
+// shortCodeMaxLen bounds facilities.short_code.
+//
+// WHY THIS EXISTS. short_code is interpolated verbatim into the queue number
+// that the Rust queue engine renders as "{short_code}-{NNNN}"
+// (apps/queue-engine/src/engine/queue.rs), and that value reaches
+// notification_outbox.body_template through the {queue_number} template
+// variable. A short_code built from digits and phone separators can therefore
+// produce a queue number that is indistinguishable from a phone number, and the
+// notification insert is then rejected by the notification_outbox phone CHECK
+// constraint — a silent, fire-and-forget failure on a normal booking.
+//
+// THE RULE IS THE RENDERED VALUE, NOT A DIGIT COUNT. An earlier revision capped
+// the number of digits in the short_code at 2. That was safe but WRONG in the
+// other direction: it rejected codes the database accepts, silently narrowing
+// the product and breaking the E2E suite's own "E2E123456", whose rendered
+// queue number "E2E123456-0001" is 11 characters and so does NOT match the
+// second conjunct, which needs 12. Deriving a numeric bound by hand is what
+// makes this class of rule wrong in one direction or the other.
+//
+// So validateShortCode renders the queue number the facility will actually
+// produce and tests it against the SAME predicate the database enforces, via
+// notification.ContainsRawPhoneDigits. The predicate is exact by construction:
+// there is no bound to re-derive and no margin to get wrong.
+//
+// The prefix must be a letter so that a purely numeric short_code cannot exist.
+const shortCodeMaxLen = 10
+
+// queueNumberWorstCase is a worst-case counter suffix. The queue engine renders
+// the counter with {:04} and caps it at DAILY_QUEUE_LIMIT = 300, so every
+// counter is exactly four digits, and both conjuncts of the predicate depend
+// only on how many digits are present, never on their values. Any four-digit
+// counter is therefore an equally valid witness.
+const queueNumberWorstCase = "-0300"
+
+// validateShortCode enforces the facilities.short_code contract. It is applied
+// on create and on update, so a facility can never be moved into an unsafe
+// short_code after creation.
+func validateShortCode(code string) error {
+	if code == "" {
+		return fmt.Errorf("Kode singkat wajib diisi.")
+	}
+	if len(code) > shortCodeMaxLen {
+		return fmt.Errorf("Kode singkat maksimal %d karakter.", shortCodeMaxLen)
+	}
+	if !isASCILLetter(code[0]) {
+		return fmt.Errorf("Kode singkat harus diawali huruf.")
+	}
+	for i := range len(code) {
+		c := code[i]
+		if isASCILLetter(c) || (c >= '0' && c <= '9') || c == '-' {
+			continue
+		}
+		return fmt.Errorf("Kode singkat hanya boleh berisi huruf, angka, atau tanda hubung.")
+	}
+	// The safety invariant, tested on the rendered value rather than re-derived.
+	// See the block comment above: the database predicate is the contract, and
+	// ContainsRawPhoneDigits is its Go expression.
+	if notification.ContainsRawPhoneDigits(code + queueNumberWorstCase) {
+		return fmt.Errorf("Kode singkat menghasilkan nomor antrean yang tidak aman; kurangi angka pada kode.")
+	}
+	return nil
+}
+
+// isASCILLetter reports whether c is an ASCII letter. Deliberately ASCII-only:
+// a non-ASCII letter would still be safe for the digit rule, but restricting to
+// ASCII keeps the rendered queue number predictable and the contract testable.
+func isASCILLetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
 func validateCreateFacility(req CreateFacilityRequest) error {
 	if strings.TrimSpace(req.Name) == "" {
 		return fmt.Errorf("Nama fasilitas wajib diisi.")
@@ -484,8 +672,8 @@ func validateCreateFacility(req CreateFacilityRequest) error {
 	if strings.ContainsAny(req.Phone, "<>\"'&") {
 		return fmt.Errorf("Nomor telepon mengandung karakter tidak valid.")
 	}
-	if strings.TrimSpace(req.ShortCode) == "" {
-		return fmt.Errorf("Kode singkat wajib diisi.")
+	if err := validateShortCode(strings.TrimSpace(req.ShortCode)); err != nil {
+		return err
 	}
 	return nil
 }
@@ -509,12 +697,18 @@ func validateUpdateFacility(req UpdateFacilityRequest) error {
 	if req.Phone != nil && strings.ContainsAny(*req.Phone, "<>\"'&") {
 		return fmt.Errorf("Nomor telepon mengandung karakter tidak valid.")
 	}
+	if req.ShortCode != nil {
+		if err := validateShortCode(strings.TrimSpace(*req.ShortCode)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 // extractFacilityID parses the facility UUID from paths like:
-//   /api/v1/admin/facilities/{id}
-//   /api/v1/admin/facilities/{id}/deactivate
+//
+//	/api/v1/admin/facilities/{id}
+//	/api/v1/admin/facilities/{id}/deactivate
 func extractFacilityID(path string) string {
 	prefix := "/api/v1/admin/facilities/"
 	if !strings.HasPrefix(path, prefix) {
@@ -565,37 +759,38 @@ type queueTicketResponse struct {
 // --- Queue admin handlers ---
 
 // ListQueueTickets handles GET /api/v1/admin/queues?facility_id=...
-// Requires queue.read permission.
+//
+// The route-level queue.read check is COARSE. The list is restricted to the
+// facilities where queue.read is GRANTED, so a queue.read held at one facility
+// cannot be used to read another facility's tickets.
 func (h *AdminHandler) ListQueueTickets(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, unrestricted, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	readSet, _ := h.listFacilityReadSet(r, actor, "queue.read")
+	if readSet.Err != nil || !readSet.HasFacilities() {
+		detail := "no facilities authorized for queue.read"
+		status := "ok"
+		if readSet.Err != nil {
+			detail = "scope resolution failed"
+			status = "error"
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"data":    []queueTicketResponse{},
 		})
-		h.logQueueAccess(r, actor, "queue.list", "error", "scope resolution failed")
-		return
-	}
-	if !unrestricted && !actor.IsDev && len(allowedFacilities) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"success": true,
-			"data":    []queueTicketResponse{},
-		})
-		h.logQueueAccess(r, actor, "queue.list", "ok", "no facilities in scope")
+		h.logQueueAccess(r, actor, "queue.list", status, detail)
 		return
 	}
 
 	query := `SELECT id, facility_id, queue_number, formatted_number, status,
 			registered_at, called_at, completed_at FROM queue_tickets`
 	args := []any{}
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) > 0 {
+	if !readSet.Unrestricted {
 		query += " WHERE facility_id = ANY($1)"
-		args = append(args, allowedFacilities)
+		args = append(args, readSet.IDs)
 	}
 	query += " ORDER BY registered_at DESC"
 
@@ -629,7 +824,12 @@ func (h *AdminHandler) ListQueueTickets(w http.ResponseWriter, r *http.Request) 
 }
 
 // GetQueueTicket handles GET /api/v1/admin/queues/{id}.
-// Requires queue.read permission.
+//
+// Detail read semantics: the stored facility_id is resolved FIRST, then
+// queue.read is authorized AT that facility. A ticket at a facility where the
+// actor has no queue.read provenance returns 404 even when the facility is in
+// scope, and even when the actor holds queue.read flatly from another facility.
+// The unauthorized row is never materialized.
 func (h *AdminHandler) GetQueueTicket(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 	id := extractQueueTicketID(r.URL.Path)
@@ -642,28 +842,45 @@ func (h *AdminHandler) GetQueueTicket(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	var t queueTicketResponse
-	query := `SELECT id, facility_id, queue_number, formatted_number, status,
-			registered_at, called_at, completed_at
-		 FROM queue_tickets WHERE id = $1`
-	args := []any{id}
+	if _, err := uuid.Parse(id); err != nil {
+		writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
+		h.logQueueAccess(r, actor, "queue.read", "not_found", "invalid id")
+		return
+	}
 
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
+	liveActor, scope, _, authorized := h.beginFacilityRead(r, actor, "queue.read")
+	if !authorized {
+		writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
+		h.logQueueAccess(r, actor, "queue.read", "not_found", "no queue.read facility authorized")
+		return
+	}
+
+	var ticketFacilityID *uuid.UUID
+	if err := h.pool.QueryRow(ctx,
+		`SELECT facility_id FROM queue_tickets WHERE id = $1`, id).Scan(&ticketFacilityID); err != nil {
+		if err == pgx.ErrNoRows {
 			writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
-			h.logQueueAccess(r, actor, "queue.read", "error", "scope resolution failed")
+			h.logQueueAccess(r, actor, "queue.read", "not_found", id)
 			return
 		}
-		if len(allowedFacilities) > 0 {
-			query = `SELECT id, facility_id, queue_number, formatted_number, status,
-			registered_at, called_at, completed_at
-		 FROM queue_tickets WHERE id = $1 AND facility_id = ANY($2)`
-			args = []any{id, allowedFacilities}
-		}
+		writeError(w, http.StatusInternalServerError, "Gagal mengambil data antrean.")
+		h.logQueueAccess(r, actor, "queue.read", "error", err.Error())
+		return
 	}
-	err := h.pool.QueryRow(ctx, query, args...).Scan(&t.ID, &t.FacilityID, &t.QueueNumber, &t.FormattedNumber,
-		&t.Status, &t.RegisteredAt, &t.CalledAt, &t.CompletedAt)
+
+	if decision := auth.AuthorizeFacilityRead(liveActor, scope, "queue.read", ticketFacilityID); !decision.Allowed {
+		writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
+		h.logQueueAccess(r, actor, "queue.read", "forbidden", decision.Reason)
+		return
+	}
+
+	var t queueTicketResponse
+	err := h.pool.QueryRow(ctx,
+		`SELECT id, facility_id, queue_number, formatted_number, status,
+			registered_at, called_at, completed_at
+		 FROM queue_tickets WHERE id = $1`, id).
+		Scan(&t.ID, &t.FacilityID, &t.QueueNumber, &t.FormattedNumber, &t.Status,
+			&t.RegisteredAt, &t.CalledAt, &t.CompletedAt)
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -706,24 +923,54 @@ func (h *AdminHandler) UpdateQueueStatus(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, unrestricted, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
 		writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
-		h.logQueueAccess(r, actor, "queue.status_updated", "error", "scope resolution failed")
+		h.logQueueAccess(r, actor, "queue.status_updated", "error", detail)
 		return
 	}
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) == 0 {
-		writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
-		h.logQueueAccess(r, actor, "queue.status_updated", "not_found", id)
-		return
+
+	// The target facility is resolved from the stored ticket, never from the
+	// request, so the permission check below is anchored to the row actually
+	// being mutated. Only a globally unrestricted actor may skip this lookup,
+	// preserving the single-statement path for the global super admin.
+	var ticketFacilityID *uuid.UUID
+	if !scope.Unrestricted {
+		var ticketFacility uuid.UUID
+		err := h.pool.QueryRow(ctx,
+			`SELECT facility_id FROM queue_tickets WHERE id = $1 AND facility_id = ANY($2)`,
+			id, scope.IDs).Scan(&ticketFacility)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
+				h.logQueueAccess(r, actor, "queue.status_updated", "not_found", id)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "Gagal mengambil data antrean.")
+			h.logQueueAccess(r, actor, "queue.status_updated", "error", err.Error())
+			return
+		}
+		ticketFacilityID = &ticketFacility
+	}
+
+	if ticketFacilityID != nil {
+		if decision := auth.AuthorizeFacilityMutation(actor, scope, "queue.manage", *ticketFacilityID); !decision.Allowed {
+			writeError(w, http.StatusNotFound, "Antrean tidak ditemukan.")
+			h.logQueueAccess(r, actor, "queue.status_updated", "not_found", decision.Reason)
+			return
+		}
 	}
 
 	var currentStatus string
 	selectQuery := `SELECT status FROM queue_tickets WHERE id = $1`
 	selectArgs := []any{id}
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		selectQuery = `SELECT status FROM queue_tickets WHERE id = $1 AND facility_id = ANY($2)`
-		selectArgs = []any{id, allowedFacilities}
+		selectArgs = []any{id, scope.IDs}
 	}
 	err := h.pool.QueryRow(ctx, selectQuery, selectArgs...).Scan(&currentStatus)
 	if err != nil {
@@ -766,9 +1013,9 @@ func (h *AdminHandler) UpdateQueueStatus(w http.ResponseWriter, r *http.Request)
 
 	query := fmt.Sprintf(`UPDATE queue_tickets SET %s WHERE id = $%d`, strings.Join(setClauses, ", "), argIdx)
 	args = append(args, id)
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		query = fmt.Sprintf(`UPDATE queue_tickets SET %s WHERE id = $%d AND facility_id = ANY($%d)`, strings.Join(setClauses, ", "), argIdx, argIdx+1)
-		args = append(args, allowedFacilities)
+		args = append(args, scope.IDs)
 	}
 
 	_, err = h.pool.Exec(ctx, query, args...)
@@ -830,8 +1077,9 @@ func isValidQueueTransition(from, to string) bool {
 }
 
 // extractQueueTicketID parses the queue ticket UUID from paths like:
-//   /api/v1/admin/queues/{id}
-//   /api/v1/admin/queues/{id}/status
+//
+//	/api/v1/admin/queues/{id}
+//	/api/v1/admin/queues/{id}/status
 func extractQueueTicketID(path string) string {
 	prefix := "/api/v1/admin/queues/"
 	if !strings.HasPrefix(path, prefix) {
@@ -897,7 +1145,9 @@ type UpdateServiceUnitRequest struct {
 // --- Service unit handlers ---
 
 // ListServiceUnits handles GET /api/v1/admin/service-units.
-// Requires the schedule.read permission.
+//
+// The route-level schedule.read check is COARSE. The list is restricted to the
+// facilities where schedule.read is GRANTED, not merely in scope.
 func (h *AdminHandler) ListServiceUnits(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 	if h.pool == nil {
@@ -909,33 +1159,28 @@ func (h *AdminHandler) ListServiceUnits(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, unrestricted, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	readSet, _ := h.listFacilityReadSet(r, actor, "schedule.read")
+	if readSet.Err != nil || !readSet.HasFacilities() {
+		detail := "no facilities authorized for schedule.read"
+		status := "ok"
+		if readSet.Err != nil {
+			detail = "scope resolution failed"
+			status = "error"
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"data":    []serviceUnitResponse{},
 		})
-		h.logServiceUnitAccess(r, actor, "service_unit.list", "error", "scope resolution failed")
-		return
-	}
-	if !unrestricted && !actor.IsDev && len(allowedFacilities) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"success": true,
-			"data":    []serviceUnitResponse{},
-		})
-		h.logServiceUnitAccess(r, actor, "service_unit.list", "ok", "no facilities in scope")
+		h.logServiceUnitAccess(r, actor, "service_unit.list", status, detail)
 		return
 	}
 
 	query := `SELECT id, facility_id, name, code, description, is_active
 		 FROM service_units`
 	args := []any{}
-	if !actor.IsDev && unrestricted {
-		// unrestricted non-dev actor with no facilities — already handled above
-	}
-	if !actor.IsDev && !unrestricted {
+	if !readSet.Unrestricted {
 		query += " WHERE facility_id = ANY($1)"
-		args = append(args, allowedFacilities)
+		args = append(args, readSet.IDs)
 	}
 	query += " ORDER BY name"
 
@@ -966,7 +1211,10 @@ func (h *AdminHandler) ListServiceUnits(w http.ResponseWriter, r *http.Request) 
 }
 
 // GetServiceUnit handles GET /api/v1/admin/service-units/{id}.
-// Requires the schedule.read permission.
+//
+// Detail read semantics: the stored facility_id is resolved first, then
+// schedule.read is authorized AT that facility. An out-of-provenance unit
+// returns 404 and is never materialized.
 func (h *AdminHandler) GetServiceUnit(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 	if h.pool == nil {
@@ -984,25 +1232,44 @@ func (h *AdminHandler) GetServiceUnit(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	var u serviceUnitResponse
-	query := `SELECT id, facility_id, name, code, description, is_active, created_at, updated_at
-		 FROM service_units WHERE id = $1`
-	args := []any{id}
+	if _, err := uuid.Parse(id); err != nil {
+		writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+		h.logServiceUnitAccess(r, actor, "service_unit.get", "not_found", "invalid id")
+		return
+	}
 
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
+	liveActor, scope, _, authorized := h.beginFacilityRead(r, actor, "schedule.read")
+	if !authorized {
+		writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+		h.logServiceUnitAccess(r, actor, "service_unit.get", "not_found", "no schedule.read facility authorized")
+		return
+	}
+
+	var unitFacilityID *uuid.UUID
+	if err := h.pool.QueryRow(ctx,
+		`SELECT facility_id FROM service_units WHERE id = $1`, id).Scan(&unitFacilityID); err != nil {
+		if err == pgx.ErrNoRows {
 			writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
-			h.logServiceUnitAccess(r, actor, "service_unit.get", "error", "scope resolution failed")
+			h.logServiceUnitAccess(r, actor, "service_unit.get", "not_found", id)
 			return
 		}
-		if len(allowedFacilities) > 0 {
-			query = `SELECT id, facility_id, name, code, description, is_active, created_at, updated_at
-			 FROM service_units WHERE id = $1 AND facility_id = ANY($2)`
-			args = []any{id, allowedFacilities}
-		}
+		writeError(w, http.StatusInternalServerError, "Gagal mengambil data unit layanan.")
+		h.logServiceUnitAccess(r, actor, "service_unit.get", "error", err.Error())
+		return
 	}
-	err := h.pool.QueryRow(ctx, query, args...).Scan(&u.ID, &u.FacilityID, &u.Name, &u.Code, &u.Description, &u.IsActive, &u.CreatedAt, &u.UpdatedAt)
+
+	if decision := auth.AuthorizeFacilityRead(liveActor, scope, "schedule.read", unitFacilityID); !decision.Allowed {
+		writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+		h.logServiceUnitAccess(r, actor, "service_unit.get", "forbidden", decision.Reason)
+		return
+	}
+
+	var u serviceUnitResponse
+	err := h.pool.QueryRow(ctx,
+		`SELECT id, facility_id, name, code, description, is_active, created_at, updated_at
+		 FROM service_units WHERE id = $1`, id).
+		Scan(&u.ID, &u.FacilityID, &u.Name, &u.Code, &u.Description, &u.IsActive,
+			&u.CreatedAt, &u.UpdatedAt)
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -1047,31 +1314,33 @@ func (h *AdminHandler) CreateServiceUnit(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusForbidden, "Akses ditolak: anda tidak memiliki lingkup fasilitas yang valid.")
-			h.logServiceUnitAccess(r, actor, "service_unit.created", "forbidden", "scope resolution failed")
-			return
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
 		}
-		facilityID, ferr := uuid.Parse(req.FacilityID)
-		if ferr != nil {
-			writeError(w, http.StatusBadRequest, "Facility ID tidak valid.")
-			h.logServiceUnitAccess(r, actor, "service_unit.created", "error", "invalid facility_id")
-			return
-		}
-		allowed := false
-		for _, f := range allowedFacilities {
-			if f == facilityID {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			writeError(w, http.StatusForbidden, "Akses ditolak: facility_id di luar lingkup yang diizinkan.")
-			h.logServiceUnitAccess(r, actor, "service_unit.created", "forbidden", "facility_id outside scope")
-			return
-		}
+		writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+		h.logServiceUnitAccess(r, actor, "service_unit.created", "error", detail)
+		return
+	}
+	facilityID, ferr := uuid.Parse(req.FacilityID)
+	if ferr != nil {
+		writeError(w, http.StatusBadRequest, "Facility ID tidak valid.")
+		h.logServiceUnitAccess(r, actor, "service_unit.created", "error", "invalid facility_id")
+		return
+	}
+	if !auth.FacilityScopeResultAllows(scope, facilityID) {
+		writeError(w, http.StatusForbidden, "Akses ditolak: facility_id di luar lingkup yang diizinkan.")
+		h.logServiceUnitAccess(r, actor, "service_unit.created", "forbidden", "facility_id outside scope")
+		return
+	}
+	// Scope alone is not enough: the mutation permission must be held at the
+	// supplied target facility, not merely at some other facility in scope.
+	if decision := auth.AuthorizeFacilityMutation(actor, scope, "schedule.manage", facilityID); !decision.Allowed {
+		writeError(w, http.StatusForbidden, "Akses ditolak: izin tidak berlaku untuk fasilitas tujuan.")
+		h.logServiceUnitAccess(r, actor, "service_unit.created", "forbidden", decision.Reason)
+		return
 	}
 
 	var id string
@@ -1165,44 +1434,70 @@ func (h *AdminHandler) UpdateServiceUnit(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	if !actor.IsDev && req.FacilityID != nil {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusForbidden, "Akses ditolak: anda tidak memiliki lingkup fasilitas yang valid.")
-			h.logServiceUnitAccess(r, actor, "service_unit.updated", "forbidden", "scope resolution failed")
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
+		writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+		h.logServiceUnitAccess(r, actor, "service_unit.updated", "error", detail)
+		return
+	}
+
+	// Resolve the stored facility so the permission check is anchored to the
+	// row being mutated rather than to any client-supplied facility_id.
+	var storedFacilityID *uuid.UUID
+	if !scope.Unrestricted {
+		var stored uuid.UUID
+		err := h.pool.QueryRow(ctx,
+			`SELECT facility_id FROM service_units WHERE id = $1 AND facility_id = ANY($2)`,
+			id, scope.IDs).Scan(&stored)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+				h.logServiceUnitAccess(r, actor, "service_unit.updated", "not_found", id)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "Gagal mengambil unit layanan.")
+			h.logServiceUnitAccess(r, actor, "service_unit.updated", "error", err.Error())
 			return
 		}
+		storedFacilityID = &stored
+	}
+
+	if storedFacilityID != nil {
+		if decision := auth.AuthorizeFacilityMutation(actor, scope, "schedule.manage", *storedFacilityID); !decision.Allowed {
+			writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+			h.logServiceUnitAccess(r, actor, "service_unit.updated", "not_found", decision.Reason)
+			return
+		}
+	}
+
+	if req.FacilityID != nil {
 		facilityID, ferr := uuid.Parse(*req.FacilityID)
 		if ferr != nil {
 			writeError(w, http.StatusBadRequest, "Facility ID tidak valid.")
 			h.logServiceUnitAccess(r, actor, "service_unit.updated", "error", "invalid facility_id")
 			return
 		}
-		allowed := false
-		for _, f := range allowedFacilities {
-			if f == facilityID {
-				allowed = true
-				break
-			}
+		if !auth.FacilityScopeResultAllows(scope, facilityID) {
+			writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+			h.logServiceUnitAccess(r, actor, "service_unit.updated", "not_found", id)
+			return
 		}
-		if !allowed {
-			writeError(w, http.StatusForbidden, "Akses ditolak: facility_id di luar lingkup yang diizinkan.")
-			h.logServiceUnitAccess(r, actor, "service_unit.updated", "forbidden", "facility_id outside scope")
+		// A supplied facility_id is a re-parenting target, so it needs the
+		// mutation permission in its own right, not merely facility scope.
+		if decision := auth.AuthorizeFacilityMutation(actor, scope, "schedule.manage", facilityID); !decision.Allowed {
+			writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
+			h.logServiceUnitAccess(r, actor, "service_unit.updated", "not_found", decision.Reason)
 			return
 		}
 	}
 
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusNotFound, "Unit layanan tidak ditemukan.")
-			h.logServiceUnitAccess(r, actor, "service_unit.updated", "error", "scope resolution failed")
-			return
-		}
-		if len(allowedFacilities) > 0 {
-			query += fmt.Sprintf(" AND facility_id = ANY($%d)", argIdx+1)
-			args = append(args, allowedFacilities)
-		}
+	if !scope.Unrestricted {
+		query += fmt.Sprintf(" AND facility_id = ANY($%d)", argIdx+1)
+		args = append(args, scope.IDs)
 	}
 
 	res, err := h.pool.Exec(ctx, query, args...)
@@ -1243,7 +1538,8 @@ func (h *AdminHandler) ServiceUnitsRouter(w http.ResponseWriter, r *http.Request
 }
 
 // extractServiceUnitID parses the service unit UUID from paths like:
-//   /api/v1/admin/service-units/{id}
+//
+//	/api/v1/admin/service-units/{id}
 func extractServiceUnitID(path string) string {
 	prefix := "/api/v1/admin/service-units/"
 	if !strings.HasPrefix(path, prefix) {
@@ -1352,7 +1648,9 @@ type UpdateScheduleRequest struct {
 // --- Schedule handlers ---
 
 // ListSchedules handles GET /api/v1/admin/schedules.
-// Requires the schedule.read permission.
+//
+// The route-level schedule.read check is COARSE. The list is restricted to the
+// facilities where schedule.read is GRANTED, not merely in scope.
 func (h *AdminHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 	if h.pool == nil {
@@ -1364,33 +1662,61 @@ func (h *AdminHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, unrestricted, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	readSet, _ := h.listFacilityReadSet(r, actor, "schedule.read")
+	if readSet.Err != nil || !readSet.HasFacilities() {
+		detail := "no facilities authorized for schedule.read"
+		status := "ok"
+		if readSet.Err != nil {
+			detail = "scope resolution failed"
+			status = "error"
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"data":    []scheduleResponse{},
 		})
-		h.logScheduleAccess(r, actor, "schedule.list", "error", "scope resolution failed")
-		return
-	}
-	if !unrestricted && !actor.IsDev && len(allowedFacilities) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"success": true,
-			"data":    []scheduleResponse{},
-		})
-		h.logScheduleAccess(r, actor, "schedule.list", "ok", "no facilities in scope")
+		h.logScheduleAccess(r, actor, "schedule.list", status, detail)
 		return
 	}
 
-	query := `SELECT id, facility_id, practitioner_id, service_unit_id,
+	// COALESCE(practitioner_id, '00000000-0000-0000-0000-000000000000'::uuid)
+	// is LOAD-BEARING, and fixes a real bug that Phase 3B5 §6 exposed.
+	//
+	// practitioner_schedules.practitioner_id is NULLABLE, and this handler scans
+	// it into a Go `string`. pgx cannot scan a NULL uuid into a string — it
+	// returns "cannot scan NULL into *string" — so ONE schedule row with no
+	// practitioner made the ENTIRE list fail with 500 "Gagal membaca data
+	// jadwal." Not just that row: the whole table, for every caller.
+	//
+	// Why it survived until now: every seeded schedule had a practitioner, so the
+	// null path was never executed. §6 requires CREATE and UPDATE to OMIT
+	// practitioner_id entirely, which leaves the column NULL by design, and the
+	// very first such schedule made the admin schedule list unusable.
+	//
+	// WHY THE ZERO UUID AND NOT ''. An empty string is not a valid uuid in
+	// PostgreSQL — `''::uuid` raises "invalid input syntax for type uuid" — so
+	// the obvious COALESCE target would turn a scan error into a query error and
+	// fix nothing. The all-zero uuid is the canonical "absent" value, is accepted
+	// by the cast, and is what the Go side already treats as empty: every uuid
+	// comparison here uses uuid.Nil, which is exactly this value.
+	//
+	// COALESCE to a uuid rather than a nullable Go type because the JSON contract
+	// is `omitempty` on a string — NULL and the zero uuid are absent from the
+	// wire identically, so no consumer changes.
+	//
+	// NOTE this changes no authorization path. FacilityScopeResult,
+	// FacilityGrant provenance, stored-facility checks, and global super_admin
+	// resolution are untouched — this is a read-shape fix only.
+	query := `SELECT id, facility_id,
+		    COALESCE(practitioner_id, '00000000-0000-0000-0000-000000000000'::uuid),
+		    service_unit_id,
 		    schedule_date::text, start_time::text, end_time::text,
 		    slot_minutes, capacity_per_slot, is_active,
 		    created_at, updated_at
-		 FROM practitioner_schedules`
+	 FROM practitioner_schedules`
 	args := []any{}
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) > 0 {
+	if !readSet.Unrestricted {
 		query += " WHERE facility_id = ANY($1)"
-		args = append(args, allowedFacilities)
+		args = append(args, readSet.IDs)
 	}
 	query += " ORDER BY schedule_date DESC, start_time ASC"
 
@@ -1423,7 +1749,10 @@ func (h *AdminHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetSchedule handles GET /api/v1/admin/schedules/{id}.
-// Requires the schedule.read permission.
+//
+// Detail read semantics: the stored facility_id is resolved first, then
+// schedule.read is authorized AT that facility. A schedule at a facility where
+// the actor has no schedule.read provenance returns 404.
 func (h *AdminHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 	if h.pool == nil {
@@ -1441,33 +1770,51 @@ func (h *AdminHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	if _, err := uuid.Parse(id); err != nil {
+		writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+		h.logScheduleAccess(r, actor, "schedule.get", "not_found", "invalid id")
+		return
+	}
+
+	liveActor, scope, _, authorized := h.beginFacilityRead(r, actor, "schedule.read")
+	if !authorized {
+		writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+		h.logScheduleAccess(r, actor, "schedule.get", "not_found", "no schedule.read facility authorized")
+		return
+	}
+
+	var scheduleFacilityID *uuid.UUID
+	if err := h.pool.QueryRow(ctx,
+		`SELECT facility_id FROM practitioner_schedules WHERE id = $1`, id).Scan(&scheduleFacilityID); err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+			h.logScheduleAccess(r, actor, "schedule.get", "not_found", id)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "Gagal mengambil data jadwal.")
+		h.logScheduleAccess(r, actor, "schedule.get", "error", err.Error())
+		return
+	}
+
+	if decision := auth.AuthorizeFacilityRead(liveActor, scope, "schedule.read", scheduleFacilityID); !decision.Allowed {
+		writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+		h.logScheduleAccess(r, actor, "schedule.get", "forbidden", decision.Reason)
+		return
+	}
+
 	var s scheduleResponse
-	query := `SELECT id, facility_id, practitioner_id, service_unit_id,
+	err := h.pool.QueryRow(ctx,
+		// Same COALESCE, same reason as ListSchedules: a NULL practitioner_id
+		// cannot be scanned into a Go string, and would make a single-detail read
+		// of a practitioner-less schedule fail 500 as well.
+		`SELECT id, facility_id, COALESCE(practitioner_id, '00000000-0000-0000-0000-000000000000'::uuid), service_unit_id,
 		    schedule_date::text, start_time::text, end_time::text,
 		    slot_minutes, capacity_per_slot, is_active,
 		    created_at, updated_at
-		 FROM practitioner_schedules WHERE id = $1`
-	args := []any{id}
-
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
-			h.logScheduleAccess(r, actor, "schedule.get", "error", "scope resolution failed")
-			return
-		}
-		if len(allowedFacilities) > 0 {
-			query = `SELECT id, facility_id, practitioner_id, service_unit_id,
-			    schedule_date::text, start_time::text, end_time::text,
-			    slot_minutes, capacity_per_slot, is_active,
-			    created_at, updated_at
-			 FROM practitioner_schedules WHERE id = $1 AND facility_id = ANY($2)`
-			args = []any{id, allowedFacilities}
-		}
-	}
-	err := h.pool.QueryRow(ctx, query, args...).Scan(&s.ID, &s.FacilityID, &s.PractitionerID, &s.ServiceUnitID,
-		&s.ScheduleDate, &s.StartTime, &s.EndTime, &s.SlotMinutes,
-		&s.CapacityPerSlot, &s.IsActive, &s.CreatedAt, &s.UpdatedAt)
+		 FROM practitioner_schedules WHERE id = $1`, id).
+		Scan(&s.ID, &s.FacilityID, &s.PractitionerID, &s.ServiceUnitID,
+			&s.ScheduleDate, &s.StartTime, &s.EndTime, &s.SlotMinutes,
+			&s.CapacityPerSlot, &s.IsActive, &s.CreatedAt, &s.UpdatedAt)
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -1512,38 +1859,40 @@ func (h *AdminHandler) CreateSchedule(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusForbidden, "Akses ditolak: anda tidak memiliki lingkup fasilitas yang valid.")
-			h.logScheduleAccess(r, actor, "schedule.created", "forbidden", "scope resolution failed")
-			return
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
 		}
-		facilityID, ferr := uuid.Parse(req.FacilityID)
-		if ferr != nil {
-			writeError(w, http.StatusBadRequest, "Facility ID tidak valid.")
-			h.logScheduleAccess(r, actor, "schedule.created", "error", "invalid facility_id")
-			return
-		}
-		allowed := false
-		for _, f := range allowedFacilities {
-			if f == facilityID {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			writeError(w, http.StatusForbidden, "Akses ditolak: facility_id di luar lingkup yang diizinkan.")
-			h.logScheduleAccess(r, actor, "schedule.created", "forbidden", "facility_id outside scope")
-			return
-		}
+		writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+		h.logScheduleAccess(r, actor, "schedule.created", "error", detail)
+		return
+	}
+	facilityID, ferr := uuid.Parse(req.FacilityID)
+	if ferr != nil {
+		writeError(w, http.StatusBadRequest, "Facility ID tidak valid.")
+		h.logScheduleAccess(r, actor, "schedule.created", "error", "invalid facility_id")
+		return
+	}
+	if !auth.FacilityScopeResultAllows(scope, facilityID) {
+		writeError(w, http.StatusForbidden, "Akses ditolak: facility_id di luar lingkup yang diizinkan.")
+		h.logScheduleAccess(r, actor, "schedule.created", "forbidden", "facility_id outside scope")
+		return
+	}
+	// Scope alone is not enough: the mutation permission must be held at the
+	// supplied target facility, not merely at some other facility in scope.
+	if decision := auth.AuthorizeFacilityMutation(actor, scope, "schedule.manage", facilityID); !decision.Allowed {
+		writeError(w, http.StatusForbidden, "Akses ditolak: izin tidak berlaku untuk fasilitas tujuan.")
+		h.logScheduleAccess(r, actor, "schedule.created", "forbidden", decision.Reason)
+		return
 	}
 
 	var id string
 	err := h.pool.QueryRow(ctx,
 		`INSERT INTO practitioner_schedules (facility_id, practitioner_id, service_unit_id,
 		    schedule_date, start_time, end_time, slot_minutes, capacity_per_slot)
-		 VALUES ($1, NULLIF($2, ''), $3, $4::date, $5::time, $6::time, $7, $8)
+		 VALUES ($1, NULLIF($2, '')::uuid, $3, $4::date, $5::time, $6::time, $7, $8)
 		 RETURNING id`,
 		req.FacilityID, req.PractitionerID, req.ServiceUnitID,
 		req.ScheduleDate, req.StartTime, req.EndTime, req.SlotMinutes, req.CapacityPerSlot,
@@ -1656,44 +2005,70 @@ func (h *AdminHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	if !actor.IsDev && req.FacilityID != nil {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusForbidden, "Akses ditolak: anda tidak memiliki lingkup fasilitas yang valid.")
-			h.logScheduleAccess(r, actor, "schedule.updated", "forbidden", "scope resolution failed")
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
+		writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+		h.logScheduleAccess(r, actor, "schedule.updated", "error", detail)
+		return
+	}
+
+	// Resolve the stored facility so the permission check is anchored to the
+	// row being mutated rather than to any client-supplied facility_id.
+	var storedFacilityID *uuid.UUID
+	if !scope.Unrestricted {
+		var stored uuid.UUID
+		err := h.pool.QueryRow(ctx,
+			`SELECT facility_id FROM practitioner_schedules WHERE id = $1 AND facility_id = ANY($2)`,
+			id, scope.IDs).Scan(&stored)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+				h.logScheduleAccess(r, actor, "schedule.updated", "not_found", id)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "Gagal mengambil jadwal.")
+			h.logScheduleAccess(r, actor, "schedule.updated", "error", err.Error())
 			return
 		}
+		storedFacilityID = &stored
+	}
+
+	if storedFacilityID != nil {
+		if decision := auth.AuthorizeFacilityMutation(actor, scope, "schedule.manage", *storedFacilityID); !decision.Allowed {
+			writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+			h.logScheduleAccess(r, actor, "schedule.updated", "not_found", decision.Reason)
+			return
+		}
+	}
+
+	if req.FacilityID != nil {
 		facilityID, ferr := uuid.Parse(*req.FacilityID)
 		if ferr != nil {
 			writeError(w, http.StatusBadRequest, "Facility ID tidak valid.")
 			h.logScheduleAccess(r, actor, "schedule.updated", "error", "invalid facility_id")
 			return
 		}
-		allowed := false
-		for _, f := range allowedFacilities {
-			if f == facilityID {
-				allowed = true
-				break
-			}
+		if !auth.FacilityScopeResultAllows(scope, facilityID) {
+			writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+			h.logScheduleAccess(r, actor, "schedule.updated", "not_found", id)
+			return
 		}
-		if !allowed {
-			writeError(w, http.StatusForbidden, "Akses ditolak: facility_id di luar lingkup yang diizinkan.")
-			h.logScheduleAccess(r, actor, "schedule.updated", "forbidden", "facility_id outside scope")
+		// A supplied facility_id is a re-parenting target, so it needs the
+		// mutation permission in its own right, not merely facility scope.
+		if decision := auth.AuthorizeFacilityMutation(actor, scope, "schedule.manage", facilityID); !decision.Allowed {
+			writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
+			h.logScheduleAccess(r, actor, "schedule.updated", "not_found", decision.Reason)
 			return
 		}
 	}
 
-	if !actor.IsDev {
-		allowedFacilities, _, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-		if scopeErr != nil {
-			writeError(w, http.StatusNotFound, "Jadwal tidak ditemukan.")
-			h.logScheduleAccess(r, actor, "schedule.updated", "error", "scope resolution failed")
-			return
-		}
-		if len(allowedFacilities) > 0 {
-			query += fmt.Sprintf(" AND facility_id = ANY($%d)", argIdx+1)
-			args = append(args, allowedFacilities)
-		}
+	if !scope.Unrestricted {
+		query += fmt.Sprintf(" AND facility_id = ANY($%d)", argIdx+1)
+		args = append(args, scope.IDs)
 	}
 
 	res, err := h.pool.Exec(ctx, query, args...)
@@ -1719,8 +2094,15 @@ func (h *AdminHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) SchedulesRouter(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		if r.URL.Path == "/api/v1/admin/schedules" {
+		switch r.URL.Path {
+		case "/api/v1/admin/schedules":
 			h.ListSchedules(w, r)
+			return
+		case "/api/v1/admin/schedules/options":
+			// Matched BEFORE the {id} branch. The sub-path is a literal, so
+			// without this ordering "options" would be parsed as a schedule id
+			// and every request would 404 on a valid UUID failure.
+			h.ListScheduleOptions(w, r)
 			return
 		}
 		h.GetSchedule(w, r)
@@ -1734,7 +2116,8 @@ func (h *AdminHandler) SchedulesRouter(w http.ResponseWriter, r *http.Request) {
 }
 
 // extractScheduleID parses the schedule UUID from paths like:
-//   /api/v1/admin/schedules/{id}
+//
+//	/api/v1/admin/schedules/{id}
 func extractScheduleID(path string) string {
 	prefix := "/api/v1/admin/schedules/"
 	if !strings.HasPrefix(path, prefix) {
@@ -1817,7 +2200,7 @@ func validateCreateSchedule(req CreateScheduleRequest) error {
 	if req.SlotMinutes < 5 || req.SlotMinutes > 180 {
 		return fmt.Errorf("Durasi slot harus antara 5–180 menit.")
 	}
-	totalMinutes := int(endDuration - startDuration) / int(time.Minute)
+	totalMinutes := int(endDuration-startDuration) / int(time.Minute)
 	if totalMinutes%req.SlotMinutes != 0 {
 		return fmt.Errorf("Durasi slot harus membagi habis rentang waktu (%d menit).", totalMinutes)
 	}
@@ -1949,12 +2332,12 @@ type UpdateAppointmentStatusRequest struct {
 
 // validAppointmentTransitions defines the allowed status changes.
 var validAppointmentTransitions = map[string][]string{
-	"scheduled":   {"checked_in", "cancelled", "no_show"},
-	"checked_in":  {"queued", "cancelled", "no_show"},
-	"queued":      {"completed", "cancelled", "no_show"},
-	"completed":   {},
-	"cancelled":   {},
-	"no_show":     {},
+	"scheduled":  {"checked_in", "cancelled", "no_show"},
+	"checked_in": {"queued", "cancelled", "no_show"},
+	"queued":     {"completed", "cancelled", "no_show"},
+	"completed":  {},
+	"cancelled":  {},
+	"no_show":    {},
 }
 
 func isValidAppointmentTransition(from, to string) bool {
@@ -1973,7 +2356,9 @@ func isValidAppointmentTransition(from, to string) bool {
 // --- Appointment admin handlers ---
 
 // ListAppointments handles GET /api/v1/admin/appointments.
-// Requires the appointment.read permission.
+//
+// The route-level appointment.read check is COARSE. The list is restricted to
+// the facilities where appointment.read is GRANTED, not merely in scope.
 func (h *AdminHandler) ListAppointments(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 	if h.pool == nil {
@@ -1985,32 +2370,37 @@ func (h *AdminHandler) ListAppointments(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, unrestricted, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	readSet, _ := h.listFacilityReadSet(r, actor, "appointment.read")
+	if readSet.Err != nil || !readSet.HasFacilities() {
+		detail := "no facilities authorized for appointment.read"
+		status := "ok"
+		if readSet.Err != nil {
+			detail = "scope resolution failed"
+			status = "error"
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"data":    []appointmentResponse{},
 		})
-		h.logAppointmentAccess(r, actor, "appointment.list", "error", "scope resolution failed")
-		return
-	}
-	if !unrestricted && !actor.IsDev && len(allowedFacilities) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"success": true,
-			"data":    []appointmentResponse{},
-		})
-		h.logAppointmentAccess(r, actor, "appointment.list", "ok", "no facilities in scope")
+		h.logAppointmentAccess(r, actor, "appointment.list", status, detail)
 		return
 	}
 
-	query := `SELECT id, facility_id, service_unit_id, practitioner_id, practitioner_schedule_id,
+	// COALESCE on both nullable uuid columns, for the same reason as
+	// ListSchedules: pgx cannot scan NULL into a Go string, so ONE appointment
+	// without a practitioner or without a linked schedule would fail the whole
+	// list with 500. The seeded appointment happens to have both set, which is
+	// why this was latent; it is the same class of bug, fixed in the same pass.
+	query := `SELECT id, facility_id, service_unit_id,
+		    COALESCE(practitioner_id, '00000000-0000-0000-0000-000000000000'::uuid),
+		    COALESCE(practitioner_schedule_id, '00000000-0000-0000-0000-000000000000'::uuid),
 		    appointment_time, status, patient_display_name, checkin_code, queue_ticket_id,
 		    created_at, updated_at
-		 FROM appointments`
+	 FROM appointments`
 	args := []any{}
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) > 0 {
+	if !readSet.Unrestricted {
 		query += " WHERE facility_id = ANY($1)"
-		args = append(args, allowedFacilities)
+		args = append(args, readSet.IDs)
 	}
 	query += " ORDER BY appointment_time DESC"
 
@@ -2083,16 +2473,38 @@ func (h *AdminHandler) UpdateAppointmentStatus(w http.ResponseWriter, r *http.Re
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	allowedFacilities, unrestricted, scopeErr := auth.AllowedFacilityIDsForActor(ctx, actor, h.scopeResolver)
-	if scopeErr != nil && !actor.IsDev {
+	scope := auth.FacilityScopeForActor(ctx, actor, h.scopeResolver)
+	if scope.Err != nil || (!scope.Unrestricted && len(scope.IDs) == 0) {
+		detail := "no facilities in scope"
+		if scope.Err != nil {
+			detail = "scope resolution failed"
+		}
 		writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
-		h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", "scope resolution failed")
+		h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", detail)
 		return
 	}
-	if !actor.IsDev && !unrestricted {
-		if len(allowedFacilities) == 0 {
+
+	// The appointment facility is resolved from the stored row and the
+	// permission check is anchored to it, so appointment.manage granted at
+	// another facility cannot drive a transition here.
+	if !scope.Unrestricted {
+		var appointmentFacility uuid.UUID
+		err := h.pool.QueryRow(ctx,
+			`SELECT facility_id FROM appointments WHERE id = $1 AND facility_id = ANY($2)`,
+			id, scope.IDs).Scan(&appointmentFacility)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
+				h.logAppointmentAccess(r, actor, "appointment.status_updated", "not_found", id)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "Gagal mengambil janji temu.")
+			h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", err.Error())
+			return
+		}
+		if decision := auth.AuthorizeFacilityMutation(actor, scope, "appointment.manage", appointmentFacility); !decision.Allowed {
 			writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
-			h.logAppointmentAccess(r, actor, "appointment.status_updated", "not_found", id)
+			h.logAppointmentAccess(r, actor, "appointment.status_updated", "not_found", decision.Reason)
 			return
 		}
 	}
@@ -2100,9 +2512,9 @@ func (h *AdminHandler) UpdateAppointmentStatus(w http.ResponseWriter, r *http.Re
 	var current string
 	selectQuery := `SELECT status FROM appointments WHERE id = $1`
 	selectArgs := []any{id}
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		selectQuery = `SELECT status FROM appointments WHERE id = $1 AND facility_id = ANY($2)`
-		selectArgs = []any{id, allowedFacilities}
+		selectArgs = []any{id, scope.IDs}
 	}
 	if err := h.pool.QueryRow(ctx, selectQuery, selectArgs...).Scan(&current); err != nil {
 		if err == pgx.ErrNoRows {
@@ -2133,9 +2545,9 @@ func (h *AdminHandler) UpdateAppointmentStatus(w http.ResponseWriter, r *http.Re
 
 	updateQuery := fmt.Sprintf("UPDATE appointments SET %s, updated_at = NOW() WHERE id = $2", setClause)
 	updateArgs := []any{status, id}
-	if !actor.IsDev && !unrestricted && len(allowedFacilities) > 0 {
+	if !scope.Unrestricted {
 		updateQuery = fmt.Sprintf("UPDATE appointments SET %s, updated_at = NOW() WHERE id = $3 AND facility_id = ANY($2)", setClause)
-		updateArgs = []any{status, allowedFacilities, id}
+		updateArgs = []any{status, scope.IDs, id}
 	}
 	res, err := h.pool.Exec(ctx, updateQuery, updateArgs...)
 	if err != nil {
@@ -2173,7 +2585,8 @@ func (h *AdminHandler) AppointmentsRouter(w http.ResponseWriter, r *http.Request
 }
 
 // extractAppointmentID parses the appointment UUID from paths like:
-//   /api/v1/admin/appointments/{id}/status
+//
+//	/api/v1/admin/appointments/{id}/status
 func extractAppointmentID(path string) string {
 	prefix := "/api/v1/admin/appointments/"
 	if !strings.HasPrefix(path, prefix) {
@@ -2205,3 +2618,4 @@ func (h *AdminHandler) logAppointmentAccess(r *http.Request, actor identity.Acto
 		}),
 	})
 }
+

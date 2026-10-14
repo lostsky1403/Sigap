@@ -2,8 +2,17 @@
 Description=Sigap PostgreSQL backup timer (AUDIT-701) — daily 03:00 UTC
 
 [Timer]
-OnCalendar=daily
-OnCalendar=03:00
+# EXACTLY ONE OnCalendar directive. systemd combines multiple OnCalendar= lines with OR
+# (systemd.timer(5): "the timer unit will trigger whenever any of the specified timer
+# expressions elapse"), so the previous pair — `daily` (00:00) AND `03:00` — fired the
+# backup TWICE a day at 00:00 and 03:00, while this unit's own Description and
+# docs/operations/BACKUP_RESTORE.md both claim a single 03:00 run.
+#
+# The `UTC` suffix is load-bearing: an OnCalendar expression is evaluated in the HOST's
+# local timezone unless it names one, and systemd accepts the literal `UTC`. Without it
+# the documented "03:00 UTC" would silently become "03:00 local" on any host that is not
+# on UTC, which changes the run time rather than failing loudly.
+OnCalendar=*-*-* 03:00:00 UTC
 Persistent=true
 RandomizedDelaySec=600
 Unit=sigap-postgres-backup.service

@@ -33,22 +33,22 @@ func DevIdentity(next http.Handler) http.Handler {
 				)
 				// actor type=dev
 				ctx := ContextWithActor(r.Context(), Actor{
-				UserID: devUserID,
-				Type:   ActorDev,
-				IsDev:  true,
-				// SECURITY: Dev identity is restricted to read-only, non-PHI
-				// permissions only. Write-level permissions are intentionally
-				// excluded to prevent an unauthenticated client with the
-				// X-Sigap-Dev-User-ID header from modifying records.
-				Permissions: []string{
-					"facility.read",
-					"notification.read",
-					"appointment.read",
-					"queue.read",
-					"schedule.read",
-					"audit.read",
-				},
-			})
+					UserID: devUserID,
+					Type:   ActorDev,
+					IsDev:  true,
+					// SECURITY: Dev identity is restricted to read-only, non-PHI
+					// permissions only. Write-level permissions are intentionally
+					// excluded to prevent an unauthenticated client with the
+					// X-Sigap-Dev-User-ID header from modifying records.
+					Permissions: []string{
+						"facility.read",
+						"notification.read",
+						"appointment.read",
+						"queue.read",
+						"schedule.read",
+						"audit.read",
+					},
+				})
 				r = r.WithContext(ctx)
 			}
 		}
