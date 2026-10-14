@@ -20,8 +20,14 @@ async function proxy(request: Request, path: string, event: RequestEvent, method
 	});
 }
 
+// The Go ListNotifications handler accepts limit, facility_id, status, channel,
+// template_key, created_from, and created_to. The admin notifications page sends
+// all of them, so the query string must be forwarded or every filter is a silent
+// no-op. facility_id remains defense-in-depth only: the API honors it solely
+// after it passes the scope and notification.read provenance intersection.
 export const GET: RequestHandler = async (event) => {
-	return proxy(event.request, '/api/v1/admin/notifications', event);
+	const query = new URL(event.request.url).search;
+	return proxy(event.request, `/api/v1/admin/notifications${query}`, event);
 };
 
 export const POST: RequestHandler = async (event) => {

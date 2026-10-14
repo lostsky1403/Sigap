@@ -133,8 +133,8 @@ A privacy-first notification foundation for appointment/check-in communication. 
 - **Forward-only schema** (`packages/db/migrations/0006_notifications.sql`): three new tables — `notification_templates`, `notification_outbox`, `notification_delivery_attempts`. No existing table, column, index, sequence, or row is modified. Indexes on `(facility_id, status, created_at)`, `(template_key, status)`, and a partial index on `(next_attempt_at) WHERE status='pending'`.
 - **RBAC additions** (additive): `notification.read`, `notification.manage`. Assigned to `super_admin` and `facility_admin` for both; `operator` and `viewer` get `notification.read` only. Enforced by the existing `RequirePermission` middleware against the `notification.manage` policy declared in `router/router.go`.
 - **Privacy model enforced at three layers**:
-  - **Go service**: `MaskPhone` / `MaskEmail` strip the bulk of digits / local-part before insert; denylist regex rejects 8+ consecutive digits in `subject` / `body_template`; raw contact is consumed transiently and goes out of scope after the call returns.
-  - **Database**: `recipient_contact_masked` is the only contact-shape column; CHECK constraints `subject !~ '[0-9]{8,}'` and `body_template !~ '[0-9]{8,}'` reject raw-phone-like digit sequences at insert time as defence-in-depth.
+  - **Go service**: `MaskPhone` / `MaskEmail` strip the bulk of digits / local-part before insert; the denylist regex `digitRunRegex` (`apps/api/internal/notification/masking.go:176`) rejects raw-phone-like content in `subject` / `body_template`; raw contact is consumed transiently and goes out of scope after the call returns.
+  - **Database**: `recipient_contact_masked` is the only contact-shape column; the CHECK constraints `notification_outbox_no_raw_phone_in_subject_chk` / `..._in_body_chk` reject raw-phone-like digit sequences at insert time as defence-in-depth. **These are not the same predicate as the Go regex** — see the note below.
   - **API**: `notification.OutboxRow` has **no** `RecipientContact` field and **no** `RecipientContactHash` field. Compile-time test `TestOutboxRowHasNoRawContactField` guarantees the struct never grows such a field.
 - **Audit sanitisation**: metadata restricted to `notification_id`, `facility_id`, `channel`, `template_key`, `status`, `outcome`. The audit sanitizer's forbidden-key list (`phone`, `nama`, `alamat`, `email`, `patient`, `pasien`, `name`) catches every accidental PII leak even if a future contributor adds an unknown key.
 - **API endpoints** (all require dev identity headers, none are public):
@@ -145,6 +145,34 @@ A privacy-first notification foundation for appointment/check-in communication. 
 - **Fire-and-forget triggers**: `BookAppointment` and `CheckIn` fire a goroutine that enqueues a confirmation. The HTTP response is written **before** the goroutine launches, so a slow enqueue never blocks the patient. Enqueue failures never roll back the booking or check-in. Any panic is recovered and logged via `slog.Warn` with no PII.
 - **Dev provider is offline and deterministic**: `DevProvider` makes no network calls (no `http.Client`, no `net.Dial`, no DNS). Outcome is derived from `fnv32a(uuid) % 100` and bucketed `delivered` (< 75) vs `failed` (≥ 75). Two calls with the same outbox id always produce the same outcome.
 - **Web UI** at `/admin/notifications`: list, status badge, channel, template key, **masked** recipient, created time, retry/cancel actions. **No raw contact, hash, or PII is ever rendered to the DOM.**
+
+> **The Go predicate and the SQL predicate are NOT the same predicate.** They are two
+> independent controls with overlapping — but not identical — shapes, and neither is a
+> reimplementation of the other:
+>
+> | Layer | Predicate | Rejects |
+> |---|---|---|
+> | Go (`apps/api/internal/notification/masking.go`, `digitRunRegex`) | `[0-9]{8,}` **OR** `[0-9]{3,4}[-._() ][0-9]{3,4}[-._() ][0-9]{2,4}` | 8+ consecutive digits; **or** a formatted `3-4 / 3-4 / 2-4` digit-group layout separated by `- . _ ( )` or space |
+> | SQL (`packages/db/migrations/0006_notifications.sql`, `notification_outbox_no_raw_phone_in_{subject,body}_chk`) | `<col> !~ '[0-9]{8,}'` **AND** `<col> !~ '[0-9][0-9\-._() ]{10,}[0-9]'` | 8+ consecutive digits; **and** a ≥12-character digit/separator run bounded by digits |
+>
+> The formatted-phone alternatives differ in *shape*: Go requires a specific `3-4 / 3-4 /
+> 2-4` group split, whereas SQL requires a long digit/separator run. A string can satisfy
+> one and not the other — e.g. `"081-234-56"` (8 digits in a `3-3-2` layout) matches the Go
+> alternative but is too short for the SQL run-length threshold, and the SQL predicate alone
+> would accept it. Treat the two as **complementary**, not equivalent: do not claim the SQL
+> CHECK "mirrors" or "duplicates" the Go regex, and do not claim either control alone is
+> sufficient.
+>
+> **Neither control's deployment status is proven for production.** The second SQL predicate
+> (`[0-9][0-9\-._() ]{10,}[0-9]`) was added by `9d4e68e`, an edit to an **already-shipped**
+> migration. The migration runner (`apps/api/internal/migrate/migrate.go`) is **version-only**
+> — it skips versions already recorded as applied and never re-reads the stored checksum — so
+> a database that applied `0006` before `9d4e68e` keeps the earlier, weaker constraint
+> indefinitely. The running production API image likewise has **no proven source revision**:
+> it cannot be tied to a commit, so the Go-layer control cannot be asserted as deployed from
+> the repository alone. Establishing either fact requires the read-only metadata inspection
+> in `scripts/ops/db-metadata-inspection.sql` (see `docs/operations/DEPLOYMENT_RUNBOOK.md`
+> §12). Until it runs, treat the live DB-layer control as **UNKNOWN**.
 
 ### What is NOT implemented (backlogged)
 - Real vendor providers (Twilio, WhatsApp Cloud API, SMTP, SendGrid, …) — intentionally deferred.

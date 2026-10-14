@@ -20,6 +20,11 @@ async function proxy(request: Request, path: string, event: RequestEvent, method
 	});
 }
 
+// GetNotificationSummary accepts facility_id and narrows the aggregate to it.
+// Other notification filters are not part of the summary contract, so
+// forwarding the whole query string is safe: the API ignores what it does not
+// define and still authorizes facility_id against the live read set.
 export const GET: RequestHandler = async (event) => {
-	return proxy(event.request, '/api/v1/admin/notifications/summary', event);
+	const query = new URL(event.request.url).search;
+	return proxy(event.request, `/api/v1/admin/notifications/summary${query}`, event);
 };

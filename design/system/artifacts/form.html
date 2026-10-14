@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sigap Civic Health — Get started</title>
+    
+    <style>
+    :root {
+      --brand-color-primary: #0f766e;
+      --brand-color-primary-bg: #a8b5b2;
+      --brand-color-primary-bg-hover: #82a8a0;
+      --brand-color-primary-border: #5f9c91;
+      --brand-color-primary-border-hover: #408f83;
+      --brand-color-primary-hover: #268278;
+      --brand-color-primary-active: #064f4c;
+      --brand-color-primary-text: #000203;
+      --brand-color-success: #2f7d32;
+      --brand-color-success-bg: #b3bdb1;
+      --brand-color-success-border: #8ea38c;
+      --brand-color-success-hover: #4a8a4b;
+      --brand-color-success-active: #1d5721;
+      --brand-color-warning: #b45309;
+      --brand-color-warning-bg: #f5ebdc;
+      --brand-color-warning-border: #dbab74;
+      --brand-color-warning-hover: #c27029;
+      --brand-color-warning-active: #8f3900;
+      --brand-color-error: #c4322a;
+      --brand-color-error-bg: #fff3f0;
+      --brand-color-error-border: #ebada2;
+      --brand-color-error-hover: #d1594d;
+      --brand-color-error-active: #9e1c19;
+      --brand-color-info: #1d6bb5;
+      --brand-color-info-bg: #e6f0f5;
+      --brand-color-info-border: #8cbddb;
+      --brand-color-link: #0f766e;
+      --brand-color-link-hover: #268278;
+      --brand-color-link-active: #064f4c;
+      --brand-color-text: #363534;
+      --brand-color-text-secondary: #696866;
+      --brand-color-text-tertiary: #949391;
+      --brand-color-text-quaternary: #c0bfbd;
+      --brand-color-fill: #d6d5d2;
+      --brand-color-fill-secondary: #eae9e6;
+      --brand-color-fill-tertiary: #eeedea;
+      --brand-color-fill-quaternary: #f3f2ef;
+      --brand-color-bg-layout: #eeedea;
+      --brand-color-bg-container: #f7f6f3;
+      --brand-color-bg-elevated: #f7f6f3;
+      --brand-color-border: #d6d5d2;
+      --brand-color-border-secondary: #eae9e6;
+      --brand-font-family: Inter, system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+      --brand-font-family-code: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+      --brand-font-size: 14px;
+      --brand-font-size-sm: 12px;
+      --brand-font-size-lg: 18px;
+      --brand-font-size-xl: 22px;
+      --brand-font-size-heading-1: 38px;
+      --brand-font-size-heading-2: 32px;
+      --brand-font-size-heading-3: 26px;
+      --brand-font-size-heading-4: 22px;
+      --brand-font-size-heading-5: 18px;
+      --brand-line-height: 1.5714285714285714;
+      --brand-line-height-heading: 1.25;
+      --brand-font-weight-strong: 600;
+      --brand-size-xxs: 4px;
+      --brand-size-xs: 8px;
+      --brand-size-sm: 12px;
+      --brand-size: 16px;
+      --brand-size-md: 20px;
+      --brand-size-lg: 24px;
+      --brand-size-xl: 32px;
+      --brand-size-xxl: 48px;
+      --brand-border-radius-xs: 3px;
+      --brand-border-radius-sm: 5px;
+      --brand-border-radius: 8px;
+      --brand-border-radius-lg: 10px;
+      --brand-line-width: 1px;
+      --brand-control-height-xs: 16px;
+      --brand-control-height-sm: 24px;
+      --brand-control-height: 32px;
+      --brand-control-height-lg: 40px;
+      --brand-motion-duration-fast: 0.1s;
+      --brand-motion-duration-mid: 0.2s;
+      --brand-motion-duration-slow: 0.3s;
+      --brand-motion-ease-in-out: cubic-bezier(0.645, 0.045, 0.355, 1);
+      --brand-motion-ease-out: cubic-bezier(0.215, 0.61, 0.355, 1);
+      --brand-primary-palette-1: #a8b5b2;
+      --brand-primary-palette-2: #82a8a0;
+      --brand-primary-palette-3: #5f9c91;
+      --brand-primary-palette-4: #408f83;
+      --brand-primary-palette-5: #268278;
+      --brand-primary-palette-6: #0f766e;
+      --brand-primary-palette-7: #064f4c;
+      --brand-primary-palette-8: #012928;
+      --brand-primary-palette-9: #000203;
+      --brand-primary-palette-10: #000000;
+      --brand-presets-red-1: #fff1f0;
+      --brand-presets-red-2: #ffcbc7;
+      --brand-presets-red-3: #ffa39e;
+      --brand-presets-red-4: #ff7775;
+      --brand-presets-red-5: #ff4d50;
+      --brand-presets-red-6: #f5222d;
+      --brand-presets-red-7: #cf1323;
+      --brand-presets-red-8: #a8071a;
+      --brand-presets-red-9: #820014;
+      --brand-presets-red-10: #5c0011;
+      --brand-presets-volcano-1: #fff2e8;
+      --brand-presets-volcano-2: #ffd8bf;
+      --brand-presets-volcano-3: #ffbb96;
+      --brand-presets-volcano-4: #ff9c6e;
+      --brand-presets-volcano-5: #ff7a45;
+      --brand-presets-volcano-6: #fa541c;
+      --brand-presets-volcano-7: #d4380d;
+      --brand-presets-volcano-8: #ad2202;
+      --brand-presets-volcano-9: #871500;
+      --brand-presets-volcano-10: #610c00;
+      --brand-presets-orange-1: #fff7e6;
+      --brand-presets-orange-2: #ffe7ba;
+      --brand-presets-orange-3: #ffd591;
+      --brand-presets-orange-4: #ffc069;
+      --brand-presets-orange-5: #ffa940;
+      --brand-presets-orange-6: #fa8c16;
+      --brand-presets-orange-7: #d46b08;
+      --brand-presets-orange-8: #ad4e00;
+      --brand-presets-orange-9: #873800;
+      --brand-presets-orange-10: #612500;
+      --brand-presets-gold-1: #fffbe6;
+      --brand-presets-gold-2: #fff1b8;
+      --brand-presets-gold-3: #ffe58f;
+      --brand-presets-gold-4: #ffd666;
+      --brand-presets-gold-5: #ffc53d;
+      --brand-presets-gold-6: #faad14;
+      --brand-presets-gold-7: #d48806;
+      --brand-presets-gold-8: #ad6800;
+      --brand-presets-gold-9: #874c00;
+      --brand-presets-gold-10: #613400;
+      --brand-presets-yellow-1: #feffe6;
+      --brand-presets-yellow-2: #ffffb8;
+      --brand-presets-yellow-3: #fffb8f;
+      --brand-presets-yellow-4: #fff566;
+      --brand-presets-yellow-5: #ffeb3d;
+      --brand-presets-yellow-6: #fadb14;
+      --brand-presets-yellow-7: #d4b106;
+      --brand-presets-yellow-8: #ad8a00;
+      --brand-presets-yellow-9: #876700;
+      --brand-presets-yellow-10: #614700;
+      --brand-presets-lime-1: #fcffe6;
+      --brand-presets-lime-2: #f4ffb8;
+      --brand-presets-lime-3: #eaff8f;
+      --brand-presets-lime-4: #d3f261;
+      --brand-presets-lime-5: #bae637;
+      --brand-presets-lime-6: #a0d911;
+      --brand-presets-lime-7: #7bb305;
+      --brand-presets-lime-8: #5b8c00;
+      --brand-presets-lime-9: #3f6600;
+      --brand-presets-lime-10: #254000;
+      --brand-presets-green-1: #f6ffed;
+      --brand-presets-green-2: #d9f7be;
+      --brand-presets-green-3: #b6eb8f;
+      --brand-presets-green-4: #94de64;
+      --brand-presets-green-5: #72d13d;
+      --brand-presets-green-6: #52c41a;
+      --brand-presets-green-7: #389e0d;
+      --brand-presets-green-8: #227804;
+      --brand-presets-green-9: #135200;
+      --brand-presets-green-10: #092b00;
+      --brand-presets-cyan-1: #e6fffb;
+      --brand-presets-cyan-2: #b5f5ec;
+      --brand-presets-cyan-3: #87e8de;
+      --brand-presets-cyan-4: #5cdbd3;
+      --brand-presets-cyan-5: #36cfc9;
+      --brand-presets-cyan-6: #13c2c2;
+      --brand-presets-cyan-7: #08979c;
+      --brand-presets-cyan-8: #006d75;
+      --brand-presets-cyan-9: #00474f;
+      --brand-presets-cyan-10: #002329;
+      --brand-presets-blue-1: #e6f4ff;
+      --brand-presets-blue-2: #bae0ff;
+      --brand-presets-blue-3: #91caff;
+      --brand-presets-blue-4: #69b1ff;
+      --brand-presets-blue-5: #4096ff;
+      --brand-presets-blue-6: #1677ff;
+      --brand-presets-blue-7: #0958d9;
+      --brand-presets-blue-8: #003eb3;
+      --brand-presets-blue-9: #002c8c;
+      --brand-presets-blue-10: #001d66;
+      --brand-presets-geekblue-1: #f0f5ff;
+      --brand-presets-geekblue-2: #d6e4ff;
+      --brand-presets-geekblue-3: #adc6ff;
+      --brand-presets-geekblue-4: #85a5ff;
+      --brand-presets-geekblue-5: #597df7;
+      --brand-presets-geekblue-6: #2f54eb;
+      --brand-presets-geekblue-7: #1d39c4;
+      --brand-presets-geekblue-8: #10229e;
+      --brand-presets-geekblue-9: #061178;
+      --brand-presets-geekblue-10: #030852;
+      --brand-presets-purple-1: #f9f0ff;
+      --brand-presets-purple-2: #efdbff;
+      --brand-presets-purple-3: #d4adf7;
+      --brand-presets-purple-4: #b37feb;
+      --brand-presets-purple-5: #9254de;
+      --brand-presets-purple-6: #722ed1;
+      --brand-presets-purple-7: #531dab;
+      --brand-presets-purple-8: #391085;
+      --brand-presets-purple-9: #22075e;
+      --brand-presets-purple-10: #120338;
+      --brand-presets-magenta-1: #fff0f6;
+      --brand-presets-magenta-2: #ffd6e7;
+      --brand-presets-magenta-3: #ffadd2;
+      --brand-presets-magenta-4: #ff85bf;
+      --brand-presets-magenta-5: #f759aa;
+      --brand-presets-magenta-6: #eb2f96;
+      --brand-presets-magenta-7: #c41d7e;
+      --brand-presets-magenta-8: #9e1067;
+      --brand-presets-magenta-9: #780650;
+      --brand-presets-magenta-10: #520339;
+      --brand-presets-grey-1: #a6a6a6;
+      --brand-presets-grey-2: #999999;
+      --brand-presets-grey-3: #8c8c8c;
+      --brand-presets-grey-4: #808080;
+      --brand-presets-grey-5: #737373;
+      --brand-presets-grey-6: #666666;
+      --brand-presets-grey-7: #404040;
+      --brand-presets-grey-8: #1a1a1a;
+      --brand-presets-grey-9: #000000;
+      --brand-presets-grey-10: #000000;
+    }
+      :root { --display-family: Inter, system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif, var(--brand-font-family); }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        font-family: var(--brand-font-family);
+        font-size: var(--brand-font-size);
+        line-height: var(--brand-line-height);
+        color: var(--brand-color-text);
+        background: var(--brand-color-bg-layout);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      a { color: var(--brand-color-link); text-decoration: none; }
+      h1, h2, h3, h4 {
+        margin: 0;
+        font-family: var(--display-family);
+        line-height: var(--brand-line-height-heading);
+        font-weight: var(--brand-font-weight-strong);
+        color: var(--brand-color-text);
+        overflow-wrap: break-word;
+      }
+      p { margin: 0; overflow-wrap: break-word; }
+      img, svg { max-width: 100%; display: block; }
+      .wrap { max-width: 1120px; margin: 0 auto; padding-left: clamp(20px, 4vw, 40px); padding-right: clamp(20px, 4vw, 40px); }
+      .kicker {
+        display: block;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        font-size: var(--brand-font-size-sm);
+        font-weight: var(--brand-font-weight-strong);
+        color: var(--brand-color-primary);
+        margin-bottom: var(--brand-size-sm);
+      }
+      .clamp-2, .clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+      .clamp-2 { -webkit-line-clamp: 2; }
+      .clamp-3 { -webkit-line-clamp: 3; }
+      a[role="button"]{transition:filter .15s ease,transform .15s ease}
+a[role="button"]:hover{filter:brightness(1.07)}
+a[role="button"]:active{filter:brightness(.95);transform:translateY(0.5px)}
+input:focus,textarea:focus,select:focus{border-color:var(--brand-color-primary)!important;box-shadow:0 0 0 3px var(--brand-color-primary-bg);outline:none}
+details.kit-acc>summary{list-style:none;cursor:pointer}
+details.kit-acc>summary::-webkit-details-marker{display:none}
+details.kit-acc .kit-acc-icon{transition:transform .18s ease}
+details.kit-acc[open] .kit-acc-icon{transform:rotate(45deg)}
+      
+      .form-split { display: grid; grid-template-columns: minmax(320px, 4.6fr) minmax(380px, 5.4fr); min-height: 100vh; }
+      @media (max-width: 900px) { .form-split { grid-template-columns: 1fr; } .form-brand { min-height: 340px; } }
+      .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--brand-size); }
+      @media (max-width: 540px) { .form-grid-2 { grid-template-columns: 1fr; } }
+      .fld input:focus, .fld textarea:focus, .fld select:focus { border-color: var(--brand-color-primary) !important; box-shadow: 0 0 0 3px var(--brand-color-primary-bg); }
+      .fld input:invalid:not(:placeholder-shown) { border-color: var(--brand-color-error); }
+      .fld input:invalid:not(:placeholder-shown) ~ .fld-err { display: block; }
+      .fld-err { display: none; margin: var(--brand-size-xxs) 0 0; font-size: var(--brand-font-size-sm); color: var(--brand-color-error); }
+      .form-card { transition: box-shadow var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out); }
+
+    </style>
+  </head>
+  <body>
+    <div class="form-split">
+      <div class="form-brand" style="background:var(--brand-color-primary);color:#fff;padding:clamp(32px,5vw,64px);display:flex;flex-direction:column;justify-content:space-between;gap:var(--brand-size-xl);position:relative;overflow:hidden;">
+        <svg width="220" height="220" viewBox="0 0 220 220" fill="none" aria-hidden="true" style="position:absolute;top:-40px;right:-40px;opacity:0.18;color:#fff;"><defs><pattern id="fdot" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.6" fill="currentColor"/></pattern></defs><rect width="220" height="220" fill="url(#fdot)"/></svg>
+        <div style="position:absolute;bottom:-140px;left:-100px;width:320px;height:320px;border-radius:50%;background:var(--brand-color-primary-active);opacity:0.45;"></div>
+        <div style="position:relative;display:flex;align-items:center;gap:var(--brand-size-sm);">
+          <span style="display:inline-flex;width:30px;height:30px;border-radius:var(--brand-border-radius);background:rgba(255,255,255,0.16);align-items:center;justify-content:center;">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M1.5 7l3.5 3.5L12.5 3" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <span style="font-family:var(--display-family);font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-lg);letter-spacing:-0.01em;color:#fff;white-space:nowrap;">Sigap Civic Health</span>
+        </div>
+        <div style="position:relative;max-width:42ch;">
+          <h1 style="color:#fff;font-size:clamp(28px,3.4vw,42px);letter-spacing:-0.02em;line-height:1.08;margin-bottom:var(--brand-size-md);">Layanan kesehatan warga yang cepat, tenang, dan tepercaya</h1>
+          <p class="clamp-3" style="color:rgba(255,255,255,0.82);font-size:var(--brand-font-size-lg);line-height:1.55;margin-bottom:var(--brand-size-lg);">Sigap is an Indonesian civic-health digital service for citizens, patients, and healthcare facility operators.
+
+The product helps citizens find healthcare facilities, make appointments, check in, and track visit/queue status. Facility staff use it to manage queues, appointments, schedules, facilities, and operational notifications.
+
+The redesign must feel trustworthy, calm, precise, accessible, modern, and suitable for a real public-health digital service.
+
+Avoid generic SaaS aesthetics, AI-generated visual patterns, gradients, glassmorphism, excessive cards, excessive rounded corners, huge hero sections, fake metrics, decorative illustrations, and startup-style marketing UI.
+
+Citizen-facing interfaces should be friendly and task-oriented. Admin interfaces should be operational, information-dense, fast to scan, and desktop-first.
+
+All UI copy should use natural Indonesian.</p>
+          <ul style="list-style:none;margin:0;padding:0;"><li style="display:flex;gap:var(--brand-size-sm);align-items:flex-start;padding:var(--brand-size-xs) 0;color:rgba(255,255,255,0.92);font-size:var(--brand-font-size-lg);line-height:1.45;">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true" style="flex:0 0 auto;margin-top:3px;"><path d="M3.5 9.5L7 13l7.5-8" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Indonesian civic-health service for citizens, patients, and facility operators.</span>
+          </li><li style="display:flex;gap:var(--brand-size-sm);align-items:flex-start;padding:var(--brand-size-xs) 0;color:rgba(255,255,255,0.92);font-size:var(--brand-font-size-lg);line-height:1.45;">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true" style="flex:0 0 auto;margin-top:3px;"><path d="M3.5 9.5L7 13l7.5-8" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Citizens find facilities, book appointments, check in, and track visit and queue status.</span>
+          </li><li style="display:flex;gap:var(--brand-size-sm);align-items:flex-start;padding:var(--brand-size-xs) 0;color:rgba(255,255,255,0.92);font-size:var(--brand-font-size-lg);line-height:1.45;">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true" style="flex:0 0 auto;margin-top:3px;"><path d="M3.5 9.5L7 13l7.5-8" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Facility staff manage queues, appointments, schedules, facilities, and operational notifications.</span>
+          </li></ul>
+        </div>
+        <div style="position:relative;display:flex;align-items:center;gap:var(--brand-size-sm);color:rgba(255,255,255,0.7);font-size:var(--brand-font-size-sm);">
+          <span style="display:inline-flex;width:8px;height:8px;border-radius:50%;background:var(--brand-color-success);box-shadow:0 0 0 4px rgba(255,255,255,0.12);"></span>
+          <span>Concise, respectful and useful Indonesian public-service tone. Calm and precise for health tasks, never marketing hype or startup enthusiasm.</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center;padding:clamp(24px,4vw,64px);background:var(--brand-color-bg-layout);">
+        <div class="form-card" style="width:100%;max-width:520px;background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);padding:clamp(28px,4vw,44px);box-shadow:0 24px 60px var(--brand-color-fill-quaternary), 0 2px 8px var(--brand-color-fill-quaternary);">
+          <header style="margin-bottom:var(--brand-size-lg);">
+            <h2 style="font-size:var(--brand-font-size-heading-3);letter-spacing:-0.015em;margin-bottom:var(--brand-size-xs);">Tell us where to start</h2>
+            <p style="color:var(--brand-color-text-tertiary);font-size:var(--brand-font-size);">A couple of details and Sigap Civic Health takes it from there — no account needed yet.</p>
+          </header>
+
+          <form novalidate onsubmit="this.querySelector('.form-body').style.display='none';var s=this.querySelector('.form-success');s.hidden=false;s.style.display='flex';return false;">
+            <div class="form-body" style="display:flex;flex-direction:column;gap:var(--brand-size-lg);">
+              <div style="display:flex;flex-direction:column;gap:var(--brand-size-lg);">
+            <div class="form-grid-2">
+              <div class="fld">
+            <label style="display:flex;align-items:baseline;justify-content:space-between;gap:var(--brand-size-sm);margin-bottom:var(--brand-size-xxs);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);"><span>First name</span></label>
+            <input type="text" placeholder="Ada" autocomplete="given-name" style="box-sizing:border-box;width:100%;font-family:var(--brand-font-family);font-size:var(--brand-font-size);color:var(--brand-color-text);background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border);border-radius:var(--brand-border-radius);outline:none;height:var(--brand-control-height-lg);padding:0 var(--brand-size);">
+            
+            
+          </div>
+              <div class="fld">
+            <label style="display:flex;align-items:baseline;justify-content:space-between;gap:var(--brand-size-sm);margin-bottom:var(--brand-size-xxs);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);"><span>Last name</span></label>
+            <input type="text" placeholder="Lovelace" autocomplete="family-name" style="box-sizing:border-box;width:100%;font-family:var(--brand-font-family);font-size:var(--brand-font-size);color:var(--brand-color-text);background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border);border-radius:var(--brand-border-radius);outline:none;height:var(--brand-control-height-lg);padding:0 var(--brand-size);">
+            
+            
+          </div>
+            </div>
+            <div class="fld">
+            <label style="display:flex;align-items:baseline;justify-content:space-between;gap:var(--brand-size-sm);margin-bottom:var(--brand-size-xxs);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);"><span>Work email</span></label>
+            <input type="email" placeholder="you@company.com" inputmode="email" autocomplete="email" style="box-sizing:border-box;width:100%;font-family:var(--brand-font-family);font-size:var(--brand-font-size);color:var(--brand-color-text);background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border);border-radius:var(--brand-border-radius);outline:none;height:var(--brand-control-height-lg);padding:0 var(--brand-size);">
+            <p class="fld-err">That doesn't look like an email yet — try name@company.com.</p>
+            <p style="margin:var(--brand-size-xxs) 0 0;font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);line-height:1.4;">We'll send your next steps here.</p>
+          </div>
+            <div class="fld">
+            <label style="display:flex;align-items:baseline;justify-content:space-between;gap:var(--brand-size-sm);margin-bottom:var(--brand-size-xxs);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);"><span>What can we help with?</span></label>
+            <select style="box-sizing:border-box;width:100%;font-family:var(--brand-font-family);font-size:var(--brand-font-size);color:var(--brand-color-text);background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border);border-radius:var(--brand-border-radius);outline:none;height:var(--brand-control-height-lg);padding:0 var(--brand-size);-webkit-appearance:none;-moz-appearance:none;appearance:none;cursor:pointer;padding-right:var(--brand-size-xxl);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%23888' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right var(--brand-size) center;"><option value="" disabled selected>Choose one…</option><option>Indonesian civic-health service for citizens, patients, and facility operators.</option><option>Citizens find facilities, book appointments, check in, and track visit and queue status.</option><option>Facility staff manage queues, appointments, schedules, facilities, and operational notifications.</option><option>Trustworthy, calm, precise, accessible, and modern public-health service.</option></select>
+            <p style="margin:var(--brand-size-xxs) 0 0;font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);line-height:1.4;">Pick the closest — you can change direction later.</p>
+          </div>
+            <div class="fld">
+            <label style="display:flex;align-items:baseline;justify-content:space-between;gap:var(--brand-size-sm);margin-bottom:var(--brand-size-xxs);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);"><span>Anything we should know?</span><span style="font-weight:400;font-size:var(--brand-font-size-sm);color:var(--brand-color-text-quaternary);">Optional</span></label>
+            <textarea rows="4" placeholder="A sentence or two about what you're trying to do with Sigap Civic Health…" style="box-sizing:border-box;width:100%;font-family:var(--brand-font-family);font-size:var(--brand-font-size);color:var(--brand-color-text);background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border);border-radius:var(--brand-border-radius);outline:none;display:block;min-height:var(--brand-control-height-lg);padding:var(--brand-size-sm) var(--brand-size);line-height:var(--brand-line-height);resize:vertical;"></textarea>
+            
+          </div>
+            <label class="cbx" style="display:flex;align-items:flex-start;gap:var(--brand-size-sm);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);cursor:pointer;">
+            <input type="checkbox" style="accent-color:var(--brand-color-primary);width:18px;height:18px;margin:2px 0 0;flex:0 0 auto;cursor:pointer;">
+            <span>Keep me posted on what's new at Sigap Civic Health. No noise, easy to turn off.</span>
+          </label>
+          </div>
+              <div style="display:flex;flex-direction:column;gap:var(--brand-size-sm);margin-top:var(--brand-size);">
+            <div style="display:flex;flex-direction:column;">
+              <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height-lg);padding:0 var(--brand-size-lg);font-size:var(--brand-font-size-lg);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-primary);color:#fff;border-color:var(--brand-color-primary);box-shadow:0 2px 0 var(--brand-color-primary-bg)">Get started with Sigap Civic Health</a>
+            </div>
+            <p style="display:flex;align-items:center;justify-content:center;gap:var(--brand-size-xs);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);text-align:center;">
+              <svg width="13" height="14" viewBox="0 0 13 14" fill="none" aria-hidden="true" style="flex:0 0 auto;"><path d="M2 6V4.5a4.5 4.5 0 019 0V6m-10 0h11v7H1.5z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span>No spam, ever. Unsubscribe in one click — your data stays yours.</span>
+            </p>
+          </div>
+            </div>
+            <div class="form-success" hidden style="display:none;flex-direction:column;align-items:center;text-align:center;gap:var(--brand-size-md);padding:var(--brand-size-xl) 0;">
+          <span style="display:inline-flex;width:56px;height:56px;border-radius:50%;background:var(--brand-color-success-bg);align-items:center;justify-content:center;">
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true"><path d="M6 13.5l4.5 4.5L20 7" stroke="var(--brand-color-success)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <h2 style="font-size:var(--brand-font-size-heading-4);">You're in.</h2>
+          <p style="color:var(--brand-color-text-secondary);max-width:34ch;">Check your inbox for a note from Sigap Civic Health — your next step is waiting there. We usually reply within one business day.</p>
+        </div>
+          </form>
+
+          <div style="margin-top:var(--brand-size-lg);padding-top:var(--brand-size-lg);border-top:var(--brand-line-width) solid var(--brand-color-border-secondary);display:flex;align-items:center;justify-content:space-between;gap:var(--brand-size-sm);color:var(--brand-color-text-quaternary);font-size:var(--brand-font-size-sm);">
+            <span style="display:inline-flex;align-items:center;gap:var(--brand-size-xs);"><span style="flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:var(--brand-border-radius-sm);background:var(--brand-color-primary-bg);"><svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 6h7M6 2.5L9.5 6 6 9.5" stroke="var(--brand-color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span style="color:var(--brand-color-text-tertiary);">Layanan kesehatan warga yang cepat, tenang, dan tepercaya</span></span>
+            <span>sigap-civic-health</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </body>
+</html>

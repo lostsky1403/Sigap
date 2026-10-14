@@ -195,8 +195,11 @@ func TestAllStatusesAndChannels(t *testing.T) {
 // against the empty string or the unix epoch.
 func TestListParamsZeroValueIsNoFilter(t *testing.T) {
 	p := ListParams{}
-	if p.FacilityID != uuid.Nil {
-		t.Errorf("zero FacilityID = %v, want uuid.Nil", p.FacilityID)
+	if len(p.FacilityIDs) != 0 {
+		t.Errorf("zero FacilityIDs = %v, want empty", p.FacilityIDs)
+	}
+	if p.Unrestricted {
+		t.Error("zero Unrestricted = true, want false")
 	}
 	if p.Limit != 0 {
 		t.Errorf("zero Limit = %d, want 0", p.Limit)
@@ -242,7 +245,10 @@ func integrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("SIGAP_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("SIGAP_DATABASE_URL not set; skipping notification DB integration test")
+		dsn = os.Getenv("DATABASE_URL")
+	}
+	if dsn == "" {
+		t.Skip("SIGAP_DATABASE_URL or DATABASE_URL not set; skipping notification DB integration test")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -306,7 +312,7 @@ func countByTemplatePrefix(t *testing.T, pool *pgxpool.Pool, prefix string) int 
 	return n
 }
 
-func TestServiceList_EmptyParamsReturnsAll(t *testing.T) {
+func TestServiceList_UnrestrictedParamsReturnAll(t *testing.T) {
 	pool := integrationPool(t)
 	svc := NewService(pool)
 	prefix := "test.list.empty."
@@ -317,7 +323,7 @@ func TestServiceList_EmptyParamsReturnsAll(t *testing.T) {
 	seedOutboxRow(t, pool, string(StatusPending), prefix+"a", now)
 	seedOutboxRow(t, pool, string(StatusDelivered), prefix+"b", now)
 
-	rows, err := svc.List(context.Background(), ListParams{Limit: 50})
+	rows, err := svc.List(context.Background(), ListParams{Limit: 50, Unrestricted: true})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -344,8 +350,9 @@ func TestServiceList_StatusFilter(t *testing.T) {
 	seedOutboxRow(t, pool, string(StatusDelivered), prefix+"b", now)
 
 	rows, err := svc.List(context.Background(), ListParams{
-		Limit:  50,
-		Status: string(StatusDelivered),
+		Limit:        50,
+		Unrestricted: true,
+		Status:       string(StatusDelivered),
 	})
 	if err != nil {
 		t.Fatalf("List(status=delivered): %v", err)
@@ -368,8 +375,9 @@ func TestServiceList_TemplateKeyFilter(t *testing.T) {
 	seedOutboxRow(t, pool, string(StatusPending), prefix+"only", now)
 
 	rows, err := svc.List(context.Background(), ListParams{
-		Limit:       50,
-		TemplateKey: prefix + "only",
+		Limit:        50,
+		Unrestricted: true,
+		TemplateKey:  prefix + "only",
 	})
 	if err != nil {
 		t.Fatalf("List(template_key): %v", err)
@@ -398,8 +406,9 @@ func TestServiceList_CreatedFromFilter(t *testing.T) {
 	// Window starts one hour in the future — the seed row must be excluded.
 	future := now.Add(time.Hour)
 	rows, err := svc.List(context.Background(), ListParams{
-		Limit:       50,
-		CreatedFrom: future,
+		Limit:        50,
+		Unrestricted: true,
+		CreatedFrom:  future,
 	})
 	if err != nil {
 		t.Fatalf("List(created_from): %v", err)
@@ -418,7 +427,7 @@ func TestServiceSummary_EmptyOutboxReturnsZeros(t *testing.T) {
 	// existing rows. uuid.Nil would aggregate across all facilities.
 	scoped := uuid.New()
 
-	counts, err := svc.Summary(context.Background(), scoped)
+	counts, err := svc.Summary(context.Background(), SummaryParams{FacilityIDs: []uuid.UUID{scoped}})
 	if err != nil {
 		t.Fatalf("Summary: %v", err)
 	}
@@ -451,7 +460,7 @@ func TestServiceSummary_AggregatesByStatus(t *testing.T) {
 		t.Fatalf("seed: expected 4 rows under %q, got %d", prefix, n)
 	}
 
-	counts, err := svc.Summary(context.Background(), uuid.Nil)
+	counts, err := svc.Summary(context.Background(), SummaryParams{Unrestricted: true})
 	if err != nil {
 		t.Fatalf("Summary: %v", err)
 	}

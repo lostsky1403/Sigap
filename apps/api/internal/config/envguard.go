@@ -41,6 +41,19 @@ var devOnlyFlags = []devFlag{
 		},
 		Label: "engine fallback dev",
 	},
+	// Phase 3B5.0: the local test identity selector. It grants no permissions
+	// of its own — it resolves the named subject through the real DB RBAC
+	// resolver — but it is still a way to CHOOSE an identity from a request
+	// header, so it must never be armable outside local. Being listed here
+	// means a misconfigured deploy refuses to start rather than quietly
+	// exposing a header-driven identity switch.
+	{
+		EnvVar: "SIGAP_LOCAL_RBAC_TEST_IDENTITY",
+		IsDanger: func(v string) bool {
+			return strings.EqualFold(v, "true")
+		},
+		Label: "local RBAC test identity",
+	},
 }
 
 // GuardDevCapabilities checks that dev-only environment flags are not

@@ -1,0 +1,799 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sigap Civic Health — Layanan kesehatan warga yang cepat, tenang, dan tepercaya</title>
+    
+    <style>
+    :root {
+      --brand-color-primary: #0f766e;
+      --brand-color-primary-bg: #a8b5b2;
+      --brand-color-primary-bg-hover: #82a8a0;
+      --brand-color-primary-border: #5f9c91;
+      --brand-color-primary-border-hover: #408f83;
+      --brand-color-primary-hover: #268278;
+      --brand-color-primary-active: #064f4c;
+      --brand-color-primary-text: #000203;
+      --brand-color-success: #2f7d32;
+      --brand-color-success-bg: #b3bdb1;
+      --brand-color-success-border: #8ea38c;
+      --brand-color-success-hover: #4a8a4b;
+      --brand-color-success-active: #1d5721;
+      --brand-color-warning: #b45309;
+      --brand-color-warning-bg: #f5ebdc;
+      --brand-color-warning-border: #dbab74;
+      --brand-color-warning-hover: #c27029;
+      --brand-color-warning-active: #8f3900;
+      --brand-color-error: #c4322a;
+      --brand-color-error-bg: #fff3f0;
+      --brand-color-error-border: #ebada2;
+      --brand-color-error-hover: #d1594d;
+      --brand-color-error-active: #9e1c19;
+      --brand-color-info: #1d6bb5;
+      --brand-color-info-bg: #e6f0f5;
+      --brand-color-info-border: #8cbddb;
+      --brand-color-link: #0f766e;
+      --brand-color-link-hover: #268278;
+      --brand-color-link-active: #064f4c;
+      --brand-color-text: #363534;
+      --brand-color-text-secondary: #696866;
+      --brand-color-text-tertiary: #949391;
+      --brand-color-text-quaternary: #c0bfbd;
+      --brand-color-fill: #d6d5d2;
+      --brand-color-fill-secondary: #eae9e6;
+      --brand-color-fill-tertiary: #eeedea;
+      --brand-color-fill-quaternary: #f3f2ef;
+      --brand-color-bg-layout: #eeedea;
+      --brand-color-bg-container: #f7f6f3;
+      --brand-color-bg-elevated: #f7f6f3;
+      --brand-color-border: #d6d5d2;
+      --brand-color-border-secondary: #eae9e6;
+      --brand-font-family: Inter, system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+      --brand-font-family-code: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+      --brand-font-size: 14px;
+      --brand-font-size-sm: 12px;
+      --brand-font-size-lg: 18px;
+      --brand-font-size-xl: 22px;
+      --brand-font-size-heading-1: 38px;
+      --brand-font-size-heading-2: 32px;
+      --brand-font-size-heading-3: 26px;
+      --brand-font-size-heading-4: 22px;
+      --brand-font-size-heading-5: 18px;
+      --brand-line-height: 1.5714285714285714;
+      --brand-line-height-heading: 1.25;
+      --brand-font-weight-strong: 600;
+      --brand-size-xxs: 4px;
+      --brand-size-xs: 8px;
+      --brand-size-sm: 12px;
+      --brand-size: 16px;
+      --brand-size-md: 20px;
+      --brand-size-lg: 24px;
+      --brand-size-xl: 32px;
+      --brand-size-xxl: 48px;
+      --brand-border-radius-xs: 3px;
+      --brand-border-radius-sm: 5px;
+      --brand-border-radius: 8px;
+      --brand-border-radius-lg: 10px;
+      --brand-line-width: 1px;
+      --brand-control-height-xs: 16px;
+      --brand-control-height-sm: 24px;
+      --brand-control-height: 32px;
+      --brand-control-height-lg: 40px;
+      --brand-motion-duration-fast: 0.1s;
+      --brand-motion-duration-mid: 0.2s;
+      --brand-motion-duration-slow: 0.3s;
+      --brand-motion-ease-in-out: cubic-bezier(0.645, 0.045, 0.355, 1);
+      --brand-motion-ease-out: cubic-bezier(0.215, 0.61, 0.355, 1);
+      --brand-primary-palette-1: #a8b5b2;
+      --brand-primary-palette-2: #82a8a0;
+      --brand-primary-palette-3: #5f9c91;
+      --brand-primary-palette-4: #408f83;
+      --brand-primary-palette-5: #268278;
+      --brand-primary-palette-6: #0f766e;
+      --brand-primary-palette-7: #064f4c;
+      --brand-primary-palette-8: #012928;
+      --brand-primary-palette-9: #000203;
+      --brand-primary-palette-10: #000000;
+      --brand-presets-red-1: #fff1f0;
+      --brand-presets-red-2: #ffcbc7;
+      --brand-presets-red-3: #ffa39e;
+      --brand-presets-red-4: #ff7775;
+      --brand-presets-red-5: #ff4d50;
+      --brand-presets-red-6: #f5222d;
+      --brand-presets-red-7: #cf1323;
+      --brand-presets-red-8: #a8071a;
+      --brand-presets-red-9: #820014;
+      --brand-presets-red-10: #5c0011;
+      --brand-presets-volcano-1: #fff2e8;
+      --brand-presets-volcano-2: #ffd8bf;
+      --brand-presets-volcano-3: #ffbb96;
+      --brand-presets-volcano-4: #ff9c6e;
+      --brand-presets-volcano-5: #ff7a45;
+      --brand-presets-volcano-6: #fa541c;
+      --brand-presets-volcano-7: #d4380d;
+      --brand-presets-volcano-8: #ad2202;
+      --brand-presets-volcano-9: #871500;
+      --brand-presets-volcano-10: #610c00;
+      --brand-presets-orange-1: #fff7e6;
+      --brand-presets-orange-2: #ffe7ba;
+      --brand-presets-orange-3: #ffd591;
+      --brand-presets-orange-4: #ffc069;
+      --brand-presets-orange-5: #ffa940;
+      --brand-presets-orange-6: #fa8c16;
+      --brand-presets-orange-7: #d46b08;
+      --brand-presets-orange-8: #ad4e00;
+      --brand-presets-orange-9: #873800;
+      --brand-presets-orange-10: #612500;
+      --brand-presets-gold-1: #fffbe6;
+      --brand-presets-gold-2: #fff1b8;
+      --brand-presets-gold-3: #ffe58f;
+      --brand-presets-gold-4: #ffd666;
+      --brand-presets-gold-5: #ffc53d;
+      --brand-presets-gold-6: #faad14;
+      --brand-presets-gold-7: #d48806;
+      --brand-presets-gold-8: #ad6800;
+      --brand-presets-gold-9: #874c00;
+      --brand-presets-gold-10: #613400;
+      --brand-presets-yellow-1: #feffe6;
+      --brand-presets-yellow-2: #ffffb8;
+      --brand-presets-yellow-3: #fffb8f;
+      --brand-presets-yellow-4: #fff566;
+      --brand-presets-yellow-5: #ffeb3d;
+      --brand-presets-yellow-6: #fadb14;
+      --brand-presets-yellow-7: #d4b106;
+      --brand-presets-yellow-8: #ad8a00;
+      --brand-presets-yellow-9: #876700;
+      --brand-presets-yellow-10: #614700;
+      --brand-presets-lime-1: #fcffe6;
+      --brand-presets-lime-2: #f4ffb8;
+      --brand-presets-lime-3: #eaff8f;
+      --brand-presets-lime-4: #d3f261;
+      --brand-presets-lime-5: #bae637;
+      --brand-presets-lime-6: #a0d911;
+      --brand-presets-lime-7: #7bb305;
+      --brand-presets-lime-8: #5b8c00;
+      --brand-presets-lime-9: #3f6600;
+      --brand-presets-lime-10: #254000;
+      --brand-presets-green-1: #f6ffed;
+      --brand-presets-green-2: #d9f7be;
+      --brand-presets-green-3: #b6eb8f;
+      --brand-presets-green-4: #94de64;
+      --brand-presets-green-5: #72d13d;
+      --brand-presets-green-6: #52c41a;
+      --brand-presets-green-7: #389e0d;
+      --brand-presets-green-8: #227804;
+      --brand-presets-green-9: #135200;
+      --brand-presets-green-10: #092b00;
+      --brand-presets-cyan-1: #e6fffb;
+      --brand-presets-cyan-2: #b5f5ec;
+      --brand-presets-cyan-3: #87e8de;
+      --brand-presets-cyan-4: #5cdbd3;
+      --brand-presets-cyan-5: #36cfc9;
+      --brand-presets-cyan-6: #13c2c2;
+      --brand-presets-cyan-7: #08979c;
+      --brand-presets-cyan-8: #006d75;
+      --brand-presets-cyan-9: #00474f;
+      --brand-presets-cyan-10: #002329;
+      --brand-presets-blue-1: #e6f4ff;
+      --brand-presets-blue-2: #bae0ff;
+      --brand-presets-blue-3: #91caff;
+      --brand-presets-blue-4: #69b1ff;
+      --brand-presets-blue-5: #4096ff;
+      --brand-presets-blue-6: #1677ff;
+      --brand-presets-blue-7: #0958d9;
+      --brand-presets-blue-8: #003eb3;
+      --brand-presets-blue-9: #002c8c;
+      --brand-presets-blue-10: #001d66;
+      --brand-presets-geekblue-1: #f0f5ff;
+      --brand-presets-geekblue-2: #d6e4ff;
+      --brand-presets-geekblue-3: #adc6ff;
+      --brand-presets-geekblue-4: #85a5ff;
+      --brand-presets-geekblue-5: #597df7;
+      --brand-presets-geekblue-6: #2f54eb;
+      --brand-presets-geekblue-7: #1d39c4;
+      --brand-presets-geekblue-8: #10229e;
+      --brand-presets-geekblue-9: #061178;
+      --brand-presets-geekblue-10: #030852;
+      --brand-presets-purple-1: #f9f0ff;
+      --brand-presets-purple-2: #efdbff;
+      --brand-presets-purple-3: #d4adf7;
+      --brand-presets-purple-4: #b37feb;
+      --brand-presets-purple-5: #9254de;
+      --brand-presets-purple-6: #722ed1;
+      --brand-presets-purple-7: #531dab;
+      --brand-presets-purple-8: #391085;
+      --brand-presets-purple-9: #22075e;
+      --brand-presets-purple-10: #120338;
+      --brand-presets-magenta-1: #fff0f6;
+      --brand-presets-magenta-2: #ffd6e7;
+      --brand-presets-magenta-3: #ffadd2;
+      --brand-presets-magenta-4: #ff85bf;
+      --brand-presets-magenta-5: #f759aa;
+      --brand-presets-magenta-6: #eb2f96;
+      --brand-presets-magenta-7: #c41d7e;
+      --brand-presets-magenta-8: #9e1067;
+      --brand-presets-magenta-9: #780650;
+      --brand-presets-magenta-10: #520339;
+      --brand-presets-grey-1: #a6a6a6;
+      --brand-presets-grey-2: #999999;
+      --brand-presets-grey-3: #8c8c8c;
+      --brand-presets-grey-4: #808080;
+      --brand-presets-grey-5: #737373;
+      --brand-presets-grey-6: #666666;
+      --brand-presets-grey-7: #404040;
+      --brand-presets-grey-8: #1a1a1a;
+      --brand-presets-grey-9: #000000;
+      --brand-presets-grey-10: #000000;
+    }
+      :root { --display-family: Inter, system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif, var(--brand-font-family); }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        font-family: var(--brand-font-family);
+        font-size: var(--brand-font-size);
+        line-height: var(--brand-line-height);
+        color: var(--brand-color-text);
+        background: var(--brand-color-bg-layout);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      a { color: var(--brand-color-link); text-decoration: none; }
+      h1, h2, h3, h4 {
+        margin: 0;
+        font-family: var(--display-family);
+        line-height: var(--brand-line-height-heading);
+        font-weight: var(--brand-font-weight-strong);
+        color: var(--brand-color-text);
+        overflow-wrap: break-word;
+      }
+      p { margin: 0; overflow-wrap: break-word; }
+      img, svg { max-width: 100%; display: block; }
+      .wrap { max-width: 1120px; margin: 0 auto; padding-left: clamp(20px, 4vw, 40px); padding-right: clamp(20px, 4vw, 40px); }
+      .kicker {
+        display: block;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        font-size: var(--brand-font-size-sm);
+        font-weight: var(--brand-font-weight-strong);
+        color: var(--brand-color-primary);
+        margin-bottom: var(--brand-size-sm);
+      }
+      .clamp-2, .clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+      .clamp-2 { -webkit-line-clamp: 2; }
+      .clamp-3 { -webkit-line-clamp: 3; }
+      a[role="button"]{transition:filter .15s ease,transform .15s ease}
+a[role="button"]:hover{filter:brightness(1.07)}
+a[role="button"]:active{filter:brightness(.95);transform:translateY(0.5px)}
+input:focus,textarea:focus,select:focus{border-color:var(--brand-color-primary)!important;box-shadow:0 0 0 3px var(--brand-color-primary-bg);outline:none}
+details.kit-acc>summary{list-style:none;cursor:pointer}
+details.kit-acc>summary::-webkit-details-marker{display:none}
+details.kit-acc .kit-acc-icon{transition:transform .18s ease}
+details.kit-acc[open] .kit-acc-icon{transform:rotate(45deg)}
+      
+      .nav-links { display: flex; gap: 28px; align-items: center; color: var(--brand-color-text-secondary); }
+      .nav-links a { color: var(--brand-color-text-secondary); transition: color .15s ease; }
+      .nav-links a:hover { color: var(--brand-color-text); }
+      @media (max-width: 820px) { .nav-links { display: none; } }
+      .section { padding: clamp(64px, 9vw, 104px) 0; }
+      .section-head { max-width: 680px; margin: 0 auto 48px; text-align: center; }
+      .pillars { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(16px, 2vw, 24px); }
+      @media (max-width: 880px) { .pillars { grid-template-columns: 1fr; } }
+      .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; align-items: stretch; }
+      .problem-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(14px, 1.8vw, 20px); }
+      @media (max-width: 880px) { .problem-grid { grid-template-columns: 1fr; } }
+      .zig { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(32px, 5vw, 72px); align-items: center; }
+      .zig + .zig { margin-top: clamp(48px, 7vw, 96px); }
+      @media (max-width: 880px) { .zig { grid-template-columns: 1fr; gap: 28px; } .zig .zig-visual { order: -1; } }
+      .footer-cols { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 32px; }
+      @media (max-width: 760px) { .footer-cols { grid-template-columns: 1fr 1fr; } }
+      .mock-grid { display: grid; grid-template-columns: 200px minmax(0, 1fr); min-height: 300px; }
+      @media (max-width: 720px) { .mock-grid { grid-template-columns: minmax(0, 1fr); } .mock-side { display: none; } }
+      .hero-trust { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
+
+    </style>
+  </head>
+  <body>
+    <header style="position:sticky;top:0;z-index:20;background:color-mix(in srgb, var(--brand-color-bg-container) 86%, transparent);backdrop-filter:blur(12px);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary);">
+      <div class="wrap" style="display:flex;align-items:center;justify-content:space-between;height:64px;gap:var(--brand-size-lg);">
+        <span style="font-family:var(--display-family);font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-lg);letter-spacing:-0.01em;color:var(--brand-color-text);white-space:nowrap;">Sigap Civic Health</span>
+        <nav class="nav-links">
+          <a href="#how">How it works</a>
+          <a href="#features">Features</a>
+          <a href="#pricing">Pricing</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+        <div style="display:flex;gap:var(--brand-size-sm);align-items:center;">
+          <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-size:var(--brand-font-size-sm);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:transparent;color:var(--brand-color-text);border-color:transparent">Sign in</a>
+          <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-size:var(--brand-font-size-sm);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-primary);color:#fff;border-color:var(--brand-color-primary);box-shadow:0 2px 0 var(--brand-color-primary-bg)">Get started free</a>
+        </div>
+      </div>
+    </header>
+
+    <!-- 2 · HERO — the 5-piece value prop -->
+    <main>
+    <section class="wrap" style="padding-top:clamp(56px, 9vw, 108px);text-align:center;">
+      <div style="max-width:860px;margin:0 auto;">
+        <span style="display:inline-flex;align-items:center;height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);line-height:1;color:var(--brand-color-primary);background:var(--brand-color-primary-bg);border:var(--brand-line-width) solid var(--brand-color-primary-border);border-radius:var(--brand-border-radius-sm)">Trustworthy · Calm · Precise</span>
+        <h1 style="font-size:clamp(36px, 5.6vw, 64px);letter-spacing:-0.025em;line-height:1.06;margin:var(--brand-size-lg) auto var(--brand-size-md);max-width:18ch;">Layanan kesehatan warga yang cepat, tenang, dan tepercaya</h1>
+        <p style="font-size:var(--brand-font-size-xl);color:var(--brand-color-text-secondary);max-width:62ch;margin:0 auto var(--brand-size-xl);line-height:1.5;">Sigap is an Indonesian civic-health digital service for citizens, patients, and healthcare facility operators.
+
+The product helps citizens find healthcare facilities, make appointments, check in, and track visit/queue status. Facility staff use it to manage queues, appointments, schedules, facilities, and operational notifications.
+
+The redesign must feel trustworthy, calm, precise, accessible, modern, and suitable for a real public-health digital service.
+
+Avoid generic SaaS aesthetics, AI-generated visual patterns, gradients, glassmorphism, excessive cards, excessive rounded corners, huge hero sections, fake metrics, decorative illustrations, and startup-style marketing UI.
+
+Citizen-facing interfaces should be friendly and task-oriented. Admin interfaces should be operational, information-dense, fast to scan, and desktop-first.
+
+All UI copy should use natural Indonesian.</p>
+        <div style="display:flex;gap:var(--brand-size-sm);justify-content:center;flex-wrap:wrap;">
+          <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height-lg);padding:0 var(--brand-size-lg);font-size:var(--brand-font-size-lg);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-primary);color:#fff;border-color:var(--brand-color-primary);box-shadow:0 2px 0 var(--brand-color-primary-bg)">Get started free</a>
+          <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height-lg);padding:0 var(--brand-size-lg);font-size:var(--brand-font-size-lg);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-bg-container);color:var(--brand-color-text);border-color:var(--brand-color-border)">See how it works</a>
+        </div>
+        <p style="margin-top:var(--brand-size-md);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);">Free plan · No credit card · 2-minute setup</p>
+      </div>
+      <div style="max-width:980px;margin:clamp(40px, 6vw, 68px) auto 0;">
+      <div style="border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:14px;overflow:hidden;background:var(--brand-color-bg-container);box-shadow:0 32px 80px -24px var(--brand-color-fill-secondary);">
+        <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary);background:var(--brand-color-fill-quaternary);">
+          <span style="width:10px;height:10px;border-radius:50%;background:var(--brand-color-error);opacity:.55;"></span>
+          <span style="width:10px;height:10px;border-radius:50%;background:var(--brand-color-warning);opacity:.55;"></span>
+          <span style="width:10px;height:10px;border-radius:50%;background:var(--brand-color-success);opacity:.55;"></span>
+          <span style="flex:1;max-width:380px;margin-left:12px;height:22px;border-radius:11px;background:var(--brand-color-fill-tertiary);display:flex;align-items:center;padding:0 12px;font-size:11px;color:var(--brand-color-text-quaternary);overflow:hidden;white-space:nowrap;">sigap-civic-health</span>
+        </div>
+        <div class="mock-grid">
+          <div class="mock-side" style="border-right:var(--brand-line-width) solid var(--brand-color-border-secondary);padding:16px 12px;display:flex;flex-direction:column;gap:4px;">
+            <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--brand-border-radius-sm);background:var(--brand-color-primary-bg);">
+      <div style="width:14px;height:14px;border-radius:4px;background:var(--brand-color-primary);"></div>
+      <div style="width:64%;height:8px;border-radius:5px;background:var(--brand-color-fill-secondary);"></div>
+    </div><div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--brand-border-radius-sm);">
+      <div style="width:14px;height:14px;border-radius:4px;background:var(--brand-color-fill);"></div>
+      <div style="width:52%;height:8px;border-radius:5px;background:var(--brand-color-fill-secondary);"></div>
+    </div><div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--brand-border-radius-sm);">
+      <div style="width:14px;height:14px;border-radius:4px;background:var(--brand-color-fill);"></div>
+      <div style="width:52%;height:8px;border-radius:5px;background:var(--brand-color-fill-secondary);"></div>
+    </div><div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--brand-border-radius-sm);">
+      <div style="width:14px;height:14px;border-radius:4px;background:var(--brand-color-fill);"></div>
+      <div style="width:52%;height:8px;border-radius:5px;background:var(--brand-color-fill-secondary);"></div>
+    </div>
+          </div>
+          <div style="padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+              <div style="width:180px;height:14px;border-radius:5px;background:var(--brand-color-fill-secondary);"></div>
+              <div style="width:96px;height:28px;border-radius:var(--brand-border-radius);background:var(--brand-color-primary);"></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;flex:1;">
+              <div style="border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);padding:16px;display:flex;align-items:flex-end;gap:8px;min-height:160px;"><div style="flex:1;height:42%;border-radius:4px 4px 0 0;background:var(--brand-primary-palette-4);"></div><div style="flex:1;height:68%;border-radius:4px 4px 0 0;background:var(--brand-primary-palette-5);"></div><div style="flex:1;height:54%;border-radius:4px 4px 0 0;background:var(--brand-primary-palette-6);"></div><div style="flex:1;height:82%;border-radius:4px 4px 0 0;background:var(--brand-primary-palette-7);"></div><div style="flex:1;height:64%;border-radius:4px 4px 0 0;background:var(--brand-primary-palette-4);"></div><div style="flex:1;height:96%;border-radius:4px 4px 0 0;background:var(--brand-primary-palette-5);"></div><div style="flex:1;height:72%;border-radius:4px 4px 0 0;background:var(--brand-primary-palette-6);"></div><div style="flex:1;height:58%;border-radius:4px 4px 0 0;background:var(--brand-primary-palette-7);"></div></div>
+              <div style="display:flex;flex-direction:column;gap:12px;">
+                <div style="border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);padding:14px;display:flex;flex-direction:column;gap:8px;"><div style="width:40%;height:8px;border-radius:5px;background:var(--brand-color-fill-secondary);"></div><div style="width:70%;height:14px;border-radius:5px;background:var(--brand-color-fill-secondary);"></div></div>
+                <div style="border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);padding:14px;display:flex;flex-direction:column;gap:8px;"><div style="width:46%;height:8px;border-radius:5px;background:var(--brand-color-fill-secondary);"></div><div style="width:60%;height:14px;border-radius:5px;background:var(--brand-color-fill-secondary);"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div>
+    </section>
+
+    <!-- 3 · SOCIAL PROOF — hugs the hero -->
+    <section class="wrap" style="padding:clamp(40px,6vw,64px) 0 8px;">
+      <div class="hero-trust" style="margin-bottom:var(--brand-size-lg);">
+        <span style="color:var(--brand-color-warning);letter-spacing:2px;">★★★★★</span>
+        <span style="font-size:var(--brand-font-size-sm);color:var(--brand-color-text-secondary);">Rated 4.9/5 by 12,000+ teams</span>
+      </div>
+      <p style="text-align:center;text-transform:uppercase;letter-spacing:0.16em;font-size:var(--brand-font-size-sm);color:var(--brand-color-text-quaternary);margin-bottom:var(--brand-size-lg);">Trusted by teams at</p>
+      <div style="display:flex;justify-content:center;align-items:center;gap:clamp(24px,5vw,56px);flex-wrap:wrap;opacity:0.9;">
+        <span style="font-family:var(--display-family);font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-lg);color:var(--brand-color-text-quaternary);letter-spacing:0.02em;white-space:nowrap;">Beranda</span>
+        <span style="font-family:var(--display-family);font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-lg);color:var(--brand-color-text-quaternary);letter-spacing:0.02em;white-space:nowrap;">Cari Faskes</span>
+        <span style="font-family:var(--display-family);font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-lg);color:var(--brand-color-text-quaternary);letter-spacing:0.02em;white-space:nowrap;">Northwind</span>
+        <span style="font-family:var(--display-family);font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-lg);color:var(--brand-color-text-quaternary);letter-spacing:0.02em;white-space:nowrap;">Lumen Labs</span>
+        <span style="font-family:var(--display-family);font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-lg);color:var(--brand-color-text-quaternary);letter-spacing:0.02em;white-space:nowrap;">Fieldnote</span>
+      </div>
+    </section>
+
+    <!-- 4 · PROBLEM — PAS (P + A) -->
+    <section class="section">
+      <div class="wrap">
+        <div class="section-head">
+        <span class="kicker">The problem</span>
+        <h2 style="font-size:clamp(26px, 3.2vw, 38px);letter-spacing:-0.015em;margin-bottom:var(--brand-size-sm);">You're not slow. Your setup is.</h2>
+        <p style="color:var(--brand-color-text-secondary);font-size:var(--brand-font-size-lg);">Sound familiar? The longer it goes unfixed, the more it quietly taxes everything Sigap Civic Health is supposed to make easy.</p>
+      </div>
+        <div class="problem-grid">
+        <div style="background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);padding:var(--brand-size-xl);">
+          <div style="display:flex;align-items:flex-start;gap:var(--brand-size-sm);">
+            <span style="flex:0 0 auto;width:8px;height:8px;border-radius:50%;margin-top:9px;background:var(--brand-color-error);"></span>
+            <div>
+              <h3 style="font-size:var(--brand-font-size-lg);margin-bottom:var(--brand-size-xxs);">Stuck with generic saas terms</h3>
+              <p class="clamp-3" style="color:var(--brand-color-text-tertiary);font-size:var(--brand-font-size);">Every week it costs you time, momentum and a little more trust from the team.</p>
+            </div>
+          </div>
+        </div>
+        <div style="background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);padding:var(--brand-size-xl);">
+          <div style="display:flex;align-items:flex-start;gap:var(--brand-size-sm);">
+            <span style="flex:0 0 auto;width:8px;height:8px;border-radius:50%;margin-top:9px;background:var(--brand-color-error);"></span>
+            <div>
+              <h3 style="font-size:var(--brand-font-size-lg);margin-bottom:var(--brand-size-xxs);">Stuck with marketing hype</h3>
+              <p class="clamp-3" style="color:var(--brand-color-text-tertiary);font-size:var(--brand-font-size);">Every week it costs you time, momentum and a little more trust from the team.</p>
+            </div>
+          </div>
+        </div>
+        <div style="background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);padding:var(--brand-size-xl);">
+          <div style="display:flex;align-items:flex-start;gap:var(--brand-size-sm);">
+            <span style="flex:0 0 auto;width:8px;height:8px;border-radius:50%;margin-top:9px;background:var(--brand-color-error);"></span>
+            <div>
+              <h3 style="font-size:var(--brand-font-size-lg);margin-bottom:var(--brand-size-xxs);">Stuck with startup slogans</h3>
+              <p class="clamp-3" style="color:var(--brand-color-text-tertiary);font-size:var(--brand-font-size);">Every week it costs you time, momentum and a little more trust from the team.</p>
+            </div>
+          </div>
+        </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 · VALUE PILLARS — PAS (S), FAB so each shows the benefit -->
+    <section id="value" class="section" style="background:var(--brand-color-bg-container);border-top:var(--brand-line-width) solid var(--brand-color-border-secondary);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary);">
+      <div class="wrap">
+        <div class="section-head">
+        <span class="kicker">Why Sigap Civic Health</span>
+        <h2 style="font-size:clamp(26px, 3.2vw, 38px);letter-spacing:-0.015em;margin-bottom:var(--brand-size-sm);">Here's how that changes</h2>
+        <p style="color:var(--brand-color-text-secondary);font-size:var(--brand-font-size-lg);">Three ways Sigap Civic Health turns the daily grind into something you actually look forward to.</p>
+      </div>
+        <div class="pillars">
+        <div style="background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);padding:var(--brand-size-xl);box-shadow:0 1px 2px var(--brand-color-fill-quaternary);display:flex;flex-direction:column;">
+          <div style="display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;background:var(--brand-color-primary-bg);color:var(--brand-color-primary);margin-bottom:var(--brand-size-md);"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" style="display:block;"><path d="M5 12l4 4 10-10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <h3 class="clamp-2" style="font-size:var(--brand-font-size-heading-4);margin-bottom:var(--brand-size-xs);">Indonesian civic-health service for citizens, patients, and facility operators.</h3>
+          <p class="clamp-3" style="color:var(--brand-color-text-secondary);">Trustworthy by design — and built into every surface Sigap Civic Health ships.</p>
+        </div>
+        <div style="background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);padding:var(--brand-size-xl);box-shadow:0 1px 2px var(--brand-color-fill-quaternary);display:flex;flex-direction:column;">
+          <div style="display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;background:var(--brand-color-primary-bg);color:var(--brand-color-primary);margin-bottom:var(--brand-size-md);"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" style="display:block;"><path d="M12 3v18M3 12h18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <h3 class="clamp-2" style="font-size:var(--brand-font-size-heading-4);margin-bottom:var(--brand-size-xs);">Citizens find facilities, book appointments, check in, and track visit and queue status.</h3>
+          <p class="clamp-3" style="color:var(--brand-color-text-secondary);">Calm by design — and built into every surface Sigap Civic Health ships.</p>
+        </div>
+        <div style="background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);padding:var(--brand-size-xl);box-shadow:0 1px 2px var(--brand-color-fill-quaternary);display:flex;flex-direction:column;">
+          <div style="display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;background:var(--brand-color-primary-bg);color:var(--brand-color-primary);margin-bottom:var(--brand-size-md);"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" style="display:block;"><circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 20l-4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <h3 class="clamp-2" style="font-size:var(--brand-font-size-heading-4);margin-bottom:var(--brand-size-xs);">Facility staff manage queues, appointments, schedules, facilities, and operational notifications.</h3>
+          <p class="clamp-3" style="color:var(--brand-color-text-secondary);">Precise by design — and built into every surface Sigap Civic Health ships.</p>
+        </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6 · HOW IT WORKS — 3 steps -->
+    <section id="how" class="section">
+      <div class="wrap">
+        <div class="section-head">
+        <span class="kicker">How it works</span>
+        <h2 style="font-size:clamp(26px, 3.2vw, 38px);letter-spacing:-0.015em;margin-bottom:var(--brand-size-sm);">Up and running in three steps</h2>
+        <p style="color:var(--brand-color-text-secondary);font-size:var(--brand-font-size-lg);">No migration project. No six-week rollout.</p>
+      </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:clamp(24px,4vw,48px);">
+        <div style="display:flex;flex-direction:column;gap:var(--brand-size-md);">
+          <div style="aspect-ratio:124/108;border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);background:var(--brand-color-bg-layout);padding:var(--brand-size-lg);"><svg viewBox="0 0 124 108" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><rect x="14" y="40" width="92" height="9" rx="4.5" fill="var(--brand-color-border-secondary)"/><rect x="14" y="58" width="58" height="9" rx="4.5" fill="var(--brand-color-border-secondary)"/><rect x="14" y="80" width="40" height="14" rx="7" fill="var(--brand-color-primary)"/></svg></div>
+          <div>
+            <div style="display:flex;align-items:center;gap:var(--brand-size-sm);margin-bottom:var(--brand-size-xs);">
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--brand-color-primary);color:#fff;font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);">1</span>
+              <h3 style="font-size:var(--brand-font-size-heading-4);">Connect</h3>
+            </div>
+            <p style="color:var(--brand-color-text-secondary);max-width:34ch;">Point Sigap Civic Health at what you already have — no rebuild required.</p>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:var(--brand-size-md);">
+          <div style="aspect-ratio:124/108;border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);background:var(--brand-color-bg-layout);padding:var(--brand-size-lg);"><svg viewBox="0 0 124 108" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><rect x="14" y="38" width="44" height="38" rx="6" fill="none" stroke="var(--brand-color-border-secondary)" stroke-width="2"/><rect x="66" y="38" width="44" height="38" rx="6" fill="none" stroke="var(--brand-color-primary)" stroke-width="2"/><rect x="14" y="84" width="96" height="9" rx="4.5" fill="var(--brand-color-border-secondary)"/></svg></div>
+          <div>
+            <div style="display:flex;align-items:center;gap:var(--brand-size-sm);margin-bottom:var(--brand-size-xs);">
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--brand-color-primary);color:#fff;font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);">2</span>
+              <h3 style="font-size:var(--brand-font-size-heading-4);">Make it yours</h3>
+            </div>
+            <p style="color:var(--brand-color-text-secondary);max-width:34ch;">Adjust the defaults until they fit the way your team works.</p>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:var(--brand-size-md);">
+          <div style="aspect-ratio:124/108;border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);background:var(--brand-color-bg-layout);padding:var(--brand-size-lg);"><svg viewBox="0 0 124 108" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><path d="M16 70l20 16 28-44" fill="none" stroke="var(--brand-color-primary)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><rect x="72" y="44" width="38" height="9" rx="4.5" fill="var(--brand-color-border-secondary)"/><rect x="72" y="64" width="26" height="9" rx="4.5" fill="var(--brand-color-border-secondary)"/></svg></div>
+          <div>
+            <div style="display:flex;align-items:center;gap:var(--brand-size-sm);margin-bottom:var(--brand-size-xs);">
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--brand-color-primary);color:#fff;font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);">3</span>
+              <h3 style="font-size:var(--brand-font-size-heading-4);">Launch</h3>
+            </div>
+            <p style="color:var(--brand-color-text-secondary);max-width:34ch;">Go live with confidence, then iterate from real feedback.</p>
+          </div>
+        </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- recurring CTA (~every 1.5 screens) — calm, the loud one is reserved for module 11 -->
+    <section class="wrap" style="padding:0 0 clamp(56px,8vw,88px);">
+      <div style="border:var(--brand-line-width) solid var(--brand-color-primary-border);background:var(--brand-color-primary-bg);border-radius:clamp(14px,2vw,20px);padding:clamp(24px,4vw,36px) clamp(24px,5vw,48px);display:flex;align-items:center;justify-content:space-between;gap:var(--brand-size-lg);flex-wrap:wrap;">
+        <div style="min-width:0;">
+          <h3 style="font-size:clamp(20px,2.4vw,26px);letter-spacing:-0.01em;">See it on your own work in minutes</h3>
+          <p style="color:var(--brand-color-text-secondary);margin-top:var(--brand-size-xxs);">Free plan · No credit card · 2-minute setup</p>
+        </div>
+        <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height-lg);padding:0 var(--brand-size-lg);font-size:var(--brand-font-size-lg);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-primary);color:#fff;border-color:var(--brand-color-primary);box-shadow:0 2px 0 var(--brand-color-primary-bg)">Get started free</a>
+      </div>
+    </section>
+
+    <!-- 7 · FEATURES — zig-zag deep dive -->
+    <section id="features" class="section" style="background:var(--brand-color-bg-container);border-top:var(--brand-line-width) solid var(--brand-color-border-secondary);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary);">
+      <div class="wrap">
+        <div class="section-head">
+        <span class="kicker">A closer look</span>
+        <h2 style="font-size:clamp(26px, 3.2vw, 38px);letter-spacing:-0.015em;margin-bottom:var(--brand-size-sm);">Built for the way real teams work</h2>
+        <p style="color:var(--brand-color-text-secondary);font-size:var(--brand-font-size-lg);">Every capability earns its place — and translates to something you can feel.</p>
+      </div>
+        <div class="zig"><div>
+            <span class="kicker">Capability 01</span>
+            <h3 style="font-size:clamp(22px,2.6vw,30px);letter-spacing:-0.015em;margin-bottom:var(--brand-size-sm);">Trustworthy, calm, precise, accessible, and modern public-health service.</h3>
+            <p style="color:var(--brand-color-text-secondary);font-size:var(--brand-font-size-lg);max-width:46ch;">Accessible by design — and built into every surface Sigap Civic Health ships.</p>
+            <div style="margin-top:var(--brand-size-lg);">
+              <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height);padding:0 var(--brand-size);font-size:var(--brand-font-size);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:transparent;color:var(--brand-color-link);border-color:transparent">Learn more</a>
+            </div>
+          </div><div class="zig-visual" style="border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);background:var(--brand-color-bg-container);box-shadow:0 8px 28px -16px var(--brand-color-fill-secondary);padding:var(--brand-size-xl);min-height:240px;display:flex;flex-direction:column;gap:var(--brand-size-md);">
+            <div style="display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:11px;background:var(--brand-color-primary-bg);color:var(--brand-color-primary);"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" style="display:block;"><path d="M4 13l5 5L20 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 7l3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <div style="height:12px;width:70%;border-radius:6px;background:var(--brand-color-fill-secondary);"></div>
+            <div style="height:12px;width:52%;border-radius:6px;background:var(--brand-color-fill-tertiary);"></div>
+            <div style="margin-top:auto;display:flex;gap:var(--brand-size-sm);">
+              <div style="flex:1;height:64px;border-radius:var(--brand-border-radius);background:var(--brand-color-primary-bg);"></div>
+              <div style="flex:1;height:64px;border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid var(--brand-color-border-secondary);"></div>
+            </div>
+          </div></div>
+        <div class="zig"><div class="zig-visual" style="border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);background:var(--brand-color-bg-container);box-shadow:0 8px 28px -16px var(--brand-color-fill-secondary);padding:var(--brand-size-xl);min-height:240px;display:flex;flex-direction:column;gap:var(--brand-size-md);">
+            <div style="display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:11px;background:var(--brand-color-primary-bg);color:var(--brand-color-primary);"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" style="display:block;"><rect x="4" y="4" width="16" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 12h6M12 9v6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <div style="height:12px;width:70%;border-radius:6px;background:var(--brand-color-fill-secondary);"></div>
+            <div style="height:12px;width:52%;border-radius:6px;background:var(--brand-color-fill-tertiary);"></div>
+            <div style="margin-top:auto;display:flex;gap:var(--brand-size-sm);">
+              <div style="flex:1;height:64px;border-radius:var(--brand-border-radius);background:var(--brand-color-primary-bg);"></div>
+              <div style="flex:1;height:64px;border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid var(--brand-color-border-secondary);"></div>
+            </div>
+          </div><div>
+            <span class="kicker">Capability 02</span>
+            <h3 style="font-size:clamp(22px,2.6vw,30px);letter-spacing:-0.015em;margin-bottom:var(--brand-size-sm);">Works where you work</h3>
+            <p style="color:var(--brand-color-text-secondary);font-size:var(--brand-font-size-lg);max-width:46ch;">Integrates with the tools your team already relies on every day.</p>
+            <div style="margin-top:var(--brand-size-lg);">
+              <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height);padding:0 var(--brand-size);font-size:var(--brand-font-size);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:transparent;color:var(--brand-color-link);border-color:transparent">Learn more</a>
+            </div>
+          </div></div>
+        <div class="zig"><div>
+            <span class="kicker">Capability 03</span>
+            <h3 style="font-size:clamp(22px,2.6vw,30px);letter-spacing:-0.015em;margin-bottom:var(--brand-size-sm);">Insight you can act on</h3>
+            <p style="color:var(--brand-color-text-secondary);font-size:var(--brand-font-size-lg);max-width:46ch;">Reporting that reads like a story, not a spreadsheet.</p>
+            <div style="margin-top:var(--brand-size-lg);">
+              <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height);padding:0 var(--brand-size);font-size:var(--brand-font-size);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:transparent;color:var(--brand-color-link);border-color:transparent">Learn more</a>
+            </div>
+          </div><div class="zig-visual" style="border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);background:var(--brand-color-bg-container);box-shadow:0 8px 28px -16px var(--brand-color-fill-secondary);padding:var(--brand-size-xl);min-height:240px;display:flex;flex-direction:column;gap:var(--brand-size-md);">
+            <div style="display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:11px;background:var(--brand-color-primary-bg);color:var(--brand-color-primary);"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" style="display:block;"><path d="M12 2l3 6 7 .9-5 4.7 1.3 6.9L12 18l-6.3 3.5L7 14.6 2 9.9 9 9z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <div style="height:12px;width:70%;border-radius:6px;background:var(--brand-color-fill-secondary);"></div>
+            <div style="height:12px;width:52%;border-radius:6px;background:var(--brand-color-fill-tertiary);"></div>
+            <div style="margin-top:auto;display:flex;gap:var(--brand-size-sm);">
+              <div style="flex:1;height:64px;border-radius:var(--brand-border-radius);background:var(--brand-color-primary-bg);"></div>
+              <div style="flex:1;height:64px;border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid var(--brand-color-border-secondary);"></div>
+            </div>
+          </div></div>
+      </div>
+    </section>
+
+    <!-- 8 · PROOF — stat band + testimonials -->
+    <section style="background:var(--brand-color-primary);padding:clamp(48px,6vw,64px) 0;">
+      <div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--brand-size-xl);">
+        <div style="text-align:center;">
+          <div style="font-family:var(--display-family);font-size:clamp(30px,3.6vw,46px);font-weight:var(--brand-font-weight-strong);line-height:1.05;color:#fff;letter-spacing:-0.02em;">10k+</div>
+          <div style="margin-top:var(--brand-size-xxs);font-size:var(--brand-font-size-sm);color:rgba(255,255,255,0.78);">Teams onboard</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-family:var(--display-family);font-size:clamp(30px,3.6vw,46px);font-weight:var(--brand-font-weight-strong);line-height:1.05;color:#fff;letter-spacing:-0.02em;">99.9%</div>
+          <div style="margin-top:var(--brand-size-xxs);font-size:var(--brand-font-size-sm);color:rgba(255,255,255,0.78);">Uptime SLA</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-family:var(--display-family);font-size:clamp(30px,3.6vw,46px);font-weight:var(--brand-font-weight-strong);line-height:1.05;color:#fff;letter-spacing:-0.02em;">4.9/5</div>
+          <div style="margin-top:var(--brand-size-xxs);font-size:var(--brand-font-size-sm);color:rgba(255,255,255,0.78);">Average rating</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-family:var(--display-family);font-size:clamp(30px,3.6vw,46px);font-weight:var(--brand-font-weight-strong);line-height:1.05;color:#fff;letter-spacing:-0.02em;">120+</div>
+          <div style="margin-top:var(--brand-size-xxs);font-size:var(--brand-font-size-sm);color:rgba(255,255,255,0.78);">Integrations</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="wrap">
+        <div class="section-head">
+        <span class="kicker">Proof</span>
+        <h2 style="font-size:clamp(26px, 3.2vw, 38px);letter-spacing:-0.015em;margin-bottom:var(--brand-size-sm);">Loved by the teams who use it daily</h2>
+        <p style="color:var(--brand-color-text-secondary);font-size:var(--brand-font-size-lg);">Real results, in their words — not ours.</p>
+      </div>
+        <div class="grid-3">
+        <div style="display:flex;flex-direction:column;background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);overflow:hidden;font-family:var(--brand-font-family);color:var(--brand-color-text);box-shadow:0 1px 2px var(--brand-color-fill-quaternary)"><div style="padding:var(--brand-size-lg);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);flex:1"><p style="margin:0 0 var(--brand-size-lg);font-size:var(--brand-font-size-lg);line-height:1.6;color:var(--brand-color-text)">&ldquo;Sigap Civic Health is the first tool in this space that actually feels trustworthy. It became part of our daily flow within a week.&rdquo;</p>
+  <div style="display:flex;align-items:center;gap:var(--brand-size-sm);">
+    <span style="display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:var(--brand-control-height);height:var(--brand-control-height);border-radius:50%;background:var(--brand-color-primary-bg);color:var(--brand-color-primary-text);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);letter-spacing:0.02em;user-select:none">MC</span>
+    <div style="min-width:0;">
+      <div style="font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);font-size:var(--brand-font-size);">Maya Chen</div>
+      <div style="font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);">Head of Design, Northwind</div>
+    </div>
+  </div></div></div>
+        <div style="display:flex;flex-direction:column;background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);overflow:hidden;font-family:var(--brand-font-family);color:var(--brand-color-text);box-shadow:0 1px 2px var(--brand-color-fill-quaternary)"><div style="padding:var(--brand-size-lg);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);flex:1"><p style="margin:0 0 var(--brand-size-lg);font-size:var(--brand-font-size-lg);line-height:1.6;color:var(--brand-color-text)">&ldquo;We were skeptical, then we shipped our first project — genuinely calm — in a single afternoon. The team never looked back.&rdquo;</p>
+  <div style="display:flex;align-items:center;gap:var(--brand-size-sm);">
+    <span style="display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:var(--brand-control-height);height:var(--brand-control-height);border-radius:50%;background:var(--brand-color-primary-bg);color:var(--brand-color-primary-text);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);letter-spacing:0.02em;user-select:none">JW</span>
+    <div style="min-width:0;">
+      <div style="font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);font-size:var(--brand-font-size);">Jonas Weber</div>
+      <div style="font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);">Engineering Lead, Lumen Labs</div>
+    </div>
+  </div></div></div>
+        <div style="display:flex;flex-direction:column;background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);overflow:hidden;font-family:var(--brand-font-family);color:var(--brand-color-text);box-shadow:0 1px 2px var(--brand-color-fill-quaternary)"><div style="padding:var(--brand-size-lg);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);flex:1"><p style="margin:0 0 var(--brand-size-lg);font-size:var(--brand-font-size-lg);line-height:1.6;color:var(--brand-color-text)">&ldquo;The quality bar out of the box is what sold us. Layanan kesehatan warga yang cepat, tenang, dan tepercaya is not just a slogan here.&rdquo;</p>
+  <div style="display:flex;align-items:center;gap:var(--brand-size-sm);">
+    <span style="display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:var(--brand-control-height);height:var(--brand-control-height);border-radius:50%;background:var(--brand-color-primary-bg);color:var(--brand-color-primary-text);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);font-weight:var(--brand-font-weight-strong);letter-spacing:0.02em;user-select:none">PN</span>
+    <div style="min-width:0;">
+      <div style="font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);font-size:var(--brand-font-size);">Priya Natarajan</div>
+      <div style="font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);">Founder, Fieldnote</div>
+    </div>
+  </div></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9 · OBJECTION — FAQ -->
+    <section id="faq" class="section" style="background:var(--brand-color-bg-container);border-top:var(--brand-line-width) solid var(--brand-color-border-secondary);border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary);">
+      <div class="wrap" style="max-width:780px;">
+        <div class="section-head">
+        <span class="kicker">Before you ask</span>
+        <h2 style="font-size:clamp(26px, 3.2vw, 38px);letter-spacing:-0.015em;margin-bottom:var(--brand-size-sm);">Your questions, answered</h2>
+        
+      </div>
+        <div><details class="kit-acc" open style="border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+    <summary style="display:flex;align-items:center;justify-content:space-between;gap:var(--brand-size-md);padding:var(--brand-size-md) 0;font-family:var(--brand-font-family);font-size:var(--brand-font-size-lg);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text)"><span style="min-width:0;">What is Sigap Civic Health?</span><span class="kit-acc-icon" style="flex:0 0 auto;color:var(--brand-color-primary);font-size:var(--brand-font-size-xl);line-height:1;font-weight:400">+</span></summary>
+    <div style="padding:0 0 var(--brand-size-md);font-family:var(--brand-font-family);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);max-width:70ch">Sigap is an Indonesian civic-health digital service for citizens, patients, and healthcare facility operators.
+
+The product helps citizens find healthcare facilities, make appointments, check in, and track visit/queue status. Facility staff use it to manage queues, appointments, schedules, facilities, and operational notifications.
+
+The redesign must feel trustworthy, calm, precise, accessible, modern, and suitable for a real public-health digital service.
+
+Avoid generic SaaS aesthetics, AI-generated visual patterns, gradients, glassmorphism, excessive cards, excessive rounded corners, huge hero sections, fake metrics, decorative illustrations, and startup-style marketing UI.
+
+Citizen-facing interfaces should be friendly and task-oriented. Admin interfaces should be operational, information-dense, fast to scan, and desktop-first.
+
+All UI copy should use natural Indonesian.</div>
+  </details>
+<details class="kit-acc" style="border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+    <summary style="display:flex;align-items:center;justify-content:space-between;gap:var(--brand-size-md);padding:var(--brand-size-md) 0;font-family:var(--brand-font-family);font-size:var(--brand-font-size-lg);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text)"><span style="min-width:0;">How long does it take to get started?</span><span class="kit-acc-icon" style="flex:0 0 auto;color:var(--brand-color-primary);font-size:var(--brand-font-size-xl);line-height:1;font-weight:400">+</span></summary>
+    <div style="padding:0 0 var(--brand-size-md);font-family:var(--brand-font-family);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);max-width:70ch">Most teams are up and running in under an hour. There is nothing to install and no migration to plan — connect, customize, launch.</div>
+  </details>
+<details class="kit-acc" style="border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+    <summary style="display:flex;align-items:center;justify-content:space-between;gap:var(--brand-size-md);padding:var(--brand-size-md) 0;font-family:var(--brand-font-family);font-size:var(--brand-font-size-lg);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text)"><span style="min-width:0;">Can I try it before committing?</span><span class="kit-acc-icon" style="flex:0 0 auto;color:var(--brand-color-primary);font-size:var(--brand-font-size-xl);line-height:1;font-weight:400">+</span></summary>
+    <div style="padding:0 0 var(--brand-size-md);font-family:var(--brand-font-family);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);max-width:70ch">Yes. Start on the free plan, invite your team, and upgrade only when you need more. No credit card required.</div>
+  </details>
+<details class="kit-acc" style="border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+    <summary style="display:flex;align-items:center;justify-content:space-between;gap:var(--brand-size-md);padding:var(--brand-size-md) 0;font-family:var(--brand-font-family);font-size:var(--brand-font-size-lg);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text)"><span style="min-width:0;">How does pricing work?</span><span class="kit-acc-icon" style="flex:0 0 auto;color:var(--brand-color-primary);font-size:var(--brand-font-size-xl);line-height:1;font-weight:400">+</span></summary>
+    <div style="padding:0 0 var(--brand-size-md);font-family:var(--brand-font-family);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);max-width:70ch">Plans scale with your team. Start free, move to Pro when you need unlimited usage, and talk to us about Enterprise for custom needs.</div>
+  </details>
+<details class="kit-acc" style="border-bottom:var(--brand-line-width) solid var(--brand-color-border-secondary)">
+    <summary style="display:flex;align-items:center;justify-content:space-between;gap:var(--brand-size-md);padding:var(--brand-size-md) 0;font-family:var(--brand-font-family);font-size:var(--brand-font-size-lg);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text)"><span style="min-width:0;">What about security and privacy?</span><span class="kit-acc-icon" style="flex:0 0 auto;color:var(--brand-color-primary);font-size:var(--brand-font-size-xl);line-height:1;font-weight:400">+</span></summary>
+    <div style="padding:0 0 var(--brand-size-md);font-family:var(--brand-font-family);font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary);max-width:70ch">Your data stays yours. Access is encrypted in transit and at rest, and granular permissions keep the right things with the right people.</div>
+  </details></div>
+      </div>
+    </section>
+
+    <!-- 10 · PRICING — middle tier highlighted -->
+    <section id="pricing" class="section">
+      <div class="wrap">
+        <div class="section-head">
+        <span class="kicker">Pricing</span>
+        <h2 style="font-size:clamp(26px, 3.2vw, 38px);letter-spacing:-0.015em;margin-bottom:var(--brand-size-sm);">Plans that scale with you</h2>
+        <p style="color:var(--brand-color-text-secondary);font-size:var(--brand-font-size-lg);">Start free. Upgrade only when it earns it.</p>
+      </div>
+        <div class="grid-3" style="max-width:1000px;margin:0 auto;">
+        <div style="display:flex;flex-direction:column;position:relative;background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);padding:var(--brand-size-xl);font-family:var(--brand-font-family);box-shadow:0 1px 2px var(--brand-color-fill-quaternary)">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--brand-size-sm);margin-bottom:var(--brand-size-xs);">
+      <span style="font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-lg);color:var(--brand-color-text);">Starter</span>
+      
+    </div>
+    <p style="margin:0 0 var(--brand-size-md);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);">For trying things out.</p>
+    <div style="display:flex;align-items:baseline;gap:var(--brand-size-xxs);margin-bottom:var(--brand-size-lg);">
+      <span style="font-size:var(--brand-font-size-heading-2);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);line-height:1;letter-spacing:-0.01em;">$0</span>
+      <span style="color:var(--brand-color-text-tertiary);font-size:var(--brand-font-size-sm);">/ mo</span>
+    </div>
+    <ul style="list-style:none;margin:0 0 var(--brand-size-xl);padding:0;flex:1;"><li style="display:flex;gap:var(--brand-size-xs);align-items:flex-start;padding:var(--brand-size-xxs) 0;font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary)"><span style="color:var(--brand-color-success);font-weight:var(--brand-font-weight-strong);flex:0 0 auto;">&#10003;</span><span>Up to 3 projects</span></li><li style="display:flex;gap:var(--brand-size-xs);align-items:flex-start;padding:var(--brand-size-xxs) 0;font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary)"><span style="color:var(--brand-color-success);font-weight:var(--brand-font-weight-strong);flex:0 0 auto;">&#10003;</span><span>Indonesian civic-health service for citizens, patients, and facility operators.</span></li><li style="display:flex;gap:var(--brand-size-xs);align-items:flex-start;padding:var(--brand-size-xxs) 0;font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary)"><span style="color:var(--brand-color-success);font-weight:var(--brand-font-weight-strong);flex:0 0 auto;">&#10003;</span><span>Community support</span></li></ul>
+    <div style="display:flex;flex-direction:column;"><a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height);padding:0 var(--brand-size);font-size:var(--brand-font-size);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-bg-container);color:var(--brand-color-text);border-color:var(--brand-color-border)">Start for free</a></div>
+  </div>
+        <div style="display:flex;flex-direction:column;position:relative;background:var(--brand-color-bg-container);border:2px solid var(--brand-color-primary);border-radius:var(--brand-border-radius-lg);padding:var(--brand-size-xl);font-family:var(--brand-font-family);box-shadow:0 12px 32px var(--brand-color-primary-bg)">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--brand-size-sm);margin-bottom:var(--brand-size-xs);">
+      <span style="font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-lg);color:var(--brand-color-text);">Pro</span>
+      <span style="display:inline-flex;align-items:center;height:var(--brand-control-height-sm);padding:0 var(--brand-size-xs);font-family:var(--brand-font-family);font-size:var(--brand-font-size-sm);line-height:1;color:var(--brand-color-primary);background:var(--brand-color-primary-bg);border:var(--brand-line-width) solid var(--brand-color-primary-border);border-radius:var(--brand-border-radius-sm)">Most popular</span>
+    </div>
+    <p style="margin:0 0 var(--brand-size-md);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);">For growing teams.</p>
+    <div style="display:flex;align-items:baseline;gap:var(--brand-size-xxs);margin-bottom:var(--brand-size-lg);">
+      <span style="font-size:var(--brand-font-size-heading-2);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);line-height:1;letter-spacing:-0.01em;">$29</span>
+      <span style="color:var(--brand-color-text-tertiary);font-size:var(--brand-font-size-sm);">/ mo</span>
+    </div>
+    <ul style="list-style:none;margin:0 0 var(--brand-size-xl);padding:0;flex:1;"><li style="display:flex;gap:var(--brand-size-xs);align-items:flex-start;padding:var(--brand-size-xxs) 0;font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary)"><span style="color:var(--brand-color-success);font-weight:var(--brand-font-weight-strong);flex:0 0 auto;">&#10003;</span><span>Unlimited projects</span></li><li style="display:flex;gap:var(--brand-size-xs);align-items:flex-start;padding:var(--brand-size-xxs) 0;font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary)"><span style="color:var(--brand-color-success);font-weight:var(--brand-font-weight-strong);flex:0 0 auto;">&#10003;</span><span>Citizens find facilities, book appointments, check in, and track visit and queue status.</span></li><li style="display:flex;gap:var(--brand-size-xs);align-items:flex-start;padding:var(--brand-size-xxs) 0;font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary)"><span style="color:var(--brand-color-success);font-weight:var(--brand-font-weight-strong);flex:0 0 auto;">&#10003;</span><span>Facility staff manage queues, appointments, schedules, facilities, and operational notifications.</span></li><li style="display:flex;gap:var(--brand-size-xs);align-items:flex-start;padding:var(--brand-size-xxs) 0;font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary)"><span style="color:var(--brand-color-success);font-weight:var(--brand-font-weight-strong);flex:0 0 auto;">&#10003;</span><span>Priority support</span></li></ul>
+    <div style="display:flex;flex-direction:column;"><a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height);padding:0 var(--brand-size);font-size:var(--brand-font-size);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-primary);color:#fff;border-color:var(--brand-color-primary);box-shadow:0 2px 0 var(--brand-color-primary-bg)">Start free trial</a></div>
+  </div>
+        <div style="display:flex;flex-direction:column;position:relative;background:var(--brand-color-bg-container);border:var(--brand-line-width) solid var(--brand-color-border-secondary);border-radius:var(--brand-border-radius-lg);padding:var(--brand-size-xl);font-family:var(--brand-font-family);box-shadow:0 1px 2px var(--brand-color-fill-quaternary)">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--brand-size-sm);margin-bottom:var(--brand-size-xs);">
+      <span style="font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-lg);color:var(--brand-color-text);">Enterprise</span>
+      
+    </div>
+    <p style="margin:0 0 var(--brand-size-md);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);">For organizations at scale.</p>
+    <div style="display:flex;align-items:baseline;gap:var(--brand-size-xxs);margin-bottom:var(--brand-size-lg);">
+      <span style="font-size:var(--brand-font-size-heading-2);font-weight:var(--brand-font-weight-strong);color:var(--brand-color-text);line-height:1;letter-spacing:-0.01em;">Custom</span>
+      
+    </div>
+    <ul style="list-style:none;margin:0 0 var(--brand-size-xl);padding:0;flex:1;"><li style="display:flex;gap:var(--brand-size-xs);align-items:flex-start;padding:var(--brand-size-xxs) 0;font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary)"><span style="color:var(--brand-color-success);font-weight:var(--brand-font-weight-strong);flex:0 0 auto;">&#10003;</span><span>SSO &amp; audit logs</span></li><li style="display:flex;gap:var(--brand-size-xs);align-items:flex-start;padding:var(--brand-size-xxs) 0;font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary)"><span style="color:var(--brand-color-success);font-weight:var(--brand-font-weight-strong);flex:0 0 auto;">&#10003;</span><span>Dedicated success manager</span></li><li style="display:flex;gap:var(--brand-size-xs);align-items:flex-start;padding:var(--brand-size-xxs) 0;font-size:var(--brand-font-size);line-height:var(--brand-line-height);color:var(--brand-color-text-secondary)"><span style="color:var(--brand-color-success);font-weight:var(--brand-font-weight-strong);flex:0 0 auto;">&#10003;</span><span>Custom contracts &amp; SLA</span></li></ul>
+    <div style="display:flex;flex-direction:column;"><a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;transition:all var(--brand-motion-duration-mid) var(--brand-motion-ease-in-out);height:var(--brand-control-height);padding:0 var(--brand-size);font-size:var(--brand-font-size);border-radius:var(--brand-border-radius);border:var(--brand-line-width) solid transparent;background:var(--brand-color-bg-container);color:var(--brand-color-text);border-color:var(--brand-color-border)">Talk to sales</a></div>
+  </div>
+        </div>
+        <p style="text-align:center;margin-top:var(--brand-size-lg);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);">All prices in USD · Cancel anytime · No credit card to start.</p>
+      </div>
+    </section>
+    </main>
+
+    <!-- 11 · FINAL CTA — the page's strongest accent -->
+    <section class="wrap" style="padding-bottom:clamp(64px,9vw,104px);">
+      <div style="background:var(--brand-color-primary);border-radius:clamp(18px,2.4vw,28px);padding:clamp(48px,7vw,84px) clamp(24px,5vw,64px);text-align:center;position:relative;overflow:hidden;">
+        <div style="position:absolute;top:-100px;right:-90px;width:320px;height:320px;border-radius:50%;background:var(--brand-color-primary-hover);opacity:0.5;"></div>
+        <div style="position:absolute;bottom:-120px;left:-80px;width:260px;height:260px;border-radius:50%;background:var(--brand-color-primary-active);opacity:0.45;"></div>
+        <div style="position:relative;">
+          <h2 style="color:#fff;font-size:clamp(28px,4vw,46px);letter-spacing:-0.02em;line-height:1.08;margin-bottom:var(--brand-size-md);max-width:20ch;margin-left:auto;margin-right:auto;">Start building with Sigap Civic Health today</h2>
+          <p class="clamp-2" style="color:rgba(255,255,255,0.88);font-size:var(--brand-font-size-lg);max-width:540px;margin:0 auto var(--brand-size-xl);">Layanan kesehatan warga yang cepat, tenang, dan tepercaya</p>
+          <div style="display:flex;gap:var(--brand-size-sm);justify-content:center;flex-wrap:wrap;">
+            <a role="button" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;cursor:pointer;white-space:nowrap;user-select:none;font-family:var(--brand-font-family);font-weight:var(--brand-font-weight-strong);line-height:1;text-decoration:none;height:var(--brand-control-height-lg);padding:0 var(--brand-size-lg);font-size:var(--brand-font-size-lg);border-radius:var(--brand-border-radius);background:#fff;color:var(--brand-color-primary);border:none;">Get started free</a>
+            <a href="#" style="display:inline-flex;align-items:center;height:var(--brand-control-height-lg);color:rgba(255,255,255,0.92);font-weight:var(--brand-font-weight-strong);padding:0 var(--brand-size-md);">Talk to us &rarr;</a>
+          </div>
+          <p style="margin-top:var(--brand-size-md);font-size:var(--brand-font-size-sm);color:rgba(255,255,255,0.72);">2-minute setup · Cancel anytime</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 12 · FOOTER — grey, small, restrained -->
+    <footer style="background:var(--brand-color-bg-container);border-top:var(--brand-line-width) solid var(--brand-color-border-secondary);padding:clamp(48px,6vw,64px) 0 32px;">
+      <div class="wrap">
+        <div class="footer-cols">
+          <div>
+            <span style="font-family:var(--display-family);font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-lg);letter-spacing:-0.01em;color:var(--brand-color-text);white-space:nowrap;">Sigap Civic Health</span>
+            <p class="clamp-2" style="color:var(--brand-color-text-tertiary);max-width:36ch;margin-top:var(--brand-size-sm);font-size:var(--brand-font-size-sm);">Sigap is an Indonesian civic-health digital service for citizens, patients, and healthcare facility operators.
+
+The product helps citizens find healthcare facilities, make appointments, check in, and track visit/queue status. Facility staff use it to manage queues, appointments, schedules, facilities, and operational notifications.
+
+The redesign must feel trustworthy, calm, precise, accessible, modern, and suitable for a real public-health digital service.
+
+Avoid generic SaaS aesthetics, AI-generated visual patterns, gradients, glassmorphism, excessive cards, excessive rounded corners, huge hero sections, fake metrics, decorative illustrations, and startup-style marketing UI.
+
+Citizen-facing interfaces should be friendly and task-oriented. Admin interfaces should be operational, information-dense, fast to scan, and desktop-first.
+
+All UI copy should use natural Indonesian.</p>
+          </div>
+          <div>
+          <div style="font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-sm);text-transform:uppercase;letter-spacing:0.08em;color:var(--brand-color-text-tertiary);margin-bottom:var(--brand-size-md);">Product</div>
+          <div style="display:flex;flex-direction:column;gap:var(--brand-size-xs);">
+            <a href="#" style="color:var(--brand-color-text-secondary);">How it works</a>
+            <a href="#" style="color:var(--brand-color-text-secondary);">Features</a>
+            <a href="#" style="color:var(--brand-color-text-secondary);">Pricing</a>
+            <a href="#" style="color:var(--brand-color-text-secondary);">Changelog</a>
+          </div>
+        </div>
+          <div>
+          <div style="font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-sm);text-transform:uppercase;letter-spacing:0.08em;color:var(--brand-color-text-tertiary);margin-bottom:var(--brand-size-md);">Company</div>
+          <div style="display:flex;flex-direction:column;gap:var(--brand-size-xs);">
+            <a href="#" style="color:var(--brand-color-text-secondary);">About</a>
+            <a href="#" style="color:var(--brand-color-text-secondary);">Blog</a>
+            <a href="#" style="color:var(--brand-color-text-secondary);">Careers</a>
+            <a href="#" style="color:var(--brand-color-text-secondary);">Contact</a>
+          </div>
+        </div>
+          <div>
+          <div style="font-weight:var(--brand-font-weight-strong);font-size:var(--brand-font-size-sm);text-transform:uppercase;letter-spacing:0.08em;color:var(--brand-color-text-tertiary);margin-bottom:var(--brand-size-md);">Resources</div>
+          <div style="display:flex;flex-direction:column;gap:var(--brand-size-xs);">
+            <a href="#" style="color:var(--brand-color-text-secondary);">Docs</a>
+            <a href="#" style="color:var(--brand-color-text-secondary);">Support</a>
+            <a href="#" style="color:var(--brand-color-text-secondary);">Status</a>
+            <a href="#" style="color:var(--brand-color-text-secondary);">Privacy</a>
+          </div>
+        </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--brand-size-lg);flex-wrap:wrap;margin-top:48px;padding-top:var(--brand-size-lg);border-top:var(--brand-line-width) solid var(--brand-color-border-secondary);font-size:var(--brand-font-size-sm);color:var(--brand-color-text-tertiary);">
+          <span>&copy; Sigap Civic Health &middot; sigap-civic-health</span>
+          <span>Trustworthy · Calm · Precise</span>
+        </div>
+      </div>
+    </footer>
+
+  </body>
+</html>

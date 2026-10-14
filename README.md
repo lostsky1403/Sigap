@@ -91,8 +91,10 @@ flowchart TD
 │   │       ├── main.rs
 │   │       └── engine/queue.rs         # Logika transaksi kritis
 │   └── web/                            # SvelteKit
-│       └── src/lib/components/dashboard/
-│           └── BedAvailabilityDashboard.svelte   # Komponen utama yang diminta
+│       └── src/
+│           ├── lib/ui/                 # Primitif desain bersama (satu merek, dua kepadatan)
+│           ├── lib/citizen/            # Shell & alur warga
+│           └── routes/                 # Halaman warga dan admin
 └── README.md
 ```
 
@@ -168,6 +170,33 @@ make lint
 # Security scanning (govulncheck, cargo-audit, gitleaks)
 make security
 ```
+
+### End-to-end (Playwright) — manual trigger
+
+The browser suite is **not** wired into CI: it needs a full local stack (a
+disposable PostgreSQL cluster, the Go API, the Rust queue engine, and the web
+preview), which is too heavy for the hosted runner. It is triggered by hand
+instead, and this is that trigger:
+
+```powershell
+# Brings up the whole local seeded stack, runs the suite once per actor, tears down.
+pwsh -NoProfile -File scripts/dev/Start-LocalE2E.ps1
+
+# Reuse the existing engine binary (skips the slow `cargo build --release`).
+pwsh -NoProfile -File scripts/dev/Start-LocalE2E.ps1 -SkipEngineBuild
+
+# Leave the stack running to poke at it by hand; stop it yourself afterwards.
+pwsh -NoProfile -File scripts/dev/Start-LocalE2E.ps1 -KeepRunning
+```
+
+Requires PowerShell 7+, Go, Node/pnpm, a Rust toolchain, `protoc`, and a local
+PostgreSQL install (`initdb`/`pg_ctl`/`createdb`/`psql`). The stack is
+**local-only by construction**: the suite refuses any non-loopback base URL
+(`apps/web/playwright.config.ts`), the database is a throwaway cluster holding
+only synthetic seed data, and the dev identity flags are gated on
+`SIGAP_ENV=local` (`apps/api/internal/config/envguard.go`). It never contacts
+production. See the script's own `Get-Help` output for the actor matrix and the
+`-DatabasePort` / `-ApiPort` / `-WebPort` options.
 
 5. Test endpoint (setelah Phase 2 selesai)
    ```bash

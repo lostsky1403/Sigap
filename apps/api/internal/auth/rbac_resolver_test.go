@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sigap/sigap/apps/api/internal/identity"
 	"github.com/sigap/sigap/apps/api/internal/migrate"
 )
 
@@ -47,42 +47,17 @@ func applyMigrations(t *testing.T, ctx context.Context, pool *pgxpool.Pool) erro
 		return fmt.Errorf("create test_rbac schema: %w", err)
 	}
 
-	// migrationFiles lists, in order, the real migration files the resolver
-	// query depends on (facilities FK base, identity/RBAC tables, subject).
-	order := []int{1, 3, 8}
-	for _, v := range order {
-		name, err := migrationFileName(dir, v)
-		if err != nil {
-			return err
-		}
-		content, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			return fmt.Errorf("read migration %d: %w", v, err)
-		}
-		if _, err := pool.Exec(ctx, string(content)); err != nil {
-			return fmt.Errorf("apply migration %d: %w", v, fmtEnc(err))
-		}
+	// Apply the complete tracked chain, including existing 0010, so the
+	// resolver integration test uses the same schema as CI.
+	if _, err := migrate.Run(ctx, pool, dir); err != nil {
+		return fmt.Errorf("apply complete migration chain: %w", err)
+	}
+	var applied int
+	if err := pool.QueryRow(ctx, `SELECT 1 FROM schema_migrations WHERE version = 10`).Scan(&applied); err != nil || applied != 1 {
+		return fmt.Errorf("verify existing migration 0010: value=%d err=%w", applied, err)
 	}
 	return nil
 }
-
-// migrationFileName resolves a migration version to its exact filename using
-// the same discovery the migration runner uses.
-func migrationFileName(dir string, version int) (string, error) {
-	migrations, err := migrate.DiscoverMigrations(dir)
-	if err != nil {
-		return "", err
-	}
-	for _, m := range migrations {
-		if m.Version == version {
-			return filepath.Base(m.Path), nil
-		}
-	}
-	return "", fmt.Errorf("migration %d not found", version)
-}
-
-// fmtEnc wraps an error's message so it can be added cleanly to a Fatalf string.
-func fmtEnc(err error) error { return err }
 
 // seedRBACUser creates an app user with the given external subject and grants
 // it the named permission keys through a dedicated role. It returns the user's
@@ -243,6 +218,417 @@ func newTestResolverPool(t *testing.T) (*pgxpool.Pool, func()) {
 	return pool, cleanup
 }
 
+// seedScopedGrant inserts a user_roles row for subject at the given facility
+// (empty string means global / facility_id IS NULL) whose role carries exactly
+// the named permission keys. It returns the app user id.
+func seedScopedGrant(t *testing.T, pool *pgxpool.Pool, subject, facilityID, roleName string, perms ...string) string {
+	t.Helper()
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM user_roles WHERE user_id IN (SELECT id FROM app_users WHERE subject = $1)`, subject); err != nil {
+		t.Fatalf("cleanup user_roles: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM app_users WHERE subject = $1`, subject); err != nil {
+		t.Fatalf("cleanup app_users: %v", err)
+	}
+
+	var userID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO app_users (email, status, subject)
+		 VALUES (($1 || '@example.test'), 'active', $1)
+		 RETURNING id::text`, subject).Scan(&userID); err != nil {
+		t.Fatalf("insert app user: %v", err)
+	}
+
+	var roleID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO roles (name, description, is_system) VALUES ($1, $2, true)
+		 ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description
+		 RETURNING id::text`, roleName, "test role "+roleName).Scan(&roleID); err != nil {
+		t.Fatalf("insert role: %v", err)
+	}
+
+	var scopedFacility any
+	if facilityID != "" {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO facilities (id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, short_code)
+			 VALUES ($1, $2, 'puskesmas', 'Jl. Grant', 'Kec. Grant', 'Kab. Grant', 'Prov. Grant', '021-12345678', $3)
+			 ON CONFLICT (id) DO NOTHING`,
+			facilityID, "Grant "+roleName+" "+facilityID, grantShortCode(facilityID)); err != nil {
+			t.Fatalf("insert facility: %v", err)
+		}
+		scopedFacility = facilityID
+	}
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO user_roles (user_id, role_id, facility_id, status, deleted_at)
+		 VALUES ($1, $2, $3, 'active', NULL)`, userID, roleID, scopedFacility); err != nil {
+		t.Fatalf("insert user_roles: %v", err)
+	}
+
+	for _, perm := range perms {
+		var permID string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO permissions (key, description) VALUES ($1, 'test permission')
+			 ON CONFLICT (key) DO NOTHING
+			 RETURNING id::text`, perm).Scan(&permID); err != nil {
+			if err = pool.QueryRow(ctx, `SELECT id::text FROM permissions WHERE key = $1`, perm).Scan(&permID); err != nil {
+				t.Fatalf("get permission %s: %v", perm, err)
+			}
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2)
+			 ON CONFLICT (role_id, permission_id) DO NOTHING`, roleID, permID); err != nil {
+			t.Fatalf("insert role_permissions: %v", err)
+		}
+	}
+	return userID
+}
+
+// grantShortCode derives a short, deterministic code from a facility uuid.
+func grantShortCode(facilityID string) string {
+	return "GR" + facilityID[len(facilityID)-8:]
+}
+
+// grantAt reports whether a resolved grant set contains the key scoped to the
+// given facility.
+func grantAt(grants []identity.FacilityGrant, key string, facilityID uuid.UUID) bool {
+	for _, g := range grants {
+		if g.Key != key {
+			continue
+		}
+		if g.FacilityID != nil && *g.FacilityID == facilityID {
+			return true
+		}
+	}
+	return false
+}
+
+// grantIsUnrestricted reports whether a resolved grant set contains the key as
+// a global (facility_id IS NULL) grant.
+func grantIsUnrestricted(grants []identity.FacilityGrant, key string) bool {
+	for _, g := range grants {
+		if g.Key == key && g.Unrestricted {
+			return true
+		}
+	}
+	return false
+}
+
+// TestRBACResolver_Integration subtest proving the cross-facility privilege
+// fix at the source: a flat union is insufficient, and provenance must be
+// attached per assignment.
+func TestRBACResolverFacilityProvenance_Integration(t *testing.T) {
+	pool, cleanup := newTestResolverPool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	resolver := NewRBACResolver(pool)
+	scopeResolver := NewDBFacilityScope(pool).(FacilityScopeResolver)
+
+	// CASE1: viewer@A + operator@B for one user. The flat union legitimately
+	// contains queue.manage, but the grant must be scoped to B only.
+	t.Run("viewer at A and operator at B do not spill operator permission into A", func(t *testing.T) {
+		facA := uuid.NewString()
+		facB := uuid.NewString()
+		seedScopedGrant(t, pool, "cross-facility", facA, "viewer", "queue.read", "facility.read")
+		seedScopedGrantExtra(t, pool, "cross-facility", facB, "operator", "queue.manage", "queue.read")
+
+		got, err := resolver.Resolve(ctx, "cross-facility")
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+
+		a := uuid.MustParse(facA)
+		b := uuid.MustParse(facB)
+
+		// The flat union does contain the key: this is precisely why the flat
+		// set alone cannot authorize a facility-scoped mutation.
+		if !contains(got.Permissions, "queue.manage") {
+			t.Fatalf("precondition: flat union should contain queue.manage, got %v", got.Permissions)
+		}
+		if !grantAt(got.Grants, "queue.manage", b) {
+			t.Errorf("queue.manage must be granted at facility B, grants=%+v", got.Grants)
+		}
+		if grantAt(got.Grants, "queue.manage", a) {
+			t.Errorf("queue.manage must NOT be granted at facility A, grants=%+v", got.Grants)
+		}
+		if !grantAt(got.Grants, "queue.read", a) {
+			t.Errorf("queue.read must be granted at facility A, grants=%+v", got.Grants)
+		}
+
+		// Both facilities are in scope, so scope alone does not stop the attack.
+		scope := scopeResolver.ResolveFacilityScope(ctx, got.AppUserID)
+		if scope.Err != nil {
+			t.Fatalf("resolve scope: %v", scope.Err)
+		}
+		if !FacilityScopeResultAllows(scope, a) || !FacilityScopeResultAllows(scope, b) {
+			t.Fatalf("precondition: both facilities should be in scope, got %+v", scope)
+		}
+
+		// The two-axis check is what denies the cross-facility mutation.
+		if decision := AuthorizeFacilityMutation(actorFor(got), scope, "queue.manage", b); !decision.Allowed {
+			t.Errorf("mutation at B must be allowed, got %+v", decision)
+		}
+		if decision := AuthorizeFacilityMutation(actorFor(got), scope, "queue.manage", a); decision.Allowed {
+			t.Errorf("same mutation at A must be DENIED, got %+v", decision)
+		}
+	})
+
+	// CASE2: a narrow role at B must not inherit the broader role's reach at A.
+	t.Run("narrower role at B does not spill facility_admin at A", func(t *testing.T) {
+		facA := uuid.NewString()
+		facB := uuid.NewString()
+		seedScopedGrant(t, pool, "no-spill", facA, "facility_admin", "facility.manage", "queue.manage")
+		seedScopedGrantExtra(t, pool, "no-spill", facB, "viewer", "queue.read", "facility.read")
+
+		got, err := resolver.Resolve(ctx, "no-spill")
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		a := uuid.MustParse(facA)
+		b := uuid.MustParse(facB)
+		scope := scopeResolver.ResolveFacilityScope(ctx, got.AppUserID)
+		if scope.Err != nil {
+			t.Fatalf("resolve scope: %v", scope.Err)
+		}
+		actor := actorFor(got)
+
+		if decision := AuthorizeFacilityMutation(actor, scope, "facility.manage", a); !decision.Allowed {
+			t.Errorf("facility.manage at A must be allowed, got %+v", decision)
+		}
+		// facility.manage exists in the flat union but only at A.
+		if contains(got.Permissions, "facility.manage") && grantAt(got.Grants, "facility.manage", b) {
+			t.Errorf("facility.manage must not be granted at B, grants=%+v", got.Grants)
+		}
+		if decision := AuthorizeFacilityMutation(actor, scope, "facility.manage", b); decision.Allowed {
+			t.Errorf("facility.manage at B must be DENIED, got %+v", decision)
+		}
+	})
+
+	// CASE3: an active global super_admin keeps global access.
+	t.Run("active global super admin retains global access", func(t *testing.T) {
+		facA := uuid.NewString()
+		facB := uuid.NewString()
+		seedScopedGrant(t, pool, "global-admin", "", "super_admin", "queue.manage", "facility.manage")
+		// Create the facilities so the "global" check targets real rows.
+		for _, f := range []string{facA, facB} {
+			if _, err := pool.Exec(ctx,
+				`INSERT INTO facilities (id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, short_code)
+				 VALUES ($1, $2, 'puskesmas', 'Jl. Global', 'Kec. Global', 'Kab. Global', 'Prov. Global', '021-12345678', $3)
+				 ON CONFLICT (id) DO NOTHING`, f, "Global "+f, grantShortCode(f)); err != nil {
+				t.Fatalf("insert facility: %v", err)
+			}
+		}
+
+		got, err := resolver.Resolve(ctx, "global-admin")
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if !grantIsUnrestricted(got.Grants, "queue.manage") {
+			t.Errorf("global super_admin must hold an unrestricted queue.manage grant, grants=%+v", got.Grants)
+		}
+		scope := scopeResolver.ResolveFacilityScope(ctx, got.AppUserID)
+		if scope.Err != nil {
+			t.Fatalf("resolve scope: %v", scope.Err)
+		}
+		if !scope.Unrestricted {
+			t.Fatalf("precondition: global super_admin scope must be unrestricted, got %+v", scope)
+		}
+		actor := actorFor(got)
+		for _, f := range []uuid.UUID{uuid.MustParse(facA), uuid.MustParse(facB)} {
+			if decision := AuthorizeFacilityMutation(actor, scope, "queue.manage", f); !decision.Allowed {
+				t.Errorf("global super_admin must be allowed at %v, got %+v", f, decision)
+			}
+		}
+	})
+
+	// CASE4: a zero (unscoped, non-super_admin) assignment grants nothing.
+	t.Run("zero scope assignment grants no facility provenance", func(t *testing.T) {
+		seedScopedGrant(t, pool, "zero-scope", "", "operator", "queue.manage", "facility.manage")
+
+		got, err := resolver.Resolve(ctx, "zero-scope")
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if !contains(got.Permissions, "queue.manage") {
+			t.Errorf("precondition: flat union should list queue.manage, got %v", got.Permissions)
+		}
+		if grantIsUnrestricted(got.Grants, "queue.manage") {
+			t.Errorf("a non-super_admin zero-scope assignment must not be unrestricted, grants=%+v", got.Grants)
+		}
+		for _, g := range got.Grants {
+			if g.Key == "queue.manage" && g.FacilityID != nil {
+				t.Errorf("a zero-scope assignment must not carry a facility id, got %+v", g)
+			}
+		}
+
+		// It is also out of scope everywhere, so authorization denies.
+		fac := uuid.New()
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO facilities (id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, short_code)
+			 VALUES ($1, 'Zero Scope', 'puskesmas', 'Jl. Zero', 'Kec. Zero', 'Kab. Zero', 'Prov. Zero', '021-12345678', 'ZSC')
+			 ON CONFLICT (id) DO NOTHING`, fac.String()); err != nil {
+			t.Fatalf("insert facility: %v", err)
+		}
+		scope := scopeResolver.ResolveFacilityScope(ctx, got.AppUserID)
+		if scope.Err != nil {
+			t.Fatalf("resolve scope: %v", scope.Err)
+		}
+		if decision := AuthorizeFacilityMutation(actorFor(got), scope, "queue.manage", fac); decision.Allowed {
+			t.Errorf("zero-scope assignment must be DENIED, got %+v", decision)
+		}
+	})
+
+	// CASE5/CASE6: lifecycle-dead assignments grant neither permission nor scope.
+	t.Run("lifecycle-dead assignments grant neither permission nor scope", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			role   string
+			mutate string
+		}{
+			{name: "inactive facility scoped role", role: "operator", mutate: `status = 'inactive'`},
+			{name: "soft deleted facility scoped role", role: "operator", mutate: `deleted_at = now()`},
+			{name: "inactive global super admin", role: "super_admin", mutate: `status = 'inactive'`},
+			{name: "soft deleted global super admin", role: "super_admin", mutate: `deleted_at = now()`},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				subject := "lifecycle-" + uuid.NewString()
+				facA := uuid.NewString()
+				seedScopedGrant(t, pool, subject, facA, tc.role, "queue.manage")
+				if tc.role == "super_admin" {
+					// Make it a global assignment for the super_admin cases.
+					if _, err := pool.Exec(ctx,
+						`UPDATE user_roles SET facility_id = NULL
+						 WHERE user_id IN (SELECT id FROM app_users WHERE subject = $1)`, subject); err != nil {
+						t.Fatalf("make global: %v", err)
+					}
+				}
+				if _, err := pool.Exec(ctx,
+					`UPDATE user_roles SET `+tc.mutate+`
+					 WHERE user_id IN (SELECT id FROM app_users WHERE subject = $1)`, subject); err != nil {
+					t.Fatalf("apply lifecycle: %v", err)
+				}
+
+				got, err := resolver.Resolve(ctx, subject)
+				if err != nil {
+					t.Fatalf("resolve: %v", err)
+				}
+				if contains(got.Permissions, "queue.manage") {
+					t.Errorf("lifecycle-dead assignment granted queue.manage, permissions=%v", got.Permissions)
+				}
+				for _, g := range got.Grants {
+					if g.Key == "queue.manage" {
+						t.Errorf("lifecycle-dead assignment produced a grant, grants=%+v", got.Grants)
+					}
+				}
+				scope := scopeResolver.ResolveFacilityScope(ctx, got.AppUserID)
+				if scope.Err != nil {
+					t.Fatalf("resolve scope: %v", scope.Err)
+				}
+				if scope.Unrestricted {
+					t.Errorf("lifecycle-dead global super_admin must not be unrestricted, got %+v", scope)
+				}
+				if len(scope.IDs) != 0 {
+					t.Errorf("lifecycle-dead assignment must grant no scope, got %+v", scope)
+				}
+			})
+		}
+	})
+
+	// CASE7: token/client claims cannot manufacture provenance. The resolver is
+	// the only source; a claim has no way to reach this code path.
+	t.Run("claims cannot create facility provenance", func(t *testing.T) {
+		facA := uuid.NewString()
+		seedScopedGrant(t, pool, "claims-only", facA, "viewer", "queue.read", "facility.read")
+
+		got, err := resolver.Resolve(ctx, "claims-only")
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		// The DB grants only read keys; there is no path by which a claim
+		// could add queue.manage provenance here.
+		if contains(got.Permissions, "queue.manage") {
+			t.Errorf("unexpected queue.manage in DB-resolved set, got %v", got.Permissions)
+		}
+		if grantAt(got.Grants, "queue.manage", uuid.MustParse(facA)) {
+			t.Errorf("unexpected queue.manage provenance, grants=%+v", got.Grants)
+		}
+
+		// An actor forged purely from claims holds the key flatly but has no
+		// provenance, so the two-axis check denies.
+		forged := identity.Actor{
+			Type:        identity.ActorUser,
+			UserID:      "claims-only",
+			AppUserID:   got.AppUserID,
+			Permissions: []string{"queue.manage"},
+		}
+		scope := scopeResolver.ResolveFacilityScope(ctx, got.AppUserID)
+		if decision := AuthorizeFacilityMutation(forged, scope, "queue.manage", uuid.MustParse(facA)); decision.Allowed {
+			t.Errorf("claim-only actor must be DENIED, got %+v", decision)
+		}
+	})
+}
+
+// seedScopedGrantExtra adds a second facility-scoped assignment to an existing
+// subject, mirroring a user who legitimately holds different roles at
+// different facilities.
+func seedScopedGrantExtra(t *testing.T, pool *pgxpool.Pool, subject, facilityID, roleName string, perms ...string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO facilities (id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, short_code)
+		 VALUES ($1, $2, 'puskesmas', 'Jl. Grant', 'Kec. Grant', 'Kab. Grant', 'Prov. Grant', '021-12345678', $3)
+		 ON CONFLICT (id) DO NOTHING`, facilityID, "Extra "+roleName+" "+facilityID, grantShortCode(facilityID)); err != nil {
+		t.Fatalf("insert facility: %v", err)
+	}
+	var roleID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO roles (name, description, is_system) VALUES ($1, $2, true)
+		 ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description
+		 RETURNING id::text`, roleName, "test role "+roleName).Scan(&roleID); err != nil {
+		t.Fatalf("insert role: %v", err)
+	}
+	var userID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM app_users WHERE subject = $1`, subject).Scan(&userID); err != nil {
+		t.Fatalf("load app user: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO user_roles (user_id, role_id, facility_id, status, deleted_at)
+		 VALUES ($1, $2, $3, 'active', NULL)`, userID, roleID, facilityID); err != nil {
+		t.Fatalf("insert user_roles: %v", err)
+	}
+	for _, perm := range perms {
+		var permID string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO permissions (key, description) VALUES ($1, 'test permission')
+			 ON CONFLICT (key) DO NOTHING
+			 RETURNING id::text`, perm).Scan(&permID); err != nil {
+			if err = pool.QueryRow(ctx, `SELECT id::text FROM permissions WHERE key = $1`, perm).Scan(&permID); err != nil {
+				t.Fatalf("get permission %s: %v", perm, err)
+			}
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2)
+			 ON CONFLICT (role_id, permission_id) DO NOTHING`, roleID, permID); err != nil {
+			t.Fatalf("insert role_permissions: %v", err)
+		}
+	}
+}
+
+// actorFor wraps a resolved permission set into a non-dev Actor carrying the
+// flat keys and the facility provenance, exactly as the JWT provider does.
+func actorFor(resolved ResolvedPermissions) identity.Actor {
+	return identity.Actor{
+		Type:           identity.ActorUser,
+		UserID:         "resolved",
+		Permissions:    resolved.Permissions,
+		FacilityGrants: resolved.Grants,
+		AppUserID:      resolved.AppUserID,
+	}
+}
+
 func TestRBACResolver_Integration(t *testing.T) {
 	pool, cleanup := newTestResolverPool(t)
 	defer cleanup()
@@ -307,6 +693,66 @@ func TestRBACResolver_Integration(t *testing.T) {
 		}
 	})
 
+	for _, tc := range []struct {
+		name       string
+		subject    string
+		assignment string
+		keepPerm   string
+	}{
+		{name: "inactive role assignment grants no permissions", subject: "inactive-assignment", assignment: `status = 'inactive'`},
+		{name: "soft-deleted role assignment grants no permissions", subject: "deleted-assignment", assignment: `deleted_at = now()`},
+		{name: "inactive assignment grants nothing alongside an active one", subject: "mixed-inactive", assignment: `status = 'inactive'`, keepPerm: "facility.read"},
+		{name: "soft-deleted assignment grants nothing alongside an active one", subject: "mixed-deleted", assignment: `deleted_at = now()`, keepPerm: "facility.read"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			perms := []string{"queue.read"}
+			if tc.keepPerm != "" {
+				perms = append(perms, tc.keepPerm)
+			}
+			userID := seedRBACUser(t, pool, tc.subject, perms...)
+			if _, err := pool.Exec(ctx,
+				`UPDATE user_roles SET `+tc.assignment+`
+				 WHERE user_id IN (SELECT id FROM app_users WHERE subject = $1)
+				   AND role_id IN (
+				     SELECT rp.role_id
+				     FROM role_permissions rp
+				     JOIN permissions p ON p.id = rp.permission_id
+				     WHERE p.key = 'queue.read'
+				   )`, tc.subject); err != nil {
+				t.Fatalf("apply assignment lifecycle: %v", err)
+			}
+
+			got, err := resolver.Resolve(ctx, tc.subject)
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			if contains(got.Permissions, "queue.read") {
+				t.Errorf("lifecycle-dead assignment granted queue.read, permissions = %v", got.Permissions)
+			}
+			if len(got.Permissions) != boolToInt(tc.keepPerm != "") {
+				t.Errorf("permissions = %v, want %d effective permission(s)", got.Permissions, boolToInt(tc.keepPerm != ""))
+			}
+			if got.AppUserID != userID {
+				t.Errorf("AppUserID=%q want %q", got.AppUserID, userID)
+			}
+		})
+	}
+
+	t.Run("active user without a role resolves empty permissions and app user id", func(t *testing.T) {
+		subject := "no-role-user"
+		userID := seedRBACUser(t, pool, subject)
+		got, err := resolver.Resolve(ctx, subject)
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if len(got.Permissions) != 0 {
+			t.Errorf("expected zero permissions, got %v", got.Permissions)
+		}
+		if got.AppUserID != userID {
+			t.Errorf("AppUserID=%q want %q", got.AppUserID, userID)
+		}
+	})
+
 	t.Run("role change reflected without token change", func(t *testing.T) {
 		// Subject starts with only facility.read.
 		seedRBACUser(t, pool, "bob", "facility.read")
@@ -345,4 +791,11 @@ func contains(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

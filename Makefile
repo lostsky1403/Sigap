@@ -1,7 +1,7 @@
 # Sigap Makefile — cross-language dev orchestration (KISS, no heavy runner)
 SHELL := /bin/bash
 
-.PHONY: help dev dev-down db-migrate db-migrate-all db-seed bootstrap dev-api dev-engine dev-web dev-notification-worker build test clean lint security
+.PHONY: help dev dev-down db-migrate db-migrate-all db-seed bootstrap dev-api dev-engine dev-web dev-notification-worker build test test-ops clean lint security
 
 help:
 	@echo "Sigap — available targets:"
@@ -19,6 +19,7 @@ help:
 	@echo "  make security     # run security checks (gitleaks, cargo audit, govulncheck)"
 	@echo "  make build        # build all"
 	@echo "  make test         # run Go + Rust tests"
+	@echo "  make test-ops     # deployment-safety guards (compose/env fail-closed)"
 	@echo "  make clean        # remove build artifacts"
 
 # Boots the whole stack. docker compose auto-loads .env from the repo root,
@@ -68,6 +69,13 @@ build:
 test:
 	cd apps/api && go test ./...
 	cd apps/queue-engine && cargo test
+
+# Deployment-safety guards (no host, no container, no production contact).
+# Fails closed on: missing/local SIGAP_ENV, bad auth mode, dev-only flags,
+# unsupported Compose version, missing rollback-target contract.
+test-ops:
+	@sh scripts/ops/test-preflight-production-env.sh
+	@sh scripts/ops/test-production-deploy-guards.sh
 
 clean:
 	rm -rf apps/api/bin apps/queue-engine/target apps/web/.svelte-kit apps/web/build
