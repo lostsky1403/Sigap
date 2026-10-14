@@ -1,0 +1,22 @@
+# Line-ending policy.
+#
+# This repository is developed on Windows and deployed on Linux, and `core.autocrlf=true`
+# on a Windows checkout rewrites these files to CRLF in the working tree. For most files
+# that is harmless. For the three classes below it is not, so LF is pinned explicitly.
+#
+# All of these are already LF in the index, so this changes no committed content — it
+# stops a Windows working tree from reintroducing CR.
+
+# systemd unit files and the wrapper they exec. A unit whose value lines end in CR is a
+# real hazard on the host: `OnCalendar=...UTC\r` is not the setting the author wrote.
+deploy/systemd/* text eol=lf
+
+# Shell scripts. A CRLF shebang (`#!/bin/sh\r`) fails on Linux with "bad interpreter",
+# and every ops script here is run on the production host or in CI.
+*.sh text eol=lf
+
+# Migration SQL. apps/api/internal/migrate records SHA-256(content) into
+# schema_migrations.checksum, so the file's BYTES are evidence. A CRLF checkout hashes
+# differently from an LF one, which makes that recorded digest non-reproducible across
+# machines even though the SQL is semantically identical.
+packages/db/migrations/*.sql text eol=lf

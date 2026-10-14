@@ -95,6 +95,61 @@ else
   printf 'GUARD SKIP: python3 unavailable (edge-binding check skipped)\n'
 fi
 
+# 7c. EVERY published port must be loopback-bound in the FULL production set — not just
+#     web's. Measured 2026-10-14: with the correct three-file set all four services bind
+#     127.0.0.1, but the protection comes from docker-compose.prod-ports.yml, and 7b only
+#     ever asserted `web`. So if prod-ports.yml lost a host_ip for api, postgres or
+#     rust-engine, every existing guard would still pass while Postgres 5433, the API 8080
+#     and the Rust engine 50051 were published on ALL interfaces.
+#
+#     That is not hypothetical: `base + prod-edge` (omitting prod-ports, a plausible
+#     operator mistake — prod-edge is the file named "edge") binds api, postgres AND
+#     rust-engine to all interfaces today. This check pins the invariant for all of them.
+if command -v python3 >/dev/null 2>&1; then
+  # The probe is written to a file rather than inlined: it contains both quote styles and
+  # a nested f-string, and an inlined `python3 -c "..."` version is one shell-quoting
+  # mistake away from silently probing nothing.
+  APROBE=$(mktemp 2>/dev/null || echo "/tmp/sigap-portprobe-$$")
+  cat > "$APROBE" <<'PYPROBE'
+import json, sys
+d = json.load(sys.stdin)["services"]
+leaks = []
+seen = 0
+for name, svc in sorted(d.items()):
+    for p in svc.get("ports", []) or []:
+        seen += 1
+        hip = p.get("host_ip")
+        if hip not in ("127.0.0.1", "::1"):
+            leaks.append("%s %s->%s host_ip=%r" % (name, p.get("published"), p.get("target"), hip))
+# A response with NO published ports would make the loopback check vacuous, so say so.
+if seen == 0:
+    print("NONE")
+elif leaks:
+    print("LEAK")
+    print("; ".join(leaks))
+else:
+    print("OK")
+PYPROBE
+  portstate=$(env SIGAP_ENV=staging $BASE_CREDS $CFG --format json 2>/dev/null | python3 "$APROBE" 2>/dev/null)
+  case "$portstate" in
+    OK)   ok ;;
+    LEAK*) bad "a published port is not loopback-bound in the full production set: $(printf '%s' "$portstate" | tail -n +2)" ;;
+    NONE) bad "the full production set publishes no ports at all, so the loopback check proves nothing" ;;
+    *)    bad "could not determine port bindings from the full production set" ;;
+  esac
+  # The invariant must be non-vacuous: the BASE file alone publishes on all interfaces, so
+  # a passing full-set check is real evidence rather than an empty result.
+  basestate=$(env SIGAP_ENV=staging $BASE_CREDS docker compose -f docker-compose.yml config --format json 2>/dev/null | python3 "$APROBE" 2>/dev/null)
+  case "$basestate" in
+    LEAK*) ok ;;
+    OK)    bad "the base file is already loopback-only, so check 7c cannot distinguish a missing overlay" ;;
+    *)     bad "could not determine base-file port bindings, so check 7c is unproven" ;;
+  esac
+  rm -f "$APROBE"
+else
+  printf 'GUARD SKIP: python3 unavailable (loopback-binding check skipped)\n'
+fi
+
 # 8. SIGAP_AUTH_MODE remains required-without-default in the API service (no silent fallback).
 if grep -q 'SIGAP_AUTH_MODE: ${SIGAP_AUTH_MODE:?' docker-compose.yml; then ok; else bad "SIGAP_AUTH_MODE lost its :? guard in docker-compose.yml"; fi
 
