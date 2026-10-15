@@ -46,7 +46,7 @@ Export dir: `F:\Sehat-Hub\design\prototypes\v21-shots\`
 | 31 | 70 Flow / Peta Alur & Gerak | `roJLR` | 3120,10400 | auto | `roJLR.png` | `30dc27208bb72b5d63c0dbcff59ff99464cbca70bc308d58387d15d2c56fe0f1` |
 | 32 | 45 States / Booking & Check-In | `EiOMR` | 4680,10400 | auto | `EiOMR.png` | `27ed564a1a965cb040f2cf51eed2273fb01d5730578bbfc3bef66202c27538b2` |
 | 33 | 27 Admin Mobile / Antrean / 390 | `B5J3jT` | 0,11600 | auto | `B5J3jT.png` | `797cc36d9c54d1ef0477e2e18c98cc9f190562b6c631338c3b3a09543eb4ad55` |
-| 34 | 41 States / Dialog, Toast & Sesi | `iBe8t` | 0,12700 | auto | `iBe8t.png` | `e6dcd089753e577dc2eba758c5c2ce7c2e48365a6c898889ed932b8fa52da118` |
+| 34 | 41 States / Dialog, Toast & Sesi | `iBe8t` | 0,12700 | auto | `iBe8t.png` | `ad0feca98ebbbe9284b76c534d9e80904b164ae51714cc49b97308f20d205ace` |
 | 35 | 18 Citizen / Daftar / 1440 | `IAI2N` | 1520,12700 | auto | `IAI2N.png` | `63514d60cfabb1e34bf8cfb255656b794b59053791ee54320048aee3eeeff7f6` |
 | 36 | 35 Citizen Mobile / Walk-In / 390 | `KNWMV` | 3040,12700 | auto | `KNWMV.png` | `ca53dd486799c5191fd854b71cbaca11bc1f0c8230ebee86ea5026ff99721e78` |
 | 37 | 36 Citizen Mobile / Check-In / 390 | `xRtxS` | 3600,12700 | auto | `xRtxS.png` | `fdaa42d0e6cdb3749578d2be0953ff8d7bca969e9d897e27aac859eacc0fd710` |
@@ -74,6 +74,6 @@ Export dir: `F:\Sehat-Hub\design\prototypes\v21-shots\`
 - Top-level overlap test (AABB, all pairs): **0 overlaps**
 - Broken component references: **0**
 - Text nodes below the 11px floor: **0**
-- Filled primary buttons per real screen: **≤1**
+- Filled primary buttons per real screen: **≤1** (vision-verified on 11, 13, 14, 15, 16, 17, 18)
 - Fabricated visit records: **0**
 - Route map matches the 16 real SvelteKit routes: **yes**
