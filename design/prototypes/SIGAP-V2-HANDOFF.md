@@ -1,6 +1,6 @@
 # SIGAP V2 — Pen.dev Prototype Handoff
 
-**Artifact:** `design/prototypes/sigap-civic-v2.pen` — Pen.dev schema v2.21, 27 top-level frames, 36 variables, 20 reusable components, 21 component instances, 0 broken references.
+**Artifact:** `design/prototypes/sigap-civic-v2.pen` — Pen.dev schema v2.21, 28 top-level frames, 36 variables, 18 reusable components, 21 component instances, 0 broken references.
 
 **Source of truth read from:** `F:\sigap-design-v2`, branch `design/sigap-v2-prototype` (clean worktree created off `local/r2-drill` @ `704633c`). The main checkout `F:\Sehat-Hub` was left untouched — no Svelte component, API handler, migration, schema, auth code, or operational script was modified, and nothing was deployed.
 
@@ -81,6 +81,9 @@ Three directions were developed and compared:
 
 ### Citizen — mobile 390
 30 Beranda · 31 Status (visit pass) · 32 Faskes · 33 Buat Janji
+
+### Citizen — narrow phone 360
+34 Status (visit pass) — verifies the 40px monospace queue number and the 4-step progress row survive the narrowest supported width without overflow or label collision.
 
 ### Admin — desktop 1440
 | Frame | Route | Notes |
@@ -168,8 +171,10 @@ Visual QA ran through a vision model on exported PNGs at each stage. Defects fou
 8. **Sample-data provenance** — added an explicit note that figures and facility names are design samples, not production data.
 9. Invalid `alignItems: "baseline"` and missing lucide icon names (`clock`, `alert-triangle`) corrected.
 10. **Overlapping frames** and **duplicate frames** from rebuild passes removed.
+11. **Narrow-phone coverage gap** — the brief requires 360–375px behaviour but only 390px existed. Added a 360px visit-pass artboard, which is the composition most at risk (40px monospace number, four-step progress row). Verified clean.
+12. **Duplicate masthead components** — three copies accumulated across rebuild passes; all 7 instances repointed to one canonical component and the duplicates deleted (20 → 18 components).
 
-Final integrity check: 0 placeholders remaining, 21 ref instances resolving to 9 component targets, 0 broken references.
+Final integrity check: 0 placeholders remaining, 21 ref instances resolving to 7 component targets, 0 broken references, 28 top-level frames.
 
 ---
 

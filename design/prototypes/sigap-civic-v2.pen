@@ -29206,6 +29206,632 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "H6Br7r",
+      "x": 900,
+      "y": 8100,
+      "name": "34 Citizen Narrow / Status / 360",
+      "clip": true,
+      "width": 360,
+      "fill": "$canvas",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "thFO8",
+          "name": "MH",
+          "width": "fill_container",
+          "height": 56,
+          "fill": "$surface",
+          "stroke": "$border-subtle",
+          "strokeWidth": {
+            "bottom": 1
+          },
+          "strokeAlignment": "inner",
+          "padding": [
+            0,
+            14
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "dDmbf",
+              "name": "Brand",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": "$r-ctl",
+                  "id": "fO1kP",
+                  "name": "Mark",
+                  "fill": "$primary",
+                  "width": 24,
+                  "height": 24
+                },
+                {
+                  "type": "text",
+                  "id": "K17KKb",
+                  "name": "W",
+                  "fill": "$fg",
+                  "content": "Sigap",
+                  "lineHeight": 1.45,
+                  "fontFamily": "$font",
+                  "fontSize": 16,
+                  "fontWeight": "700",
+                  "letterSpacing": -0.01
+                }
+              ]
+            },
+            {
+              "type": "icon",
+              "id": "Np0cf",
+              "name": "Menu",
+              "width": 22,
+              "height": 22,
+              "icon": "menu",
+              "library": "lucide",
+              "fill": "$fg"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "xW4Cj",
+          "name": "Body",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "padding": [
+            18,
+            14
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "pCF7D",
+              "name": "H",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "rectangle",
+                  "id": "ib3fS",
+                  "name": "R",
+                  "fill": "$primary",
+                  "width": 100,
+                  "height": 2
+                },
+                {
+                  "type": "text",
+                  "id": "vGbxI",
+                  "name": "T",
+                  "fill": "$fg",
+                  "content": "Status kunjungan",
+                  "lineHeight": 1.45,
+                  "fontFamily": "$font",
+                  "fontSize": 21,
+                  "fontWeight": "600",
+                  "letterSpacing": -0.02
+                },
+                {
+                  "type": "text",
+                  "id": "O3Ffz",
+                  "name": "D",
+                  "fill": "$muted",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Kode check-in atau nomor antrean Anda.",
+                  "lineHeight": 1.45,
+                  "fontFamily": "$font",
+                  "fontSize": 13
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "U0Osc",
+              "name": "Pass",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$surface",
+              "cornerRadius": "$r-panel",
+              "stroke": "$border-subtle",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "hXhKY",
+                  "name": "Top",
+                  "width": "fill_container",
+                  "fill": "$primary-tint",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "padding": [
+                    18,
+                    16
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "Lt07i",
+                      "name": "E",
+                      "fill": "$primary-strong",
+                      "content": "NOMOR ANTREAN",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$font",
+                      "fontSize": 10,
+                      "fontWeight": "600",
+                      "letterSpacing": 0.08
+                    },
+                    {
+                      "type": "text",
+                      "id": "LrN1R",
+                      "name": "N",
+                      "fill": "$primary-strong",
+                      "content": "RSK-0042",
+                      "lineHeight": 1.45,
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 34,
+                      "fontWeight": "700",
+                      "letterSpacing": 0.1
+                    },
+                    {
+                      "type": "text",
+                      "id": "kMXNX",
+                      "name": "F",
+                      "fill": "$muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "RSUD Kota Sehat · Rumah Sakit",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$font",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "VQCCg",
+                  "name": "Prog",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "padding": [
+                    18,
+                    16
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "fwSNi",
+                      "name": "L",
+                      "fill": "$muted",
+                      "content": "TAHAP KUNJUNGAN",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$font",
+                      "fontSize": 10,
+                      "fontWeight": "600",
+                      "letterSpacing": 0.06
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hUdot",
+                      "name": "Steps",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "A3oUHS",
+                          "name": "S/Check-In",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 5,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "c1OQt",
+                              "name": "D",
+                              "width": 20,
+                              "height": 20,
+                              "fill": "$success",
+                              "cornerRadius": 10,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "HMT95",
+                                  "name": "G",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "check",
+                                  "library": "lucide",
+                                  "fill": "#FFFFFF"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "F61Ks",
+                              "name": "T",
+                              "fill": "$fg",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Check-In",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font",
+                              "fontSize": 10,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "uQkJh",
+                          "name": "S/Antre",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 5,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "j6X9s",
+                              "name": "D",
+                              "width": 20,
+                              "height": 20,
+                              "fill": "$primary",
+                              "cornerRadius": 10,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "kPJi8",
+                                  "name": "G",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "clock-3",
+                                  "library": "lucide",
+                                  "fill": "#FFFFFF"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "SD9M4",
+                              "name": "T",
+                              "fill": "$fg",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Antre",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font",
+                              "fontSize": 10,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "w3VQRg",
+                          "name": "S/Dilayani",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 5,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "k4fIHV",
+                              "name": "D",
+                              "width": 20,
+                              "height": 20,
+                              "fill": "$surface-sunken",
+                              "cornerRadius": 10,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "XkzM3",
+                                  "name": "G",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "circle",
+                                  "library": "lucide",
+                                  "fill": "$muted"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "fIFJU",
+                              "name": "T",
+                              "fill": "$muted",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Dilayani",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font",
+                              "fontSize": 10
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "bLf1w",
+                          "name": "S/Selesai",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 5,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "qwFVp",
+                              "name": "D",
+                              "width": 20,
+                              "height": 20,
+                              "fill": "$surface-sunken",
+                              "cornerRadius": 10,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "c07Tkk",
+                                  "name": "G",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "circle",
+                                  "library": "lucide",
+                                  "fill": "$muted"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "qMtsK",
+                              "name": "T",
+                              "fill": "$muted",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Selesai",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font",
+                              "fontSize": 10
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "eGCxq",
+                      "name": "Bar",
+                      "width": "fill_container",
+                      "height": 4,
+                      "fill": "$surface-sunken",
+                      "cornerRadius": 2,
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 2,
+                          "id": "G1x1y",
+                          "name": "F",
+                          "fill": "$primary",
+                          "width": 88,
+                          "height": 4
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "WyESA",
+                  "name": "Inf",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "padding": [
+                    0,
+                    16,
+                    18,
+                    16
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "piswM",
+                      "name": "KV/Status",
+                      "width": "fill_container",
+                      "gap": 10,
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "cAXit",
+                          "name": "K",
+                          "fill": "$muted",
+                          "content": "Status",
+                          "lineHeight": 1.45,
+                          "fontFamily": "$font",
+                          "fontSize": 11
+                        },
+                        {
+                          "type": "text",
+                          "id": "z3n6a",
+                          "name": "V",
+                          "fill": "$fg",
+                          "content": "Menunggu dipanggil",
+                          "lineHeight": 1.45,
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 11,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "osyea",
+                      "name": "KV/Estimasi",
+                      "width": "fill_container",
+                      "gap": 10,
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "m8mdIb",
+                          "name": "K",
+                          "fill": "$muted",
+                          "content": "Estimasi",
+                          "lineHeight": 1.45,
+                          "fontFamily": "$font",
+                          "fontSize": 11
+                        },
+                        {
+                          "type": "text",
+                          "id": "m9rzc",
+                          "name": "V",
+                          "fill": "$fg",
+                          "content": "Sekitar 25 menit",
+                          "lineHeight": 1.45,
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 11,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hCFQ0",
+                      "name": "KV/Diperbarui",
+                      "width": "fill_container",
+                      "gap": 10,
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Y9xVEf",
+                          "name": "K",
+                          "fill": "$muted",
+                          "content": "Diperbarui",
+                          "lineHeight": 1.45,
+                          "fontFamily": "$font",
+                          "fontSize": 11
+                        },
+                        {
+                          "type": "text",
+                          "id": "JMFWj",
+                          "name": "V",
+                          "fill": "$fg",
+                          "content": "09.42",
+                          "lineHeight": 1.45,
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 11,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "mCWTR",
+                      "name": "Cav",
+                      "width": "fill_container",
+                      "fill": "$warning-tint",
+                      "cornerRadius": "$r-ctl",
+                      "gap": 8,
+                      "padding": 10,
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "C4vpH",
+                          "name": "I",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "info",
+                          "library": "lucide",
+                          "fill": "$warning"
+                        },
+                        {
+                          "type": "text",
+                          "id": "JZJ27",
+                          "name": "T",
+                          "fill": "$fg",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Estimasi dihitung saat pendaftaran dan bisa berubah.",
+                          "lineHeight": 1.45,
+                          "fontFamily": "$font",
+                          "fontSize": 11
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "jvp44",
+                  "name": "Act",
+                  "width": "fill_container",
+                  "padding": [
+                    0,
+                    16,
+                    18,
+                    16
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "I3fNj",
+                      "name": "B",
+                      "width": "fill_container",
+                      "height": 44,
+                      "cornerRadius": "$r-ctl",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "w0qno8",
+                          "name": "L",
+                          "fill": "$fg",
+                          "content": "Perbarui status",
+                          "lineHeight": 1.45,
+                          "fontFamily": "$font",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "B07b04",
+          "type": "ref",
+          "ref": "BAZFl",
+          "name": "Nav",
+          "width": 360,
+          "height": 64
+        }
+      ]
     }
   ],
   "variables": {
