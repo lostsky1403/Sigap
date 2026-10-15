@@ -25,6 +25,13 @@ Three directions were developed and compared:
 
 **Teal budget:** ~2% of painted pixels — the primary action, inline links, the active nav item, section-opening rules, and the queue-number ground. **V2.1 correction:** the masthead CTA was demoted from filled to outlined so that **exactly one filled primary action exists per screen** (vision-verified on the homepage).
 
+**Primary-action rule, stated precisely.** One filled primary per **action context**, not one per canvas:
+
+- A screen with a page-level task has **exactly one** filled primary (submit, confirm, book). Its header CTA is outlined so the two never compete.
+- An **admin data table** has no page-level primary. Each row carries its own filled action for the transition that row's state permits (`Panggil` for a waiting ticket, `Layani` for a called one). Four rows → four filled buttons, each scoped to one row, none competing for the same click. Demoting them to outlined would hide the operator's primary work behind a secondary affordance.
+
+Both forms are applied consistently: every admin table (20, 22, 26, 27) uses row-level primaries; every task screen (12a–12f, 13, 15, 16, 17, 18) uses one page-level primary with an outlined header CTA.
+
 ---
 
 ## 2. Foundations
