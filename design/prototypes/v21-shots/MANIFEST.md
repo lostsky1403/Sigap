@@ -1,9 +1,9 @@
 # SIGAP V2.1 — Export Manifest
 
-Generated: 2026-10-15
+Generated: 2026-10-16
 Source: `F:\Sehat-Hub\design\prototypes\sigap.pen`
-Source SHA-256: `f8b7e88122a694902ea392201786e4c9751c03ae59d8801bdab57af98c714dd8`
-Source size: 1,331,976 bytes
+Source SHA-256: `b3f3ce52d5f5b5672a1b543e4c1eee12c2357a7d5913be7efef6a3842580646f`
+Source size: 1,332,165 bytes
 Mirror (byte-identical): `F:\sigap-design-v2\design\prototypes\sigap-civic-v2.pen`
 Frame count: **37** (was 28 at the V2 hand-off)
 PNG scale: 2x
@@ -24,9 +24,9 @@ Export dir: `F:\Sehat-Hub\design\prototypes\v21-shots\`
 | 9 | 15 Citizen / Check-In / 1440 | `NFusA` | 3040,3900 | auto | `NFusA.png` | `5b0414391eb4badecfaeddcac1f563720bd7756d6c936db54c9c1597661251f5` |
 | 10 | 17 Citizen / Masuk / 1440 | `nusx2` | 4560,3900 | auto | `nusx2.png` | `55521fc63f5ccd036b5119862ea2fb01478d3cdecd2d47fce5f90d176f4e4629` |
 | 11 | 12a Booking / 1 Fasilitas / 1440 | `VtQoq` | 0,4900 | auto | `VtQoq.png` | `3b82379ae5d1f8efa88606464977b5b1d1f94817b48b03b5139db993ff520e82` |
-| 12 | 12b Booking / 2 Layanan / 1440 | `TPBC7` | 1520,4900 | auto | `TPBC7.png` | `8f61b17d0f7cc6d7ea8d2bdb50e0d387a4d579020bb725c184990ba3c1988285` |
-| 13 | 12c Booking / 3 Pasien / 1440 | `kakk8` | 3040,4900 | auto | `kakk8.png` | `ea7a4a72ec66e26bc8e596c41149479bb909b7ea886ead4adfa3ffa410e3c416` |
-| 14 | 12d Booking / 4 Tinjau / 1440 | `wtJRo` | 4560,4900 | auto | `wtJRo.png` | `9dc9a49ff68d91be839071e1ff782960e4cb6505e1edec7545e2083ad4945ae0` |
+| 12 | 12b Booking / 2 Layanan / 1440 | `TPBC7` | 1520,4900 | auto | `TPBC7.png` | `9fe81b074a6d3cfac34071c20d7a96370a98578b178ef29f11ef12835836e082` |
+| 13 | 12c Booking / 3 Pasien / 1440 | `kakk8` | 3040,4900 | auto | `kakk8.png` | `1a7110afe49064072cdcba387a82f2be7d5687894229cb4208714d534ce8ed5d` |
+| 14 | 12d Booking / 4 Tinjau / 1440 | `wtJRo` | 4560,4900 | auto | `wtJRo.png` | `e4817a8f19eadd69fe4c82fa0e577dd71a2ee0331a085252d58370d01ddebc96` |
 | 15 | 12e Booking / Sukses / 1440 | `kFaiv` | 6240,4900 | auto | `kFaiv.png` | `de0b54d6f1db53b5396a66c4c140957c5d68b45ac7b0091f1326b7fde3a54a7a` |
 | 16 | 12f Booking / Galat / 1440 | `b9s1Z` | 7760,4900 | auto | `b9s1Z.png` | `0f77fd91cc97f130949303c02dfd2774cb7b26eb730f6b21c61e0c16860463f9` |
 | 17 | 20 Admin / Antrean / 1440 | `mtstm` | 0,6000 | 1440×900 | `mtstm.png` | `76842585b4405d30ee35a643cbd48230570848744bba4b014abb5799388039b5` |
@@ -42,7 +42,7 @@ Export dir: `F:\Sehat-Hub\design\prototypes\v21-shots\`
 | 27 | 34 Citizen Narrow / Status / 360 | `H6Br7r` | 1800,8100 | auto | `H6Br7r.png` | `212b7a28eaf8f480e05fd200f4238321c1cd57e697ce8337ae57356b8c8a4520` |
 | 28 | 26 Admin Responsive / Antrean / 768 | `Sr2wS` | 0,9300 | 768×900 | `Sr2wS.png` | `d4b13fb8c17453c53a89479530c07dec4cbd6cb62b351034ac2b5f01f9ac78a0` |
 | 29 | 40 States / Interaction & Read States | `LVDS7` | 0,10400 | auto | `LVDS7.png` | `e98ec0938da2c8bd00646feaf365b9a8afa964159977ac48d7054ac7d993daa4` |
-| 30 | 60 Handoff / Aksesibilitas & Pemetaan Rute | `debBO` | 1560,10400 | auto | `debBO.png` | `0d2f0dcf258729a02066a3a547ca6c416d14a9278f0185600e9b83cba62effba` |
+| 30 | 60 Handoff / Aksesibilitas & Pemetaan Rute | `debBO` | 1560,10400 | auto | `debBO.png` | `bb2cee01c68ab17b2acb0870c5269c5e9566240f7d17313b3bc77f162771b3e7` |
 | 31 | 70 Flow / Peta Alur & Gerak | `roJLR` | 3120,10400 | auto | `roJLR.png` | `30dc27208bb72b5d63c0dbcff59ff99464cbca70bc308d58387d15d2c56fe0f1` |
 | 32 | 45 States / Booking & Check-In | `EiOMR` | 4680,10400 | auto | `EiOMR.png` | `27ed564a1a965cb040f2cf51eed2273fb01d5730578bbfc3bef66202c27538b2` |
 | 33 | 27 Admin Mobile / Antrean / 390 | `B5J3jT` | 0,11600 | auto | `B5J3jT.png` | `797cc36d9c54d1ef0477e2e18c98cc9f190562b6c631338c3b3a09543eb4ad55` |
@@ -76,3 +76,4 @@ Export dir: `F:\Sehat-Hub\design\prototypes\v21-shots\`
 - Text nodes below the 11px floor: **0**
 - Filled primary buttons per real screen: **≤1**
 - Fabricated visit records: **0**
+- Route map matches the 16 real SvelteKit routes: **yes**

@@ -1,7 +1,7 @@
 # SIGAP V2.1 — Pen.dev Prototype Handoff
 
 **Artifact (canonical):** `F:\Sehat-Hub\design\prototypes\sigap.pen`
-**SHA-256:** `f8b7e88122a694902ea392201786e4c9751c03ae59d8801bdab57af98c714dd8` — 1,331,976 bytes
+**SHA-256:** `b3f3ce52d5f5b5672a1b543e4c1eee12c2357a7d5913be7efef6a3842580646f` — 1,332,165 bytes
 **Byte-identical mirror:** `F:\sigap-design-v2\design\prototypes\sigap-civic-v2.pen` (branch `design/sigap-v2-prototype`)
 **Document:** Pen.dev schema **v2.21**, **37 top-level frames**, 36 variables, **18 reusable components**, 28 ref instances, 2,992 nodes, **0 broken references**, **0 top-level frame overlaps**.
 
