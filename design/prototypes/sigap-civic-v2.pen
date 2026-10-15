@@ -882,7 +882,9 @@
                   "id": "n7h5uA",
                   "type": "ref",
                   "ref": "a7fsY",
-                  "name": "Badge"
+                  "name": "Badge",
+                  "width": 89,
+                  "height": 26
                 }
               ]
             },

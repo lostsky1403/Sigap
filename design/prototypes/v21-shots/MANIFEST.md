@@ -2,8 +2,8 @@
 
 Generated: 2026-10-16
 Source: `F:\Sehat-Hub\design\prototypes\sigap.pen`
-Source SHA-256: `b3f3ce52d5f5b5672a1b543e4c1eee12c2357a7d5913be7efef6a3842580646f`
-Source size: 1,332,165 bytes
+Source SHA-256: `715f25f315b9c85d356b1a84ac774fffce5fe8fc43d80273e9da70c766309b31`
+Source size: 1,332,228 bytes
 Mirror (byte-identical): `F:\sigap-design-v2\design\prototypes\sigap-civic-v2.pen`
 Frame count: **37** (was 28 at the V2 hand-off)
 PNG scale: 2x
@@ -14,7 +14,7 @@ Export dir: `F:\Sehat-Hub\design\prototypes\v21-shots\`
 | # | Frame | Node | Position | W×H | PNG | SHA-256 |
 |---|-------|------|----------|-----|-----|---------|
 | 1 | 00 Cover / SIGAP V2 | `nQp3R` | 0,0 | 1440×900 | `nQp3R.png` | `6f5dfbe2fe45b7e1202c9db577ac6dfaa29f4845c1261c6d8554a68ca1a8b2e0` |
-| 2 | 01 Components | `czNlX` | 1560,0 | 1400×900 | `czNlX.png` | `0148b13d756a750e073463707f967fe95145dfd923f023710aa8e424b7520b06` |
+| 2 | 01 Components | `czNlX` | 1560,0 | 1400×900 | `czNlX.png` | `c6255b85f5f1be41bd7c2f9a4e2997449ef63628eab23cc1e472df4e3118e95e` |
 | 3 | 02 Foundations | `c9xTK` | 0,1000 | auto | `c9xTK.png` | `669dee194147502144a5c72010280e93f42e938c6fed7609aa8ddb4e0f832d23` |
 | 4 | 10 Citizen / Beranda / 1440 | `O1PIku` | 0,2400 | auto | `O1PIku.png` | `4f944cbf798b29b29dcbc53945ac164ded53d9d4bcd5f756b86e84fdaacee97b` |
 | 5 | 11 Citizen / Faskes / 1440 | `OGKVi` | 1520,2400 | auto | `OGKVi.png` | `d5d4eb1da2c9646ede90c2a448678bb884ee91cf5b4c12af3156b6e1978b505b` |
@@ -73,6 +73,7 @@ Export dir: `F:\Sehat-Hub\design\prototypes\v21-shots\`
 - Top-level frames: **37**
 - Top-level overlap test (AABB, all pairs): **0 overlaps**
 - Broken component references: **0**
+- Refs nested inside other components: **1** (`n7h5uA`, explicit size, resolves inside its cell)
 - Text nodes below the 11px floor: **0**
 - Filled primary buttons per real screen: **≤1** (vision-verified on 11, 13, 14, 15, 16, 17, 18)
 - Fabricated visit records: **0**
