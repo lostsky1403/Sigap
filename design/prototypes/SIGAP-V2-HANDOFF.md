@@ -1,9 +1,9 @@
 # SIGAP V2.1 — Pen.dev Prototype Handoff
 
 **Artifact (canonical):** `F:\Sehat-Hub\design\prototypes\sigap.pen`
-**SHA-256:** `887982ab6992b21f385f362fba4a12bebe12487c547bd99dbb03ac43edb2303d` — 1,328,174 bytes
+**SHA-256:** `f8b7e88122a694902ea392201786e4c9751c03ae59d8801bdab57af98c714dd8` — 1,331,976 bytes
 **Byte-identical mirror:** `F:\sigap-design-v2\design\prototypes\sigap-civic-v2.pen` (branch `design/sigap-v2-prototype`)
-**Document:** Pen.dev schema **v2.21**, **37 top-level frames**, 36 variables, 20 component roots, 28 ref instances, 2,992 nodes, **0 broken references**, **0 top-level frame overlaps**.
+**Document:** Pen.dev schema **v2.21**, **37 top-level frames**, 36 variables, **18 reusable components**, 28 ref instances, 2,992 nodes, **0 broken references**, **0 top-level frame overlaps**.
 
 **Source of truth read from:** `F:\sigap-design-v2`, branch `design/sigap-v2-prototype`. No Svelte component, API handler, migration, schema, auth code, or operational script was modified, and nothing was deployed.
 
@@ -86,7 +86,7 @@ Three directions were developed and compared:
 | Frame | Purpose |
 |---|---|
 | 00 Cover / SIGAP V2 | Direction, source of truth, **16 route files** |
-| 01 Components | 20 component roots |
+| 01 Components | 18 reusable components |
 | 02 Foundations | Type scale, numerals, colour grid |
 
 ### Citizen — desktop 1440
@@ -227,6 +227,9 @@ Visual QA ran through a vision model on exported PNGs at every stage. **V2 defec
 22. **Two filled primary actions on the homepage** — masthead CTA demoted to outlined. Vision-verified: exactly one filled teal CTA remains.
 23. **Invented route** — frame 41's session panel listed `/patient/walk-in`, which is not a SvelteKit route. Corrected to `/queues/new`. The route map in frame 60 now matches the **16 real route files** exactly (was claimed as 21).
 24. **Toast row overflow** — four 420px toasts in one 1360px row clipped the fourth. Restructured to two rows of two; vision-verified no clipping.
+25. **Two filled primary actions on 11 screens.** The reusable masthead (`Tg6xv`) carries a filled `Buat Janji Temu` button, so every screen that also had its own filled submit rendered two filled teal primaries — contradicting the "exactly one" rule, which had only been enforced on the homepage. Fixed with per-instance `descendants` overrides demoting the masthead CTA to outlined on the 11 screens that own a primary: 12a–12f, 13 Ambil Antrean, 15 Check-In, 16 Jejak Kunjungan, 17 Masuk, 18 Daftar. Faskes and Status keep it filled — there it *is* the screen's primary. Vision-verified on 15, 17, 18, 13, 11: **exactly one filled teal button each.**
+26. **Redundant auth labels.** On `/auth/login` the masthead offered "Masuk" beside a submit also labelled "Masuk". The masthead now offers the *alternate* action: "Daftar" on the login screen, "Masuk" on the register screen.
+27. **Three empty input boxes** — the desktop Check-In code field was a genuinely empty frame (0 children), and the optional-note and error-state time fields held blank text nodes. Each given a muted placeholder. Two remaining empty frames are deliberate flex spacers inside `C/Admin/SidebarRail`.
 
 **Final integrity check:** 37 top-level frames, 0 overlaps, 0 broken refs, 0 text nodes below 11px, 0 fabricated records, route map matches the app 1:1.
 

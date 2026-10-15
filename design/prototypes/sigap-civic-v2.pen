@@ -6169,6 +6169,15 @@
             "MQgPa": {
               "fill": "$muted",
               "fontWeight": "400"
+            },
+            "EZuPM": {
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner"
+            },
+            "WK1SL": {
+              "fill": "$fg"
             }
           }
         },
@@ -6677,6 +6686,15 @@
             "MQgPa": {
               "fill": "$muted",
               "fontWeight": "400"
+            },
+            "EZuPM": {
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner"
+            },
+            "WK1SL": {
+              "fill": "$fg"
             }
           }
         },
@@ -6834,7 +6852,20 @@
                         0,
                         12
                       ],
-                      "alignItems": "center"
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "S3Q4j",
+                          "name": "V",
+                          "fill": "$muted",
+                          "content": "Masukkan kode check-in",
+                          "lineHeight": 1.45,
+                          "fontFamily": "$font",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
                     },
                     {
                       "type": "text",
@@ -6913,6 +6944,15 @@
             "MQgPa": {
               "fill": "$muted",
               "fontWeight": "400"
+            },
+            "EZuPM": {
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner"
+            },
+            "WK1SL": {
+              "fill": "$fg"
             }
           }
         },
@@ -7199,6 +7239,19 @@
             "MQgPa": {
               "fill": "$muted",
               "fontWeight": "400"
+            },
+            "CnCYf": {
+              "fill": "$fg",
+              "content": "Daftar"
+            },
+            "EZuPM": {
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner"
+            },
+            "WK1SL": {
+              "fill": "$fg"
             }
           }
         },
@@ -30210,7 +30263,18 @@
           "ref": "Tg6xv",
           "name": "Masthead",
           "width": 1440,
-          "height": 56
+          "height": 56,
+          "descendants": {
+            "EZuPM": {
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner"
+            },
+            "WK1SL": {
+              "fill": "$fg"
+            }
+          }
         },
         {
           "type": "frame",
@@ -30814,7 +30878,18 @@
           "ref": "Tg6xv",
           "name": "Masthead",
           "width": 1440,
-          "height": 56
+          "height": 56,
+          "descendants": {
+            "EZuPM": {
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner"
+            },
+            "WK1SL": {
+              "fill": "$fg"
+            }
+          }
         },
         {
           "type": "frame",
@@ -31559,7 +31634,18 @@
           "ref": "Tg6xv",
           "name": "Masthead",
           "width": 1440,
-          "height": 56
+          "height": 56,
+          "descendants": {
+            "EZuPM": {
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner"
+            },
+            "WK1SL": {
+              "fill": "$fg"
+            }
+          }
         },
         {
           "type": "frame",
@@ -31989,7 +32075,8 @@
                               "type": "text",
                               "id": "ZSdTo",
                               "name": "V",
-                              "fill": "$fg",
+                              "fill": "$muted",
+                              "content": "Tidak ada catatan",
                               "lineHeight": 1.45,
                               "fontFamily": "$font",
                               "fontSize": 14
@@ -32093,7 +32180,18 @@
           "ref": "Tg6xv",
           "name": "Masthead",
           "width": 1440,
-          "height": 56
+          "height": 56,
+          "descendants": {
+            "EZuPM": {
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner"
+            },
+            "WK1SL": {
+              "fill": "$fg"
+            }
+          }
         },
         {
           "type": "frame",
@@ -32721,7 +32819,18 @@
           "ref": "Tg6xv",
           "name": "Masthead",
           "width": 1440,
-          "height": 56
+          "height": 56,
+          "descendants": {
+            "EZuPM": {
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner"
+            },
+            "WK1SL": {
+              "fill": "$fg"
+            }
+          }
         },
         {
           "type": "frame",
@@ -33043,7 +33152,18 @@
           "ref": "Tg6xv",
           "name": "Masthead",
           "width": 1440,
-          "height": 56
+          "height": 56,
+          "descendants": {
+            "EZuPM": {
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner"
+            },
+            "WK1SL": {
+              "fill": "$fg"
+            }
+          }
         },
         {
           "type": "frame",
@@ -33327,6 +33447,7 @@
                               "id": "bspPr",
                               "name": "V",
                               "fill": "$muted",
+                              "content": "Pilih tanggal dan waktu",
                               "lineHeight": 1.45,
                               "fontFamily": "$font",
                               "fontSize": 14
@@ -34924,6 +35045,19 @@
             "MQgPa": {
               "fill": "$muted",
               "fontWeight": "400"
+            },
+            "CnCYf": {
+              "fill": "$fg",
+              "content": "Masuk"
+            },
+            "EZuPM": {
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner"
+            },
+            "WK1SL": {
+              "fill": "$fg"
             }
           }
         },
