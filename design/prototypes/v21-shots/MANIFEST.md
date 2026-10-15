@@ -2,7 +2,7 @@
 
 Generated: 2026-10-16
 Source: `F:\Sehat-Hub\design\prototypes\sigap.pen`
-Source SHA-256: `8ececa12e6687a691fef138e7d3f9432e00ab28e71cf7ec8bf8af10a97127858`
+Source SHA-256: `d05d6f3f96ec426fa11925c5f17ecc5dfce993f8aa320d9abb8d5c80b1163fa5`
 Source size: 1,333,140 bytes
 Mirror (byte-identical): `F:\sigap-design-v2\design\prototypes\sigap-civic-v2.pen`
 Frame count: **37** (was 28 at the V2 hand-off)
@@ -33,7 +33,7 @@ Export dir: `F:\Sehat-Hub\design\prototypes\v21-shots\`
 | 18 | 21 Admin / Ringkasan / 1440 | `bQlk5` | 1560,6000 | 1440×900 | `bQlk5.png` | `eca5ca3898a81cfe005c888b16f986c5ce59efcdfb190a5309543d82a52e7456` |
 | 19 | 22 Admin / Janji Temu / 1440 | `mTWYS` | 1560,7000 | 1440×900 | `mTWYS.png` | `86a29d1bb86189f94af41519497d635558503ea9a6d3437dbeb26f4ac2a43d06` |
 | 20 | 23 Admin / Jadwal / 1440 | `G4FuIp` | 3120,7000 | 1440×900 | `G4FuIp.png` | `d4214d7e3960780b38967866cbabd0ac5775554657ae04c665f5d25325bfcf17` |
-| 21 | 24 Admin / Fasilitas / 1440 | `w7cYzq` | 4680,7000 | 1440×900 | `w7cYzq.png` | `7aae835aa722729d0723dd2ac4b720103be006812787993d25e4e48660527f18` |
+| 21 | 24 Admin / Fasilitas / 1440 | `w7cYzq` | 4680,7000 | 1440×900 | `w7cYzq.png` | `4ea2de8c6102145c2525a7bcbdab6b4e2ab1746e6253e846c2d342c83791b04d` |
 | 22 | 25 Admin / Notifikasi / 1440 | `bRvc2` | 6240,7000 | 1440×900 | `bRvc2.png` | `80c9cfe3ad4ed6ec34308607df2e4fe642eb46413af06b26c16da0a0c70b751c` |
 | 23 | 30 Citizen Mobile / Beranda / 390 | `M7Sgp` | 0,8100 | auto | `M7Sgp.png` | `34535b887ecbf432e1e61191b2b5979f1a0253a65c9dd93f85eb201fdde25e92` |
 | 24 | 32 Citizen Mobile / Faskes / 390 | `OeMFe` | 450,8100 | auto | `OeMFe.png` | `2773d33765342045a3ccd6c78fa97fc376541fe109b27c34f012b2f715732c31` |
@@ -76,6 +76,7 @@ Export dir: `F:\Sehat-Hub\design\prototypes\v21-shots\`
 - Refs nested inside other components: **1** (`n7h5uA`, explicit size, resolves inside its cell)
 - Citizen mobile frames carrying the bottom nav: **7 / 7**
 - Text nodes below the 11px floor: **0**
+- Table cells narrower than their text: **0**
 - Filled primary buttons per real screen: **≤1** (vision-verified on 11, 13, 14, 15, 16, 17, 18)
 - Fabricated visit records: **0**
 - Route map matches the 16 real SvelteKit routes: **yes**

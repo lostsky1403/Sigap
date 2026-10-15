@@ -14633,7 +14633,7 @@
                           "type": "frame",
                           "id": "E15L4o",
                           "name": "C",
-                          "width": 140,
+                          "width": 130,
                           "alignItems": "center",
                           "children": [
                             {
@@ -14821,7 +14821,7 @@
                           "type": "frame",
                           "id": "FUUzA",
                           "name": "C",
-                          "width": 140,
+                          "width": 130,
                           "gap": 8,
                           "alignItems": "center",
                           "children": [
@@ -15082,7 +15082,7 @@
                           "type": "frame",
                           "id": "G9OGCW",
                           "name": "C",
-                          "width": 140,
+                          "width": 130,
                           "gap": 8,
                           "alignItems": "center",
                           "children": [
@@ -15343,7 +15343,7 @@
                           "type": "frame",
                           "id": "Zxsus",
                           "name": "C",
-                          "width": 140,
+                          "width": 130,
                           "gap": 8,
                           "alignItems": "center",
                           "children": [
