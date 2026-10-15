@@ -1105,339 +1105,6 @@
         },
         {
           "type": "frame",
-          "id": "EcCQo",
-          "layoutPosition": "absolute",
-          "x": 40,
-          "y": 560,
-          "name": "C/Masthead/Citizen",
-          "reusable": true,
-          "width": 1440,
-          "height": 56,
-          "fill": "$surface",
-          "stroke": "$border-subtle",
-          "strokeWidth": {
-            "bottom": 1
-          },
-          "strokeAlignment": "inner",
-          "padding": [
-            0,
-            48
-          ],
-          "justifyContent": "space_between",
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "frame",
-              "id": "YJPiW",
-              "name": "Brand",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "rectangle",
-                  "cornerRadius": "$r-ctl",
-                  "id": "xw8Kf",
-                  "name": "Mark",
-                  "fill": "$primary",
-                  "width": 24,
-                  "height": 24
-                },
-                {
-                  "type": "text",
-                  "id": "driw6",
-                  "name": "Wordmark",
-                  "fill": "$fg",
-                  "content": "Sigap",
-                  "lineHeight": 1.45,
-                  "fontFamily": "$font",
-                  "fontSize": 17,
-                  "fontWeight": "700",
-                  "letterSpacing": -0.01
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "FQXKg",
-              "name": "Nav",
-              "gap": 28,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "text",
-                  "id": "a3GaK",
-                  "name": "I/Beranda",
-                  "fill": "$primary",
-                  "content": "Beranda",
-                  "lineHeight": 1.45,
-                  "fontFamily": "$font",
-                  "fontSize": 14,
-                  "fontWeight": "600"
-                },
-                {
-                  "type": "text",
-                  "id": "r73Te",
-                  "name": "I/Faskes",
-                  "fill": "$muted",
-                  "content": "Faskes",
-                  "lineHeight": 1.45,
-                  "fontFamily": "$font",
-                  "fontSize": 14
-                },
-                {
-                  "type": "text",
-                  "id": "v4KfqI",
-                  "name": "I/Check-In",
-                  "fill": "$muted",
-                  "content": "Check-In",
-                  "lineHeight": 1.45,
-                  "fontFamily": "$font",
-                  "fontSize": 14
-                },
-                {
-                  "type": "text",
-                  "id": "xEcng",
-                  "name": "I/Status",
-                  "fill": "$muted",
-                  "content": "Status",
-                  "lineHeight": 1.45,
-                  "fontFamily": "$font",
-                  "fontSize": 14
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "i8nkF",
-              "name": "Account",
-              "gap": 12,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "Z5gRO",
-                  "name": "SignInBtn",
-                  "height": 44,
-                  "cornerRadius": "$r-ctl",
-                  "stroke": "$border",
-                  "strokeWidth": 1,
-                  "strokeAlignment": "inner",
-                  "padding": [
-                    0,
-                    18
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "sUW6D",
-                      "name": "Label",
-                      "fill": "$fg",
-                      "content": "Masuk",
-                      "fontFamily": "$font",
-                      "fontSize": 14,
-                      "fontWeight": "600"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "zDLVM",
-                  "name": "BookBtn",
-                  "height": 44,
-                  "fill": "$primary",
-                  "cornerRadius": "$r-ctl",
-                  "padding": [
-                    0,
-                    18
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "IHnP2",
-                      "name": "Label",
-                      "fill": "$on-primary",
-                      "content": "Buat Janji Temu",
-                      "fontFamily": "$font",
-                      "fontSize": 14,
-                      "fontWeight": "600"
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "ifMNb",
-          "x": 40,
-          "y": 560,
-          "name": "C/Masthead/Citizen",
-          "reusable": true,
-          "width": 1440,
-          "height": 56,
-          "fill": "$surface",
-          "stroke": "$border-subtle",
-          "strokeWidth": {
-            "bottom": 1
-          },
-          "strokeAlignment": "inner",
-          "padding": [
-            0,
-            48
-          ],
-          "justifyContent": "space_between",
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "frame",
-              "id": "sOXKq",
-              "name": "Brand",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "rectangle",
-                  "cornerRadius": "$r-ctl",
-                  "id": "LBnI6",
-                  "name": "Mark",
-                  "fill": "$primary",
-                  "width": 24,
-                  "height": 24
-                },
-                {
-                  "type": "text",
-                  "id": "Tm2nd",
-                  "name": "Wordmark",
-                  "fill": "$fg",
-                  "content": "Sigap",
-                  "lineHeight": 1.45,
-                  "fontFamily": "$font",
-                  "fontSize": 17,
-                  "fontWeight": "700",
-                  "letterSpacing": -0.01
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "lkMQz",
-              "name": "Nav",
-              "gap": 28,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "text",
-                  "id": "DSfEK",
-                  "name": "N/Beranda",
-                  "fill": "$primary",
-                  "content": "Beranda",
-                  "lineHeight": 1.45,
-                  "fontFamily": "$font",
-                  "fontSize": 14,
-                  "fontWeight": "600"
-                },
-                {
-                  "type": "text",
-                  "id": "LwcUn",
-                  "name": "N/Faskes",
-                  "fill": "$muted",
-                  "content": "Faskes",
-                  "lineHeight": 1.45,
-                  "fontFamily": "$font",
-                  "fontSize": 14
-                },
-                {
-                  "type": "text",
-                  "id": "Y7yKqY",
-                  "name": "N/Check-In",
-                  "fill": "$muted",
-                  "content": "Check-In",
-                  "lineHeight": 1.45,
-                  "fontFamily": "$font",
-                  "fontSize": 14
-                },
-                {
-                  "type": "text",
-                  "id": "baez5",
-                  "name": "N/Status",
-                  "fill": "$muted",
-                  "content": "Status",
-                  "lineHeight": 1.45,
-                  "fontFamily": "$font",
-                  "fontSize": 14
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "sa47p",
-              "name": "Account",
-              "gap": 12,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "VekzV",
-                  "name": "SignIn",
-                  "height": 44,
-                  "cornerRadius": "$r-ctl",
-                  "stroke": "$border",
-                  "strokeWidth": 1,
-                  "strokeAlignment": "inner",
-                  "padding": [
-                    0,
-                    18
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "DRONV",
-                      "name": "L",
-                      "fill": "$fg",
-                      "content": "Masuk",
-                      "lineHeight": 1.45,
-                      "fontFamily": "$font",
-                      "fontSize": 14,
-                      "fontWeight": "600"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "bPhry",
-                  "name": "Book",
-                  "height": 44,
-                  "fill": "$primary",
-                  "cornerRadius": "$r-ctl",
-                  "padding": [
-                    0,
-                    18
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "RqPoh",
-                      "name": "L",
-                      "fill": "$on-primary",
-                      "content": "Buat Janji Temu",
-                      "lineHeight": 1.45,
-                      "fontFamily": "$font",
-                      "fontSize": 14,
-                      "fontWeight": "600"
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
           "id": "Tg6xv",
           "x": 40,
           "y": 560,
@@ -5038,9 +4705,9 @@
       "layout": "vertical",
       "children": [
         {
-          "id": "J9eadJ",
+          "id": "RI7T0",
           "type": "ref",
-          "ref": "EcCQo",
+          "ref": "Tg6xv",
           "name": "Masthead",
           "width": 1440,
           "height": 56
@@ -5701,9 +5368,9 @@
       "layout": "vertical",
       "children": [
         {
-          "id": "YfH8J",
+          "id": "T2XeA",
           "type": "ref",
-          "ref": "EcCQo",
+          "ref": "Tg6xv",
           "name": "Masthead",
           "width": 1440,
           "height": 56
@@ -6340,9 +6007,9 @@
       "layout": "vertical",
       "children": [
         {
-          "id": "DP4yK",
+          "id": "k2r5mt",
           "type": "ref",
-          "ref": "ifMNb",
+          "ref": "Tg6xv",
           "name": "Masthead",
           "width": 1440,
           "height": 56
@@ -6821,9 +6488,9 @@
       "layout": "vertical",
       "children": [
         {
-          "id": "W9Hb2",
+          "id": "LdsQK",
           "type": "ref",
-          "ref": "ifMNb",
+          "ref": "Tg6xv",
           "name": "Masthead",
           "width": 1440,
           "height": 56
@@ -7047,9 +6714,9 @@
       "layout": "vertical",
       "children": [
         {
-          "id": "gzNis",
+          "id": "H1cC2",
           "type": "ref",
-          "ref": "ifMNb",
+          "ref": "Tg6xv",
           "name": "Masthead",
           "width": 1440,
           "height": 56
@@ -7393,9 +7060,9 @@
       "layout": "vertical",
       "children": [
         {
-          "id": "E38eF",
+          "id": "l8jiIC",
           "type": "ref",
-          "ref": "ifMNb",
+          "ref": "Tg6xv",
           "name": "Masthead",
           "width": 1440,
           "height": 56
