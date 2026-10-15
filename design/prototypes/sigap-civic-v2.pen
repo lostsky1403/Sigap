@@ -20669,6 +20669,44 @@
               "fontWeight": "normal"
             }
           ]
+        },
+        {
+          "id": "B74xdn",
+          "type": "ref",
+          "ref": "BAZFl",
+          "name": "BottomNav",
+          "width": 390,
+          "height": 64,
+          "descendants": {
+            "jq6np": {
+              "fill": "$muted"
+            },
+            "Md04w": {
+              "fill": "$muted",
+              "fontWeight": "400"
+            },
+            "pXPEr": {
+              "fill": "$primary"
+            },
+            "qCChm": {
+              "fill": "$primary",
+              "fontWeight": "600"
+            },
+            "r3iotU": {
+              "fill": "$muted"
+            },
+            "SHZzN": {
+              "fill": "$muted",
+              "fontWeight": "400"
+            },
+            "RZaUc": {
+              "fill": "$muted"
+            },
+            "L2RvM": {
+              "fill": "$muted",
+              "fontWeight": "400"
+            }
+          }
         }
       ]
     },

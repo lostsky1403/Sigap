@@ -2,8 +2,8 @@
 
 Generated: 2026-10-16
 Source: `F:\Sehat-Hub\design\prototypes\sigap.pen`
-Source SHA-256: `715f25f315b9c85d356b1a84ac774fffce5fe8fc43d80273e9da70c766309b31`
-Source size: 1,332,228 bytes
+Source SHA-256: `8ececa12e6687a691fef138e7d3f9432e00ab28e71cf7ec8bf8af10a97127858`
+Source size: 1,333,140 bytes
 Mirror (byte-identical): `F:\sigap-design-v2\design\prototypes\sigap-civic-v2.pen`
 Frame count: **37** (was 28 at the V2 hand-off)
 PNG scale: 2x
@@ -38,7 +38,7 @@ Export dir: `F:\Sehat-Hub\design\prototypes\v21-shots\`
 | 23 | 30 Citizen Mobile / Beranda / 390 | `M7Sgp` | 0,8100 | auto | `M7Sgp.png` | `34535b887ecbf432e1e61191b2b5979f1a0253a65c9dd93f85eb201fdde25e92` |
 | 24 | 32 Citizen Mobile / Faskes / 390 | `OeMFe` | 450,8100 | auto | `OeMFe.png` | `2773d33765342045a3ccd6c78fa97fc376541fe109b27c34f012b2f715732c31` |
 | 25 | 31 Citizen Mobile / Status / 390 | `BMaKt` | 900,8100 | auto | `BMaKt.png` | `63eb6501142cb5239f1d4bb3d90ecf725de7d5a7570c07f6f470329559e057a8` |
-| 26 | 33 Citizen Mobile / Buat Janji / 390 | `KXPTn` | 1350,8100 | auto | `KXPTn.png` | `5e8228218bf541a0aca6b99128394c69e8213e7d7b69ed7ac109e331ce2f0968` |
+| 26 | 33 Citizen Mobile / Buat Janji / 390 | `KXPTn` | 1350,8100 | auto | `KXPTn.png` | `d03296b200887ff87a8aeb5ea3fec0c453fe5870c63c71569f3f8f75a21f73e4` |
 | 27 | 34 Citizen Narrow / Status / 360 | `H6Br7r` | 1800,8100 | auto | `H6Br7r.png` | `212b7a28eaf8f480e05fd200f4238321c1cd57e697ce8337ae57356b8c8a4520` |
 | 28 | 26 Admin Responsive / Antrean / 768 | `Sr2wS` | 0,9300 | 768×900 | `Sr2wS.png` | `d4b13fb8c17453c53a89479530c07dec4cbd6cb62b351034ac2b5f01f9ac78a0` |
 | 29 | 40 States / Interaction & Read States | `LVDS7` | 0,10400 | auto | `LVDS7.png` | `e98ec0938da2c8bd00646feaf365b9a8afa964159977ac48d7054ac7d993daa4` |
@@ -74,6 +74,7 @@ Export dir: `F:\Sehat-Hub\design\prototypes\v21-shots\`
 - Top-level overlap test (AABB, all pairs): **0 overlaps**
 - Broken component references: **0**
 - Refs nested inside other components: **1** (`n7h5uA`, explicit size, resolves inside its cell)
+- Citizen mobile frames carrying the bottom nav: **7 / 7**
 - Text nodes below the 11px floor: **0**
 - Filled primary buttons per real screen: **≤1** (vision-verified on 11, 13, 14, 15, 16, 17, 18)
 - Fabricated visit records: **0**

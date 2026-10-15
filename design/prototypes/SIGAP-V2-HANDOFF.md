@@ -1,7 +1,7 @@
 # SIGAP V2.1 — Pen.dev Prototype Handoff
 
 **Artifact (canonical):** `F:\Sehat-Hub\design\prototypes\sigap.pen`
-**SHA-256:** `715f25f315b9c85d356b1a84ac774fffce5fe8fc43d80273e9da70c766309b31` — 1,332,228 bytes
+**SHA-256:** `8ececa12e6687a691fef138e7d3f9432e00ab28e71cf7ec8bf8af10a97127858` — 1,333,140 bytes
 **Byte-identical mirror:** `F:\sigap-design-v2\design\prototypes\sigap-civic-v2.pen` (branch `design/sigap-v2-prototype`)
 **Document:** Pen.dev schema **v2.21**, **37 top-level frames**, 36 variables, **18 reusable components**, 28 ref instances, 2,993 nodes, **0 broken references**, **0 top-level frame overlaps**.
 
@@ -231,6 +231,7 @@ Visual QA ran through a vision model on exported PNGs at every stage. **V2 defec
 26. **Redundant auth labels.** On `/auth/login` the masthead offered "Masuk" beside a submit also labelled "Masuk". The masthead now offers the *alternate* action: "Daftar" on the login screen, "Masuk" on the register screen.
 27. **Three empty input boxes** — the desktop Check-In code field was a genuinely empty frame (0 children), and the optional-note and error-state time fields held blank text nodes. Each given a muted placeholder. Two remaining empty frames are deliberate flex spacers inside `C/Admin/SidebarRail`.
 28. **Collapsed badge inside the table-row component.** The DataRow component (`a913rh`) contains a badge ref whose target (`a7fsY`) carries `layoutPosition: absolute` — the same inheritance trap that broke the V2 masthead. The instance rendered at the *component's* gallery coordinates (40,288) instead of inside its StatusCell, so the gallery's STATUS column looked empty. Fixed by giving the ref explicit `width`/`height` and `layoutPosition: auto`; it now resolves to (0,7) inside the cell and is vertically centred. Vision-verified. Audit of all 28 refs confirms this was the only ref nested inside another component — the other 27 are direct children of top-level frames.
+29. **Missing bottom nav on 33 Citizen Mobile / Buat Janji / 390.** Every other citizen mobile frame (30, 31, 32, 34, 35, 36) carries the bottom nav; this one did not, leaving the screen as a dead end. Added with **Faskes** active — the booking route is entered from the Faskes list, and no tab maps to `/appointments/new` directly. Vision-verified: 4 labelled tabs, Faskes teal, no overlap with the form.
 
 **Final integrity check:** 37 top-level frames, 0 overlaps, 0 broken refs, 0 text nodes below 11px, 0 fabricated records, route map matches the app 1:1.
 
