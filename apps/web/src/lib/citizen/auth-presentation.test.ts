@@ -335,6 +335,7 @@ describe('presentation only: the client is not an authorization authority', () =
 	 */
 	const FILES = [
 		'src/lib/citizen/AuthForms.svelte',
+		'src/lib/citizen/AuthPanel.svelte',
 		'src/routes/auth/login/+page.svelte',
 		'src/routes/auth/register/+page.svelte',
 		'src/routes/auth/logout/+page.svelte'
@@ -378,6 +379,7 @@ describe('presentation only: the client is not an authorization authority', () =
 		// browser and bypass the frozen action entirely.
 		for (const file of [
 			'src/lib/citizen/AuthForms.svelte',
+			'src/lib/citizen/AuthPanel.svelte',
 			'src/routes/auth/login/+page.svelte',
 			'src/routes/auth/register/+page.svelte',
 			'src/routes/auth/logout/+page.svelte'

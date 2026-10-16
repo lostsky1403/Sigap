@@ -104,16 +104,18 @@
 		width: 224px;
 		height: 100vh;
 		background-color: var(--sigap-surface);
-		border-right: 1px solid var(--sigap-border);
+		/* Decorative: the sidebar's right edge is a rule, not a control boundary. */
+		border-right: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-admin-sidebar__brand {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: var(--sigap-space-2);
 		height: 56px;
-		padding: 0 16px;
-		border-bottom: 1px solid var(--sigap-border);
+		padding: 0 var(--sigap-space-4);
+		/* A decorative separator between the brand and the nav list. */
+		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-admin-sidebar__mark {
@@ -123,10 +125,10 @@
 		flex-shrink: 0;
 		width: 24px;
 		height: 24px;
-		border-radius: 6px;
+		border-radius: var(--sigap-radius-control);
 		background-color: var(--sigap-primary);
 		color: var(--sigap-surface);
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		font-weight: 600;
 		line-height: 1;
 	}
@@ -138,21 +140,21 @@
 	}
 
 	.sigap-admin-sidebar__brand-name {
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		font-weight: 600;
 		line-height: 16px;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-admin-sidebar__brand-sub {
-		font-size: 11px;
+		font-size: var(--sigap-type-micro);
 		line-height: 16px;
 		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-sidebar__nav {
 		flex: 1;
-		padding: 12px 10px;
+		padding: var(--sigap-space-3);
 		overflow-y: auto;
 	}
 
@@ -162,14 +164,18 @@
 		list-style: none;
 	}
 
+	/*
+		The nav item separator. Decorative: it spaces one destination from the
+		next, and it is never the boundary of a control.
+	*/
 	.sigap-admin-sidebar__item + .sigap-admin-sidebar__item {
-		margin-top: 4px;
+		margin-top: var(--sigap-space-1);
 	}
 
 	.sigap-admin-sidebar__link {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: var(--sigap-space-3);
 		/*
 			`var(--sigap-control-admin-comfortable)` = 40px, not a literal.
 
@@ -183,8 +189,8 @@
 			is the more comfortable of the two candidates.
 		*/
 		height: var(--sigap-control-admin-comfortable);
-		padding: 0 12px;
-		font-size: 14px;
+		padding: 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-body);
 		font-weight: 450;
 		color: var(--sigap-foreground);
 		text-decoration: none;
@@ -205,6 +211,10 @@
 		state survives a monochrome display and is never colour-only. Exactly one
 		link carries `aria-current`, decided by exact-path comparison in
 		navigation.ts.
+
+		The border here is the ESSENTIAL `--sigap-border`, not the subtle one: this
+		is the outline of a control the operator clicks, and at 1.28:1 the current
+		destination would be indistinguishable from its neighbours.
 	*/
 	.sigap-admin-sidebar__link[aria-current='page'] {
 		background-color: var(--sigap-surface);
@@ -221,20 +231,22 @@
 	}
 
 	.sigap-admin-sidebar__account {
-		padding: 12px 10px;
-		border-top: 1px solid var(--sigap-border);
+		padding: var(--sigap-space-3);
+		/* A decorative separator above the account row, not a control boundary. */
+		border-top: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-admin-sidebar__account-link {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: var(--sigap-space-3);
 		/* Same frozen density as the nav rows above, for the same reason. */
 		height: var(--sigap-control-admin-comfortable);
-		padding: 0 12px;
-		font-size: 13px;
+		padding: 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-foreground);
 		text-decoration: none;
+		/* A control boundary: this is a link the operator clicks. */
 		border: 1px solid var(--sigap-border);
 	}
 

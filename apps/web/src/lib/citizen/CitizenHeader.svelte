@@ -1,7 +1,7 @@
 <script lang="ts">
 	import CitizenDesktopNav from './CitizenDesktopNav.svelte';
 	import CitizenBottomNav from './CitizenBottomNav.svelte';
-	import AccountMenu from './AccountMenu.svelte';
+	import CitizenActions from './CitizenActions.svelte';
 
 	/**
 	 * The citizen shell header.
@@ -56,24 +56,7 @@
 		</div>
 
 		<div class="sigap-citizen-header__actions">
-			<AccountMenu {hasSession} {userEmail} {path} />
-
-			<!--
-				Booking is a primary action, not a destination, so it is not a
-				tab and not a nav link. It sits last in the action cluster, as
-				the reference draws it: the rightmost, outermost affordance.
-
-				Desktop only. The mobile bar is the bottom nav, and the frozen
-				390px frames show the top bar carrying identity and the account
-				control rather than a second booking entry point.
-			-->
-			<a
-				class="sigap-citizen-header__cta"
-				class:sigap-citizen-header__cta--filled={ctaEmphasis === 'filled'}
-				href="/appointments/new"
-			>
-				Buat Janji Temu
-			</a>
+			<CitizenActions {hasSession} {userEmail} {path} {ctaEmphasis} />
 		</div>
 	</div>
 </header>
@@ -182,65 +165,6 @@
 	.sigap-citizen-header__actions {
 		display: flex;
 		align-items: center;
-		gap: var(--sigap-space-3);
 		flex: none;
-	}
-
-	/*
-		The booking CTA.
-
-		Outlined by default, because the masthead is chrome and the page below
-		it owns the filled primary. On a page that promotes nothing — the
-		catalog — the modifier fills it, matching the reference.
-
-		Both variants keep `--sigap-border` while outlined: it is operable, so
-		its edge carries the 3:1 requirement.
-	*/
-	.sigap-citizen-header__cta {
-		display: none;
-		align-items: center;
-		justify-content: center;
-		height: 44px;
-		padding: 0 var(--sigap-space-4);
-		font-size: 14px;
-		font-weight: 500;
-		color: var(--sigap-primary);
-		background-color: transparent;
-		border: 1px solid var(--sigap-border);
-		border-radius: var(--sigap-radius-control);
-		text-decoration: none;
-	}
-
-	@media (min-width: 1024px) {
-		.sigap-citizen-header__cta {
-			display: inline-flex;
-		}
-	}
-
-	.sigap-citizen-header__cta:hover {
-		color: var(--sigap-primary-hover);
-		border-color: var(--sigap-primary-hover);
-	}
-
-	.sigap-citizen-header__cta:focus-visible {
-		outline: 2px solid var(--sigap-primary);
-		outline-offset: 2px;
-	}
-
-	.sigap-citizen-header__cta--filled {
-		color: var(--sigap-on-primary);
-		background-color: var(--sigap-primary);
-		border-color: var(--sigap-primary);
-	}
-
-	.sigap-citizen-header__cta--filled:hover {
-		color: var(--sigap-on-primary);
-		background-color: var(--sigap-primary-hover);
-		border-color: var(--sigap-primary-hover);
-	}
-
-	.sigap-citizen-header__cta--filled:active {
-		background-color: var(--sigap-primary-active);
-		border-color: var(--sigap-primary-active);
 	}
 </style>

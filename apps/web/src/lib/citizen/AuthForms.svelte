@@ -156,7 +156,7 @@
 				name="email"
 				type="email"
 				autocomplete="email"
-				placeholder="nama@email.com"
+				placeholder={mode === 'login' ? 'petugas@sigap.id' : 'siti@contoh.id'}
 				required
 			/>
 		</Field>
@@ -197,7 +197,7 @@
 		{/if}
 
 		<Button type="submit" fullWidth disabled={submitting} icon={submitting ? Loader2 : undefined}>
-			{mode === 'login' ? 'Masuk' : 'Daftar'}
+			{mode === 'login' ? 'Masuk' : 'Buat akun'}
 		</Button>
 	</form>
 {/if}

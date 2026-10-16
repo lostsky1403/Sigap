@@ -78,7 +78,7 @@
 	.sigap-checkin-form {
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		gap: var(--sigap-space-4);
 	}
 
 	/*

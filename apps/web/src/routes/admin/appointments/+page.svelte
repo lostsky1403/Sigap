@@ -241,7 +241,7 @@
 
 	<AdminToolbar
 		refreshing={loading}
-		showRefresh={false}
+		onRefresh={() => void reloadAppointments()}
 		note="Daftar janji temu sudah dibatasi fasilitas dalam lingkup akses Anda. Filter di bawah hanya mempersempit tampilan data yang sudah dimuat."
 	>
 		<FacilityFilter
@@ -277,6 +277,7 @@
 		scopeEmpty={facilitiesLoaded && isEmptyScope(facilities)}
 		emptyTitle="Belum ada janji temu"
 		emptyDescription={ORDINARY_EMPTY_DESCRIPTION}
+		onRetry={() => void reloadAppointments()}
 	>
 		{#if filtered.length === 0}
 			<div class="sigap-admin-nomatch" style:border-radius={RADIUS.panel} role="status">
@@ -365,24 +366,25 @@
 	.sigap-admin-field {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: var(--sigap-space-1);
 	}
 
 	.sigap-admin-field__label {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		font-weight: 500;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-admin-field__select {
-		height: 36px;
+		height: var(--sigap-control-admin-compact);
 		min-width: 170px;
-		padding: 0 10px;
+		padding: 0 var(--sigap-space-3);
+		/* A control boundary: the essential token, never the subtle one. */
 		border: 1px solid var(--sigap-border);
 		background-color: var(--sigap-surface);
 		color: var(--sigap-foreground);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 	}
 
 	.sigap-admin-field__select:focus-visible {
@@ -397,39 +399,41 @@
 	*/
 
 	.sigap-appointment-row__source {
-		margin: 8px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-2) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-nomatch {
-		padding: 24px;
+		padding: var(--sigap-space-5);
 		text-align: center;
 		background-color: var(--sigap-surface);
-		border: 1px dashed var(--sigap-border);
+		/* A panel outline is decorative; this is a message, not a control. */
+		border: 1px dashed var(--sigap-border-subtle);
 	}
 
 	.sigap-admin-nomatch__title {
-		margin: 0 0 4px;
-		font-size: 15px;
+		margin: 0 0 var(--sigap-space-1);
+		font-size: var(--sigap-type-subtitle);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-admin-nomatch__body {
-		margin: 0 0 12px;
-		font-size: 14px;
+		margin: 0 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-body);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-nomatch__reset {
-		height: 36px;
-		padding: 0 14px;
+		height: var(--sigap-control-admin-compact);
+		padding: 0 var(--sigap-space-4);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		background-color: var(--sigap-surface);
+		/* A control boundary: this is a button. */
 		border: 1px solid var(--sigap-border);
 		cursor: pointer;
 	}

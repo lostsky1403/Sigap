@@ -71,14 +71,19 @@
 </ol>
 
 <style>
+	/*
+		The stepper frames a status row; it is not operable. Decorative hairline,
+		per the border split: this is a status indicator, not navigation, so
+		neither the panel nor the step dots are control boundaries.
+	*/
 	.sigap-stepper {
 		display: flex;
-		gap: 8px;
+		gap: var(--sigap-space-2);
 		margin: 0;
-		padding: 12px;
+		padding: var(--sigap-space-3);
 		list-style: none;
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 		counter-reset: none;
 	}
 
@@ -86,7 +91,7 @@
 		flex: 1 1 0;
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: var(--sigap-space-2);
 		min-width: 0;
 	}
 
@@ -100,10 +105,10 @@
 		   taller than the fields it is meant to sit above. */
 		width: 24px;
 		height: 24px;
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		font-weight: 600;
 		color: var(--sigap-muted);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	/*
@@ -122,16 +127,16 @@
 
 	.sigap-stepper__item--current .sigap-stepper__marker {
 		background-color: var(--sigap-primary);
-		/* Text on a primary fill is --sigap-surface, the same pairing the
-		   primary button uses. There is no separate on-primary token, and
-		   inventing one, or falling back to a raw #ffffff, would put an
-		   unfrozen colour in the system. */
-		color: var(--sigap-surface);
+		/* Text on a primary fill is `--sigap-on-primary`, the same pairing the
+		   primary button uses. Reaching for `--sigap-surface` here would work
+		   only because it happens to be white today, and would silently stop
+		   being readable the moment the surface token moved. */
+		color: var(--sigap-on-primary);
 	}
 
 	.sigap-stepper__label {
 		min-width: 0;
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 		/* Long step names wrap rather than truncating: "Waktu + Data Diri" cut
 		   to "Waktu + Data..." tells the citizen less than wrapping it, and at

@@ -28,3 +28,7 @@ sigap-pre-redesign-*.tar.gz
 # and it must never contain a credential — which is why the script writes only
 # command output, never its own environment.
 lock-drill-evidence/
+
+# Review scratch: screenshot crops used to read the approved Pen frames while
+# comparing them against the running app. Evidence, not source.
+.scratch/

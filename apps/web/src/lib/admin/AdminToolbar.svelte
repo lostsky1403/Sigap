@@ -31,57 +31,77 @@
 	export let note: string = '';
 </script>
 
-<div class="sigap-admin-toolbar">
-	{#if $$slots.default}
-		<div class="sigap-admin-toolbar__filters">
-			<slot />
-		</div>
-	{/if}
+<!--
+	The toolbar BLOCK. It exists so the filter row and the scope note share one
+	bottom edge: a rule that separates the whole toolbar region from the table
+	below it. A plain wrapper `<div>` with no role and no styling of its own, so
+	the landmark structure and every accessible name are unchanged.
+-->
+<div class="sigap-admin-toolbar__block">
+	<div class="sigap-admin-toolbar">
+		{#if $$slots.default}
+			<div class="sigap-admin-toolbar__filters">
+				<slot />
+			</div>
+		{/if}
 
-	{#if showRefresh && onRefresh}
-		<div class="sigap-admin-toolbar__actions">
-			<Button
-				variant="secondary"
-				size={DENSITY.adminCompact}
-				icon={RefreshCw}
-				label={refreshLabel}
-				disabled={refreshing}
-				onClick={() => onRefresh?.()}
-			/>
-		</div>
+		{#if showRefresh && onRefresh}
+			<div class="sigap-admin-toolbar__actions">
+				<Button
+					variant="secondary"
+					size={DENSITY.adminCompact}
+					icon={RefreshCw}
+					label={refreshLabel}
+					disabled={refreshing}
+					onClick={() => onRefresh?.()}
+				/>
+			</div>
+		{/if}
+	</div>
+
+	{#if note}
+		<p class="sigap-admin-toolbar__note">{note}</p>
 	{/if}
 </div>
 
-{#if note}
-	<p class="sigap-admin-toolbar__note">{note}</p>
-{/if}
-
 <style>
+	/*
+		The toolbar's bottom edge. DECORATIVE, so `--sigap-border-subtle`: it
+		separates the filter region from the table below it and is not a control
+		boundary. The block also carries the bottom margin, so the rule and the
+		spacing below it can never drift apart.
+	*/
+	.sigap-admin-toolbar__block {
+		padding-bottom: var(--sigap-space-3);
+		margin-bottom: var(--sigap-space-4);
+		border-bottom: 1px solid var(--sigap-border-subtle);
+	}
+
 	.sigap-admin-toolbar {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: flex-end;
 		justify-content: space-between;
-		gap: 12px;
+		gap: var(--sigap-space-3);
 	}
 
 	.sigap-admin-toolbar__filters {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: flex-end;
-		gap: 12px;
+		gap: var(--sigap-space-3);
 	}
 
 	.sigap-admin-toolbar__actions {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: var(--sigap-space-2);
 		flex-shrink: 0;
 	}
 
 	.sigap-admin-toolbar__note {
-		margin: 8px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-2) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 </style>

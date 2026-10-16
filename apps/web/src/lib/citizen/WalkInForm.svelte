@@ -34,6 +34,22 @@
 	 */
 	let attempted = false;
 
+	/**
+	 * The controls are locked while a request is in flight, not only while the
+	 * catalog loads.
+	 *
+	 * A disabled control is visibly locked: the primitives paint the sunken
+	 * ground and the muted text, so the form reads as busy rather than as
+	 * broken, and a second submit cannot be assembled from a field the citizen
+	 * edited mid-request. `disabled` alone would leave the fields live during
+	 * submit, which is the state this exists to avoid.
+	 *
+	 * The facility helper text deliberately keys off `disabled` alone: during a
+	 * submit the catalog has already loaded, so "Memuat daftar fasilitas..."
+	 * would be a lie about what the form is waiting for.
+	 */
+	$: locked = disabled || submitting;
+
 	$: facilityError = errors.facility_id ?? (attempted ? validateRequired(facilityId, 'Fasilitas') : '');
 	$: nameError = errors.fullName ?? (attempted ? validateName(fullName) : '');
 	$: phoneError = errors.phone ?? (attempted ? validatePhone(phone) : '');
@@ -63,7 +79,7 @@
 			describedBy={facilityError ? 'sigap-walkin-facilityId-error' : ''}
 			invalid={Boolean(facilityError)}
 			required
-			{disabled}
+			disabled={locked}
 		/>
 	</Field>
 
@@ -74,7 +90,7 @@
 			bind:value={fullName}
 			describedBy={nameError ? 'sigap-walkin-fullName-error' : ''}
 			invalid={Boolean(nameError)}
-			{disabled}
+			disabled={locked}
 			required
 		/>
 	</Field>
@@ -94,7 +110,7 @@
 			bind:value={phone}
 			describedBy={phoneError ? 'sigap-walkin-phone-error' : ''}
 			invalid={Boolean(phoneError)}
-			{disabled}
+			disabled={locked}
 			required
 		/>
 	</Field>
@@ -108,6 +124,6 @@
 	.sigap-walkin-form {
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		gap: var(--sigap-space-4);
 	}
 </style>

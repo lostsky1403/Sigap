@@ -108,21 +108,25 @@
 
 	{#if queueNumber}
 		<p class="sigap-visit__queue">
-			Nomor antrean: <span class="sigap-visit__queue-number">{queueNumber}</span>
+			Nomor antrean: <span class="sigap-visit__queue-number sigap-identifier">{queueNumber}</span>
 		</p>
 	{/if}
 </div>
 
 <style>
+	/*
+		The visit panel frames a status list; nothing here is operable, so the
+		panel outline and the step dots are decorative hairlines.
+	*/
 	.sigap-visit {
-		padding: 16px;
+		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-visit__label {
-		margin: 0 0 12px;
-		font-size: 13px;
+		margin: 0 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
@@ -130,7 +134,7 @@
 	.sigap-visit__steps {
 		display: flex;
 		flex-direction: column;
-		gap: 12px;
+		gap: var(--sigap-space-3);
 		margin: 0;
 		padding: 0;
 		list-style: none;
@@ -139,7 +143,7 @@
 	.sigap-visit__step {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: var(--sigap-space-2);
 	}
 
 	.sigap-visit__marker {
@@ -149,10 +153,10 @@
 		width: 24px;
 		height: 24px;
 		flex: none;
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		font-weight: 600;
 		color: var(--sigap-muted);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-visit__step--done .sigap-visit__marker {
@@ -162,11 +166,11 @@
 
 	.sigap-visit__step:has(.sigap-visit__marker[aria-current='step']) .sigap-visit__marker {
 		background-color: var(--sigap-primary);
-		color: var(--sigap-surface);
+		color: var(--sigap-on-primary);
 	}
 
 	.sigap-visit__step-label {
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		color: var(--sigap-muted);
 	}
 
@@ -178,21 +182,21 @@
 	.sigap-visit__unknown,
 	.sigap-visit__outcome {
 		margin: 0;
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		font-weight: 500;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-visit__queue {
-		margin: 12px 0 0;
-		font-size: 13px;
+		margin: var(--sigap-space-3) 0 0;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
+	/* `.sigap-identifier` carries the monospace stack and tabular figures. */
 	.sigap-visit__queue-number {
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 		font-weight: 600;
-		color: var(--sigap-foreground);
+		color: var(--sigap-primary-strong);
 	}
 
 	.sigap-visually-hidden {

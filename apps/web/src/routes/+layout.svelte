@@ -66,6 +66,7 @@
 	 * A path list, not a role or a permission check: this chooses a button
 	 * variant and nothing else.
 	 */
+	let ctaEmphasis: 'filled' | 'outlined' = 'outlined';
 	$: ctaEmphasis = $page.url.pathname === '/faskes' ? 'filled' : 'outlined';
 </script>
 

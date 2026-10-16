@@ -2,8 +2,10 @@
 	import { onMount } from 'svelte';
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
-	import StatusBadge from '$lib/ui/StatusBadge.svelte';
-	import { RADIUS } from '$lib/design/tokens';
+	import AdminStatusBadge, {
+		QUEUE_STATUS_ICON,
+		activeStateIcon
+	} from '$lib/admin/AdminStatusBadge.svelte';
 	import {
 		listAppointments,
 		listFacilities,
@@ -62,10 +64,28 @@
 		unsubscribeSession = subscribeToSession((session) => {
 			hasSession = session.hasSession;
 		});
+		void loadOverview();
+	});
+
+	/**
+	 * The four scoped reads, as one reloadable unit.
+	 *
+	 * Named rather than inlined in `onMount` because `AdminReadState`'s retry has
+	 * to be able to run it again. An inline `Promise.all` inside the mount hook
+	 * leaves the error panel with nothing to call, which is how a failed overview
+	 * becomes a dead end: the operator's only way back is a manual page reload.
+	 *
+	 * `error` is cleared on entry so a retry cannot render the previous failure
+	 * next to the request that is replacing it, and `loading` is set so the retry
+	 * shows the loading state rather than a frozen error panel.
+	 */
+	async function loadOverview() {
+		loading = true;
+		error = null;
 
 		// All four are issued together. The overview cannot show a count until every
 		// source has answered, so there is nothing to gain from sequencing them.
-		Promise.all([
+		await Promise.all([
 			listQueueTickets(),
 			listAppointments(),
 			listSchedules(),
@@ -89,7 +109,7 @@
 				loadedAt = new Date();
 			})
 			.finally(() => (loading = false));
-	});
+	}
 
 	$: metrics = headlineMetrics({ queues, appointments, schedules, facilities });
 	$: attention = attentionItems({ queues, appointments, schedules, facilities });
@@ -117,6 +137,7 @@
 		rowCount={facilities.length}
 		scopeEmpty={loading === false && error === null && isEmptyScope(facilities)}
 		emptyTitle="Belum ada fasilitas"
+		onRetry={() => void loadOverview()}
 	>
 		<!--
 			The headline strip. Each figure names its source, because a count an
@@ -181,10 +202,11 @@
 			<div class="sigap-ringkasan-bands">
 				{#each QUEUE_BANDS as status (status)}
 					<div class="sigap-ringkasan-bands__item">
-						<StatusBadge
+						<AdminStatusBadge
 							label={QUEUE_STATUS_LABEL[status]}
 							tone={queueTone(status)}
 							size="sm"
+							icon={QUEUE_STATUS_ICON[status]}
 						/>
 						<!--
 							Counted from the scoped queue list, not from a dedicated
@@ -229,7 +251,12 @@
 							<td>{facilityName(facilityIndex, upcoming.facility_id)}</td>
 							<td>{formatNumber(upcoming.capacity_per_slot)}</td>
 							<td>
-								<StatusBadge label="Aktif" tone="success" size="sm" />
+								<AdminStatusBadge
+									label="Aktif"
+									tone="success"
+									size="sm"
+									icon={activeStateIcon(true)}
+								/>
 							</td>
 						</tr>
 					</tbody>
@@ -248,44 +275,69 @@
 	}
 
 	.sigap-admin-updated {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 		font-variant-numeric: tabular-nums;
 	}
 
+	/*
+		The count strip. A rule-separated strip on `--sigap-surface`, NOT a row of
+		KPI cards.
+
+		Why the distinction is load-bearing: a shadowed, tinted,
+		big-number-in-a-box tile is the visual grammar of a generic SaaS dashboard,
+		and it implies a comparison and a trend that these four scoped reads cannot
+		support. The page carries integers and their provenance and nothing else, so
+		the strip carries the numbers on the page ground, with a hairline between
+		them and an 11px uppercase label above each one. No shadow, no tint, no box
+		per figure.
+	*/
 	.sigap-ringkasan-strip {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 32px;
-		padding: 14px 0;
+		background-color: var(--sigap-surface);
+		border-top: 1px solid var(--sigap-border-subtle);
+		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-ringkasan-strip__item {
+		flex: 1 1 160px;
 		min-width: 160px;
+		padding: var(--sigap-space-4);
+		/* The rule between two figures. Decorative, so the subtle token. */
+		border-right: 1px solid var(--sigap-border-subtle);
+	}
+
+	.sigap-ringkasan-strip__item:last-child {
+		border-right: none;
 	}
 
 	.sigap-ringkasan-strip__label {
-		margin: 0 0 2px;
-		font-size: 12px;
+		margin: 0 0 var(--sigap-space-1);
+		/* The 11px uppercase micro-label, which is the frozen floor of the scale. */
+		font-size: var(--sigap-type-micro);
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
 		color: var(--sigap-muted);
 	}
 
 	.sigap-ringkasan-strip__value {
 		margin: 0;
-		font-size: 20px;
+		font-size: var(--sigap-type-page-title);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 		font-variant-numeric: tabular-nums;
 	}
 
 	.sigap-ringkasan-strip__source {
-		margin: 2px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-1) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-ringkasan-strip__link {
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		text-decoration: none;
@@ -305,25 +357,25 @@
 	}
 
 	.sigap-ringkasan-note {
-		margin: 0 0 20px;
-		font-size: 12px;
+		margin: 0 0 var(--sigap-space-5);
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-ringkasan-section {
-		margin-bottom: 24px;
+		margin-bottom: var(--sigap-space-5);
 	}
 
 	.sigap-ringkasan-section__title {
-		margin: 0 0 8px;
-		font-size: 13px;
+		margin: 0 0 var(--sigap-space-2);
+		font-size: var(--sigap-type-label);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-ringkasan-section__empty {
 		margin: 0;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
@@ -331,17 +383,18 @@
 		margin: 0;
 		padding: 0;
 		list-style: none;
-		border-top: 1px solid var(--sigap-border);
-		border-bottom: 1px solid var(--sigap-border);
+		/* List hairlines, not control boundaries. */
+		border-top: 1px solid var(--sigap-border-subtle);
+		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-ringkasan-attention__row {
 		display: flex;
 		align-items: center;
-		gap: 12px;
-		min-height: 40px;
-		font-size: 13px;
-		border-bottom: 1px solid var(--sigap-border);
+		gap: var(--sigap-space-3);
+		min-height: var(--sigap-control-admin-comfortable);
+		font-size: var(--sigap-type-label);
+		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-ringkasan-attention__row:last-child {
@@ -364,23 +417,24 @@
 	.sigap-ringkasan-bands {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 12px;
-		margin-bottom: 8px;
+		gap: var(--sigap-space-3);
+		margin-bottom: var(--sigap-space-2);
 	}
 
 	.sigap-ringkasan-bands__item {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
-		padding: 8px 12px;
+		gap: var(--sigap-space-1);
+		padding: var(--sigap-space-2) var(--sigap-space-3);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
-		border-radius: 8px;
+		/* A panel outline is decorative; the badge inside carries the state. */
+		border: 1px solid var(--sigap-border-subtle);
+		border-radius: var(--sigap-radius-panel);
 	}
 
 	.sigap-ringkasan-bands__count {
 		margin: 0;
-		font-size: 18px;
+		font-size: var(--sigap-type-subtitle);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 		font-variant-numeric: tabular-nums;
@@ -389,7 +443,7 @@
 	.sigap-ringkasan-schedule {
 		width: 100%;
 		border-collapse: collapse;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 	}
 
 	.sigap-ringkasan-schedule__caption {
@@ -405,21 +459,25 @@
 	}
 
 	.sigap-ringkasan-schedule th {
-		padding: 10px 12px;
+		padding: var(--sigap-space-3);
 		text-align: left;
-		font-size: 11px;
+		/* 11px uppercase muted header on the sunken ground, per the admin register. */
+		font-size: var(--sigap-type-micro);
 		font-weight: 600;
 		letter-spacing: 0.04em;
 		text-transform: uppercase;
 		color: var(--sigap-muted);
-		border-bottom: 1px solid var(--sigap-border);
+		background-color: var(--sigap-surface-sunken);
+		/* The header's own bottom edge: a rule, not a control boundary. */
+		border-bottom: 1px solid var(--sigap-border-subtle);
 		white-space: nowrap;
 	}
 
 	.sigap-ringkasan-schedule td {
-		height: 44px;
-		padding: 0 12px;
-		border-bottom: 1px solid var(--sigap-border);
+		height: var(--sigap-control-admin-comfortable);
+		padding: 0 var(--sigap-space-3);
+		/* A row separator, so the subtle token. */
+		border-bottom: 1px solid var(--sigap-border-subtle);
 		background-color: var(--sigap-surface);
 	}
 </style>

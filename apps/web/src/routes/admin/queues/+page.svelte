@@ -277,7 +277,7 @@
 	}
 
 	.sigap-admin-updated {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 		/* Tabular figures so the label does not jitter as the minutes tick over. */
 		font-variant-numeric: tabular-nums;
@@ -286,24 +286,25 @@
 	.sigap-admin-search {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: var(--sigap-space-1);
 	}
 
 	.sigap-admin-search__label {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		font-weight: 500;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-admin-search__input {
-		height: 36px;
+		height: var(--sigap-control-admin-compact);
 		width: 180px;
-		padding: 0 10px;
+		padding: 0 var(--sigap-space-3);
+		/* A control boundary: the essential token, never the subtle one. */
 		border: 1px solid var(--sigap-border);
 		background-color: var(--sigap-surface);
 		color: var(--sigap-foreground);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 	}
 
 	.sigap-admin-search__input:focus-visible {
@@ -311,16 +312,23 @@
 		outline-offset: 2px;
 	}
 
+	/*
+		The stale banner keeps the previous rows on screen; this panel is the
+		warning above them. Its outline is a panel outline — decorative — so it
+		uses the subtle token. The leading 3px edge stays `--sigap-danger`: that
+		is the part that carries the warning, and a warning the operator cannot
+		see is not a warning.
+	*/
 	.sigap-admin-stale {
 		display: flex;
-		gap: 10px;
+		gap: var(--sigap-space-3);
 		align-items: flex-start;
-		margin: 12px 0;
-		padding: 12px;
-		font-size: 13px;
+		margin: var(--sigap-space-3) 0;
+		padding: var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		line-height: 1.45;
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 		border-left: 3px solid var(--sigap-danger);
 		color: var(--sigap-danger);
 	}
@@ -337,33 +345,35 @@
 	}
 
 	.sigap-admin-nomatch {
-		padding: 24px;
+		padding: var(--sigap-space-5);
 		text-align: center;
 		background-color: var(--sigap-surface);
-		border: 1px dashed var(--sigap-border);
+		/* A panel outline is decorative; this is a message, not a control. */
+		border: 1px dashed var(--sigap-border-subtle);
 	}
 
 	.sigap-admin-nomatch__title {
-		margin: 0 0 4px;
-		font-size: 15px;
+		margin: 0 0 var(--sigap-space-1);
+		font-size: var(--sigap-type-subtitle);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-admin-nomatch__body {
-		margin: 0 0 12px;
-		font-size: 14px;
+		margin: 0 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-body);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-nomatch__reset {
-		height: 36px;
-		padding: 0 14px;
+		height: var(--sigap-control-admin-compact);
+		padding: 0 var(--sigap-space-4);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		background-color: var(--sigap-surface);
+		/* A control boundary: this is a button. */
 		border: 1px solid var(--sigap-border);
 		cursor: pointer;
 	}

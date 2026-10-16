@@ -5,7 +5,7 @@
 	import AdminToolbar from '$lib/admin/AdminToolbar.svelte';
 	import FacilityFilter from '$lib/admin/FacilityFilter.svelte';
 	import DataTable from '$lib/ui/DataTable.svelte';
-	import StatusBadge from '$lib/ui/StatusBadge.svelte';
+	import AdminStatusBadge, { activeStateIcon } from '$lib/admin/AdminStatusBadge.svelte';
 	import ForbiddenPanel from '$lib/ui/ForbiddenPanel.svelte';
 	import ScheduleEditor from '$lib/admin/ScheduleEditor.svelte';
 	import AdminConfirmDialog from '$lib/admin/AdminConfirmDialog.svelte';
@@ -360,6 +360,7 @@
 		scopeEmpty={facilitiesLoaded && isEmptyScope(facilities)}
 		emptyTitle="Belum ada jadwal"
 		emptyDescription={ORDINARY_EMPTY_DESCRIPTION}
+		onRetry={() => void reloadSchedules()}
 	>
 		{#if filtered.length === 0}
 			<div class="sigap-admin-nomatch" style:border-radius={RADIUS.panel} role="status">
@@ -404,10 +405,11 @@
 						<td class="sigap-schedule-row__num">{schedule.slot_minutes} mnt</td>
 						<td class="sigap-schedule-row__num">{schedule.capacity_per_slot}</td>
 						<td>
-							<StatusBadge
+							<AdminStatusBadge
 								label={schedule.is_active ? 'Aktif' : 'Nonaktif'}
 								tone={schedule.is_active ? 'success' : 'neutral'}
 								size="sm"
+								icon={activeStateIcon(schedule.is_active)}
 							/>
 						</td>
 						<td class="sigap-schedule-row__actions">
@@ -497,14 +499,14 @@
 	.sigap-admin-actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 8px;
+		gap: var(--sigap-space-2);
 	}
 
 	.sigap-admin-actions__primary {
-		height: 40px;
-		padding: 0 16px;
+		height: var(--sigap-control-admin-comfortable);
+		padding: 0 var(--sigap-space-4);
 		font: inherit;
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		font-weight: 500;
 		color: var(--sigap-surface);
 		background-color: var(--sigap-primary);
@@ -524,9 +526,9 @@
 	}
 
 	.sigap-admin-inline-error {
-		margin: 0 0 12px;
-		padding: 8px 12px;
-		font-size: 13px;
+		margin: 0 0 var(--sigap-space-3);
+		padding: var(--sigap-space-2) var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		line-height: 1.45;
 		color: var(--sigap-danger);
 		background-color: var(--sigap-surface);
@@ -538,13 +540,16 @@
 	}
 
 	.sigap-schedule-row__edit {
-		height: 32px;
-		padding: 0 12px;
+		/* The frozen compact admin control height; see the row-action density rule
+		   in e2e/admin-table-density.spec.ts. */
+		height: var(--sigap-control-admin-compact);
+		padding: 0 var(--sigap-space-3);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		background-color: var(--sigap-surface);
+		/* A control boundary: this is a button. */
 		border: 1px solid var(--sigap-border);
 		cursor: pointer;
 	}
@@ -555,25 +560,28 @@
 	}
 
 	.sigap-schedule-row__readonly {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-checkfield {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: var(--sigap-space-2);
 		/* Aligns the checkbox with the 36px control row beside it. */
-		height: 36px;
+		height: var(--sigap-control-admin-compact);
 	}
 
 	.sigap-admin-checkfield__input {
 		width: 16px;
 		height: 16px;
+		/* Native control colouring, so the checkbox matches the brand without a
+		   hand-rolled box that would lose the platform's own states. */
+		accent-color: var(--sigap-primary);
 	}
 
 	.sigap-admin-checkfield__label {
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-foreground);
 	}
 
@@ -597,33 +605,35 @@
 	}
 
 	.sigap-admin-nomatch {
-		padding: 24px;
+		padding: var(--sigap-space-5);
 		text-align: center;
 		background-color: var(--sigap-surface);
-		border: 1px dashed var(--sigap-border);
+		/* A panel outline is decorative; this is a message, not a control. */
+		border: 1px dashed var(--sigap-border-subtle);
 	}
 
 	.sigap-admin-nomatch__title {
-		margin: 0 0 4px;
-		font-size: 15px;
+		margin: 0 0 var(--sigap-space-1);
+		font-size: var(--sigap-type-subtitle);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-admin-nomatch__body {
-		margin: 0 0 12px;
-		font-size: 14px;
+		margin: 0 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-body);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-nomatch__reset {
-		height: 36px;
-		padding: 0 14px;
+		height: var(--sigap-control-admin-compact);
+		padding: 0 var(--sigap-space-4);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		background-color: var(--sigap-surface);
+		/* A control boundary: this is a button. */
 		border: 1px solid var(--sigap-border);
 		cursor: pointer;
 	}

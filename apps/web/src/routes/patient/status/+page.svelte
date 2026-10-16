@@ -3,6 +3,7 @@
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import { RADIUS } from '$lib/design/tokens';
 	import { Search } from 'lucide-svelte';
 	import Icon from '$lib/ui/Icon.svelte';
@@ -102,12 +103,11 @@
 </svelte:head>
 
 <div class="sigap-status">
-	<section class="sigap-status__intro" aria-labelledby="sigap-status-title">
-		<h1 id="sigap-status-title" class="sigap-page-title">Status Kunjungan</h1>
-		<p class="sigap-page-subtitle">
-			Masukkan kode check-in atau nomor antrean untuk melihat posisi kunjungan Anda saat ini.
-		</p>
-	</section>
+	<PageHeader
+		eyebrow="Kunjungan"
+		title="Status Kunjungan"
+		description="Masukkan kode check-in atau nomor antrean untuk melihat posisi kunjungan Anda saat ini."
+	/>
 
 	<section class="sigap-status__panel" style:border-radius={RADIUS.panel}>
 		<form novalidate on:submit|preventDefault={lookup}>
@@ -196,36 +196,41 @@
 	.sigap-status {
 		max-width: 640px;
 		margin: 0 auto;
-		padding: 20px 16px 8px;
+		padding: var(--sigap-space-5) var(--sigap-space-4) var(--sigap-space-2);
 	}
 
 	@media (min-width: 768px) {
 		.sigap-status {
-			padding: 32px 24px 8px;
+			padding: var(--sigap-space-6) var(--sigap-space-5) var(--sigap-space-2);
 		}
 	}
 
+	/*
+		The lookup panel frames a field and a button; it is not itself operable.
+		Decorative hairline, per the border split — the input and the submit
+		button inside keep their own `--sigap-border` boundaries.
+	*/
 	.sigap-status__panel {
-		margin-top: 16px;
-		padding: 16px;
+		margin-top: var(--sigap-space-4);
+		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-status__panel form {
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		gap: var(--sigap-space-4);
 	}
 
 	.sigap-status__result:not(:empty) {
-		margin-top: 20px;
+		margin-top: var(--sigap-space-5);
 	}
 
 	.sigap-status__found {
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		gap: var(--sigap-space-4);
 	}
 
 	.sigap-status__facility {
@@ -235,36 +240,41 @@
 	}
 
 	.sigap-status__facility-label {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-status__facility-name {
-		font-size: 16px;
+		font-size: var(--sigap-type-subtitle);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-status__when {
 		margin: 0;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-status__found-by {
 		margin: 0;
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
+	/*
+		The not-found state is a panel, not an alert: nothing is broken, the code
+		is simply unknown. Muted ground and a decorative outline keep it from
+		reading as a failure.
+	*/
 	.sigap-status__empty {
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
-		gap: 8px;
-		padding: 16px;
-		background-color: var(--sigap-canvas);
-		border: 1px solid var(--sigap-border);
+		gap: var(--sigap-space-2);
+		padding: var(--sigap-space-4);
+		background-color: var(--sigap-surface-sunken);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-status__empty-icon {
@@ -274,21 +284,23 @@
 
 	.sigap-status__empty-title {
 		margin: 0;
-		font-size: 15px;
+		font-size: var(--sigap-type-subtitle);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-status__empty-body {
 		margin: 0;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
+	/* A tone-carrying alert: tone border, tone text, tinted ground. */
 	.sigap-status__error {
-		padding: 12px;
-		font-size: 13px;
+		padding: var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-danger);
+		background-color: var(--sigap-danger-tint);
 		border: 1px solid var(--sigap-danger);
 	}
 </style>

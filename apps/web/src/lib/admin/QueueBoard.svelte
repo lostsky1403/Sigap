@@ -132,20 +132,20 @@
 	.sigap-queue-board {
 		display: flex;
 		flex-direction: column;
-		gap: 24px;
+		gap: var(--sigap-space-5);
 	}
 
 	.sigap-queue-board__group-head {
 		display: flex;
 		align-items: baseline;
-		gap: 8px;
+		gap: var(--sigap-space-2);
 		flex-wrap: wrap;
-		margin-bottom: 8px;
+		margin-bottom: var(--sigap-space-2);
 	}
 
 	.sigap-queue-board__group-title {
 		margin: 0;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
@@ -153,7 +153,7 @@
 	.sigap-queue-board__group-count {
 		/* `min-width: 2ch` keeps a single-digit count from shifting the hint. */
 		min-width: 2ch;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		font-weight: 600;
 		text-align: right;
 		color: var(--sigap-primary);
@@ -162,23 +162,24 @@
 
 	.sigap-queue-board__group-hint {
 		margin: 0;
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-queue-board__group-empty {
 		margin: 0;
-		padding: 16px 12px;
-		font-size: 13px;
+		padding: var(--sigap-space-4) var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 		background-color: var(--sigap-surface);
-		border: 1px dashed var(--sigap-border);
-		border-radius: 8px;
+		/* A panel outline is decorative: it is a placeholder ground, not a control. */
+		border: 1px dashed var(--sigap-border-subtle);
+		border-radius: var(--sigap-radius-panel);
 	}
 
 	.sigap-queue-board__source {
 		margin: 0;
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 </style>

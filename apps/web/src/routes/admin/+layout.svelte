@@ -47,6 +47,6 @@
 
 	:global(.sigap-admin-page) {
 		min-width: 0;
-		padding: 20px 24px;
+		padding: var(--sigap-space-5) var(--sigap-space-5);
 	}
 </style>

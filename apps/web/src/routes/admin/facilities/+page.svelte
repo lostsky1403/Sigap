@@ -3,7 +3,7 @@
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
 	import DataTable from '$lib/ui/DataTable.svelte';
-	import StatusBadge from '$lib/ui/StatusBadge.svelte';
+	import AdminStatusBadge, { activeStateIcon } from '$lib/admin/AdminStatusBadge.svelte';
 	import FacilityEditor from '$lib/admin/FacilityEditor.svelte';
 	import AdminConfirmDialog from '$lib/admin/AdminConfirmDialog.svelte';
 	import AdminMutationFeedback from '$lib/admin/AdminMutationFeedback.svelte';
@@ -262,6 +262,7 @@
 		rowCount={facilities.length}
 		scopeEmpty={loading === false && error === null && isEmptyScope(facilities)}
 		emptyTitle="Belum ada fasilitas"
+		onRetry={() => void reloadFacilities()}
 	>
 		<DataTable
 			caption="Fasilitas dalam lingkup akses"
@@ -293,10 +294,11 @@
 							outline-only with the label as its text, so the state survives a
 							monochrome display and a colour-blind operator.
 						-->
-						<StatusBadge
+						<AdminStatusBadge
 							label={facilityStateLabel(active)}
 							tone={active ? 'success' : 'neutral'}
 							size="sm"
+							icon={activeStateIcon(active)}
 						/>
 						{#if !active}
 							<!--
@@ -404,14 +406,14 @@
 	.sigap-admin-actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 8px;
+		gap: var(--sigap-space-2);
 	}
 
 	.sigap-admin-actions__primary {
-		height: 40px;
-		padding: 0 16px;
+		height: var(--sigap-control-admin-comfortable);
+		padding: 0 var(--sigap-space-4);
 		font: inherit;
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		font-weight: 500;
 		color: var(--sigap-surface);
 		background-color: var(--sigap-primary);
@@ -431,9 +433,9 @@
 	}
 
 	.sigap-admin-inline-error {
-		margin: 12px 0 0;
-		padding: 8px 12px;
-		font-size: 13px;
+		margin: var(--sigap-space-3) 0 0;
+		padding: var(--sigap-space-2) var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		line-height: 1.45;
 		color: var(--sigap-danger);
 		background-color: var(--sigap-surface);
@@ -446,10 +448,13 @@
 
 	.sigap-facility-row__edit,
 	.sigap-facility-row__deactivate {
-		height: 32px;
-		padding: 0 12px;
+		/* The frozen compact admin control height. A 32px row action is a third
+		   density the system does not have, and e2e/admin-table-density.spec.ts
+		   asserts row action controls stay at or above 36px. */
+		height: var(--sigap-control-admin-compact);
+		padding: 0 var(--sigap-space-3);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		cursor: pointer;
 	}
@@ -457,6 +462,7 @@
 	.sigap-facility-row__edit {
 		color: var(--sigap-primary);
 		background-color: var(--sigap-surface);
+		/* A control boundary: these are buttons, so the essential token. */
 		border: 1px solid var(--sigap-border);
 	}
 
@@ -464,7 +470,7 @@
 		color: var(--sigap-danger);
 		background-color: var(--sigap-surface);
 		border: 1px solid var(--sigap-border);
-		margin-left: 6px;
+		margin-left: var(--sigap-space-2);
 	}
 
 	.sigap-facility-row__edit:focus-visible,
@@ -521,15 +527,15 @@
 	.sigap-facility-row__permanent {
 		display: block;
 		margin-top: 1px;
-		font-size: 11px;
+		font-size: var(--sigap-type-micro);
 		line-height: 1;
 		color: var(--sigap-muted);
 		white-space: nowrap;
 	}
 
 	.sigap-facility-row__note {
-		margin: 8px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-2) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 </style>

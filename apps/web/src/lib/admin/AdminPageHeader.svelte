@@ -38,16 +38,23 @@
 		top: 0;
 		z-index: 30;
 		background-color: var(--sigap-canvas);
-		border-bottom: 1px solid var(--sigap-border);
+		/*
+			DECORATIVE, not a control boundary. The header's bottom edge is a rule
+			separating the sticky bar from the content that scrolls under it, so it
+			belongs to `--sigap-border-subtle`. Wiring it to `--sigap-border`
+			(#767E7C) draws a 4.16:1 line across the top of every admin page, which
+			reads as a wireframe rather than as a rule.
+		*/
+		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-admin-header__inner {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 16px;
+		gap: var(--sigap-space-4);
 		height: 56px;
-		padding: 0 24px;
+		padding: 0 var(--sigap-space-5);
 	}
 
 	.sigap-admin-header__text {
@@ -56,7 +63,7 @@
 
 	.sigap-admin-header__title {
 		margin: 0;
-		font-size: 20px;
+		font-size: var(--sigap-type-page-title);
 		font-weight: 600;
 		line-height: 24px;
 		letter-spacing: -0.01em;
@@ -65,14 +72,14 @@
 
 	.sigap-admin-header__subtitle {
 		margin: 0;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-header__aside {
 		display: flex;
 		align-items: center;
-		gap: 12px;
+		gap: var(--sigap-space-3);
 		flex-shrink: 0;
 	}
 </style>

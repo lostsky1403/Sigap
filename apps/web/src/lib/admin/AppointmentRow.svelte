@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Button from '$lib/ui/Button.svelte';
-	import StatusBadge from '$lib/ui/StatusBadge.svelte';
+	import AdminStatusBadge, { APPOINTMENT_STATUS_ICON } from './AdminStatusBadge.svelte';
 	import { DENSITY } from '$lib/ui/density';
 	import { formatDateTime } from '$lib/domain/format';
 	import {
@@ -70,10 +70,11 @@
 	<td class="sigap-table-col-secondary">{facilityName}</td>
 	<td class="sigap-table-col-secondary">{serviceUnitName}</td>
 	<td>
-		<StatusBadge
+		<AdminStatusBadge
 			label={APPOINTMENT_STATUS_LABEL[appointment.status]}
 			tone={appointmentTone(appointment.status)}
 			size="sm"
+			icon={APPOINTMENT_STATUS_ICON[appointment.status]}
 		/>
 	</td>
 	<td class="sigap-appointment-row__actions">
@@ -133,19 +134,23 @@
 	}
 
 	.sigap-appointment-row__actions :global(.sigap-button) {
-		margin-right: 6px;
+		margin-right: var(--sigap-space-2);
 	}
 
 	.sigap-appointment-row__terminal {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
+	/*
+		Decorative leading accent on a message row, not a control boundary, so it
+		uses the subtle border token.
+	*/
 	.sigap-appointment-row__outcome-cell {
-		padding: 8px 12px;
-		font-size: 13px;
+		padding: var(--sigap-space-2) var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		line-height: 1.45;
 		background-color: var(--sigap-surface);
-		border-left: 3px solid var(--sigap-border);
+		border-left: 3px solid var(--sigap-border-subtle);
 	}
 </style>

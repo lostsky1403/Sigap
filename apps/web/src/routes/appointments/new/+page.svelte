@@ -8,8 +8,9 @@
 	import Textarea from '$lib/ui/Textarea.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import ErrorState from '$lib/ui/ErrorState.svelte';
+	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import { RADIUS } from '$lib/design/tokens';
-	import { CalendarCheck, Copy, Check } from 'lucide-svelte';
+	import { AlertTriangle, CalendarCheck, Copy, Check } from 'lucide-svelte';
 	import Icon from '$lib/ui/Icon.svelte';
 	import {
 		bookAppointment,
@@ -402,12 +403,16 @@
 </svelte:head>
 
 <div class="sigap-booking">
-	<section class="sigap-booking__intro" aria-labelledby="sigap-booking-title">
-		<h1 id="sigap-booking-title" class="sigap-page-title">Buat Janji Temu</h1>
-		<p class="sigap-page-subtitle">
-			Pilih fasilitas, layanan, dan waktu. Data Anda hanya dipakai untuk janji temu ini.
-		</p>
-	</section>
+	<!--
+		The shared section opener: eyebrow, 2px content-measure rule, title, lede.
+		Every citizen page opens with it, so it is one component rather than a
+		hand-rolled block per page that would drift from the others.
+	-->
+	<PageHeader
+		eyebrow="Janji temu"
+		title="Buat Janji Temu"
+		description="Pilih fasilitas, layanan, dan waktu. Data Anda hanya dipakai untuk janji temu ini."
+	/>
 
 	<!--
 		A catalog failure means there is nothing to book against, so the whole
@@ -448,7 +453,7 @@
 					<Icon icon={CalendarCheck} size={20} />
 				</span>
 				<div>
-					<h2 class="sigap-booking__confirm-title" id="sigap-booking-confirmed-title">
+					<h2 class="sigap-section-title" id="sigap-booking-confirmed-title">
 						Janji temu berhasil dibuat
 					</h2>
 					<p class="sigap-booking__confirm-sub">
@@ -466,7 +471,7 @@
 					can take it away from this screen.
 				-->
 				<p
-					class="sigap-booking__code"
+					class="sigap-booking__code sigap-identifier"
 					aria-labelledby="sigap-booking-code-label"
 					data-testid="booking-checkin-code"
 				>
@@ -506,7 +511,7 @@
 				<dl class="sigap-booking__detail-list">
 					<div>
 						<dt>appointment_id</dt>
-						<dd data-testid="booking-appointment-id">{result.id}</dd>
+						<dd class="sigap-identifier" data-testid="booking-appointment-id">{result.id}</dd>
 					</div>
 					<div>
 						<dt>status</dt>
@@ -535,7 +540,10 @@
 				-->
 				{#if submitFailure}
 					<div class="sigap-booking__failure" role="alert">
-						{failureMessage}
+						<span class="sigap-booking__failure-icon" aria-hidden="true">
+							<Icon icon={AlertTriangle} size={18} />
+						</span>
+						<p class="sigap-booking__failure-text">{failureMessage}</p>
 					</div>
 				{/if}
 
@@ -694,28 +702,34 @@
 	.sigap-booking {
 		max-width: 1024px;
 		margin: 0 auto;
-		padding: 20px 16px 8px;
+		padding: var(--sigap-space-5) var(--sigap-space-4) var(--sigap-space-2);
 	}
 
 	@media (min-width: 1024px) {
 		.sigap-booking {
-			padding: 32px 24px 8px;
+			padding: var(--sigap-space-6) var(--sigap-space-5) var(--sigap-space-2);
 		}
 	}
 
 	.sigap-booking__section {
-		margin-top: 16px;
+		margin-top: var(--sigap-space-4);
 	}
 
+	/*
+		A loading region is not a control, so its outline is the decorative
+		hairline and the sunken ground does the work of separating it. Wiring
+		`--sigap-border` here would draw a 4.16:1 box around a non-interactive
+		message.
+	*/
 	.sigap-booking__loading {
-		padding: 16px;
-		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		padding: var(--sigap-space-4);
+		background-color: var(--sigap-surface-sunken);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-booking__loading-text {
 		margin: 0;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
@@ -728,8 +742,8 @@
 	.sigap-booking__layout {
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
-		margin-top: 16px;
+		gap: var(--sigap-space-4);
+		margin-top: var(--sigap-space-4);
 	}
 
 	@media (min-width: 1024px) {
@@ -747,7 +761,7 @@
 		   for a two-field row at 1024px. */
 		.sigap-booking__aside {
 			position: sticky;
-			top: 16px;
+			top: var(--sigap-space-4);
 			width: 320px;
 			flex: none;
 		}
@@ -756,7 +770,7 @@
 	.sigap-booking__form {
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		gap: var(--sigap-space-4);
 		min-width: 0;
 	}
 
@@ -765,12 +779,16 @@
 		like three pages, and it keeps the citizen from seeing fields they cannot
 		use yet — a service list that is empty because no facility is chosen
 		reads as an error rather than as "not yet".
+
+		The step is a section, not a control: its outline is the decorative
+		hairline, and the controls inside it (the primitives) keep their own
+		`--sigap-border` boundaries.
 	*/
 	.sigap-booking__step {
 		display: none;
 		margin: 0;
-		padding: 16px;
-		border: 1px solid var(--sigap-border);
+		padding: var(--sigap-space-4);
+		border: 1px solid var(--sigap-border-subtle);
 		background-color: var(--sigap-surface);
 	}
 
@@ -780,14 +798,14 @@
 
 	.sigap-booking__step-title {
 		padding: 0;
-		margin-bottom: 12px;
-		font-size: 13px;
+		margin-bottom: var(--sigap-space-3);
+		font-size: var(--sigap-type-subtitle);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-booking__step :global(.sigap-field + .sigap-field) {
-		margin-top: 16px;
+		margin-top: var(--sigap-space-4);
 	}
 
 	/*
@@ -796,13 +814,22 @@
 		the citizen 44px height, the focus ring, and the invalid border. One
 		bespoke rule for the one control the primitives do not cover, rather
 		than a parallel stylesheet that could drift from them.
+
+		The border stays `--sigap-border`: this IS a control boundary, and the
+		decorative hairline at 1.28:1 would leave the field with no visible
+		edge on white.
 	*/
 	.sigap-booking__control {
 		width: 100%;
 		/* Citizen touch floor, matching the primitives. */
-		height: 44px;
-		padding: 0 12px;
+		height: var(--sigap-control-citizen);
+		padding: 0 var(--sigap-space-3);
 		font-family: inherit;
+		/*
+			16px, not a scale step: below 16px a focused input makes iOS Safari
+			zoom the whole page. This matches `.sigap-input--citizen` in the
+			shared primitives, which carries the same value for the same reason.
+		*/
 		font-size: 16px;
 		color: var(--sigap-foreground);
 		background-color: var(--sigap-surface);
@@ -819,12 +846,29 @@
 		border-color: var(--sigap-danger);
 	}
 
+	/*
+		A tone-carrying alert: tone border, tone icon, tone text, tinted ground.
+		The tone is the whole point — a server failure stated in body text reads
+		as an aside rather than as the reason the submit did nothing.
+	*/
 	.sigap-booking__failure {
-		padding: 12px;
-		font-size: 13px;
+		display: flex;
+		align-items: flex-start;
+		gap: var(--sigap-space-3);
+		padding: var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-danger);
-		background-color: var(--sigap-surface);
+		background-color: var(--sigap-danger-tint);
 		border: 1px solid var(--sigap-danger);
+	}
+
+	.sigap-booking__failure-icon {
+		display: flex;
+		flex: none;
+	}
+
+	.sigap-booking__failure-text {
+		margin: 0;
 	}
 
 	.sigap-booking__submit {
@@ -833,18 +877,23 @@
 	}
 
 	.sigap-booking__confirmation {
-		margin-top: 16px;
-		padding: 16px;
+		margin-top: var(--sigap-space-4);
+		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-booking__confirm-head {
 		display: flex;
 		align-items: flex-start;
-		gap: 12px;
+		gap: var(--sigap-space-3);
 	}
 
+	/*
+		The confirmation mark, drawn as a badge: 1px tone border, tone glyph,
+		tinted ground. Never filled, and never colour alone — the heading beside
+		it carries the same meaning in words.
+	*/
 	.sigap-booking__confirm-icon {
 		display: flex;
 		align-items: center;
@@ -853,57 +902,56 @@
 		height: 40px;
 		flex: none;
 		color: var(--sigap-primary);
+		background-color: var(--sigap-primary-tint);
 		border: 1px solid var(--sigap-primary);
-	}
-
-	.sigap-booking__confirm-title {
-		margin: 0;
-		font-size: 16px;
-		font-weight: 600;
-		color: var(--sigap-foreground);
+		border-radius: var(--sigap-radius-control);
 	}
 
 	.sigap-booking__confirm-sub {
-		margin: 2px 0 0;
-		font-size: 13px;
+		margin: var(--sigap-space-1) 0 0;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
+	/*
+		The code box frames a value; it is not itself operable, so its outline is
+		the decorative hairline and the tinted ground carries the emphasis. The
+		monospace code inside is what the citizen has to read, not the box.
+	*/
 	.sigap-booking__code-block {
-		margin-top: 16px;
-		padding: 16px;
+		margin-top: var(--sigap-space-4);
+		padding: var(--sigap-space-4);
 		text-align: center;
-		background-color: var(--sigap-canvas);
-		border: 1px solid var(--sigap-border);
+		background-color: var(--sigap-primary-tint);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-booking__code-label {
-		margin: 0 0 4px;
-		font-size: 12px;
+		margin: 0 0 var(--sigap-space-1);
+		font-size: var(--sigap-type-caption);
 		font-weight: 500;
 		color: var(--sigap-muted);
 	}
 
 	/*
 		The code is the one thing the citizen must write down, so it is the
-		largest text on the page. Monospace and letter-spacing keep a
-		six-character code from being misread as a word.
+		largest text on the page. `.sigap-identifier` supplies the monospace
+		stack and tabular figures — the code is compared character by character,
+		so it must not be re-typeset with a second font stack here.
 	*/
 	.sigap-booking__code {
-		margin: 0 0 12px;
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 32px;
+		margin: 0 0 var(--sigap-space-3);
+		font-size: 36px;
 		font-weight: 700;
-		letter-spacing: 0.2em;
-		color: var(--sigap-foreground);
+		color: var(--sigap-primary-strong);
 		/* Selectable by design; see the note in the markup. */
 		user-select: all;
 		overflow-wrap: anywhere;
 	}
 
 	.sigap-booking__when {
-		margin: 16px 0 0;
-		font-size: 13px;
+		margin: var(--sigap-space-4) 0 0;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
@@ -911,19 +959,19 @@
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 12px;
-		margin-top: 16px;
+		gap: var(--sigap-space-3);
+		margin-top: var(--sigap-space-4);
 	}
 
 	.sigap-booking__cta {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		min-height: 44px;
-		padding: 0 16px;
-		font-size: 14px;
+		min-height: var(--sigap-control-citizen);
+		padding: 0 var(--sigap-space-4);
+		font-size: var(--sigap-type-body);
 		font-weight: 500;
-		color: var(--sigap-surface);
+		color: var(--sigap-on-primary);
 		background-color: var(--sigap-primary);
 		text-decoration: none;
 	}
@@ -934,41 +982,40 @@
 	}
 
 	.sigap-booking__details {
-		margin-top: 16px;
-		font-size: 12px;
+		margin-top: var(--sigap-space-4);
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-booking__details summary {
-		min-height: 44px;
+		min-height: var(--sigap-control-citizen);
 		display: flex;
 		align-items: center;
 		cursor: pointer;
 	}
 
 	.sigap-booking__detail-list {
-		margin: 8px 0 0;
-		padding: 12px;
-		background-color: var(--sigap-canvas);
-		border: 1px solid var(--sigap-border);
+		margin: var(--sigap-space-2) 0 0;
+		padding: var(--sigap-space-3);
+		background-color: var(--sigap-surface-sunken);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-booking__detail-list dt {
-		font-size: 11px;
+		font-size: var(--sigap-type-micro);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-booking__detail-list dd {
-		margin: 0 0 8px;
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 11px;
+		margin: 0 0 var(--sigap-space-2);
+		font-size: var(--sigap-type-micro);
 		color: var(--sigap-foreground);
 		overflow-wrap: anywhere;
 	}
 
 	.sigap-booking__copy-hint {
-		margin: 8px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-2) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 		min-height: 16px;
 	}

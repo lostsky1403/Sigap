@@ -1,9 +1,8 @@
 <script lang="ts">
-	import { RADIUS } from '$lib/design/tokens';
 	import { DENSITY } from '$lib/ui/density';
 	import Button from '$lib/ui/Button.svelte';
 	import { QUEUE_STATUS_LABEL, queueTone } from '$lib/domain/status';
-	import StatusBadge from '$lib/ui/StatusBadge.svelte';
+	import AdminStatusBadge, { QUEUE_STATUS_ICON } from './AdminStatusBadge.svelte';
 	import { formatDateTime } from '$lib/domain/format';
 	import type { QueueStatus } from '$lib/api/types/api';
 
@@ -52,7 +51,12 @@
 <tr class="sigap-queue-row">
 	<td class="sigap-queue-row__number">{formattedNumber}</td>
 	<td class="sigap-queue-row__status">
-		<StatusBadge label={QUEUE_STATUS_LABEL[status]} tone={queueTone(status)} size="sm" />
+		<AdminStatusBadge
+			label={QUEUE_STATUS_LABEL[status]}
+			tone={queueTone(status)}
+			size="sm"
+			icon={QUEUE_STATUS_ICON[status]}
+		/>
 	</td>
 	<td class="sigap-queue-row__facility">{facilityName}</td>
 	<td class="sigap-queue-row__time">{formatDateTime(registeredAt)}</td>
@@ -136,7 +140,7 @@
 	}
 
 	.sigap-queue-row__terminal {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
@@ -145,13 +149,18 @@
 		contract belongs to a data row, and this is a message, not data. It is
 		bordered and coloured on the leading edge so it reads as belonging to the
 		row above rather than as a new band on the board.
+
+		The leading edge is DECORATIVE: it is an accent on a message, not the
+		outline of a control, so it uses `--sigap-border-subtle`. A 4.16:1 bar
+		down the side of every outcome row would out-shout the danger colour that
+		appears there when the mutation is actually refused.
 	*/
 	.sigap-queue-row__outcome-cell {
-		padding: 8px 12px;
-		font-size: 13px;
+		padding: var(--sigap-space-2) var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		line-height: 1.45;
 		background-color: var(--sigap-surface);
-		border-left: 3px solid var(--sigap-border);
+		border-left: 3px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-queue-row__pending {
@@ -168,6 +177,6 @@
 		buttons need no per-row naming.
 	*/
 	.sigap-queue-row__actions :global(.sigap-button) {
-		margin-right: 6px;
+		margin-right: var(--sigap-space-2);
 	}
 </style>

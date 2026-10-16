@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import AuthForms from '$lib/citizen/AuthForms.svelte';
-	import { RADIUS } from '$lib/design/tokens';
+	import AuthPanel from '$lib/citizen/AuthPanel.svelte';
 	import type { ActionData } from './$types';
 
 	/**
@@ -42,76 +42,14 @@
 	<title>Masuk — Sigap</title>
 </svelte:head>
 
-<div class="sigap-auth">
-	<section class="sigap-auth__panel" style:border-radius={RADIUS.panel}>
-		<h1 class="sigap-auth__title">Masuk</h1>
-		<p class="sigap-auth__subtitle">Kembali ke Sigap.</p>
+<AuthPanel
+	title="Masuk"
+	description="Masuk untuk mengelola fasilitas dan antrean."
+>
+	<AuthForms mode="login" {message} {registered} />
 
-		<div class="sigap-auth__body">
-			<AuthForms mode="login" {message} {registered} />
-		</div>
-	</section>
-
-	<p class="sigap-auth__alt">
+	<div slot="footer">
 		Belum punya akun?
-		<a class="sigap-auth__alt-link" href="/auth/register">Daftar</a>
-	</p>
-</div>
-
-<style>
-	.sigap-auth {
-		max-width: 440px;
-		margin: 0 auto;
-		padding: 24px 16px 8px;
-	}
-
-	@media (min-width: 768px) {
-		.sigap-auth {
-			padding: 40px 24px 8px;
-		}
-	}
-
-	.sigap-auth__panel {
-		padding: 20px 16px;
-		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border-subtle);
-	}
-
-	.sigap-auth__title {
-		margin: 0;
-		font-size: 20px;
-		font-weight: 600;
-		color: var(--sigap-foreground);
-	}
-
-	.sigap-auth__subtitle {
-		margin: 4px 0 0;
-		font-size: 14px;
-		color: var(--sigap-muted);
-	}
-
-	.sigap-auth__body {
-		margin-top: 20px;
-	}
-
-	.sigap-auth__alt {
-		margin: 16px 0 0;
-		font-size: 13px;
-		color: var(--sigap-muted);
-	}
-
-	.sigap-auth__alt-link {
-		font-weight: 500;
-		color: var(--sigap-primary);
-		text-decoration: none;
-	}
-
-	.sigap-auth__alt-link:hover {
-		text-decoration: underline;
-	}
-
-	.sigap-auth__alt-link:focus-visible {
-		outline: 2px solid var(--sigap-primary);
-		outline-offset: 2px;
-	}
-</style>
+		<a href="/auth/register">Daftar</a>
+	</div>
+</AuthPanel>

@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import WalkInForm from '$lib/citizen/WalkInForm.svelte';
+	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import { RADIUS } from '$lib/design/tokens';
-	import { TicketCheck, Copy, Check } from 'lucide-svelte';
+	import { AlertTriangle, TicketCheck, Copy, Check } from 'lucide-svelte';
 	import Icon from '$lib/ui/Icon.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { listPublicFacilities, generateQueueTicket, normalizeQueueTicket } from '$lib/api/endpoints/public';
@@ -144,13 +145,11 @@
 </svelte:head>
 
 <div class="sigap-walkin">
-	<section class="sigap-walkin__intro" aria-labelledby="sigap-walkin-title">
-		<h1 id="sigap-walkin-title" class="sigap-page-title">Ambil Antrean Walk-In</h1>
-		<p class="sigap-page-subtitle">
-			Untuk kunjungan tanpa janji temu. Datang langsung ke fasilitas dan ambil nomor antrean di
-			sini.
-		</p>
-	</section>
+	<PageHeader
+		eyebrow="Antrean"
+		title="Ambil Antrean Walk-In"
+		description="Untuk kunjungan tanpa janji temu. Datang langsung ke fasilitas dan ambil nomor antrean di sini."
+	/>
 
 	<!--
 		The counterpart of the check-in page's walk-in link. Someone who already
@@ -186,7 +185,7 @@
 					<Icon icon={TicketCheck} size={20} />
 				</span>
 				<div>
-					<h2 class="sigap-walkin__ticket-title" id="sigap-walkin-confirmed-title">
+					<h2 class="sigap-section-title" id="sigap-walkin-confirmed-title">
 						Nomor antrean Anda
 					</h2>
 					<p class="sigap-walkin__ticket-sub">
@@ -198,7 +197,7 @@
 			<div class="sigap-walkin__number-block">
 				<p class="sigap-walkin__number-label" id="sigap-walkin-number-label">Nomor antrean</p>
 				<p
-					class="sigap-walkin__number"
+					class="sigap-walkin__number sigap-identifier"
 					aria-labelledby="sigap-walkin-number-label"
 					data-testid="walkin-number"
 				>
@@ -223,8 +222,6 @@
 				<a
 					class="sigap-walkin__cta"
 					style:border-radius={RADIUS.control}
-					style:background-color="var(--sigap-primary)"
-					style:color="var(--sigap-surface)"
 					href="/patient/status"
 				>
 					Cek status kunjungan
@@ -243,7 +240,10 @@
 					whether to wait until tomorrow or go to another facility.
 				-->
 				<div class="sigap-walkin__failure" role="alert" data-testid="walkin-error">
-					{resolveFailureMessage(failure)}
+					<span class="sigap-walkin__failure-icon" aria-hidden="true">
+						<Icon icon={AlertTriangle} size={18} />
+					</span>
+					<p class="sigap-walkin__failure-text">{resolveFailureMessage(failure)}</p>
 				</div>
 			{/if}
 
@@ -264,42 +264,51 @@
 	.sigap-walkin {
 		max-width: 640px;
 		margin: 0 auto;
-		padding: 20px 16px 8px;
+		padding: var(--sigap-space-5) var(--sigap-space-4) var(--sigap-space-2);
 	}
 
 	@media (min-width: 768px) {
 		.sigap-walkin {
-			padding: 32px 24px 8px;
+			padding: var(--sigap-space-6) var(--sigap-space-5) var(--sigap-space-2);
 		}
 	}
 
+	/*
+		The form panel frames fields; it is not a control. Decorative hairline,
+		per the border split — the select and inputs inside keep their own
+		`--sigap-border` boundaries.
+	*/
 	.sigap-walkin__section {
-		margin-top: 16px;
-		padding: 16px;
+		margin-top: var(--sigap-space-4);
+		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-walkin__alt {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 8px;
-		margin-top: 16px;
+		gap: var(--sigap-space-2);
+		margin-top: var(--sigap-space-4);
 	}
 
 	.sigap-walkin__alt-label {
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
+	/*
+		An outlined link styled as a button, so it keeps `--sigap-border`: it is
+		something the citizen operates.
+	*/
 	.sigap-walkin__alt-link {
 		display: inline-flex;
 		align-items: center;
 		/* Citizen touch floor. */
-		min-height: 44px;
-		padding: 0 12px;
-		font-size: 13px;
+		min-height: var(--sigap-control-citizen);
+		padding: 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		border: 1px solid var(--sigap-border);
@@ -315,27 +324,49 @@
 		outline-offset: 2px;
 	}
 
+	/*
+		A tone-carrying alert: tone border, tone icon, tone text, tinted ground.
+		Verbatim server copy inside, so the citizen is told what actually failed.
+	*/
 	.sigap-walkin__failure {
-		margin-bottom: 16px;
-		padding: 12px;
-		font-size: 13px;
+		display: flex;
+		align-items: flex-start;
+		gap: var(--sigap-space-3);
+		margin-bottom: var(--sigap-space-4);
+		padding: var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-danger);
+		background-color: var(--sigap-danger-tint);
 		border: 1px solid var(--sigap-danger);
 	}
 
+	.sigap-walkin__failure-icon {
+		display: flex;
+		flex: none;
+	}
+
+	.sigap-walkin__failure-text {
+		margin: 0;
+	}
+
+	/*
+		The ticket card frames content; it is not a control, so it takes the
+		decorative hairline. The number inside carries the emphasis.
+	*/
 	.sigap-walkin__ticket {
-		margin-top: 16px;
-		padding: 16px;
+		margin-top: var(--sigap-space-4);
+		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-walkin__ticket-head {
 		display: flex;
 		align-items: flex-start;
-		gap: 12px;
+		gap: var(--sigap-space-3);
 	}
 
+	/* A badge: 1px tone border, tone glyph, tinted ground — never filled. */
 	.sigap-walkin__ticket-icon {
 		display: flex;
 		align-items: center;
@@ -344,64 +375,69 @@
 		height: 40px;
 		flex: none;
 		color: var(--sigap-primary);
+		background-color: var(--sigap-primary-tint);
 		border: 1px solid var(--sigap-primary);
-	}
-
-	.sigap-walkin__ticket-title {
-		margin: 0;
-		font-size: 16px;
-		font-weight: 600;
-		color: var(--sigap-foreground);
+		border-radius: var(--sigap-radius-control);
 	}
 
 	.sigap-walkin__ticket-sub {
-		margin: 2px 0 0;
-		font-size: 13px;
+		margin: var(--sigap-space-1) 0 0;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
+	/*
+		The number block. Decorative outline, because the block frames a value
+		rather than being operable; the tinted ground is the approved
+		queue-number ground.
+	*/
 	.sigap-walkin__number-block {
-		margin-top: 16px;
-		padding: 16px;
+		margin-top: var(--sigap-space-4);
+		padding: var(--sigap-space-4);
 		text-align: center;
-		background-color: var(--sigap-canvas);
-		border: 1px solid var(--sigap-border);
+		background-color: var(--sigap-primary-tint);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-walkin__number-label {
-		margin: 0 0 4px;
-		font-size: 12px;
+		margin: 0 0 var(--sigap-space-1);
+		font-size: var(--sigap-type-caption);
 		font-weight: 500;
 		color: var(--sigap-muted);
 	}
 
+	/*
+		The queue number: `.sigap-identifier` supplies the monospace stack and
+		tabular figures, `--sigap-primary-strong` the readable teal. Display
+		size, because this is the one value the citizen reads aloud at the
+		counter.
+	*/
 	.sigap-walkin__number {
-		margin: 0 0 12px;
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 36px;
+		margin: 0 0 var(--sigap-space-3);
+		font-size: 40px;
 		font-weight: 700;
-		letter-spacing: 0.12em;
-		color: var(--sigap-foreground);
+		color: var(--sigap-primary-strong);
 		user-select: all;
 		overflow-wrap: anywhere;
 	}
 
+	/* An inner note, not a control: decorative outline. */
 	.sigap-walkin__wait {
-		margin-top: 16px;
-		padding: 12px;
-		border: 1px solid var(--sigap-border);
+		margin-top: var(--sigap-space-4);
+		padding: var(--sigap-space-3);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-walkin__wait-value {
 		margin: 0;
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		font-weight: 500;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-walkin__wait-caveat {
-		margin: 4px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-1) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
@@ -409,18 +445,25 @@
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 12px;
-		margin-top: 16px;
+		gap: var(--sigap-space-3);
+		margin-top: var(--sigap-space-4);
 	}
 
+	/*
+		The one filled primary action in this action context. Text on the brand
+		fill is `--sigap-on-primary`, the frozen pairing — not `--sigap-surface`,
+		which happens to be white today and would silently drift if it were not.
+	*/
 	.sigap-walkin__cta {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		min-height: 44px;
-		padding: 0 16px;
-		font-size: 14px;
+		min-height: var(--sigap-control-citizen);
+		padding: 0 var(--sigap-space-4);
+		font-size: var(--sigap-type-body);
 		font-weight: 500;
+		color: var(--sigap-on-primary);
+		background-color: var(--sigap-primary);
 		text-decoration: none;
 	}
 
@@ -430,8 +473,8 @@
 	}
 
 	.sigap-walkin__copy-hint {
-		margin: 12px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-3) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 		min-height: 16px;
 	}

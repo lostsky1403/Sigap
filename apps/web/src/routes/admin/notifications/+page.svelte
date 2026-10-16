@@ -4,7 +4,9 @@
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
 	import DataTable from '$lib/ui/DataTable.svelte';
-	import StatusBadge from '$lib/ui/StatusBadge.svelte';
+	import AdminStatusBadge, {
+		NOTIFICATION_STATUS_ICON
+	} from '$lib/admin/AdminStatusBadge.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { RADIUS } from '$lib/design/tokens';
 	import {
@@ -276,10 +278,11 @@
 			<div class="sigap-notif-summary__grid">
 				{#each NOTIFICATION_STATUS_ORDER as status (status)}
 					<div class="sigap-notif-summary__card" style:border-radius={RADIUS.panel}>
-						<StatusBadge
+						<AdminStatusBadge
 							label={NOTIFICATION_STATUS_LABEL[status]}
 							tone={NOTIFICATION_STATUS_TONE[status]}
 							size="sm"
+							icon={NOTIFICATION_STATUS_ICON[status]}
 						/>
 						<!--
 							These counts come from the scoped summary endpoint only. They are
@@ -374,6 +377,7 @@
 		rowCount={rows.length}
 		scopeEmpty={facilitiesLoaded && isEmptyScope(facilities)}
 		emptyTitle="Belum ada notifikasi"
+		onRetry={() => void reloadNotifications()}
 	>
 		{#if rows.length === 0}
 			<div class="sigap-admin-nomatch" style:border-radius={RADIUS.panel} role="status">
@@ -429,10 +433,11 @@
 						-->
 						<td class="sigap-table-col-secondary">-</td>
 						<td>
-							<StatusBadge
+							<AdminStatusBadge
 								label={NOTIFICATION_STATUS_LABEL[row.status]}
 								tone={NOTIFICATION_STATUS_TONE[row.status]}
 								size="sm"
+								icon={NOTIFICATION_STATUS_ICON[row.status]}
 							/>
 						</td>
 						<td class="sigap-table-col-secondary sigap-notif-row__attempts">
@@ -524,20 +529,23 @@
 	}
 
 	.sigap-notif-row__action {
-		height: 32px;
-		padding: 0 12px;
+		/* The frozen compact admin control height; see the row-action density rule
+		   in e2e/admin-table-density.spec.ts. */
+		height: var(--sigap-control-admin-compact);
+		padding: 0 var(--sigap-space-3);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		background-color: var(--sigap-surface);
+		/* A control boundary: this is a button. */
 		border: 1px solid var(--sigap-border);
 		cursor: pointer;
 	}
 
 	.sigap-notif-row__action--danger {
 		color: var(--sigap-danger);
-		margin-left: 6px;
+		margin-left: var(--sigap-space-2);
 	}
 
 	.sigap-notif-row__action:disabled {
@@ -551,84 +559,96 @@
 	}
 
 	.sigap-notif-row__noaction {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-notif-row__outcome-cell {
-		padding: 8px 12px;
-		font-size: 13px;
+		padding: var(--sigap-space-2) var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		line-height: 1.45;
 		background-color: var(--sigap-surface);
-		border-left: 3px solid var(--sigap-border);
+		/* Decorative leading accent on a message row. */
+		border-left: 3px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-notif-summary {
-		margin-bottom: 16px;
+		margin-bottom: var(--sigap-space-4);
 	}
 
 	.sigap-notif-summary__grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-		gap: 12px;
+		gap: var(--sigap-space-3);
 	}
 
 	.sigap-notif-summary__card {
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
-		padding: 12px;
+		gap: var(--sigap-space-2);
+		padding: var(--sigap-space-3);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		/* A panel outline is decorative; the badge and the count carry the state. */
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-notif-summary__count {
 		margin: 0;
-		font-size: 20px;
+		font-size: var(--sigap-type-page-title);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 		font-variant-numeric: tabular-nums;
 	}
 
 	.sigap-notif-summary__error {
-		padding: 12px;
-		font-size: 13px;
+		padding: var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-danger);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 		border-left: 3px solid var(--sigap-danger);
 	}
 
+	/*
+		The filter row, given the same bottom edge the shared `AdminToolbar` draws:
+		one decorative rule separating the toolbar region from the table beneath it.
+		This page cannot use `AdminToolbar` — its filters are URL-synced controls
+		rather than the client-side narrowing the shared component documents — so
+		the rule is repeated here with the same token and the same spacing.
+	*/
 	.sigap-notif-filters {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: flex-end;
-		gap: 12px;
-		margin-bottom: 12px;
+		gap: var(--sigap-space-3);
+		padding-bottom: var(--sigap-space-3);
+		margin-bottom: var(--sigap-space-4);
+		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-admin-field {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: var(--sigap-space-1);
 	}
 
 	.sigap-admin-field__label {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		font-weight: 500;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-admin-field__select,
 	.sigap-admin-field__input {
-		height: 36px;
+		height: var(--sigap-control-admin-compact);
 		min-width: 150px;
-		padding: 0 10px;
+		padding: 0 var(--sigap-space-3);
+		/* A control boundary: the essential token, never the subtle one. */
 		border: 1px solid var(--sigap-border);
 		background-color: var(--sigap-surface);
 		color: var(--sigap-foreground);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 	}
 
 	.sigap-admin-field__select:focus-visible,
@@ -652,39 +672,41 @@
 	}
 
 	.sigap-notif-row__note {
-		margin: 8px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-2) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-nomatch {
-		padding: 24px;
+		padding: var(--sigap-space-5);
 		text-align: center;
 		background-color: var(--sigap-surface);
-		border: 1px dashed var(--sigap-border);
+		/* A panel outline is decorative; this is a message, not a control. */
+		border: 1px dashed var(--sigap-border-subtle);
 	}
 
 	.sigap-admin-nomatch__title {
-		margin: 0 0 4px;
-		font-size: 15px;
+		margin: 0 0 var(--sigap-space-1);
+		font-size: var(--sigap-type-subtitle);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-admin-nomatch__body {
-		margin: 0 0 12px;
-		font-size: 14px;
+		margin: 0 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-body);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-nomatch__reset {
-		height: 36px;
-		padding: 0 14px;
+		height: var(--sigap-control-admin-compact);
+		padding: 0 var(--sigap-space-4);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		background-color: var(--sigap-surface);
+		/* A control boundary: this is a button. */
 		border: 1px solid var(--sigap-border);
 		cursor: pointer;
 	}
