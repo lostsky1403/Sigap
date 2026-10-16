@@ -1,7 +1,7 @@
 # SIGAP V2.2 — Pen.dev Prototype Handoff
 
 **Artifact (canonical):** `F:\Sehat-Hub\design\prototypes\sigap.pen`
-**SHA-256:** `237946c92b91c57c46c5b0c19d92fbeec4a3dc278e0562b4b61f4f4e53f914c5` — 1,459,122 bytes
+**SHA-256:** `4d079d340e3bb08e93ad7e5e66ced5692844bf2548b8850102c94781e4e943a5` — 1459031 bytes
 **Byte-identical mirror:** `F:\sigap-design-v2\design\prototypes\sigap-civic-v2.pen` (branch `design/sigap-v2-prototype`)
 **Superseded V2.1:** `d05d6f3f96ec426fa11925c5f17ecc5dfce993f8aa320d9abb8d5c80b1163fa5`, preserved at `design/prototypes/backup-v22/sigap-v2.1-20261016-1827.pen`
 
@@ -125,6 +125,20 @@
 4. **Frame 70 motion table** referenced `#15803D`, the pre-V2.1 success colour. Corrected to `#147A3A`.
 
 5. **Route map** updated for every new artboard; still exactly the 16 real SvelteKit routes.
+
+### P1 corrections — data accuracy (second pass)
+
+Two independent reviewers ran against the first V2.2 render and found nine further real mismatches, all now fixed:
+
+1. **Facility short codes were invented.** The prototype showed `RSUD-KS` / `PKS-SJ` / `RSUD-CD` / `PKS-HI`. `packages/db/seed/dev.sql` seeds `RSK` (RSUD Kota Sehat), `PKM` (Puskesmas Sukajaya), `RSM` (RS Mitra Sehat), `PMI` (Puskesmas Melati Indah). All 24 occurrences corrected, and two facility names that exist nowhere in the seed (`RSUD Cendana`, `Puskesmas Harapan Indah`) replaced with seeded ones.
+2. **Queue numbers contradicted their own row.** Admin rows for Puskesmas Sukajaya carried `RSK-` prefixes. Now `PKM-0037/0039/0040` on Puskesmas rows and `RSK-` on RSUD rows — 5 nodes corrected, verified row by row.
+3. **An impossible identifier** in the "Antrean dibuat" toast: `RSK-0042-A17` is neither a queue number nor a 6-char check-in code. Now `RSK-0042`.
+4. **A queue number used where a facility short code belongs** in two dialogs. Now `RSK`.
+5. **Status lookup by queue number was promised.** `GET /api/v1/patient/status` resolves the check-in code only — queue-number lookup was deliberately removed (vuln-0003) and `FoundBy` is always `checkin_code`. Two mobile hints changed from *"Kode check-in atau nomor antrean Anda."* to *"Kode check-in dari janji temu Anda."*
+6. **Registration promised visit history.** `18 Daftar` said an account stores visit history; no such endpoint exists and the prototype's own `16 Jejak Kunjungan` says history is unavailable. Now *"Buat akun untuk memantau status kunjungan dan janji temu Anda."*
+7. **Facility list order contradicted its own caption.** The caption said *"diurutkan menurut nama"* while the rows were not name-sorted. Rows reordered to true name order in `10 Beranda`, `11 Faskes` and `30 Mobile Beranda` — Puskesmas Melati Indah, Puskesmas Sukajaya, RS Mitra Sehat, RSUD Kota Sehat — matching the API's `ORDER BY name`. Stale row frame names were corrected to match their content.
+8. **Booking step-3 label differed between breakpoints** (`Waktu + data` desktop vs `Waktu & data` mobile). Now identical.
+9. **Implementation-facing wording in citizen frames** — *"Tidak ada kunci idempotensi"*, *"Server tidak mengembalikan nama fasilitas"*. Rewritten for citizens; the technical facts stay in this document and in frame `60`.
 
 ### Visual craftsmanship
 

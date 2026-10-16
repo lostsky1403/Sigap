@@ -4118,8 +4118,8 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "RBD7f",
-                      "name": "F/RSUD Kota Sehat",
+                      "id": "i9aY3",
+                      "name": "F/Puskesmas Melati Indah",
                       "width": "fill_container",
                       "height": 64,
                       "stroke": "$border-subtle",
@@ -4132,7 +4132,7 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "HmJMR",
+                          "id": "pggCR",
                           "name": "B",
                           "width": "fill_container",
                           "layout": "vertical",
@@ -4140,10 +4140,10 @@
                           "children": [
                             {
                               "type": "text",
-                              "id": "ndKco",
+                              "id": "rCa2G",
                               "name": "Name",
                               "fill": "$fg",
-                              "content": "RSUD Kota Sehat",
+                              "content": "Puskesmas Melati Indah",
                               "lineHeight": 1.45,
                               "fontFamily": "$font",
                               "fontSize": 15,
@@ -4151,10 +4151,10 @@
                             },
                             {
                               "type": "text",
-                              "id": "UTFty",
+                              "id": "KNwOv",
                               "name": "Type",
                               "fill": "$muted",
-                              "content": "Rumah Sakit",
+                              "content": "Puskesmas",
                               "lineHeight": 1.45,
                               "fontFamily": "$font",
                               "fontSize": 12,
@@ -4164,7 +4164,7 @@
                         },
                         {
                           "type": "frame",
-                          "id": "Djpio",
+                          "id": "gp9vx",
                           "name": "Code",
                           "cornerRadius": "$r-ctl",
                           "stroke": "$border-subtle",
@@ -4177,10 +4177,10 @@
                           "children": [
                             {
                               "type": "text",
-                              "id": "ih688",
+                              "id": "YcySb",
                               "name": "V",
                               "fill": "$muted",
-                              "content": "RSUD-KS",
+                              "content": "PMI",
                               "lineHeight": 1.45,
                               "fontFamily": "JetBrains Mono",
                               "fontSize": 11,
@@ -4191,7 +4191,7 @@
                         },
                         {
                           "type": "icon",
-                          "id": "vC95T",
+                          "id": "UpaZZ",
                           "name": "Chevron",
                           "width": 18,
                           "height": 18,
@@ -4265,7 +4265,7 @@
                               "id": "Xw4sW",
                               "name": "V",
                               "fill": "$muted",
-                              "content": "PKS-SJ",
+                              "content": "PKM",
                               "lineHeight": 1.45,
                               "fontFamily": "JetBrains Mono",
                               "fontSize": 11,
@@ -4289,7 +4289,7 @@
                     {
                       "type": "frame",
                       "id": "RvRLE",
-                      "name": "F/RSUD Cendana",
+                      "name": "F/RS Mitra Sehat",
                       "width": "fill_container",
                       "height": 64,
                       "stroke": "$border-subtle",
@@ -4313,7 +4313,7 @@
                               "id": "TGxsY",
                               "name": "Name",
                               "fill": "$fg",
-                              "content": "RSUD Cendana",
+                              "content": "RS Mitra Sehat",
                               "lineHeight": 1.45,
                               "fontFamily": "$font",
                               "fontSize": 15,
@@ -4350,7 +4350,7 @@
                               "id": "Y2EmJV",
                               "name": "V",
                               "fill": "$muted",
-                              "content": "RSUD-CD",
+                              "content": "RSM",
                               "lineHeight": 1.45,
                               "fontFamily": "JetBrains Mono",
                               "fontSize": 11,
@@ -4373,8 +4373,8 @@
                     },
                     {
                       "type": "frame",
-                      "id": "i9aY3",
-                      "name": "F/Puskesmas Harapan Indah",
+                      "id": "RBD7f",
+                      "name": "F/RSUD Kota Sehat",
                       "width": "fill_container",
                       "height": 64,
                       "stroke": "$border-subtle",
@@ -4387,7 +4387,7 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "pggCR",
+                          "id": "HmJMR",
                           "name": "B",
                           "width": "fill_container",
                           "layout": "vertical",
@@ -4395,10 +4395,10 @@
                           "children": [
                             {
                               "type": "text",
-                              "id": "rCa2G",
+                              "id": "ndKco",
                               "name": "Name",
                               "fill": "$fg",
-                              "content": "Puskesmas Harapan Indah",
+                              "content": "RSUD Kota Sehat",
                               "lineHeight": 1.45,
                               "fontFamily": "$font",
                               "fontSize": 15,
@@ -4406,10 +4406,10 @@
                             },
                             {
                               "type": "text",
-                              "id": "KNwOv",
+                              "id": "UTFty",
                               "name": "Type",
                               "fill": "$muted",
-                              "content": "Puskesmas",
+                              "content": "Rumah Sakit",
                               "lineHeight": 1.45,
                               "fontFamily": "$font",
                               "fontSize": 12,
@@ -4419,7 +4419,7 @@
                         },
                         {
                           "type": "frame",
-                          "id": "gp9vx",
+                          "id": "Djpio",
                           "name": "Code",
                           "cornerRadius": "$r-ctl",
                           "stroke": "$border-subtle",
@@ -4432,10 +4432,10 @@
                           "children": [
                             {
                               "type": "text",
-                              "id": "YcySb",
+                              "id": "ih688",
                               "name": "V",
                               "fill": "$muted",
-                              "content": "PKS-HI",
+                              "content": "RSK",
                               "lineHeight": 1.45,
                               "fontFamily": "JetBrains Mono",
                               "fontSize": 11,
@@ -4446,7 +4446,7 @@
                         },
                         {
                           "type": "icon",
-                          "id": "UpaZZ",
+                          "id": "vC95T",
                           "name": "Chevron",
                           "width": 18,
                           "height": 18,
@@ -5082,8 +5082,8 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "B3ZWs0",
-                  "name": "F/RSUD Kota Sehat",
+                  "id": "IYxgI",
+                  "name": "F/Puskesmas Melati Indah",
                   "width": "fill_container",
                   "height": 72,
                   "stroke": "$border-subtle",
@@ -5100,7 +5100,7 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "f97TD",
+                      "id": "x6r10",
                       "name": "B",
                       "width": "fill_container",
                       "layout": "vertical",
@@ -5108,10 +5108,10 @@
                       "children": [
                         {
                           "type": "text",
-                          "id": "BStKj",
+                          "id": "PRDlx",
                           "name": "Name",
                           "fill": "$fg",
-                          "content": "RSUD Kota Sehat",
+                          "content": "Puskesmas Melati Indah",
                           "lineHeight": 1.45,
                           "fontFamily": "$font",
                           "fontSize": 15,
@@ -5119,10 +5119,10 @@
                         },
                         {
                           "type": "text",
-                          "id": "WNfGr",
+                          "id": "nV6K0",
                           "name": "Type",
                           "fill": "$muted",
-                          "content": "Rumah Sakit",
+                          "content": "Puskesmas",
                           "lineHeight": 1.45,
                           "fontFamily": "$font",
                           "fontSize": 12,
@@ -5132,7 +5132,7 @@
                     },
                     {
                       "type": "frame",
-                      "id": "q0C6gQ",
+                      "id": "J6L6Jz",
                       "name": "Code",
                       "cornerRadius": "$r-ctl",
                       "stroke": "$border-subtle",
@@ -5145,10 +5145,10 @@
                       "children": [
                         {
                           "type": "text",
-                          "id": "HLvWc",
+                          "id": "x37EkD",
                           "name": "V",
                           "fill": "$muted",
-                          "content": "RSUD-KS",
+                          "content": "PMI",
                           "lineHeight": 1.45,
                           "fontFamily": "JetBrains Mono",
                           "fontSize": 11,
@@ -5159,7 +5159,7 @@
                     },
                     {
                       "type": "frame",
-                      "id": "mhIwU",
+                      "id": "MpnAq",
                       "name": "Act",
                       "height": 40,
                       "cornerRadius": "$r-ctl",
@@ -5174,7 +5174,7 @@
                       "children": [
                         {
                           "type": "text",
-                          "id": "KQzgk",
+                          "id": "gAZbB",
                           "name": "L",
                           "fill": "$fg",
                           "content": "Buat janji",
@@ -5255,7 +5255,7 @@
                           "id": "m3ibx8",
                           "name": "V",
                           "fill": "$muted",
-                          "content": "PKS-SJ",
+                          "content": "PKM",
                           "lineHeight": 1.45,
                           "fontFamily": "JetBrains Mono",
                           "fontSize": 11,
@@ -5297,7 +5297,7 @@
                 {
                   "type": "frame",
                   "id": "r3trF",
-                  "name": "F/RSUD Cendana",
+                  "name": "F/RS Mitra Sehat",
                   "width": "fill_container",
                   "height": 72,
                   "stroke": "$border-subtle",
@@ -5325,7 +5325,7 @@
                           "id": "LYFB9",
                           "name": "Name",
                           "fill": "$fg",
-                          "content": "RSUD Cendana",
+                          "content": "RS Mitra Sehat",
                           "lineHeight": 1.45,
                           "fontFamily": "$font",
                           "fontSize": 15,
@@ -5362,7 +5362,7 @@
                           "id": "HOMLW",
                           "name": "V",
                           "fill": "$muted",
-                          "content": "RSUD-CD",
+                          "content": "RSM",
                           "lineHeight": 1.45,
                           "fontFamily": "JetBrains Mono",
                           "fontSize": 11,
@@ -5403,8 +5403,8 @@
                 },
                 {
                   "type": "frame",
-                  "id": "IYxgI",
-                  "name": "F/Puskesmas Harapan Indah",
+                  "id": "B3ZWs0",
+                  "name": "F/RSUD Kota Sehat",
                   "width": "fill_container",
                   "height": 72,
                   "stroke": "$border-subtle",
@@ -5421,7 +5421,7 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "x6r10",
+                      "id": "f97TD",
                       "name": "B",
                       "width": "fill_container",
                       "layout": "vertical",
@@ -5429,10 +5429,10 @@
                       "children": [
                         {
                           "type": "text",
-                          "id": "PRDlx",
+                          "id": "BStKj",
                           "name": "Name",
                           "fill": "$fg",
-                          "content": "Puskesmas Harapan Indah",
+                          "content": "RSUD Kota Sehat",
                           "lineHeight": 1.45,
                           "fontFamily": "$font",
                           "fontSize": 15,
@@ -5440,10 +5440,10 @@
                         },
                         {
                           "type": "text",
-                          "id": "nV6K0",
+                          "id": "WNfGr",
                           "name": "Type",
                           "fill": "$muted",
-                          "content": "Puskesmas",
+                          "content": "Rumah Sakit",
                           "lineHeight": 1.45,
                           "fontFamily": "$font",
                           "fontSize": 12,
@@ -5453,7 +5453,7 @@
                     },
                     {
                       "type": "frame",
-                      "id": "J6L6Jz",
+                      "id": "q0C6gQ",
                       "name": "Code",
                       "cornerRadius": "$r-ctl",
                       "stroke": "$border-subtle",
@@ -5466,10 +5466,10 @@
                       "children": [
                         {
                           "type": "text",
-                          "id": "x37EkD",
+                          "id": "HLvWc",
                           "name": "V",
                           "fill": "$muted",
-                          "content": "PKS-HI",
+                          "content": "RSK",
                           "lineHeight": 1.45,
                           "fontFamily": "JetBrains Mono",
                           "fontSize": 11,
@@ -5480,7 +5480,7 @@
                     },
                     {
                       "type": "frame",
-                      "id": "MpnAq",
+                      "id": "mhIwU",
                       "name": "Act",
                       "height": 40,
                       "cornerRadius": "$r-ctl",
@@ -5495,7 +5495,7 @@
                       "children": [
                         {
                           "type": "text",
-                          "id": "gAZbB",
+                          "id": "KQzgk",
                           "name": "L",
                           "fill": "$fg",
                           "content": "Buat janji",
@@ -8624,7 +8624,7 @@
                                   "id": "WIQLR",
                                   "name": "T",
                                   "fill": "$fg",
-                                  "content": "RSK-0040",
+                                  "content": "PKM-0040",
                                   "lineHeight": 1.45,
                                   "fontFamily": "JetBrains Mono",
                                   "fontSize": 13,
@@ -8815,7 +8815,7 @@
                                   "id": "vMrwD",
                                   "name": "T",
                                   "fill": "$fg",
-                                  "content": "RSK-0039",
+                                  "content": "PKM-0039",
                                   "lineHeight": 1.45,
                                   "fontFamily": "JetBrains Mono",
                                   "fontSize": 13,
@@ -9341,7 +9341,7 @@
                                   "id": "IZ8o0",
                                   "name": "T",
                                   "fill": "$fg",
-                                  "content": "RSK-0037",
+                                  "content": "PKM-0037",
                                   "lineHeight": 1.45,
                                   "fontFamily": "JetBrains Mono",
                                   "fontSize": 13,
@@ -9896,38 +9896,151 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "qF3it",
-                  "name": "H",
+                  "id": "Xo4xa",
+                  "name": "F/Puskesmas Sukajaya",
                   "width": "fill_container",
-                  "height": 52,
-                  "layout": "vertical",
-                  "gap": 6,
+                  "height": 64,
+                  "stroke": "$border-subtle",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "strokeAlignment": "inner",
+                  "gap": 12,
+                  "alignItems": "center",
                   "children": [
                     {
-                      "type": "text",
-                      "id": "zXXMG",
-                      "name": "Eyebrow",
-                      "fill": "$muted",
-                      "textGrowth": "fixed-width",
+                      "type": "frame",
+                      "id": "cXvqQ",
+                      "name": "B",
                       "width": "fill_container",
-                      "content": "FASKES AKTIF",
-                      "lineHeight": 1.45,
-                      "fontFamily": "$font",
-                      "fontSize": 11,
-                      "fontWeight": "600",
-                      "letterSpacing": 0.06
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "V2CK7Q",
+                          "name": "N",
+                          "fill": "$fg",
+                          "content": "Puskesmas Sukajaya",
+                          "lineHeight": 1.45,
+                          "fontFamily": "$font",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "I4JKah",
+                          "name": "T",
+                          "fill": "$muted",
+                          "content": "Puskesmas",
+                          "lineHeight": 1.45,
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
                     },
                     {
-                      "type": "text",
-                      "id": "JisNe",
-                      "name": "T",
-                      "fill": "$fg",
-                      "content": "Fasilitas dalam katalog",
-                      "lineHeight": 1.45,
-                      "fontFamily": "$font",
-                      "fontSize": 18,
-                      "fontWeight": "600",
-                      "letterSpacing": -0.01
+                      "type": "frame",
+                      "id": "Dnkpv",
+                      "name": "Code",
+                      "cornerRadius": "$r-ctl",
+                      "stroke": "$border-subtle",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "padding": [
+                        2,
+                        6
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "S5kOS",
+                          "name": "V",
+                          "fill": "$muted",
+                          "content": "PKM",
+                          "lineHeight": 1.45,
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 11,
+                          "fontWeight": "500",
+                          "letterSpacing": 0.06
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "eHO2R",
+                  "name": "F/RS Mitra Sehat",
+                  "width": "fill_container",
+                  "height": 64,
+                  "stroke": "$border-subtle",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "strokeAlignment": "inner",
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Wb0gR",
+                      "name": "B",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "M60Lq",
+                          "name": "N",
+                          "fill": "$fg",
+                          "content": "RS Mitra Sehat",
+                          "lineHeight": 1.45,
+                          "fontFamily": "$font",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "CfiOx",
+                          "name": "T",
+                          "fill": "$muted",
+                          "content": "Rumah Sakit",
+                          "lineHeight": 1.45,
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "NEM3L",
+                      "name": "Code",
+                      "cornerRadius": "$r-ctl",
+                      "stroke": "$border-subtle",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "padding": [
+                        2,
+                        6
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "X2mB1",
+                          "name": "V",
+                          "fill": "$muted",
+                          "content": "RSM",
+                          "lineHeight": 1.45,
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 11,
+                          "fontWeight": "500",
+                          "letterSpacing": 0.06
+                        }
+                      ]
                     }
                   ]
                 },
@@ -9995,7 +10108,7 @@
                           "id": "yU718",
                           "name": "V",
                           "fill": "$muted",
-                          "content": "RSUD-KS",
+                          "content": "RSK",
                           "lineHeight": 1.45,
                           "fontFamily": "JetBrains Mono",
                           "fontSize": 11,
@@ -10008,151 +10121,38 @@
                 },
                 {
                   "type": "frame",
-                  "id": "Xo4xa",
-                  "name": "F/Puskesmas Sukajaya",
+                  "id": "qF3it",
+                  "name": "H",
                   "width": "fill_container",
-                  "height": 64,
-                  "stroke": "$border-subtle",
-                  "strokeWidth": {
-                    "bottom": 1
-                  },
-                  "strokeAlignment": "inner",
-                  "gap": 12,
-                  "alignItems": "center",
+                  "height": 52,
+                  "layout": "vertical",
+                  "gap": 6,
                   "children": [
                     {
-                      "type": "frame",
-                      "id": "cXvqQ",
-                      "name": "B",
+                      "type": "text",
+                      "id": "zXXMG",
+                      "name": "Eyebrow",
+                      "fill": "$muted",
+                      "textGrowth": "fixed-width",
                       "width": "fill_container",
-                      "layout": "vertical",
-                      "gap": 2,
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "V2CK7Q",
-                          "name": "N",
-                          "fill": "$fg",
-                          "content": "Puskesmas Sukajaya",
-                          "lineHeight": 1.45,
-                          "fontFamily": "$font",
-                          "fontSize": 14,
-                          "fontWeight": "600"
-                        },
-                        {
-                          "type": "text",
-                          "id": "I4JKah",
-                          "name": "T",
-                          "fill": "$muted",
-                          "content": "Puskesmas",
-                          "lineHeight": 1.45,
-                          "fontFamily": "$font",
-                          "fontSize": 12,
-                          "fontWeight": "normal"
-                        }
-                      ]
+                      "content": "FASKES AKTIF",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$font",
+                      "fontSize": 11,
+                      "fontWeight": "600",
+                      "letterSpacing": 0.06
                     },
                     {
-                      "type": "frame",
-                      "id": "Dnkpv",
-                      "name": "Code",
-                      "cornerRadius": "$r-ctl",
-                      "stroke": "$border-subtle",
-                      "strokeWidth": 1,
-                      "strokeAlignment": "inner",
-                      "padding": [
-                        2,
-                        6
-                      ],
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "S5kOS",
-                          "name": "V",
-                          "fill": "$muted",
-                          "content": "PKS-SJ",
-                          "lineHeight": 1.45,
-                          "fontFamily": "JetBrains Mono",
-                          "fontSize": 11,
-                          "fontWeight": "500",
-                          "letterSpacing": 0.06
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "eHO2R",
-                  "name": "F/RSUD Cendana",
-                  "width": "fill_container",
-                  "height": 64,
-                  "stroke": "$border-subtle",
-                  "strokeWidth": {
-                    "bottom": 1
-                  },
-                  "strokeAlignment": "inner",
-                  "gap": 12,
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "Wb0gR",
-                      "name": "B",
-                      "width": "fill_container",
-                      "layout": "vertical",
-                      "gap": 2,
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "M60Lq",
-                          "name": "N",
-                          "fill": "$fg",
-                          "content": "RSUD Cendana",
-                          "lineHeight": 1.45,
-                          "fontFamily": "$font",
-                          "fontSize": 14,
-                          "fontWeight": "600"
-                        },
-                        {
-                          "type": "text",
-                          "id": "CfiOx",
-                          "name": "T",
-                          "fill": "$muted",
-                          "content": "Rumah Sakit",
-                          "lineHeight": 1.45,
-                          "fontFamily": "$font",
-                          "fontSize": 12,
-                          "fontWeight": "normal"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "NEM3L",
-                      "name": "Code",
-                      "cornerRadius": "$r-ctl",
-                      "stroke": "$border-subtle",
-                      "strokeWidth": 1,
-                      "strokeAlignment": "inner",
-                      "padding": [
-                        2,
-                        6
-                      ],
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "X2mB1",
-                          "name": "V",
-                          "fill": "$muted",
-                          "content": "RSUD-CD",
-                          "lineHeight": 1.45,
-                          "fontFamily": "JetBrains Mono",
-                          "fontSize": 11,
-                          "fontWeight": "500",
-                          "letterSpacing": 0.06
-                        }
-                      ]
+                      "type": "text",
+                      "id": "JisNe",
+                      "name": "T",
+                      "fill": "$fg",
+                      "content": "Fasilitas dalam katalog",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$font",
+                      "fontSize": 18,
+                      "fontWeight": "600",
+                      "letterSpacing": -0.01
                     }
                   ]
                 }
@@ -10319,7 +10319,7 @@
                   "fill": "$muted",
                   "textGrowth": "fixed-width",
                   "width": "fill_container",
-                  "content": "Kode check-in atau nomor antrean Anda.",
+                  "content": "Kode check-in dari janji temu Anda.",
                   "lineHeight": 1.45,
                   "fontFamily": "$font",
                   "fontSize": 14,
@@ -14809,7 +14809,7 @@
                               "id": "ifuas",
                               "name": "T",
                               "fill": "$fg",
-                              "content": "RSUD-KS",
+                              "content": "RSK",
                               "lineHeight": 1.45,
                               "fontFamily": "JetBrains Mono",
                               "fontSize": 12,
@@ -15070,7 +15070,7 @@
                               "id": "FY5H1",
                               "name": "T",
                               "fill": "$fg",
-                              "content": "PKS-SJ",
+                              "content": "PKM",
                               "lineHeight": 1.45,
                               "fontFamily": "JetBrains Mono",
                               "fontSize": 12,
@@ -15331,7 +15331,7 @@
                               "id": "qVpOv",
                               "name": "T",
                               "fill": "$fg",
-                              "content": "RSUD-CD",
+                              "content": "RSM",
                               "lineHeight": 1.45,
                               "fontFamily": "JetBrains Mono",
                               "fontSize": 12,
@@ -15353,7 +15353,7 @@
                               "id": "Zzjms",
                               "name": "T",
                               "fill": "$fg",
-                              "content": "RSUD Cendana",
+                              "content": "RS Mitra Sehat",
                               "lineHeight": 1.45,
                               "fontFamily": "$font",
                               "fontSize": 13,
@@ -17830,7 +17830,7 @@
                               "id": "bFFUg",
                               "name": "T",
                               "fill": "$fg",
-                              "content": "RSK-0040",
+                              "content": "PKM-0040",
                               "lineHeight": 1.45,
                               "fontFamily": "JetBrains Mono",
                               "fontSize": 13,
@@ -20055,7 +20055,7 @@
                           "id": "wWUmW",
                           "name": "N",
                           "fill": "$fg",
-                          "content": "RSUD Cendana",
+                          "content": "RS Mitra Sehat",
                           "lineHeight": 1.45,
                           "fontFamily": "$font",
                           "fontSize": 14,
@@ -20117,7 +20117,7 @@
                           "id": "kC3k3",
                           "name": "N",
                           "fill": "$fg",
-                          "content": "Puskesmas Harapan Indah",
+                          "content": "Puskesmas Melati Indah",
                           "lineHeight": 1.45,
                           "fontFamily": "$font",
                           "fontSize": 14,
@@ -20419,7 +20419,7 @@
                       "id": "ZTqpF",
                       "name": "L",
                       "fill": "$muted",
-                      "content": "Waktu & data",
+                      "content": "Waktu + data",
                       "lineHeight": 1.45,
                       "fontFamily": "$font",
                       "fontSize": 11,
@@ -20622,7 +20622,7 @@
                       "id": "Yahn4",
                       "name": "N",
                       "fill": "$fg",
-                      "content": "RSUD Cendana",
+                      "content": "RS Mitra Sehat",
                       "lineHeight": 1.45,
                       "fontFamily": "$font",
                       "fontSize": 14,
@@ -25376,7 +25376,7 @@
                           "id": "sEL9k",
                           "name": "N",
                           "fill": "$fg",
-                          "content": "RSK-0040",
+                          "content": "PKM-0040",
                           "lineHeight": 1.45,
                           "fontFamily": "JetBrains Mono",
                           "fontSize": 15,
@@ -29823,7 +29823,7 @@
                   "fill": "$muted",
                   "textGrowth": "fixed-width",
                   "width": "fill_container",
-                  "content": "Kode check-in atau nomor antrean Anda.",
+                  "content": "Kode check-in dari janji temu Anda.",
                   "lineHeight": 1.45,
                   "fontFamily": "$font",
                   "fontSize": 13,
@@ -30810,7 +30810,7 @@
                               "id": "rMNYS",
                               "name": "N",
                               "fill": "$fg",
-                              "content": "RSUD Cendana",
+                              "content": "RS Mitra Sehat",
                               "lineHeight": 1.45,
                               "fontFamily": "$font",
                               "fontSize": 14,
@@ -33215,7 +33215,7 @@
                           "fill": "$muted",
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
-                          "content": "RSK-0042 tidak akan menerima antrean baru. Penonaktifan bersifat satu arah dan tidak dapat dibatalkan.",
+                          "content": "RSK tidak akan menerima antrean baru. Penonaktifan bersifat satu arah dan tidak dapat dibatalkan.",
                           "lineHeight": 1.5,
                           "fontFamily": "$font",
                           "fontSize": 13,
@@ -33523,7 +33523,7 @@
                           "fill": "$muted",
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
-                          "content": "Ketik kode fasilitas (RSK-0042) untuk mengonfirmasi.",
+                          "content": "Ketik kode fasilitas (RSK) untuk mengonfirmasi.",
                           "lineHeight": 1.5,
                           "fontFamily": "$font",
                           "fontSize": 13,
@@ -33907,7 +33907,7 @@
                           "id": "NMZgU",
                           "name": "B",
                           "fill": "$muted",
-                          "content": "Nomor RSK-0042-A17 siap. Simpan untuk check-in.",
+                          "content": "Nomor RSK-0042 siap. Simpan untuk check-in.",
                           "lineHeight": 1.45,
                           "fontFamily": "$font",
                           "fontSize": 12,
@@ -34583,7 +34583,7 @@
                   "fill": "$muted",
                   "textGrowth": "fixed-width",
                   "width": "fill_container",
-                  "content": "Buat akun untuk menyimpan riwayat kunjungan dan janji temu Anda.",
+                  "content": "Buat akun untuk memantau status kunjungan dan janji temu Anda.",
                   "lineHeight": 1.5,
                   "fontFamily": "$font",
                   "fontSize": 13,
@@ -36275,7 +36275,7 @@
               "fill": "$muted",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "Server tidak mengembalikan nama fasilitas pada nomor ini. Simpan nomornya sekarang - tidak ada riwayat yang bisa dibuka kembali.",
+              "content": "Simpan nomor ini sekarang. Nomor tidak bisa dibuka kembali dari riwayat.",
               "lineHeight": 1.5,
               "fontFamily": "$font",
               "fontSize": 12,
@@ -36576,7 +36576,7 @@
               "fill": "$muted",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "Tidak ada kunci idempotensi: kirim ulang hanya setelah pesan galat tampil.",
+              "content": "Tekan kirim ulang hanya setelah pesan galat muncul, supaya jatah harian tidak terpakai dua kali.",
               "lineHeight": 1.5,
               "fontFamily": "$font",
               "fontSize": 12,
@@ -37459,7 +37459,7 @@
                       "id": "oSdz3",
                       "name": "N",
                       "fill": "$muted",
-                      "content": "Server tidak mengembalikan nama fasilitas pada respons ini.",
+                      "content": "Simpan nomor ini sekarang; nomor tidak bisa dibuka kembali dari riwayat.",
                       "lineHeight": 1.45,
                       "fontFamily": "$font",
                       "fontSize": 11,
@@ -38148,7 +38148,7 @@
               "fill": "$muted",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "Server tidak mengembalikan nama fasilitas pada respons ini. Simpan nomornya sekarang.",
+              "content": "Simpan nomor ini sekarang. Nomor tidak bisa dibuka kembali dari riwayat.",
               "lineHeight": 1.5,
               "fontFamily": "$font",
               "fontSize": 12,
@@ -38801,7 +38801,7 @@
                       "id": "A3887",
                       "name": "L",
                       "fill": "$muted",
-                      "content": "Waktu & data",
+                      "content": "Waktu + data",
                       "lineHeight": 1.45,
                       "fontFamily": "$font",
                       "fontSize": 11,
@@ -39361,7 +39361,7 @@
                       "id": "wKgQV",
                       "name": "L",
                       "fill": "$fg",
-                      "content": "Waktu & data",
+                      "content": "Waktu + data",
                       "lineHeight": 1.45,
                       "fontFamily": "$font",
                       "fontSize": 11,
