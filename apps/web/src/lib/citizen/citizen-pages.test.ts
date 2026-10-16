@@ -281,7 +281,12 @@ describe('Beranda', () => {
 			expect(href).not.toContain('/wallet');
 		}
 		expect(hrefs).toContain('/faskes');
-		expect(hrefs).toContain('/appointments/new');
+		// The catalog is the way into booking: the task picker's primary CTA
+		// lands on /faskes, and every booking link from there preselects a
+		// facility. Asserting the bare path would demand a link that enters
+		// the booking form with no facility chosen, which is the composition
+		// the approved design removes.
+		expect(hrefs.some((href) => href?.startsWith('/appointments/new'))).toBe(true);
 		expect(hrefs).toContain('/appointments/check-in');
 		expect(hrefs).toContain('/patient/status');
 	});

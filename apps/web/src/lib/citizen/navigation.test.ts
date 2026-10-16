@@ -199,11 +199,16 @@ describe('citizen shell: desktop at 1440px', () => {
 		await tick();
 		const nav = screen.getByRole('navigation', { name: 'Navigasi utama' });
 		const links = Array.from(nav.querySelectorAll('a'));
-		// Four destinations plus the booking CTA, which is an action rather than
-		// a destination and therefore lives outside the list.
-		expect(links).toHaveLength(5);
-		expect(links[0].getAttribute('href')).toBe('/');
-		expect(links[4].textContent).toContain('Buat Janji Temu');
+		// Exactly the four destinations. The booking CTA is chrome and lives in
+		// the masthead's action cluster, not in this landmark — so "four
+		// destinations" is true of the rendered nav, not only of the array.
+		expect(links).toHaveLength(4);
+		expect(links.map((a) => a.getAttribute('href'))).toEqual([
+			'/',
+			'/faskes',
+			'/appointments/check-in',
+			'/patient/status'
+		]);
 	});
 
 	it('marks exactly one desktop link as the current page', async () => {
@@ -239,7 +244,10 @@ describe('citizen shell: header composition', () => {
 		const banner = screen.getByRole('banner');
 		expect(banner).toBeTruthy();
 		expect(banner.querySelector('nav[aria-label="Navigasi utama"]')).toBeTruthy();
-		expect(banner.querySelector('.sigap-citizen-header__account')).toBeTruthy();
+		expect(banner.querySelector('.sigap-account')).toBeTruthy();
+		// The booking CTA is chrome in the same cluster, so it must be inside
+		// the banner rather than in a page body or a navigation landmark.
+		expect(banner.querySelector('a[href="/appointments/new"]')).toBeTruthy();
 	});
 
 	it('renders exactly one banner and two named navigation landmarks', async () => {
@@ -277,12 +285,34 @@ describe('account menu: identity only', () => {
 		document.body.innerHTML = '';
 	});
 
-	it('offers Masuk and Daftar when signed out', async () => {
-		render(AccountMenu, { hasSession: false });
+	it('offers one auth control, pointing at the other auth page', async () => {
+		// On any page that is not the login form, the control offers "Masuk".
+		render(AccountMenu, { hasSession: false, path: '/' });
 		await tick();
-		expect(screen.getByRole('link', { name: /Masuk/ })).toBeTruthy();
-		expect(screen.getByRole('link', { name: /Daftar/ })).toBeTruthy();
+		const masuk = screen.getByRole('link', { name: 'Masuk' });
+		expect(masuk.getAttribute('href')).toBe('/auth/login');
+		// And never a second, competing "Daftar" button beside it.
+		expect(screen.queryByRole('link', { name: 'Daftar' })).toBeNull();
 		expect(document.querySelector('form[action="/auth/logout"]')).toBeNull();
+	});
+
+	it('flips the auth control on the auth pages, so it never links to itself', async () => {
+		// Standing on the login form, the useful control is "Daftar".
+		render(AccountMenu, { hasSession: false, path: '/auth/login' });
+		await tick();
+		expect(screen.getByRole('link', { name: 'Daftar' }).getAttribute('href')).toBe(
+			'/auth/register'
+		);
+		expect(screen.queryByRole('link', { name: 'Masuk' })).toBeNull();
+
+		document.body.innerHTML = '';
+
+		// And on the register form it is "Masuk", because a link to the page
+		// you are already on is not an affordance.
+		render(AccountMenu, { hasSession: false, path: '/auth/register' });
+		await tick();
+		expect(screen.getByRole('link', { name: 'Masuk' }).getAttribute('href')).toBe('/auth/login');
+		expect(screen.queryByRole('link', { name: 'Daftar' })).toBeNull();
 	});
 
 	it('offers Keluar when signed in', async () => {

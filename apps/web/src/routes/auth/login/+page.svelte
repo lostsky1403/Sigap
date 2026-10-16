@@ -74,7 +74,7 @@
 	.sigap-auth__panel {
 		padding: 20px 16px;
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-auth__title {

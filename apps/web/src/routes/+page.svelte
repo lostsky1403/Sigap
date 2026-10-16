@@ -1,24 +1,29 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import QuickActions from '$lib/citizen/QuickActions.svelte';
-	import {
-		loadPublicFacilities,
-		type CatalogSnapshot
-	} from '$lib/citizen/usePublicFacilities';
+	import PageHeader from '$lib/ui/PageHeader.svelte';
+	import { loadPublicFacilities, type CatalogSnapshot } from '$lib/citizen/usePublicFacilities';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorState from '$lib/ui/ErrorState.svelte';
+	import Icon from '$lib/ui/Icon.svelte';
 	import { facilityTypeLabel } from '$lib/citizen/facilityType';
 	import { hasSession as readHasSession } from '$lib/stores/session';
-	import { RADIUS } from '$lib/design/tokens';
-	import { FolderSearch, CloudOff } from 'lucide-svelte';
+	import { ChevronRight, CloudOff, FolderSearch } from 'lucide-svelte';
 
 	/**
 	 * Beranda — the citizen landing page.
 	 *
-	 * Composition follows the frozen reference: a compact orientation header
-	 * (not a hero), the primary action, secondary services, a short honest
-	 * preview of the real facility catalog, and a three-step explainer.
+	 * Composition follows the approved V2.2 frame, top to bottom:
+	 *
+	 *   eyebrow / 2px rule / page title / lede   (the page device, `PageHeader`)
+	 *   MULAI DARI SINI + "Pilih tugas Anda"     (the task picker, `QuickActions`)
+	 *   FASKES AKTIF + "Fasilitas dalam katalog" (a real preview of the catalog)
+	 *   CARA MENGGUNAKAN SIGAP + "Tiga langkah"  (the explainer)
+	 *
+	 * The 2px teal rule belongs to the page device only. Sections deliberately
+	 * carry no rule: three more teal rules down one page turns the design's
+	 * signature mark into wallpaper, and the reference has exactly one.
 	 *
 	 * What is deliberately absent is the previous demo experience. There are no
 	 * bed counts, no fabricated facilities, no distance or wait-time claims, no
@@ -26,9 +31,8 @@
 	 * is not a placeholder — it is a false claim about someone's local
 	 * hospital, and a citizen has no way to tell it from a real one.
 	 *
-	 * The facility preview is a preview, labelled as such and capped, with a
-	 * link to the full catalog. It shows only what the public API actually
-	 * returns: name, short code, and the facility type enum.
+	 * The preview shows only what the public API actually returns: name, short
+	 * code, and the facility type enum.
 	 */
 
 	const catalogLoader = loadPublicFacilities();
@@ -61,8 +65,37 @@
 	 */
 	const PREVIEW_LIMIT = 4;
 
-	$: preview = catalog.facilities.slice(0, PREVIEW_LIMIT);
-	$: hasMore = catalog.facilities.length > PREVIEW_LIMIT;
+	/**
+	 * Sorted here, not trusted from the wire.
+	 *
+	 * The public endpoint does `ORDER BY name`, so this is a no-op against the
+	 * real API — but the page's own copy claims the order ("menurut nama"), and
+	 * a claim the page cannot enforce is a claim that goes stale the moment the
+	 * query changes. Sorting four rows costs nothing and makes the sentence
+	 * true by construction.
+	 *
+	 * `localeCompare` with the Indonesian collation, so "Puskesmas Melati
+	 * Indah" sorts before "Puskesmas Sukajaya" the way a reader expects rather
+	 * than by code point.
+	 */
+	$: sorted = [...catalog.facilities].sort((a, b) => a.name.localeCompare(b.name, 'id'));
+	$: preview = sorted.slice(0, PREVIEW_LIMIT);
+	$: hasMore = sorted.length > PREVIEW_LIMIT;
+
+	/**
+	 * Two strings per slot, because one of them is a claim about the list.
+	 *
+	 * "Empat faskes pertama" is only true when the catalog is longer than the
+	 * preview. On a three-facility catalog it is a small lie about how much of
+	 * the list you are looking at, which is exactly the class of statement this
+	 * page is not allowed to make.
+	 */
+	$: previewDescription = hasMore
+		? `Empat faskes pertama menurut nama, dari katalog publik yang aktif.`
+		: `Seluruh faskes aktif, dari katalog publik.`;
+	$: previewNote = hasMore
+		? `Menampilkan ${PREVIEW_LIMIT} faskes pertama (diurutkan menurut nama)`
+		: `Menampilkan ${preview.length} faskes (diurutkan menurut nama)`;
 
 	// The store exposes a getter function, not a value. Calling it keeps the
 	// prop a plain boolean, which is all ErrorState is allowed to know about.
@@ -70,19 +103,19 @@
 
 	onDestroy(unsubscribe);
 
-	/** The three steps from the frozen "cara menggunakan Sigap" content. */
+	/** The three steps, in the approved copy. */
 	const STEPS = [
 		{
-			title: 'Pilih faskes',
-			body: 'Cari fasilitas kesehatan yang sesuai untuk Anda.'
+			title: 'Pilih fasilitas',
+			body: 'Cari faskes berdasarkan nama atau jenisnya.'
 		},
 		{
 			title: 'Buat janji atau ambil antrean',
-			body: 'Simpan kode check-in atau nomor antrean Anda.'
+			body: 'Pilih layanan dan waktu, atau datang langsung.'
 		},
 		{
-			title: 'Pantau status',
-			body: 'Lihat posisi antrean sampai Anda dilayani.'
+			title: 'Pantau status kunjungan',
+			body: 'Simpan kode check-in Anda untuk melihat status kunjungan.'
 		}
 	];
 </script>
@@ -92,25 +125,29 @@
 </svelte:head>
 
 <div class="sigap-beranda">
-	<!-- A. Compact orientation. A heading and one line, not a hero. -->
-	<section class="sigap-beranda__intro" aria-labelledby="sigap-beranda-title">
-		<h1 id="sigap-beranda-title" class="sigap-page-title">
-			Apa yang bisa Anda lakukan di Sigap?
-		</h1>
-		<p class="sigap-page-subtitle">
-			Pilih layanan untuk memulai: buat janji, datang langsung, atau pantau kunjungan Anda.
-		</p>
-	</section>
+	<PageHeader
+		eyebrow="Layanan kesehatan warga"
+		title="Cari faskes, buat janji temu, dan pantau kunjungan Anda"
+		description="Satu layanan untuk menemukan fasilitas kesehatan, membuat janji temu, check-in, dan memantau status kunjungan."
+	/>
 
-	<!-- B + C. Primary and secondary actions. -->
-	<QuickActions />
+	<div class="sigap-beranda__tasks">
+		<QuickActions />
+	</div>
 
-	<!-- D. Real catalog preview. -->
 	<section class="sigap-beranda__section" aria-labelledby="sigap-beranda-facilities">
 		<div class="sigap-beranda__section-head">
-			<h2 id="sigap-beranda-facilities" class="sigap-section-title">Faskes aktif</h2>
-			<a class="sigap-inline-link" style:border-radius={RADIUS.control} href="/faskes">
+			<div class="sigap-beranda__section-intro">
+				<p class="sigap-eyebrow">Faskes aktif</p>
+				<h2 id="sigap-beranda-facilities" class="sigap-section-title">
+					Fasilitas dalam katalog
+				</h2>
+				<p class="sigap-section-desc">{previewDescription}</p>
+			</div>
+
+			<a class="sigap-inline-link" href="/faskes">
 				Lihat semua
+				<Icon icon={ChevronRight} size={14} />
 			</a>
 		</div>
 
@@ -122,7 +159,6 @@
 			-->
 			<div
 				class="sigap-beranda__skeletons"
-				style:border-radius={RADIUS.panel}
 				role="status"
 				aria-busy="true"
 				aria-live="polite"
@@ -143,7 +179,7 @@
 				onRetry={reload}
 				retryLabel="Muat ulang"
 			/>
-		{:else if catalog.facilities.length === 0}
+		{:else if sorted.length === 0}
 			<!--
 				Empty is a real operational state, not an error, and the frozen copy
 				names the cause: faskes appear once an operator activates them.
@@ -158,49 +194,59 @@
 				onAction={reload}
 			/>
 		{:else}
-			<ul class="sigap-beranda__facility-list" style:border-radius={RADIUS.panel}>
+			<ul class="sigap-beranda__facility-list">
 				{#each preview as facility (facility.id)}
-					<li class="sigap-beranda__facility">
-						<div class="sigap-beranda__facility-head">
-							<span class="sigap-beranda__facility-name">{facility.name}</span>
+					<!--
+						The whole row is the target, as the reference draws it: a
+						chevron, not a labelled sub-button. The hit area is the
+						anchor, so it is 56px tall at every viewport rather than a
+						small link inside a static row.
+					-->
+					<li>
+						<a
+							class="sigap-beranda__facility"
+							href={`/appointments/new?facility_id=${encodeURIComponent(facility.id)}`}
+						>
+							<span class="sigap-beranda__facility-text">
+								<span class="sigap-beranda__facility-name">{facility.name}</span>
+								<!--
+									The real enum through the shared label map, so a
+									facility named "RS Foo" registered as a Puskesmas
+									reads as "Puskesmas" here exactly as on /faskes.
+								-->
+								<span class="sigap-beranda__facility-type">
+									{facilityTypeLabel(facility.type)}
+								</span>
+							</span>
+
 							{#if facility.short_code}
-								<span class="sigap-code-badge" style:border-radius={RADIUS.control}>
+								<span class="sigap-beranda__facility-code sigap-identifier">
 									{facility.short_code}
 								</span>
 							{/if}
-						</div>
-						<!--
-							The frozen reference puts the classification on its own
-							line under the identity here too, so this restores the
-							designed composition rather than adding a new element to
-							it. The value is the real enum through the shared label map,
-							so a facility named "RS Foo" that is registered as a
-							Puskesmas reads as "Puskesmas", consistently with /faskes.
-						-->
-						<p class="sigap-beranda__facility-type">
-							{facilityTypeLabel(facility.type)}
-						</p>
+
+							<span class="sigap-beranda__facility-chevron" aria-hidden="true">
+								<Icon icon={ChevronRight} size={16} />
+							</span>
+						</a>
 					</li>
 				{/each}
 			</ul>
 
-			{#if hasMore}
-				<p class="sigap-beranda__more">
-					Menampilkan {PREVIEW_LIMIT} dari {catalog.facilities.length} faskes.
-				</p>
-			{/if}
+			<p class="sigap-beranda__more">{previewNote}</p>
 		{/if}
 	</section>
 
-	<!-- E. How it works. -->
 	<section class="sigap-beranda__section" aria-labelledby="sigap-beranda-steps">
-		<h2 id="sigap-beranda-steps" class="sigap-section-title">Cara menggunakan Sigap</h2>
-		<ol class="sigap-steps" style:border-radius={RADIUS.panel}>
+		<div class="sigap-beranda__section-intro">
+			<p class="sigap-eyebrow">Cara menggunakan Sigap</p>
+			<h2 id="sigap-beranda-steps" class="sigap-section-title">Tiga langkah</h2>
+		</div>
+
+		<ol class="sigap-steps">
 			{#each STEPS as step, index (step.title)}
 				<li class="sigap-steps__item">
-					<span class="sigap-steps__number" style:border-radius="9999px" aria-hidden="true">
-						{index + 1}
-					</span>
+					<span class="sigap-steps__number" aria-hidden="true">{index + 1}</span>
 					<div class="sigap-steps__body">
 						<h3 class="sigap-steps__title">{step.title}</h3>
 						<p class="sigap-steps__text">{step.body}</p>
@@ -209,48 +255,62 @@
 			{/each}
 		</ol>
 	</section>
-
-	<!-- F. Support. -->
-	<section class="sigap-beranda__section sigap-beranda__section--last">
-		<p class="sigap-beranda__support">
-			Butuh bantuan? Ikuti langkah panduan di atas, atau hubungi langsung faskes Anda.
-		</p>
-	</section>
 </div>
 
 <style>
 	.sigap-beranda {
-		max-width: 1024px;
+		/*
+			The shell measure, taken from the reference: 48px gutters at 1440
+			leaving a 1344px content column. A narrower cap (1024px) is the
+			obvious-looking choice and the wrong one — it makes every page
+			visibly narrower than the approved frame at the review viewport.
+		*/
+		max-width: 1440px;
 		margin: 0 auto;
-		padding: 20px 16px 8px;
+		padding: var(--sigap-space-6) var(--sigap-space-4) var(--sigap-space-2);
 	}
 
 	@media (min-width: 1024px) {
 		.sigap-beranda {
-			padding: 32px 24px 8px;
+			padding: var(--sigap-space-6) var(--sigap-space-7) var(--sigap-space-2);
 		}
 	}
 
+	.sigap-beranda__tasks {
+		margin-top: var(--sigap-space-6);
+	}
+
 	.sigap-beranda__section {
-		margin-top: 24px;
+		margin-top: var(--sigap-space-7);
 	}
 
-	.sigap-beranda__section--last {
-		margin-top: 24px;
-	}
-
+	/*
+		The heading block and the "Lihat semua" link share a row, and the link
+		sits on the heading's baseline rather than the description's. Aligning it
+		to the block's top would float it beside the eyebrow, which reads as a
+		second heading.
+	*/
 	.sigap-beranda__section-head {
 		display: flex;
-		align-items: baseline;
+		align-items: flex-start;
 		justify-content: space-between;
-		gap: 12px;
+		gap: var(--sigap-space-3);
+	}
+
+	.sigap-beranda__section-intro {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sigap-space-1);
+		min-width: 0;
 	}
 
 	.sigap-inline-link {
+		flex: none;
 		display: inline-flex;
 		align-items: center;
-		height: 44px;
-		padding: 0 4px;
+		gap: var(--sigap-space-1);
+		/* Citizen touch floor, so the link is a target and not a word. */
+		min-height: 44px;
 		font-size: 13px;
 		font-weight: 500;
 		color: var(--sigap-primary);
@@ -267,110 +327,149 @@
 	}
 
 	.sigap-beranda__skeletons {
-		margin-top: 8px;
-		padding: 16px;
+		margin-top: var(--sigap-space-3);
+		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
+		border-radius: var(--sigap-radius-panel);
 	}
 
 	.sigap-beranda__skeleton-row {
 		display: flex;
 		flex-direction: column;
-		gap: 8px;
+		gap: var(--sigap-space-2);
 	}
 
 	.sigap-beranda__skeleton-row + .sigap-beranda__skeleton-row {
-		margin-top: 16px;
+		margin-top: var(--sigap-space-4);
 	}
 
+	/*
+		Rules, not a box. The rows are the controls and each draws its own
+		hairline; a panel outline around them would add a second, competing
+		edge at the same weight.
+	*/
 	.sigap-beranda__facility-list {
-		margin: 8px 0 0;
+		margin: var(--sigap-space-3) 0 0;
 		padding: 0;
 		list-style: none;
-		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border-top: 1px solid var(--sigap-border-subtle);
+	}
+
+	.sigap-beranda__facility-list > li {
+		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-beranda__facility {
-		padding: 12px 16px;
-	}
-
-	.sigap-beranda__facility + .sigap-beranda__facility {
-		border-top: 1px solid var(--sigap-border);
-	}
-
-	.sigap-beranda__facility-head {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: var(--sigap-space-3);
+		/* 56px: comfortably past the 44px citizen touch target. */
+		min-height: 56px;
+		padding: var(--sigap-space-2) var(--sigap-space-1);
+		text-decoration: none;
+	}
+
+	.sigap-beranda__facility:hover {
+		background-color: var(--sigap-surface);
+	}
+
+	.sigap-beranda__facility:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: -2px;
+	}
+
+	.sigap-beranda__facility-text {
+		flex: 1 1 auto;
+		min-width: 0;
 	}
 
 	.sigap-beranda__facility-name {
-		min-width: 0;
-		font-size: 14px;
+		display: block;
+		font-size: 15px;
 		font-weight: 500;
 		color: var(--sigap-foreground);
+		/* Long facility names wrap instead of overflowing at 390px. */
+		overflow-wrap: anywhere;
 	}
 
 	/* Mirrors the catalog row: classification under the identity, muted. */
 	.sigap-beranda__facility-type {
-		margin: 4px 0 0;
+		display: block;
+		margin-top: 2px;
 		font-size: 12px;
 		color: var(--sigap-muted);
 	}
 
-	.sigap-beranda__more {
-		margin: 8px 0 0;
-		font-size: 12px;
-		color: var(--sigap-muted);
-	}
-
-	.sigap-code-badge {
+	/*
+		Static, non-interactive chip. The row's own hit area is the anchor, so
+		this is a label, not a control — hence the subtle edge, not the 4.16:1
+		one. It is monospace and tabular so "PMI" and "RSK" align down the list.
+	*/
+	.sigap-beranda__facility-code {
 		flex: none;
 		display: inline-flex;
 		align-items: center;
 		height: 20px;
-		padding: 0 6px;
+		padding: 0 var(--sigap-space-2);
 		font-size: 11px;
 		font-weight: 500;
 		color: var(--sigap-muted);
-		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		background-color: var(--sigap-surface-sunken);
+		border: 1px solid var(--sigap-border-subtle);
+		border-radius: var(--sigap-radius-control);
+	}
+
+	.sigap-beranda__facility-chevron {
+		flex: none;
+		display: flex;
+		color: var(--sigap-muted);
+	}
+
+	.sigap-beranda__more {
+		margin: var(--sigap-space-2) 0 0;
+		font-size: 12px;
+		color: var(--sigap-muted);
 	}
 
 	.sigap-steps {
-		margin: 12px 0 0;
-		padding: 16px;
+		margin: var(--sigap-space-3) 0 0;
+		padding: var(--sigap-space-4);
 		list-style: none;
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
+		border-radius: var(--sigap-radius-panel);
 	}
 
 	.sigap-steps__item {
 		position: relative;
 		display: flex;
-		gap: 12px;
+		gap: var(--sigap-space-3);
 	}
 
 	.sigap-steps__item:not(:last-child) {
-		padding-bottom: 16px;
+		padding-bottom: var(--sigap-space-4);
 	}
 
 	/*
 		The connector between step markers. Drawn with a pseudo-element rather
-	 *than a border so it can start at the marker edge without affecting the
-	 *flex layout.
+		than a border so it can start at the marker's edge without taking part
+		in the flex layout.
 	*/
 	.sigap-steps__item:not(:last-child)::after {
 		content: '';
 		position: absolute;
 		left: 13px;
-		top: 36px;
+		top: 32px;
 		width: 1px;
-		height: calc(100% - 36px);
-		background-color: var(--sigap-border);
+		height: calc(100% - 32px);
+		background-color: var(--sigap-border-subtle);
 	}
 
+	/*
+		Not a control: nothing here is operable. The ordinal survives on the
+		number's own colour, so the square is decoration and stays subtle.
+	*/
 	.sigap-steps__number {
 		flex: none;
 		display: flex;
@@ -381,8 +480,10 @@
 		font-size: 13px;
 		font-weight: 600;
 		color: var(--sigap-primary);
-		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		background-color: var(--sigap-surface-sunken);
+		border: 1px solid var(--sigap-border-subtle);
+		/* 50% keeps the marker a circle without an off-scale literal radius. */
+		border-radius: 50%;
 	}
 
 	.sigap-steps__body {
@@ -391,21 +492,15 @@
 
 	.sigap-steps__title {
 		margin: 0;
-		font-size: 13px;
-		font-weight: 700;
-		line-height: 1rem;
+		font-size: 14px;
+		font-weight: 600;
+		line-height: 1.25rem;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-steps__text {
 		margin: 2px 0 0;
 		font-size: 12px;
-		color: var(--sigap-muted);
-	}
-
-	.sigap-beranda__support {
-		margin: 0;
-		font-size: 13px;
 		color: var(--sigap-muted);
 	}
 </style>

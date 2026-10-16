@@ -110,7 +110,7 @@
 		font-weight: 500;
 		color: var(--sigap-muted);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	/*

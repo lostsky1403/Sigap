@@ -1,202 +1,201 @@
 <script lang="ts">
-	import { RADIUS } from '$lib/design/tokens';
-	import { MapPin, CalendarPlus, ClipboardCheck, Ticket, Activity } from 'lucide-svelte';
 	import Icon from '$lib/ui/Icon.svelte';
+	import { ChevronRight, ClipboardCheck, Ticket, Activity } from 'lucide-svelte';
 	import type { ComponentType } from 'svelte';
 
 	/**
-	 * Beranda's primary actions.
+	 * Beranda's task picker — the "Mulai dari sini" section.
 	 *
-	 * Every entry links to a route that exists. Nothing here is aspirational:
-	 * a quick action pointing at a page that 404s is worse than no action at
-	 * all, because it teaches a citizen that the app is broken.
+	 * Composition follows the approved V2.2 frame: an uppercase eyebrow, a
+	 * section title, ONE filled primary action, then a rule-separated list of
+	 * the remaining journeys.
 	 *
-	 * Check-in and walk-in are separate entries, not one merged "queue" action.
-	 * They are genuinely different journeys: check-in redeems a code for an
-	 * appointment you already booked, walk-in takes a number on arrival. Folding
-	 * them together is how someone ends up in a walk-in queue holding an
-	 * appointment they never used.
+	 * The primary action reads "Cari faskes dan buat janji temu" and lands on
+	 * /faskes, because that is where the journey actually starts: the catalog
+	 * row is what carries the facility into the booking form. Pointing the
+	 * button straight at /appointments/new would drop the citizen into a
+	 * facility picker with no context, and would also remove the only
+	 * prominent route into the catalog.
 	 *
-	 * Walk-in targets `/queues/new`, which Phase 3B3 implements. The link is
-	 * correct now and the destination arrives with that phase; this phase owns
-	 * the shell and the catalog, not the transactional flow.
+	 * The list is three rows, not four. "Cari Faskes" is no longer a row
+	 * because the primary action now IS that journey; keeping both would give
+	 * one destination two entries in the same section.
+	 *
+	 * Check-in and walk-in stay separate rows. They are genuinely different
+	 * journeys — check-in redeems a code for an appointment you already
+	 * booked, walk-in takes a number on arrival — and folding them together is
+	 * how someone ends up in a walk-in queue holding an unused appointment.
 	 */
-	interface QuickAction {
+	interface TaskRow {
 		label: string;
-		description: string;
+		hint: string;
 		href: string;
 		icon: ComponentType;
 	}
 
-	/**
-	 * `primary` is the one action the frozen design promotes visually. It is a
-	 * single button, not a tile, so the page has one unambiguous first step.
-	 */
-	const PRIMARY: QuickAction = {
-		label: 'Buat Janji Temu',
-		description: 'Pesan kunjungan lebih awal agar tidak antre panjang.',
-		href: '/appointments/new',
-		icon: CalendarPlus
-	};
+	const PRIMARY = {
+		label: 'Cari faskes dan buat janji temu',
+		href: '/faskes'
+	} as const;
 
-	const SECONDARY: QuickAction[] = [
-		{
-			label: 'Cari Faskes',
-			description: 'Lihat faskes yang tersedia',
-			href: '/faskes',
-			icon: MapPin
-		},
+	const TASKS: TaskRow[] = [
 		{
 			label: 'Check-In Janji Temu',
-			description: 'Untuk yang sudah punya janji',
+			hint: 'Untuk yang sudah punya janji temu',
 			href: '/appointments/check-in',
 			icon: ClipboardCheck
 		},
 		{
 			label: 'Ambil Antrean Tanpa Janji',
-			description: 'Datang langsung hari ini',
+			hint: 'Datang langsung ke fasilitas',
 			href: '/queues/new',
 			icon: Ticket
 		},
 		{
 			label: 'Cek Status Kunjungan',
-			description: 'Lihat posisi antrean Anda',
+			hint: 'Lihat status kunjungan Anda',
 			href: '/patient/status',
 			icon: Activity
 		}
 	];
 </script>
 
-<section class="sigap-quick-actions" aria-labelledby="sigap-quick-actions-title">
-	<h2 id="sigap-quick-actions-title" class="sigap-section-title">Mulai dari sini</h2>
+<section class="sigap-tasks" aria-labelledby="sigap-tasks-title">
+	<div class="sigap-tasks__head">
+		<p class="sigap-eyebrow">Mulai dari sini</p>
+		<h2 id="sigap-tasks-title" class="sigap-section-title">Pilih tugas Anda</h2>
+	</div>
 
-	<a
-		class="sigap-quick-actions__primary"
-		style:border-radius={RADIUS.control}
-		href={PRIMARY.href}
-	>
-		<Icon icon={PRIMARY.icon} size={20} />
+	<a class="sigap-tasks__primary" href={PRIMARY.href}>
 		<span>{PRIMARY.label}</span>
+		<Icon icon={ChevronRight} size={18} />
 	</a>
 
-	<h3 class="sigap-section-title sigap-quick-actions__subhead">Layanan lain</h3>
-
-	<ul class="sigap-quick-actions__list" style:border-radius={RADIUS.panel}>
-		{#each SECONDARY as action (action.href)}
-			<li>
-				<a
-					class="sigap-quick-actions__item"
-					style:border-radius={RADIUS.control}
-					href={action.href}
-				>
-					<span class="sigap-quick-actions__icon">
-						<Icon icon={action.icon} size={18} />
+	<ul class="sigap-tasks__list">
+		{#each TASKS as task (task.href)}
+			<li class="sigap-tasks__row">
+				<a class="sigap-tasks__link" href={task.href}>
+					<span class="sigap-tasks__icon">
+						<Icon icon={task.icon} size={18} />
 					</span>
-					<span class="sigap-quick-actions__text">
-						<span class="sigap-quick-actions__label">{action.label}</span>
-						<span class="sigap-quick-actions__description">{action.description}</span>
+					<span class="sigap-tasks__text">
+						<span class="sigap-tasks__label">{task.label}</span>
+						<span class="sigap-tasks__hint">{task.hint}</span>
+					</span>
+					<span class="sigap-tasks__chevron">
+						<Icon icon={ChevronRight} size={18} />
 					</span>
 				</a>
 			</li>
 		{/each}
 	</ul>
-
-	<p class="sigap-quick-actions__note">
-		Check-in dan antrean tanpa janji adalah dua jalur berbeda.
-	</p>
 </section>
 
 <style>
-	.sigap-quick-actions__primary {
+	.sigap-tasks__head {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sigap-space-2);
+	}
+
+	/*
+	 * The one filled primary action in this section, and the only filled
+	 * primary on the page besides the masthead's outlined CTA. 480px is the
+	 * approved measure — it is a deliberate size, not `width: 100%`, so the
+	 * button reads as a control rather than a banner on a wide screen.
+	 */
+	.sigap-tasks__primary {
 		display: flex;
 		align-items: center;
-		justify-content: center;
-		gap: 8px;
-		/* Citizen touch floor. */
-		min-height: 48px;
-		margin-top: 8px;
-		padding: 0 16px;
-		font-size: 16px;
-		font-weight: 500;
-		color: var(--sigap-surface);
+		justify-content: space-between;
+		gap: var(--sigap-space-3);
+		width: 100%;
+		max-width: 480px;
+		min-height: 52px;
+		margin-top: var(--sigap-space-4);
+		padding: 0 var(--sigap-space-4);
+		font-size: 15px;
+		font-weight: 600;
+		color: var(--sigap-on-primary);
 		background-color: var(--sigap-primary);
+		border-radius: var(--sigap-radius-control);
 		text-decoration: none;
 	}
 
-	.sigap-quick-actions__primary:hover {
+	.sigap-tasks__primary:hover {
 		background-color: var(--sigap-primary-hover);
 	}
 
-	.sigap-quick-actions__primary:active {
+	.sigap-tasks__primary:active {
 		background-color: var(--sigap-primary-active);
 	}
 
-	.sigap-quick-actions__primary:focus-visible {
+	.sigap-tasks__primary:focus-visible {
 		outline: 2px solid var(--sigap-primary);
 		outline-offset: 2px;
 	}
 
-	.sigap-quick-actions__subhead {
-		margin-top: 24px;
-	}
-
-	.sigap-quick-actions__list {
-		margin: 8px 0 0;
+	/*
+	 * Rules instead of boxes: the list has a top and bottom hairline and each
+	 * row a separator, but no panel outline. A bordered card around three
+	 * plain rows is exactly the box the design removes.
+	 */
+	.sigap-tasks__list {
+		margin: var(--sigap-space-4) 0 0;
 		padding: 0;
 		list-style: none;
-		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border-top: 1px solid var(--sigap-border-subtle);
 	}
 
-	.sigap-quick-actions__list > li + li {
-		border-top: 1px solid var(--sigap-border);
+	.sigap-tasks__row {
+		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
-	.sigap-quick-actions__item {
+	.sigap-tasks__link {
 		display: flex;
 		align-items: center;
-		gap: 12px;
-		/* 56px row: comfortably past the 44px citizen touch target. */
+		gap: var(--sigap-space-3);
 		min-height: 56px;
-		padding: 12px 16px;
+		padding: var(--sigap-space-2) var(--sigap-space-1);
 		text-decoration: none;
 	}
 
-	.sigap-quick-actions__item:hover {
-		background-color: var(--sigap-canvas);
+	.sigap-tasks__link:hover {
+		background-color: var(--sigap-surface);
 	}
 
-	.sigap-quick-actions__item:focus-visible {
+	.sigap-tasks__link:focus-visible {
 		outline: 2px solid var(--sigap-primary);
 		outline-offset: -2px;
 	}
 
-	.sigap-quick-actions__icon {
+	.sigap-tasks__icon {
 		flex: none;
 		display: flex;
-		color: var(--sigap-muted);
+		color: var(--sigap-primary);
 	}
 
-	.sigap-quick-actions__text {
+	.sigap-tasks__text {
 		min-width: 0;
+		flex: 1 1 auto;
 	}
 
-	.sigap-quick-actions__label {
+	.sigap-tasks__label {
 		display: block;
 		font-size: 14px;
 		font-weight: 500;
 		color: var(--sigap-foreground);
 	}
 
-	.sigap-quick-actions__description {
+	.sigap-tasks__hint {
 		display: block;
 		font-size: 12px;
 		color: var(--sigap-muted);
 	}
 
-	.sigap-quick-actions__note {
-		margin: 8px 0 0;
-		font-size: 12px;
+	.sigap-tasks__chevron {
+		flex: none;
+		display: flex;
 		color: var(--sigap-muted);
 	}
 </style>

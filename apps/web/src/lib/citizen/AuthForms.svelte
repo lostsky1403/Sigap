@@ -216,7 +216,7 @@
 		margin-bottom: 16px;
 		padding: 12px;
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-auth__notice--error {

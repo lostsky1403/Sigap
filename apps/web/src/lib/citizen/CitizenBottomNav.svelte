@@ -86,7 +86,7 @@
 			right: 0;
 			z-index: 40;
 			background-color: var(--sigap-surface);
-			border-top: 1px solid var(--sigap-border);
+			border-top: 1px solid var(--sigap-border-subtle);
 			/*
 				Reserves the home-indicator inset on devices that have one, so the
 				tab bar never sits under the system gesture area.

@@ -49,7 +49,7 @@
 		padding: 24px;
 		text-align: center;
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 		border-radius: var(--sigap-radius-dialog);
 	}
 

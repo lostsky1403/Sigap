@@ -52,6 +52,21 @@
 	$: isAdminArea = $page.url.pathname.startsWith('/admin');
 	$: hasSession = data.hasSession ?? false;
 	$: userEmail = data.userEmail ?? '';
+
+	/**
+	 * Which pages let the masthead carry the filled booking CTA.
+	 *
+	 * Only the catalog. `/faskes` promotes nothing of its own — it is a
+	 * browsable list — so the reference fills `Buat Janji Temu` there. Every
+	 * other citizen page carries a filled primary in its body (the landing
+	 * page's task picker, the auth forms' submit, the booking form's next
+	 * step), and a filled masthead button on top of that would give the screen
+	 * two competing primaries.
+	 *
+	 * A path list, not a role or a permission check: this chooses a button
+	 * variant and nothing else.
+	 */
+	$: ctaEmphasis = $page.url.pathname === '/faskes' ? 'filled' : 'outlined';
 </script>
 
 {#if isAdminArea}
@@ -63,7 +78,7 @@
 	-->
 	<slot />
 {:else}
-	<CitizenHeader path={$page.url.pathname} {hasSession} {userEmail} />
+	<CitizenHeader path={$page.url.pathname} {hasSession} {userEmail} {ctaEmphasis} />
 
 	<!--
 		The bottom padding reserves the fixed tab bar plus the device safe-area

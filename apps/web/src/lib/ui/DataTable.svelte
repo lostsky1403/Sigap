@@ -164,7 +164,7 @@
 		letter-spacing: 0.04em;
 		text-transform: uppercase;
 		color: var(--sigap-muted);
-		border-bottom: 1px solid var(--sigap-border);
+		border-bottom: 1px solid var(--sigap-border-subtle);
 		white-space: nowrap;
 	}
 
@@ -236,7 +236,7 @@
 		*/
 		height: 40px;
 		padding: 0 12px;
-		border-bottom: 1px solid var(--sigap-border);
+		border-bottom: 1px solid var(--sigap-border-subtle);
 		vertical-align: middle;
 		background-color: var(--sigap-surface);
 	}

@@ -16,6 +16,7 @@
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorState from '$lib/ui/ErrorState.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import { hasSession as readHasSession } from '$lib/stores/session';
 	import { RADIUS } from '$lib/design/tokens';
 	import { FolderSearch, SearchX, CloudOff, X } from 'lucide-svelte';
@@ -192,10 +193,17 @@
 </svelte:head>
 
 <div class="sigap-faskes">
-	<section class="sigap-faskes__intro" aria-labelledby="sigap-faskes-title">
-		<h1 id="sigap-faskes-title" class="sigap-page-title">Cari Faskes</h1>
-		<p class="sigap-page-subtitle">Telusuri fasilitas kesehatan yang aktif di Sigap.</p>
-	</section>
+	<PageHeader
+		title="Cari fasilitas kesehatan"
+		description="Telusuri faskes yang tersedia. Pencarian dan filter di bawahnya mempersempit data yang sudah dimuat."
+	/>
+
+	<!--
+		`PageHeader` owns the visible `<h1>`. This hidden anchor gives the page
+		its stable `sigap-faskes-title` id for labelled sections and tests, and
+		is silent to assistive tech so the heading is announced exactly once.
+	-->
+	<span id="sigap-faskes-title" class="sigap-visually-hidden"></span>
 
 	<!--
 		Search and type filter are hidden while loading and on error. Offering a
@@ -355,19 +363,21 @@
 
 <style>
 	.sigap-faskes {
-		max-width: 1024px;
+		/* Same shell measure as Beranda: 1344px content at 1440 with 48px
+		   gutters, so the two catalog pages do not disagree about their width. */
+		max-width: 1440px;
 		margin: 0 auto;
-		padding: 20px 16px 8px;
+		padding: var(--sigap-space-6) var(--sigap-space-4) var(--sigap-space-2);
 	}
 
 	@media (min-width: 1024px) {
 		.sigap-faskes {
-			padding: 32px 24px 8px;
+			padding: var(--sigap-space-6) var(--sigap-space-7) var(--sigap-space-2);
 		}
 	}
 
 	.sigap-faskes__search {
-		margin-top: 16px;
+		margin-top: var(--sigap-space-4);
 	}
 
 	/*
@@ -379,8 +389,8 @@
 	*/
 	.sigap-faskes__type-group {
 		display: flex;
-		gap: 8px;
-		margin-top: 12px;
+		gap: var(--sigap-space-2);
+		margin-top: var(--sigap-space-3);
 		overflow-x: auto;
 		/* No visible scrollbar on a three-item control that always fits. */
 		scrollbar-width: none;
@@ -449,9 +459,10 @@
 	}
 
 	.sigap-faskes__skeletons {
-		padding: 16px;
+		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
+		border-radius: var(--sigap-radius-panel);
 	}
 
 	.sigap-faskes__skeleton-row {
@@ -469,16 +480,17 @@
 		padding: 0;
 		list-style: none;
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		/* Panel edge: the rows inside are the controls, not this box. */
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	/*
 		Rows are separate list items, so the divider is drawn between items
-	 *rather than inside the row, which keeps the border off the rounded outer
-	 *edges of the panel.
+		rather than inside the row, which keeps the border off the rounded outer
+		edges of the panel.
 	*/
 	.sigap-faskes__list > li + li {
-		border-top: 1px solid var(--sigap-border);
+		border-top: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-faskes__clear {
