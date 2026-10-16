@@ -189,7 +189,7 @@ describe('/appointments/check-in: submission', () => {
 		await waitFor(() => expect(field('ID janji temu')).toBeTruthy());
 
 		// Walk-in is a different flow, offered but not conflated.
-		const walkin = screen.getByRole('link', { name: /Ambil antrean walk-in/ });
+		const walkin = screen.getByRole('link', { name: /Ambil nomor antrean tanpa janji/ });
 		expect(walkin.getAttribute('href')).toBe('/queues/new');
 
 		await fireEvent.input(field('ID janji temu'), { target: { value: APPT_ID } });

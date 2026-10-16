@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
+	import AdminFreshness from '$lib/admin/AdminFreshness.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
 	import AdminToolbar from '$lib/admin/AdminToolbar.svelte';
 	import FacilityFilter from '$lib/admin/FacilityFilter.svelte';
@@ -20,7 +21,7 @@
 		updateSchedule
 	} from '$lib/api/endpoints/admin';
 	import { indexBy, facilityName, serviceUnitName } from '$lib/domain/joins';
-	import { formatDate, formatTime } from '$lib/domain/format';
+	import { formatClockTime, formatDate } from '$lib/domain/format';
 	import { isEmptyScope, ORDINARY_EMPTY_DESCRIPTION } from '$lib/admin/readState';
 	import { runAdminMutation } from '$lib/admin/adminMutation';
 	import { toScheduleRequest } from '$lib/admin/scheduleForm';
@@ -55,6 +56,15 @@
 	let units: AdminServiceUnit[] = [];
 	let loading = true;
 	let error: ApiError | null = null;
+	/*
+		Separate from `loading`: `loading` drives `AdminReadState`, which replaces
+		the table with a loading panel. That is right for a first read and wrong
+		for a refresh, where the operator asked for fresh data and should keep
+		reading the rows they already have.
+	*/
+	let refreshing = false;
+	/** When the rows on screen were last confirmed by the server. */
+	let loadedAt: Date | null = null;
 	let facilitiesLoaded = false;
 	let facilityFilter = '';
 	let activeOnly = false;
@@ -100,6 +110,12 @@
 
 		if (scheduleResult.ok) {
 			schedules = scheduleResult.data;
+			// Stamped here as well as in `reloadSchedules`. The initial read is a
+			// real read, so the header must state its time immediately; leaving
+			// the stamp to the reload alone meant "Diperbarui" was absent until
+			// the operator pressed Perbarui, which reads as a page that never
+			// loaded even though the rows are on screen.
+			loadedAt = new Date();
 		} else {
 			error = scheduleResult.error;
 		}
@@ -187,10 +203,29 @@
 		if (result.ok) {
 			schedules = result.data;
 			error = null;
+			// Stamped only on success: a failed read leaves the previous time
+			// standing, because the previous rows are still what is on screen.
+			loadedAt = new Date();
 		} else {
 			error = result.error;
 		}
 		loading = false;
+	}
+
+	/**
+	 * The header's `Perbarui`. Re-reads without blanking the table.
+	 *
+	 * It cannot call `reloadSchedules` directly: that sets `loading`, which
+	 * swaps the table for a loading panel, so the rows would disappear under the
+	 * operator's cursor every time they asked for fresh data.
+	 */
+	async function refreshSchedules() {
+		refreshing = true;
+		try {
+			await reloadSchedules();
+		} finally {
+			refreshing = false;
+		}
 	}
 
 	async function loadMutationOptions() {
@@ -271,7 +306,11 @@
 	<AdminPageHeader
 		title="Jadwal"
 		subtitle="Jadwal praktik dalam lingkup akses Anda. Pilihan fasilitas pada editor berasal dari server."
-	/>
+	>
+		<svelte:fragment slot="aside">
+			<AdminFreshness {loadedAt} refreshing={refreshing} onRefresh={() => void refreshSchedules()} />
+		</svelte:fragment>
+	</AdminPageHeader>
 
 	<!--
 		THE EDITOR ENTRY POINT, gated on a server-provided affordance.
@@ -328,7 +367,6 @@
 	{/if}
 
 	<AdminToolbar
-		showRefresh={false}
 		note="Pilihan fasilitas memantulkan fasilitas yang ada dalam data yang sudah dimuat. Nama unit layanan ditampilkan hanya bila unitnya dikenal; selain itu tampil sebagai “-”."
 	>
 		<FacilityFilter
@@ -396,7 +434,7 @@
 					<tr>
 						<td class="sigap-schedule-row__date">{formatDate(schedule.schedule_date)}</td>
 						<td class="sigap-schedule-row__time">
-							{formatTime(schedule.start_time)}–{formatTime(schedule.end_time)}
+							{formatClockTime(schedule.start_time)}–{formatClockTime(schedule.end_time)}
 						</td>
 						<td class="sigap-table-col-secondary">
 							{facilityName(facilityIndex, schedule.facility_id)}

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
+	import AdminFreshness from '$lib/admin/AdminFreshness.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
 	import AdminStatusBadge, {
 		QUEUE_STATUS_ICON,
@@ -13,9 +14,9 @@
 		listSchedules
 	} from '$lib/api/endpoints/admin';
 	import { indexBy, facilityName } from '$lib/domain/joins';
-	import { formatDate, formatTime, formatNumber } from '$lib/domain/format';
+	import { formatClockTime, formatDate, formatNumber } from '$lib/domain/format';
 	import { QUEUE_STATUS_LABEL, queueTone } from '$lib/domain/status';
-	import { formatUpdatedAt, isEmptyScope } from '$lib/admin/readState';
+	import { isEmptyScope } from '$lib/admin/readState';
 	import {
 		activeQueueCount,
 		attentionItems,
@@ -57,6 +58,13 @@
 	let loading = true;
 	let error: ApiError | null = null;
 	let loadedAt: Date | null = null;
+	/*
+		Separate from `loading`: that drives `AdminReadState`, which replaces the
+		whole overview with a loading panel. Right for a first read, wrong for a
+		refresh — the operator asked for fresh numbers and should keep the ones
+		they are reading until the new ones arrive.
+	*/
+	let refreshing = false;
 	let hasSession = getSession().hasSession;
 	let unsubscribeSession: (() => void) | undefined;
 
@@ -111,6 +119,25 @@
 			.finally(() => (loading = false));
 	}
 
+	/**
+	 * The header's `Perbarui`. Re-reads without blanking the overview.
+	 *
+	 * It cannot call `loadOverview` directly: that sets `loading`, which swaps
+	 * the strip for a loading panel, so every figure would flicker on each
+	 * refresh. The tradeoff is explicit — a refresh that fails leaves the
+	 * previous figures on screen with a stale `loadedAt`, which is the honest
+	 * state, rather than showing an error over numbers that are still the last
+	 * ones the server confirmed.
+	 */
+	async function refreshOverview() {
+		refreshing = true;
+		try {
+			await loadOverview();
+		} finally {
+			refreshing = false;
+		}
+	}
+
 	$: metrics = headlineMetrics({ queues, appointments, schedules, facilities });
 	$: attention = attentionItems({ queues, appointments, schedules, facilities });
 	$: upcoming = nextSchedule(schedules);
@@ -122,11 +149,7 @@
 <div class="sigap-admin-page">
 	<AdminPageHeader title="Ringkasan" subtitle="Ringkasan kegiatan dalam lingkup akses Anda.">
 		<svelte:fragment slot="aside">
-			{#if loadedAt}
-				<span class="sigap-admin-updated" aria-live="polite">
-					{formatUpdatedAt(loadedAt)}
-				</span>
-			{/if}
+			<AdminFreshness {loadedAt} refreshing={refreshing} onRefresh={() => void refreshOverview()} />
 		</svelte:fragment>
 	</AdminPageHeader>
 
@@ -229,38 +252,48 @@
 					Tidak ada jadwal aktif berikutnya dalam lingkup operator.
 				</p>
 			{:else}
-				<table class="sigap-ringkasan-schedule">
-					<caption class="sigap-ringkasan-schedule__caption">
-						Jadwal aktif terdekat dalam lingkup operator
-					</caption>
-					<thead>
-						<tr>
-							<th scope="col">Tanggal</th>
-							<th scope="col">Waktu</th>
-							<th scope="col">Fasilitas</th>
-							<th scope="col">Kapasitas per slot</th>
-							<th scope="col">Status</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr>
-							<td>{formatDate(upcoming.schedule_date)}</td>
-							<td>
-								{formatTime(upcoming.start_time)}–{formatTime(upcoming.end_time)}
-							</td>
-							<td>{facilityName(facilityIndex, upcoming.facility_id)}</td>
-							<td>{formatNumber(upcoming.capacity_per_slot)}</td>
-							<td>
-								<AdminStatusBadge
-									label="Aktif"
-									tone="success"
-									size="sm"
-									icon={activeStateIcon(true)}
-								/>
-							</td>
-						</tr>
-					</tbody>
-				</table>
+				<!--
+					The scroll region is required, not decorative. This table has five
+					columns and is wider than a 390px viewport, and without a scroller
+					of its own it widens the PAGE — which on the admin shell means the
+					sidebar scrolls away and the operator loses their navigation. The
+					shared `DataTable` wraps its own table for exactly this reason;
+					this bespoke table has to do the same.
+				-->
+				<div class="sigap-ringkasan-schedule__region">
+					<table class="sigap-ringkasan-schedule">
+						<caption class="sigap-ringkasan-schedule__caption">
+							Jadwal aktif terdekat dalam lingkup operator
+						</caption>
+						<thead>
+							<tr>
+								<th scope="col">Tanggal</th>
+								<th scope="col">Waktu</th>
+								<th scope="col">Fasilitas</th>
+								<th scope="col">Kapasitas per slot</th>
+								<th scope="col">Status</th>
+							</tr>
+						</thead>
+						<tbody>
+							<tr>
+								<td>{formatDate(upcoming.schedule_date)}</td>
+								<td>
+									{formatClockTime(upcoming.start_time)}–{formatClockTime(upcoming.end_time)}
+								</td>
+								<td>{facilityName(facilityIndex, upcoming.facility_id)}</td>
+								<td>{formatNumber(upcoming.capacity_per_slot)}</td>
+								<td>
+									<AdminStatusBadge
+										label="Aktif"
+										tone="success"
+										size="sm"
+										icon={activeStateIcon(true)}
+									/>
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
 				<p class="sigap-ringkasan-note">
 					Nama unit layanan tidak ditampilkan — data jadwal hanya berisi kode unit.
 				</p>
@@ -274,11 +307,6 @@
 		min-width: 0;
 	}
 
-	.sigap-admin-updated {
-		font-size: var(--sigap-type-caption);
-		color: var(--sigap-muted);
-		font-variant-numeric: tabular-nums;
-	}
 
 	/*
 		The count strip. A rule-separated strip on `--sigap-surface`, NOT a row of
@@ -314,11 +342,16 @@
 
 	.sigap-ringkasan-strip__label {
 		margin: 0 0 var(--sigap-space-1);
-		/* The 11px uppercase micro-label, which is the frozen floor of the scale. */
-		font-size: var(--sigap-type-micro);
-		font-weight: 600;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
+		/*
+			Sentence case at 12px, which is what the Pen draws (`Antrean aktif`,
+			`Janji temu terjadwal`, `Fasilitas aktif` at fs=12, fw=normal). It was
+			an 11px uppercase micro-label, which reads as a column header rather
+			than as the name of the figure beneath it — and it made this strip
+			disagree with the Notifikasi summary cards, which use sentence-case
+			badge labels for the same kind of datum.
+		*/
+		font-size: var(--sigap-type-caption);
+		font-weight: 400;
 		color: var(--sigap-muted);
 	}
 
@@ -438,6 +471,17 @@
 		font-weight: 600;
 		color: var(--sigap-foreground);
 		font-variant-numeric: tabular-nums;
+	}
+
+	/*
+		The table's own scroll container. A five-column table is wider than a
+		narrow viewport, and letting it widen the page would take the sidebar with
+		it — the operator would lose navigation while reading the table. Same
+		contract as the shared `DataTable` region.
+	*/
+	.sigap-ringkasan-schedule__region {
+		overflow-x: auto;
+		max-width: 100%;
 	}
 
 	.sigap-ringkasan-schedule {

@@ -1,10 +1,7 @@
 <script lang="ts">
-	import { DENSITY } from '$lib/ui/density';
-	import Button from '$lib/ui/Button.svelte';
-	import { RefreshCw } from 'lucide-svelte';
 
 	/**
-	 * The admin toolbar: client-side filters on the left, refresh on the right.
+	 * The admin toolbar: client-side filters, and the scope note beneath them.
 	 *
 	 * `AdminToolbar` exists so the honesty rule about filtering lives in exactly
 	 * one place. Every filter in the admin read layer narrows data the server has
@@ -13,16 +10,13 @@
 	 * querying the clinic's data when they are narrowing their own view, so the
 	 * note component renders below every filter row and states the real scope.
 	 *
-	 * The refresh control is a real `<button>` rather than a link, because it
-	 * performs an action. It is also the manual counterpart to the polling
-	 * controller on the queue board, and it carries an `aria-busy` state so a
-	 * screen reader announces the in-flight refresh instead of leaving silence.
+	 * There is deliberately NO refresh control here. Every admin page's refresh
+	 * lives in the header beside the freshness label, which is where the Pen
+	 * draws it and what makes "Diperbarui HH.MM" and the control that updates it
+	 * the same object. A second refresh in the toolbar would be a duplicate
+	 * affordance for one action, and the two could disagree about their disabled
+	 * state during an in-flight read.
 	 */
-	export let onRefresh: (() => void) | undefined = undefined;
-	export let refreshing: boolean = false;
-	export let refreshLabel: string = 'Perbarui';
-	/** Set false on a page with no polling or manual refresh (Ringkasan loads once). */
-	export let showRefresh: boolean = true;
 	/**
 	 * The scope statement. Shown on every admin page that reads scoped data, so
 	 * "the list is already limited to your facilities" is never a per-page
@@ -45,18 +39,6 @@
 			</div>
 		{/if}
 
-		{#if showRefresh && onRefresh}
-			<div class="sigap-admin-toolbar__actions">
-				<Button
-					variant="secondary"
-					size={DENSITY.adminCompact}
-					icon={RefreshCw}
-					label={refreshLabel}
-					disabled={refreshing}
-					onClick={() => onRefresh?.()}
-				/>
-			</div>
-		{/if}
 	</div>
 
 	{#if note}
@@ -90,13 +72,6 @@
 		flex-wrap: wrap;
 		align-items: flex-end;
 		gap: var(--sigap-space-3);
-	}
-
-	.sigap-admin-toolbar__actions {
-		display: flex;
-		align-items: center;
-		gap: var(--sigap-space-2);
-		flex-shrink: 0;
 	}
 
 	.sigap-admin-toolbar__note {

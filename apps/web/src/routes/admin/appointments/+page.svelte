@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
+	import AdminFreshness from '$lib/admin/AdminFreshness.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
 	import AdminToolbar from '$lib/admin/AdminToolbar.svelte';
 	import FacilityFilter from '$lib/admin/FacilityFilter.svelte';
@@ -54,6 +55,15 @@
 	let units: AdminServiceUnit[] = [];
 	let loading = true;
 	let error: import('$lib/api/errors').ApiError | null = null;
+	/*
+		Separate from `loading`: that drives `AdminReadState`, which replaces the
+		table with a loading panel. Right for a first read, wrong for a refresh —
+		the operator asked for fresh data and should keep reading the rows they
+		already have.
+	*/
+	let refreshing = false;
+	/** When the rows on screen were last confirmed by the server. */
+	let loadedAt: Date | null = null;
 	let facilitiesLoaded = false;
 	let facilityFilter = '';
 	let statusFilter: AppointmentStatus | '' = '';
@@ -76,6 +86,10 @@
 
 		if (appointmentResult.ok) {
 			appointments = appointmentResult.data;
+			// Stamped here as well as in `reloadAppointments`, so the header states
+			// a freshness from the first paint rather than only after a manual
+			// refresh.
+			loadedAt = new Date();
 		} else {
 			// An abort is normalized to a non-error by the client; anything here is
 			// a genuine failure worth replacing the page for.
@@ -150,10 +164,29 @@
 			// referred to may no longer be in the state that caused it.
 			errorId = '';
 			errorMessage = '';
+			// Stamped only on success: a failed read leaves the previous time
+			// standing, because the previous rows are still what is on screen.
+			loadedAt = new Date();
 		} else {
 			error = result.error;
 		}
 		loading = false;
+	}
+
+	/**
+	 * The header's `Perbarui`. Re-reads without blanking the table.
+	 *
+	 * It cannot call `reloadAppointments` directly: that sets `loading`, which
+	 * swaps the table for a loading panel, so the rows would disappear under the
+	 * operator's cursor every time they asked for fresh data.
+	 */
+	async function refreshAppointments() {
+		refreshing = true;
+		try {
+			await reloadAppointments();
+		} finally {
+			refreshing = false;
+		}
 	}
 
 	async function handleTransition(id: string, next: AppointmentStatus) {
@@ -237,11 +270,17 @@
 	<AdminPageHeader
 		title="Janji Temu"
 		subtitle="Daftar janji temu dalam lingkup akses Anda. Data tidak diperbarui otomatis; gunakan Perbarui untuk memuat ulang."
-	/>
+	>
+		<svelte:fragment slot="aside">
+			<AdminFreshness
+				{loadedAt}
+				refreshing={refreshing}
+				onRefresh={() => void refreshAppointments()}
+			/>
+		</svelte:fragment>
+	</AdminPageHeader>
 
 	<AdminToolbar
-		refreshing={loading}
-		onRefresh={() => void reloadAppointments()}
 		note="Daftar janji temu sudah dibatasi fasilitas dalam lingkup akses Anda. Filter di bawah hanya mempersempit tampilan data yang sudah dimuat."
 	>
 		<FacilityFilter

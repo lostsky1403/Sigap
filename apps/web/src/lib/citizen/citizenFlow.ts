@@ -122,11 +122,6 @@ export function validateLookupCode(value: string): string {
 	return '';
 }
 
-/** The backend's own charset for check-in codes, from `generateCheckinCode`. */
-export function looksLikeCheckinCode(value: string): boolean {
-	return /^[A-Z0-9]{6}$/i.test(value.trim());
-}
-
 /* ------------------------------------------------------------------ *
  * Time
  * ------------------------------------------------------------------ */

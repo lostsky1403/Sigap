@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
+	import AdminFreshness from '$lib/admin/AdminFreshness.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
 	import DataTable from '$lib/ui/DataTable.svelte';
 	import AdminStatusBadge, { activeStateIcon } from '$lib/admin/AdminStatusBadge.svelte';
@@ -51,6 +52,16 @@
 	let facilities: AdminFacility[] = [];
 	let loading = true;
 	let error: ApiError | null = null;
+	/*
+		`refreshing` is separate from `loading` on purpose. `loading` drives
+		`AdminReadState`, which replaces the table with a loading panel — correct
+		for a first read and wrong for a refresh, because an operator who asked
+		for fresh data should keep the rows they were reading. So a refresh
+		disables the control and leaves the table alone.
+	*/
+	let refreshing = false;
+	/** When the rows on screen were last confirmed by the server. */
+	let loadedAt: Date | null = null;
 	let hasSession = getSession().hasSession;
 	let unsubscribeSession: (() => void) | undefined;
 
@@ -62,6 +73,10 @@
 		const result = await listFacilities();
 		if (result.ok) {
 			facilities = result.data;
+			// Stamped here as well as in `reloadFacilities`, so the header states a
+			// freshness from the first paint rather than only after a manual
+			// refresh.
+			loadedAt = new Date();
 		} else {
 			error = result.error;
 		}
@@ -100,10 +115,29 @@
 		if (result.ok) {
 			facilities = result.data;
 			error = null;
+			// Stamped only on success: a failed read leaves the previous time
+			// standing, because the previous rows are still what is on screen.
+			loadedAt = new Date();
 		} else {
 			error = result.error;
 		}
 		loading = false;
+	}
+
+	/**
+	 * The header's `Perbarui`. Re-reads without blanking the table.
+	 *
+	 * It cannot call `reloadFacilities` directly: that sets `loading`, which
+	 * swaps the table for a loading panel, so the rows would disappear under
+	 * the operator's cursor every time they asked for fresh data.
+	 */
+	async function refreshFacilities() {
+		refreshing = true;
+		try {
+			await reloadFacilities();
+		} finally {
+			refreshing = false;
+		}
 	}
 
 	function openCreate() {
@@ -241,7 +275,11 @@
 	<AdminPageHeader
 		title="Fasilitas"
 		subtitle="Fasilitas dalam lingkup akses Anda. Penonaktifan bersifat permanen dan tidak dapat dibatalkan."
-	/>
+	>
+		<svelte:fragment slot="aside">
+			<AdminFreshness {loadedAt} refreshing={refreshing} onRefresh={() => void refreshFacilities()} />
+		</svelte:fragment>
+	</AdminPageHeader>
 
 	<div class="sigap-admin-actions">
 		<button

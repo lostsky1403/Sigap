@@ -454,7 +454,7 @@ test.describe('B. check-in', () => {
 
 	test('offers the walk-in alternative for someone with no booking', async ({ page }) => {
 		await page.goto('/appointments/check-in');
-		const link = page.getByRole('link', { name: /Ambil antrean walk-in/i });
+		const link = page.getByRole('link', { name: /Ambil nomor antrean tanpa janji/i });
 		await expect(link).toHaveAttribute('href', '/queues/new');
 	});
 });
@@ -512,10 +512,12 @@ test.describe('C. status', () => {
 		await page.getByRole('button', { name: /Cek Status/ }).click();
 
 		// Not-found is its own state. Nothing is broken; the code is unknown.
-		// And the page says what else could work.
+		// And the guidance names the code the citizen actually holds: the endpoint
+		// resolves check-in codes only, so advice to try a ticket number would be
+		// a dead end.
 		await expect(page.locator('[data-testid="status-not-found"]')).toBeVisible(SETTLE);
 		await expect(page.locator('[data-testid="status-error"]')).toHaveCount(0);
-		await expect(page.locator('body')).toContainText(/nomor antrean/i);
+		await expect(page.locator('[data-testid="status-not-found"]')).not.toContainText(/nomor antrean/i);
 	});
 });
 
@@ -609,7 +611,7 @@ test.describe('D. walk-in', () => {
 			{ timeout: SETTLE.timeout }
 		);
 
-		await page.getByRole('button', { name: /Ambil Nomor Antrean/ }).click();
+		await page.getByRole('button', { name: /Ambil nomor antrean/ }).click();
 
 		/*
 		 * The backend MUST succeed. A 5xx here is a real infrastructure failure,
@@ -688,7 +690,7 @@ test.describe('D. walk-in', () => {
 			if (request.method() === 'POST') posted.push(request.url());
 		});
 
-		await page.getByRole('button', { name: /Ambil Nomor Antrean/ }).click();
+		await page.getByRole('button', { name: /Ambil nomor antrean/ }).click();
 
 		// Inline validation, and nothing was sent. The daily limiter is keyed
 		// on phone and facility, so a request with neither would consume a

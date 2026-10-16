@@ -8,7 +8,7 @@
 	 * control, in one place, with two presentations.
 	 *
 	 * At 1024px and up it is an inline row, which is how the reference draws
-	 * it — the CTA outermost, the account control beside it.
+	 * it — the account control first, the booking CTA outermost.
 	 *
 	 * Below that it collapses behind a disclosure. That is not a stylistic
 	 * choice: the 390px reference frames show a menu affordance where the
@@ -81,6 +81,21 @@
 		class:sigap-actions__panel--open={open}
 	>
 		<!--
+			Account FIRST, booking CTA second, and the order is load-bearing.
+
+			The frozen masthead draws `Masuk` to the LEFT of `Buat Janji Temu` —
+			the account control then the primary action. This is DOM order rather
+			than a CSS `order` swap so the visual order and the tab order agree: a
+			keyboard user tabbing through the masthead reaches the same controls in
+			the same sequence a sighted user sees. Reordering with flexbox would
+			have left the focus ring jumping right-to-left.
+
+			The mobile panel order is unspecified — the 390px frames draw only the
+			wordmark — so one DOM order serves both widths honestly.
+		-->
+		<AccountMenu {hasSession} {userEmail} {path} />
+
+		<!--
 			Booking is a primary action, not a destination, so it is not a tab
 			and not a nav link. It is outlined by default and filled only on the
 			one page that promotes nothing itself; see CitizenHeader for why.
@@ -92,8 +107,6 @@
 		>
 			Buat Janji Temu
 		</a>
-
-		<AccountMenu {hasSession} {userEmail} {path} />
 	</div>
 </div>
 

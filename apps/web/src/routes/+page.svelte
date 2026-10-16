@@ -264,6 +264,26 @@
 	*/
 	.sigap-beranda {
 		--sigap-page-gap: var(--sigap-space-6);
+		/*
+			Beranda's own type scale, and it is deliberately smaller than the
+			other citizen pages. The Pen draws this hero at 22px/600 on a phone
+			and 24px/700 on a desktop, where Faskes, Status, Check-In, booking and
+			walk-in all open at 32px/600.
+
+			That is not an inconsistency to normalise away: Beranda is a hub, and
+			the frames treat it as a compact orientation header over a set of
+			sections that each carry a 24px/700 title of their own. Matching the
+			task pages here would make the hero compete with the section headings
+			underneath it.
+		*/
+		--sigap-page-title-size: 22px;
+		--sigap-page-title-weight: 600;
+		--sigap-page-title-size-lg: 24px;
+		--sigap-page-title-weight-lg: 700;
+		/* The section headings take the same 24px/700 the hero does. */
+		--sigap-section-title-size: 18px;
+		--sigap-section-title-size-lg: 24px;
+		--sigap-section-title-weight-lg: 700;
 	}
 
 	@media (min-width: 1024px) {

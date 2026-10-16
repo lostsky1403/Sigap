@@ -102,7 +102,7 @@ describe('/queues/new: the exact contract', () => {
 		await chooseFacility();
 		await fireEvent.input(field('Nama lengkap'), { target: { value: 'Budi Santoso' } });
 		await fireEvent.input(field('Nomor telepon'), { target: { value: '081234567890' } });
-		await fireEvent.click(screen.getByRole('button', { name: /Ambil Nomor Antrean/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Ambil nomor antrean/ }));
 		return calls;
 	}
 
@@ -206,7 +206,7 @@ describe('/queues/new: the exact contract', () => {
 		render(WalkIn);
 		await waitForFacilities();
 
-		await fireEvent.click(screen.getByRole('button', { name: /Ambil Nomor Antrean/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Ambil nomor antrean/ }));
 		await waitFor(() => expect(document.body.textContent).toContain('wajib diisi'));
 		expect(calls.some((c) => c.method === 'POST')).toBe(false);
 
@@ -214,7 +214,7 @@ describe('/queues/new: the exact contract', () => {
 		await chooseFacility();
 		await fireEvent.input(field('Nama lengkap'), { target: { value: 'Budi' } });
 		await fireEvent.input(field('Nomor telepon'), { target: { value: '123' } });
-		await fireEvent.click(screen.getByRole('button', { name: /Ambil Nomor Antrean/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Ambil nomor antrean/ }));
 		await waitFor(() => expect(document.body.textContent).toContain('10-15 digit angka'));
 		expect(calls.some((c) => c.method === 'POST')).toBe(false);
 	});
@@ -274,7 +274,7 @@ describe('/queues/new: a backend failure is presented, not leaked', () => {
 		await chooseFacility();
 		await fireEvent.input(field('Nama lengkap'), { target: { value: 'Budi Santoso' } });
 		await fireEvent.input(field('Nomor telepon'), { target: { value: '081234567890' } });
-		await fireEvent.click(screen.getByRole('button', { name: /Ambil Nomor Antrean/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Ambil nomor antrean/ }));
 		await waitFor(() => expect(document.querySelector('[data-testid="walkin-error"]')).toBeTruthy());
 	}
 
@@ -306,7 +306,7 @@ describe('/queues/new: a backend failure is presented, not leaked', () => {
 		// citizen giving up at the counter.
 		expect((field('Nama lengkap') as HTMLInputElement).value).toBe('Budi Santoso');
 		expect((field('Nomor telepon') as HTMLInputElement).value).toBe('081234567890');
-		const submit = screen.getByRole('button', { name: /Ambil Nomor Antrean/ }) as HTMLButtonElement;
+		const submit = screen.getByRole('button', { name: /Ambil nomor antrean/ }) as HTMLButtonElement;
 		expect(submit.disabled).toBe(false);
 	});
 

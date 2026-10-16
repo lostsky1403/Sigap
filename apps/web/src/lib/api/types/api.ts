@@ -118,15 +118,17 @@ export interface PublicServiceUnit {
  * ------------------------------------------------------------------ */
 
 /**
- * `found_by` is "checkin_code" or "formatted_number", depending on which
- * lookup matched.
- *
  * The three queue fields are `omitempty` pointers in Go, so they are OMITTED
  * entirely when the LEFT JOIN found no ticket. They are optional here, not
  * nullable, because `undefined` and `null` are different states on the wire.
  */
 export interface PatientStatus {
-	found_by: 'checkin_code' | 'formatted_number';
+	/**
+	 * Always `checkin_code`. The endpoint resolves check-in codes only — the
+	 * formatted-number strategy was removed to close the enumeration vector — so
+	 * the union this once carried had a second arm the server could not reach.
+	 */
+	found_by: 'checkin_code';
 	facility_name: string;
 	appointment_status: AppointmentStatus;
 	appointment_time: string;

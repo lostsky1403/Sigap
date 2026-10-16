@@ -150,11 +150,19 @@ body {
  *
  * The previous scale stopped at 24px, which is why no page could open with the
  * display weight the design calls for.
+ *
+ * Both steps read a custom property so a page can override its own scale
+ * without restating the rule. Beranda needs exactly that: the Pen draws it as
+ * a compact orientation header — 22px/600 on a phone and 24px/700 on a desktop
+ * — because it opens a hub rather than a task. Faskes, Status, Check-In, the
+ * booking flow and the walk-in form all open at 32px/600, which is the default
+ * below. Keeping one rule with two variables is what stops the two scales
+ * drifting apart.
  */
 .sigap-page-title {
 	margin: 0;
-	font-size: 22px;
-	font-weight: 600;
+	font-size: var(--sigap-page-title-size, 22px);
+	font-weight: var(--sigap-page-title-weight, 600);
 	line-height: 1.25;
 	letter-spacing: -0.02em;
 	color: var(--sigap-foreground);
@@ -162,7 +170,8 @@ body {
 
 @media (min-width: 1024px) {
 	.sigap-page-title {
-		font-size: 32px;
+		font-size: var(--sigap-page-title-size-lg, 32px);
+		font-weight: var(--sigap-page-title-weight-lg, var(--sigap-page-title-weight, 600));
 	}
 }
 
@@ -175,8 +184,8 @@ body {
 
 .sigap-section-title {
 	margin: 0;
-	font-size: 18px;
-	font-weight: 600;
+	font-size: var(--sigap-section-title-size, 18px);
+	font-weight: var(--sigap-section-title-weight, 600);
 	line-height: 1.4;
 	letter-spacing: -0.01em;
 	color: var(--sigap-foreground);
@@ -184,7 +193,8 @@ body {
 
 @media (min-width: 1024px) {
 	.sigap-section-title {
-		font-size: 20px;
+		font-size: var(--sigap-section-title-size-lg, 20px);
+		font-weight: var(--sigap-section-title-weight-lg, var(--sigap-section-title-weight, 600));
 	}
 }
 

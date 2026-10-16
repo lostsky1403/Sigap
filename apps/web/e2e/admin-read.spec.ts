@@ -217,6 +217,54 @@ test.describe('the admin shell at 1024px', () => {
 			await expectNoHorizontalOverflow(page);
 		}
 	});
+
+	test('does not scroll the whole page sideways at 390px either', async ({ page }) => {
+		/*
+			The 1024px case above is not the hard one. At 390px the rail still
+			costs 56px, and Ringkasan's bespoke five-column schedule table is
+			~520px wide — without a scroll region of its own it widens the page to
+			520 and drags the sidebar off-screen with it. That regression shipped
+			because the existing check only ran at 1024px, so this pins the narrow
+			width too.
+		*/
+		await page.setViewportSize({ width: 390, height: 844 });
+		for (const destination of DESTINATIONS) {
+			await gotoAdmin(page, destination.href);
+			await expectNoHorizontalOverflow(page);
+		}
+	});
+});
+
+test.describe('the admin page header', () => {
+	test.use({ viewport: DESKTOP });
+
+	test('every destination states its freshness and offers the re-read', async ({ page }) => {
+		/*
+			The freshness label and the refresh control are drawn in the page header
+			on all six destinations, so they are a claim about EVERY page — but they
+			were only asserted on Ringkasan and Antrean, and the other four silently
+			shipped without the label at all: their initial load never stamped
+			`loadedAt`, so "Diperbarui pukul" appeared only after a manual refresh.
+
+			Asserting the pair per destination is what closes that gap. Both halves
+			are required: a freshness label with no way to re-read it is a fact an
+			operator cannot act on, and a refresh with no freshness label gives them
+			no idea what they refreshed.
+		*/
+		for (const destination of DESTINATIONS) {
+			await gotoAdmin(page, destination.href);
+
+			await expect(
+				page.getByText(/Diperbarui pukul \d{2}\.\d{2}/).first(),
+				`${destination.label} must state when its data was read`
+			).toBeVisible(SETTLE);
+
+			await expect(
+				page.getByRole('button', { name: /Perbarui/ }).first(),
+				`${destination.label} must offer a manual re-read`
+			).toBeVisible(SETTLE);
+		}
+	});
 });
 
 test.describe('admin reads are real and scoped', () => {

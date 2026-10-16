@@ -192,8 +192,12 @@ describe('/patient/status', () => {
 
 		// Not found is its own state: nothing is broken, the code is unknown.
 		expect(document.querySelector('[data-testid="status-error"]')).toBeNull();
-		// And it tells the citizen what to try instead.
-		expect(document.body.textContent).toContain('nomor antrean');
+		// And the guidance names the code the citizen actually holds. The endpoint
+		// resolves check-in codes only, so advice to try a ticket number would be
+		// a dead end — a regression this pins.
+		const guidance = document.querySelector('[data-testid="status-not-found"]')?.textContent ?? '';
+		expect(guidance).toMatch(/kode check-in/i);
+		expect(guidance).not.toMatch(/nomor antrean/i);
 	});
 
 	it('renders a 429 with the backend copy verbatim', async () => {

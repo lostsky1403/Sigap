@@ -52,6 +52,26 @@
 <div class="sigap-visit" style:border-radius={RADIUS.panel} data-testid="visit-progress">
 	<p class="sigap-visit__label" id="sigap-visit-label">Status kunjungan</p>
 
+	{#if queueNumber}
+		<!--
+			The pass's signature element, and the one thing a citizen reads from
+			across a waiting room: the queue number at 48px in the monospace
+			identifier stack, on the primary tint, with an 11px uppercase eyebrow
+			above it. The Pen draws exactly this block on all three status frames
+			(48px at 1440, 40px at 390, 34px at 360), and it is the reason the
+			page exists — a 13px inline "Nomor antrean: …" line buries the single
+			fact the citizen came for.
+
+			The size steps down with the viewport so the number never wraps or
+			overflows a 360px phone; a queue number that breaks across two lines
+			is unreadable at the counter.
+		-->
+		<div class="sigap-visit__pass" style:border-radius={RADIUS.control}>
+			<p class="sigap-visit__pass-eyebrow">Nomor antrean</p>
+			<p class="sigap-visit__pass-number sigap-identifier">{queueNumber}</p>
+		</div>
+	{/if}
+
 	{#if progress.kind === 'unknown'}
 		<!--
 			A status the backend did not map. Shown as itself rather than
@@ -106,11 +126,6 @@
 		</ol>
 	{/if}
 
-	{#if queueNumber}
-		<p class="sigap-visit__queue">
-			Nomor antrean: <span class="sigap-visit__queue-number sigap-identifier">{queueNumber}</span>
-		</p>
-	{/if}
 </div>
 
 <style>
@@ -187,16 +202,47 @@
 		color: var(--sigap-foreground);
 	}
 
-	.sigap-visit__queue {
-		margin: var(--sigap-space-3) 0 0;
-		font-size: var(--sigap-type-label);
-		color: var(--sigap-muted);
+	/*
+		The queue-number pass. The Pen draws it on `$primary-tint` with the
+		number in `$primary-strong`, which is why it is the one tinted surface on
+		an otherwise white panel: it marks the block as the answer the citizen
+		came for rather than as another metadata row.
+	*/
+	.sigap-visit__pass {
+		margin-top: var(--sigap-space-4);
+		padding: var(--sigap-space-4);
+		background-color: var(--sigap-primary-tint);
 	}
 
-	/* `.sigap-identifier` carries the monospace stack and tabular figures. */
-	.sigap-visit__queue-number {
+	.sigap-visit__pass-eyebrow {
+		margin: 0;
+		/* 11px is the floor, and the Pen draws this eyebrow at exactly 11px. */
+		font-size: var(--sigap-type-micro);
 		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
 		color: var(--sigap-primary-strong);
+	}
+
+	.sigap-visit__pass-number {
+		margin: var(--sigap-space-1) 0 0;
+		/* 34px at 360, 40px at 390, 48px at 1440 — the Pen's three values. */
+		font-size: 34px;
+		font-weight: 700;
+		line-height: 1.1;
+		color: var(--sigap-primary-strong);
+	}
+
+	@media (min-width: 390px) {
+		.sigap-visit__pass-number {
+			font-size: 40px;
+		}
+	}
+
+	@media (min-width: 1024px) {
+		.sigap-visit__pass-number {
+			font-size: 48px;
+		}
 	}
 
 	.sigap-visually-hidden {

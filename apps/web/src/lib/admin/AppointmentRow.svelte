@@ -5,6 +5,7 @@
 	import { formatDateTime } from '$lib/domain/format';
 	import {
 		APPOINTMENT_STATUS_LABEL,
+		APPOINTMENT_TRANSITION_LABEL,
 		allowedAppointmentTransitions,
 		appointmentTone,
 		isTerminalAppointmentStatus
@@ -79,7 +80,7 @@
 	</td>
 	<td class="sigap-appointment-row__actions">
 		{#if terminal}
-			<span class="sigap-appointment-row__terminal">Status final</span>
+			<span class="sigap-appointment-row__terminal">Tidak ada aksi lanjutan</span>
 		{:else}
 			{#each transitions as next (next)}
 				{#if next === 'cancelled'}
@@ -89,7 +90,7 @@
 					<Button
 						variant="danger"
 						size={DENSITY.adminCompact}
-						label={APPOINTMENT_STATUS_LABEL[next]}
+						label={APPOINTMENT_TRANSITION_LABEL[next]}
 						disabled={busy}
 						onClick={() => onRequestCancel(appointment)}
 					/>
@@ -97,7 +98,7 @@
 					<Button
 						variant={next === 'completed' ? 'primary' : 'secondary'}
 						size={DENSITY.adminCompact}
-						label={APPOINTMENT_STATUS_LABEL[next]}
+						label={APPOINTMENT_TRANSITION_LABEL[next]}
 						disabled={busy}
 						onClick={() => onTransition(appointment.id, next)}
 					/>

@@ -19,10 +19,11 @@
 	/**
 	 * /patient/status — where is my visit right now?
 	 *
-	 * One input, one lookup. The backend accepts a check-in code or a formatted
-	 * queue number in the same `code` parameter, and it tries them in that
-	 * order, so a single field covers both without asking the citizen which
-	 * kind of code they are holding.
+	 * One input, one lookup, by check-in code. The endpoint resolves check-in
+	 * codes ONLY: the formatted-number strategy was removed server-side to close
+	 * the enumeration vector, so a queue number is refused with a 404. The page
+	 * therefore never offers one — copy that invited a ticket number would send
+	 * the citizen to a lookup that cannot succeed.
 	 *
 	 * What this page deliberately does NOT have: a timeline, timestamps, a
 	 * wait history, or anything that updates itself. `PatientStatusLookup`
@@ -106,7 +107,7 @@
 	<PageHeader
 		rule="compact"
 		title="Status kunjungan"
-		description="Masukkan kode check-in atau nomor antrean untuk melihat posisi kunjungan Anda saat ini."
+		description="Masukkan kode check-in untuk melihat status kunjungan Anda saat ini."
 	/>
 
 	<!--
@@ -123,7 +124,7 @@
 			<form novalidate on:submit|preventDefault={lookup}>
 			<Field
 				id="sigap-status-code"
-				label="Kode check-in atau nomor antrean"
+				label="Kode check-in"
 				required
 				error={fieldError}
 				helper="Kode diberikan saat membuat janji temu atau saat check-in."
@@ -133,7 +134,7 @@
 					bind:value={code}
 					describedBy={fieldError ? 'sigap-status-code-error' : ''}
 					invalid={Boolean(fieldError)}
-					placeholder="Contoh: AB12CD atau A-012"
+					placeholder="Contoh: AB12CD"
 					autocomplete="off"
 					disabled={state === 'loading'}
 				/>
@@ -189,8 +190,7 @@
 					<h2 class="sigap-status__empty-title">Kode tidak ditemukan</h2>
 					<p class="sigap-status__empty-body">
 						Periksa kembali kode Anda. Kode check-in dibuat saat Anda membuat janji temu dan
-						diterima saat berhasil check-in. Jika Anda sudah check-in, gunakan nomor antrean
-						yang tertera di tiket.
+						ditampilkan di halaman konfirmasi janji temu Anda.
 					</p>
 				</div>
 				{:else if state === 'error'}

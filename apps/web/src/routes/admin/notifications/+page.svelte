@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
+	import AdminFreshness from '$lib/admin/AdminFreshness.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
 	import DataTable from '$lib/ui/DataTable.svelte';
 	import AdminStatusBadge, {
@@ -16,13 +17,14 @@
 		listNotifications,
 		retryNotification
 	} from '$lib/api/endpoints/admin';
-	import { formatRelativeTime, formatNumber } from '$lib/domain/format';
+	import { formatDateTime, formatNumber } from '$lib/domain/format';
 	import { isEmptyScope } from '$lib/admin/readState';
 	import { runAdminMutation } from '$lib/admin/adminMutation';
 	import AdminMutationFeedback from '$lib/admin/AdminMutationFeedback.svelte';
 	import { getSession, subscribeToSession } from '$lib/stores/session';
 	import {
 		NOTIFICATION_LIMIT_NOTE,
+		NOTIFICATION_CHANNEL_LABEL,
 		NOTIFICATION_STATUS_LABEL,
 		NOTIFICATION_STATUS_ORDER,
 		NOTIFICATION_STATUS_TONE,
@@ -47,11 +49,14 @@
 	 * This page had the strongest existing behaviour in the admin area and keeps
 	 * it. What is corrected:
 	 *
-	 *  1. `relativeTime` was returning SECONDS as "d" and DAYS as "h" — a copy-paste
-	 *     inversion, so a notification sent ten seconds ago read "10d lalu" and one
-	 *     sent two days ago read "2h lalu". The Phase 3B1 `formatRelativeTime`
-	 *     helper already orders minutes before hours before days correctly and is
-	 *     used here instead.
+	 *  1. The DIBUAT column is ABSOLUTE, not relative. It previously rendered a
+	 *     relative stamp, and before that a local `relativeTime` helper that
+	 *     returned SECONDS as "d" and DAYS as "h" — a copy-paste inversion, so a
+	 *     notification sent ten seconds ago read "10d lalu". Relative stamps are
+	 *     the wrong shape for an outbox regardless of the arithmetic: two
+	 *     failures forty minutes apart both read "1 jam lalu", and those are
+	 *     exactly the two rows an operator needs to tell apart. The Pen draws
+	 *     "20 Okt 10.31", so the column is absolute and sorts visibly.
 	 *
 	 *  2. The list and the summary keep SEPARATE loading and error states. They are
 	 *     two requests and they fail independently: a summary outage must not blank
@@ -110,8 +115,13 @@
 		// summary outage delayed the list, and a list outage blanked the cards.
 		listNotifications(buildNotificationQuery(filters))
 			.then((result) => {
-				if (result.ok) rows = result.data;
-				else listError = result.error;
+				if (result.ok) {
+					rows = result.data;
+					// Stamped here as well as in `reloadNotifications`, so the header
+					// states a freshness from the first paint rather than only after
+					// a manual refresh.
+					loadedAt = new Date();
+				} else listError = result.error;
 			})
 			.finally(() => (listLoading = false));
 
@@ -179,6 +189,16 @@
 	let errorId = '';
 	let errorMessage = '';
 
+	/*
+		Separate from `listLoading`: that drives `AdminReadState`, which replaces
+		the table with a loading panel. That is right for a first read and wrong
+		for a refresh, where the operator asked for fresh data and should keep
+		reading the rows they already have.
+	*/
+	let refreshing = false;
+	/** When the rows on screen were last confirmed by the server. */
+	let loadedAt: Date | null = null;
+
 	/**
 	 * The re-read after a mutation, preserving the URL filters.
 	 *
@@ -195,6 +215,9 @@
 		if (listResult.ok) {
 			rows = listResult.data;
 			listError = null;
+			// Stamped only on success: a failed read leaves the previous time
+			// standing, because the previous rows are still what is on screen.
+			loadedAt = new Date();
 			// The actionability booleans belong to the rows just re-read, so any
 			// rejection from a previous attempt is stale: the row may no longer be
 			// in the state that produced it.
@@ -210,6 +233,22 @@
 		// transient-looking one.
 		if (summaryResult.ok) {
 			summary = summaryResult.data;
+		}
+	}
+
+	/**
+	 * The header's `Perbarui`. Re-reads without blanking the table.
+	 *
+	 * It cannot call `reloadNotifications` directly: that sets `listLoading`,
+	 * which swaps the table for a loading panel, so the rows would disappear
+	 * under the operator's cursor every time they asked for fresh data.
+	 */
+	async function refreshNotifications() {
+		refreshing = true;
+		try {
+			await reloadNotifications();
+		} finally {
+			refreshing = false;
 		}
 	}
 
@@ -251,7 +290,11 @@
 	<AdminPageHeader
 		title="Notifikasi"
 		subtitle="Outbox notifikasi dalam lingkup akses Anda. Penerima ditampilkan dalam bentuk tersamar."
-	/>
+	>
+		<svelte:fragment slot="aside">
+			<AdminFreshness {loadedAt} refreshing={refreshing} onRefresh={() => void refreshNotifications()} />
+		</svelte:fragment>
+	</AdminPageHeader>
 
 	<!--
 		Summary cards, with their OWN loading and error states.
@@ -324,7 +367,7 @@
 			>
 				<option value="">Semua kanal</option>
 				{#each CHANNELS as channel (channel)}
-					<option value={channel}>{channel}</option>
+					<option value={channel}>{NOTIFICATION_CHANNEL_LABEL[channel]}</option>
 				{/each}
 			</select>
 		</div>
@@ -336,7 +379,7 @@
 				style:border-radius={RADIUS.control}
 				id="notif-template"
 				type="search"
-				placeholder="template_key"
+				placeholder="Kunci templat"
 				value={filters.templateKey}
 				on:change={(event) => onFilterChange('templateKey', event.currentTarget.value)}
 			/>
@@ -406,7 +449,6 @@
 					{ label: 'Kanal' },
 					{ label: 'Subjek' },
 					{ label: 'Penerima', secondary: true },
-					{ label: 'Fasilitas', secondary: true },
 					{ label: 'Status' },
 					{ label: 'Percobaan', secondary: true, numeric: true },
 				{ label: 'Aksi' }
@@ -416,22 +458,21 @@
 					<tr>
 						<td class="sigap-notif-row__time">
 							<!--
-								`formatRelativeTime` from Phase 3B1, not the local helper this
-								page used to carry. The old one returned seconds as "d" and days
-								as "h", so a notification ten seconds old read "10d lalu".
+								ABSOLUTE, and deliberately not `formatRelativeTime`.
+
+								An outbox is a log, and the Pen draws this column as
+								"20 Okt 10.31". Relative stamps collapse distinct events: a
+								notification that failed at 10.28 and one that failed at 10.31
+								both read "1 jam lalu", which is exactly the pair an operator
+								needs to tell apart when they are diagnosing a provider. The
+								table is ordered by this column, so it also has to sort
+								visibly.
 							-->
-							{formatRelativeTime(row.created_at)}
+							{formatDateTime(row.created_at)}
 						</td>
-						<td>{row.channel}</td>
+						<td>{NOTIFICATION_CHANNEL_LABEL[row.channel]}</td>
 						<td class="sigap-notif-row__subject">{row.subject}</td>
 						<td class="sigap-table-col-secondary">{recipientOf(row)}</td>
-						<!--
-							Always "-". A notification row carries `facility_id`, but
-							resolving it to a name here would need a facility catalog this
-							page does not load, and falling back to the raw id would put a
-							UUID in the UI. The join rule says: no label, so "-".
-						-->
-						<td class="sigap-table-col-secondary">-</td>
 						<td>
 							<AdminStatusBadge
 								label={NOTIFICATION_STATUS_LABEL[row.status]}
@@ -485,13 +526,13 @@
 							an operator from wondering whether the buttons failed to load.
 						-->
 						{#if !row.can_retry && !row.can_cancel}
-							<span class="sigap-notif-row__noaction">Tidak ada aksi</span>
+							<span class="sigap-notif-row__noaction">Tidak ada aksi lanjutan</span>
 						{/if}
 					</td>
 				</tr>
 				{#if errorId === row.id && errorMessage !== ''}
 					<tr class="sigap-notif-row__outcome">
-						<td colspan="8" class="sigap-notif-row__outcome-cell">
+						<td colspan="7" class="sigap-notif-row__outcome-cell">
 							<!--
 								VERBATIM. The 409 message from the server names the rule that
 								actually refused the action; substituting our own wording

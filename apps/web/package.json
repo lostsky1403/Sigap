@@ -15,7 +15,15 @@
     "e2e": "playwright test",
     "e2e:install": "playwright install chromium",
     "capture:review": "node scripts/capture-review.mjs",
-    "seed:review": "node scripts/seed-review.mjs"
+    "capture:status-found": "node scripts/capture-status-found.mjs",
+    "seed:review": "node scripts/seed-review.mjs",
+    "audit:overflow": "node scripts/audit-overflow.mjs",
+    "smoke:admin-header": "node scripts/smoke-admin-header.mjs",
+    "verify:masthead": "node scripts/verify-masthead.mjs",
+    "verify:type-scale": "node scripts/verify-type-scale.mjs",
+    "verify:secondary-columns": "node scripts/verify-secondary-columns.mjs",
+    "verify:read-states": "node scripts/verify-admin-read-states.mjs",
+    "verify:findings": "node scripts/verify-findings.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",

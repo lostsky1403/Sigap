@@ -165,13 +165,13 @@
 		booking down a path that cannot find it.
 	-->
 	<nav class="sigap-checkin__alt" aria-label="Alternatif check-in">
-		<span class="sigap-checkin__alt-label">Datang tanpa janji temu?</span>
+		<span class="sigap-checkin__alt-label">Belum punya janji temu?</span>
 		<a
 			class="sigap-checkin__alt-link"
 			style:border-radius={RADIUS.control}
 			href="/queues/new"
 		>
-			Ambil antrean walk-in
+			Ambil nomor antrean tanpa janji
 		</a>
 	</nav>
 

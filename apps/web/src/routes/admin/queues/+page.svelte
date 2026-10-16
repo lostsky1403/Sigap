@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
+	import AdminFreshness from '$lib/admin/AdminFreshness.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
 	import AdminToolbar from '$lib/admin/AdminToolbar.svelte';
 	import FacilityFilter from '$lib/admin/FacilityFilter.svelte';
@@ -167,20 +168,20 @@
 		subtitle="Pantau antrean dalam lingkup akses Anda. Pembaruan otomatis sekitar 30 detik, dijeda saat tab tidak aktif."
 	>
 		<svelte:fragment slot="aside">
-			{#if updatedLabel}
-				<!--
-					Always present once data has loaded, INCLUDING in the stale state. An
-					operator looking at possibly-out-of-date rows is exactly who needs to
-					be told when those rows were true.
-				-->
-				<span class="sigap-admin-updated" aria-live="polite">{updatedLabel}</span>
-			{/if}
+			<!--
+				Always present once data has loaded, INCLUDING in the stale state. An
+				operator looking at possibly-out-of-date rows is exactly who needs to
+				be told when those rows were true.
+			-->
+			<AdminFreshness
+				loadedAt={state.lastUpdated}
+				refreshing={state.refreshing}
+				onRefresh={() => void board.refresh()}
+			/>
 		</svelte:fragment>
 	</AdminPageHeader>
 
 	<AdminToolbar
-		refreshing={state.refreshing}
-		onRefresh={() => void board.refresh()}
 		note="Daftar antrean sudah dibatasi fasilitas dalam lingkup akses Anda. Filter di bawah hanya mempersempit tampilan data yang sudah dimuat."
 	>
 		<div class="sigap-admin-search">
@@ -274,13 +275,6 @@
 <style>
 	.sigap-admin-page {
 		min-width: 0;
-	}
-
-	.sigap-admin-updated {
-		font-size: var(--sigap-type-caption);
-		color: var(--sigap-muted);
-		/* Tabular figures so the label does not jitter as the minutes tick over. */
-		font-variant-numeric: tabular-nums;
 	}
 
 	.sigap-admin-search {

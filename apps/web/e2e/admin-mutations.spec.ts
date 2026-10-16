@@ -275,10 +275,10 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		// A waiting ticket offers EXACTLY called + cancelled. Anything else on
 		// the row would be an affordance the server would refuse.
 		await expect(row.getByRole('button')).toHaveCount(2);
-		await expect(row.getByRole('button', { name: 'Dipanggil' })).toBeVisible();
-		await expect(row.getByRole('button', { name: 'Dibatalkan' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Panggil' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Batalkan' })).toBeVisible();
 
-		await row.getByRole('button', { name: 'Dipanggil' }).click();
+		await row.getByRole('button', { name: 'Panggil' }).click();
 
 		// The row RELOADS rather than patching locally, so the assertion is that
 		// the server's new state came back. The ticket moves from the waiting
@@ -291,9 +291,9 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		// And the awaiting set is exactly what `called` allows.
 		const moved = queueRow(page, ticket.number);
 		await expect(moved.getByRole('button')).toHaveCount(3);
-		await expect(moved.getByRole('button', { name: 'Dalam Pelayanan' })).toBeVisible();
-		await expect(moved.getByRole('button', { name: 'Dibatalkan' })).toBeVisible();
-		await expect(moved.getByRole('button', { name: 'Dilewati' })).toBeVisible();
+		await expect(moved.getByRole('button', { name: 'Layani' })).toBeVisible();
+		await expect(moved.getByRole('button', { name: 'Batalkan' })).toBeVisible();
+		await expect(moved.getByRole('button', { name: 'Lewati' })).toBeVisible();
 	});
 
 	test('announces the transition politely and shows a toast', async ({ page }) => {
@@ -302,7 +302,7 @@ test.describe('T-3B5-01 queue status mutation', () => {
 
 		const row = queueRow(page, ticket.number);
 		await expect(row).toBeVisible(SETTLE);
-		await row.getByRole('button', { name: 'Dipanggil' }).click();
+		await row.getByRole('button', { name: 'Panggil' }).click();
 
 		// The live region is aria-live="polite", so it must not interrupt. An
 		// assertive region here would cut across whatever the operator is doing.
@@ -358,7 +358,7 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		);
 
 		const row = queueRow(page, ticket.number);
-		await row.getByRole('button', { name: 'Dipanggil' }).click();
+		await row.getByRole('button', { name: 'Panggil' }).click();
 
 		// VERBATIM. The row must show the server's own words, character for
 		// character, in an alert region so it is announced as a failure.
@@ -373,14 +373,14 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		const row = queueRow(page, ticket.number);
 		await expect(row).toBeVisible(SETTLE);
 		// Drive it to `skipped`, which is terminal: called -> skipped.
-		await row.getByRole('button', { name: 'Dipanggil' }).click();
+		await row.getByRole('button', { name: 'Panggil' }).click();
 		await expect(
 			page.locator('section', { has: page.getByRole('heading', { name: 'Dipanggil' }) })
 				.locator('tr', { has: page.getByText(ticket.number, { exact: true }) })
 		).toBeVisible(SETTLE);
 
 		const calledRow = queueRow(page, ticket.number);
-		await calledRow.getByRole('button', { name: 'Dilewati' }).click();
+		await calledRow.getByRole('button', { name: 'Lewati' }).click();
 
 		// A terminal state says so in words. An empty cell would read as
 		// "still loading", which is a different and wrong claim.
@@ -470,7 +470,7 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		await expect(queueRow(page, ticket.number)).toBeVisible(SETTLE);
 
 		// The mutation, through the page's own control.
-		await queueRow(page, ticket.number).getByRole('button', { name: 'Dipanggil' }).click();
+		await queueRow(page, ticket.number).getByRole('button', { name: 'Panggil' }).click();
 		await expect(
 			page.locator('section', { has: page.getByRole('heading', { name: 'Dipanggil' }) })
 				.locator('tr', { has: page.getByText(ticket.number, { exact: true }) })
@@ -661,11 +661,11 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 		// one of the confirmed ones.
 		const row = table.locator('tr', { has: page.getByText(name) }).first();
 		await expect(row).toBeVisible(SETTLE);
-		await expect(row.getByRole('button', { name: 'Sudah Check-in' })).toBeVisible();
-		await expect(row.getByRole('button', { name: 'Dibatalkan' })).toBeVisible();
-		await expect(row.getByRole('button', { name: 'Tidak Datang' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Check-in' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Batalkan' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Tandai tidak datang' })).toBeVisible();
 
-		await row.getByRole('button', { name: 'Sudah Check-in' }).click();
+		await row.getByRole('button', { name: 'Check-in' }).click();
 
 		// NO DIALOG, asserted against the live UI rather than a snapshot. If
 		// checking in asked for confirmation this times out — which is the proof,
@@ -700,10 +700,10 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 
 		// THE ABSENCE. §4 calls this "ABSOLUTELY NO", and it is the one
 		// transition most likely to be reintroduced as a convenience shortcut.
-		await expect(row.getByRole('button', { name: 'Dalam Antrean' })).toBeVisible();
-		await expect(row.getByRole('button', { name: 'Dibatalkan' })).toBeVisible();
-		await expect(row.getByRole('button', { name: 'Tidak Datang' })).toBeVisible();
-		await expect(row.getByRole('button', { name: 'Selesai' })).toHaveCount(0);
+		await expect(row.getByRole('button', { name: 'Antrekan' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Batalkan' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Tandai tidak datang' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Selesaikan' })).toHaveCount(0);
 		await expect(row.getByRole('button')).toHaveCount(3);
 
 		// And the server refuses it too, so the button would have been a control
@@ -756,7 +756,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 
 		// Cancellation is the ONLY confirmed action. Every other transition was
 		// proven dialog-free above; this is the one that must have one.
-		await row.getByRole('button', { name: 'Dibatalkan' }).click();
+		await row.getByRole('button', { name: 'Batalkan' }).click();
 
 		const modal = dialog(page);
 		await expect(modal).toBeVisible(SETTLE);
@@ -794,7 +794,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 			)
 			.toBe('cancelled');
 		await expect(table.locator('tr', { has: page.getByText(name) }).first()).toContainText(
-			'Status final',
+			'Tidak ada aksi lanjutan',
 			SETTLE
 		);
 
@@ -814,7 +814,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 		await expect(table.locator('tbody tr').first()).toBeVisible(SETTLE);
 
 		const row = table.locator('tr', { has: page.getByText(name) }).first();
-		const trigger = row.getByRole('button', { name: 'Dibatalkan' });
+		const trigger = row.getByRole('button', { name: 'Batalkan' });
 		await expect(trigger).toBeVisible(SETTLE);
 
 		await trigger.click();
@@ -843,7 +843,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 			.poll(
 				async () =>
 					page.evaluate(
-						() => document.activeElement?.textContent?.trim() === 'Dibatalkan'
+						() => document.activeElement?.textContent?.trim() === 'Batalkan'
 					),
 				{ timeout: SETTLE.timeout }
 			)
@@ -861,7 +861,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 		await expect(table.locator('tbody tr').first()).toBeVisible(SETTLE);
 
 		const row = table.locator('tr', { has: page.getByText(name) }).first();
-		const trigger = row.getByRole('button', { name: 'Dibatalkan' });
+		const trigger = row.getByRole('button', { name: 'Batalkan' });
 		await expect(trigger).toBeVisible(SETTLE);
 
 		await trigger.click();
@@ -878,7 +878,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 			.poll(
 				async () =>
 					page.evaluate(
-						() => document.activeElement?.textContent?.trim() === 'Dibatalkan'
+						() => document.activeElement?.textContent?.trim() === 'Batalkan'
 					),
 				{ timeout: SETTLE.timeout }
 			)
@@ -908,7 +908,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 		await expect(row).toBeVisible(SETTLE);
 
 		// A terminal row states so in words and offers nothing further.
-		await expect(row).toContainText('Status final', SETTLE);
+		await expect(row).toContainText('Tidak ada aksi lanjutan', SETTLE);
 		await expect(row.getByRole('button')).toHaveCount(0);
 	});
 
@@ -971,7 +971,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 		await expect(live).toHaveAttribute('aria-live', 'polite');
 		await expect(live).toHaveAttribute('aria-atomic', 'true');
 
-		await row.getByRole('button', { name: 'Sudah Check-in' }).click();
+		await row.getByRole('button', { name: 'Check-in' }).click();
 
 		// The announcement names the transition the operator just made, so it is
 		// recognisable as THIS action's result rather than generic confirmation.

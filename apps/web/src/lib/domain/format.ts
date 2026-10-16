@@ -51,6 +51,35 @@ export function formatTime(value: string | number | Date | null | undefined): st
 }
 
 /**
+ * A wall-clock time of day, e.g. "09.00".
+ *
+ * `formatTime` is the wrong function for this and silently returned "-".
+ *
+ * A schedule's `start_time`/`end_time` are Postgres `time` columns selected as
+ * `start_time::text`, so the wire carries "09:00:00" — a TIME OF DAY with no
+ * date and no zone. `new Date("09:00:00")` is Invalid Date (only full
+ * timestamps and date-only strings parse), so `toDate` returned null and every
+ * WAKTU cell in the Jadwal table rendered "-".
+ *
+ * It also cannot be fixed by parsing to a Date: a time of day has no date, so
+ * routing it through a Date would attach TODAY and any timezone shift would
+ * silently move 09.00 to 08.00 or 16.00. Parsing the digits directly is both
+ * simpler and the only version that cannot drift.
+ *
+ * Accepts "HH:MM" and "HH:MM:SS", with an optional fractional part, which is
+ * the documented contract for these fields.
+ */
+export function formatClockTime(value: string | null | undefined): string {
+	if (!value) return EMPTY;
+	const match = /^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/.exec(value.trim());
+	if (!match) return EMPTY;
+	const hours = Number(match[1]);
+	const minutes = Number(match[2]);
+	if (hours > 23 || minutes > 59) return EMPTY;
+	return `${String(hours).padStart(2, '0')}.${String(minutes).padStart(2, '0')}`;
+}
+
+/**
  * A plain number, with Indonesian digit grouping.
  *
  * Queue and bed counts read badly with a thousands separator typed by hand, and

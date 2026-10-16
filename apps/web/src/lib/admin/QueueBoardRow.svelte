@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { DENSITY } from '$lib/ui/density';
 	import Button from '$lib/ui/Button.svelte';
-	import { QUEUE_STATUS_LABEL, queueTone } from '$lib/domain/status';
+	import { QUEUE_STATUS_LABEL, QUEUE_TRANSITION_LABEL, queueTone } from '$lib/domain/status';
 	import AdminStatusBadge, { QUEUE_STATUS_ICON } from './AdminStatusBadge.svelte';
 	import { formatDateTime } from '$lib/domain/format';
 	import type { QueueStatus } from '$lib/api/types/api';
@@ -59,7 +59,7 @@
 		/>
 	</td>
 	<td class="sigap-queue-row__facility">{facilityName}</td>
-	<td class="sigap-queue-row__time">{formatDateTime(registeredAt)}</td>
+	<td class="sigap-queue-row__time sigap-table-col-secondary">{formatDateTime(registeredAt)}</td>
 	<td class="sigap-queue-row__time sigap-table-col-secondary">{formatDateTime(calledAt)}</td>
 	<td class="sigap-queue-row__time sigap-table-col-secondary">{formatDateTime(completedAt)}</td>
 	<td class="sigap-queue-row__actions">
@@ -74,7 +74,7 @@
 				<Button
 					variant={next === 'completed' ? 'primary' : 'secondary'}
 					size={DENSITY.adminCompact}
-					label={QUEUE_STATUS_LABEL[next]}
+					label={QUEUE_TRANSITION_LABEL[next]}
 					disabled={pendingStatus !== ''}
 					onClick={() => onTransition(ticketId, next)}
 				/>

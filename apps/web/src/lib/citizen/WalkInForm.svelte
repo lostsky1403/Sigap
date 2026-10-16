@@ -116,7 +116,7 @@
 	</Field>
 
 	<Button type="submit" disabled={submitting || disabled} fullWidth>
-		{submitting ? 'Memproses...' : 'Ambil Nomor Antrean'}
+		{submitting ? 'Memproses...' : 'Ambil nomor antrean'}
 	</Button>
 </form>
 
