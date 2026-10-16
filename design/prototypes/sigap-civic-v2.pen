@@ -37859,6 +37859,65 @@
             },
             {
               "type": "frame",
+              "id": "rp4iI",
+              "name": "Panel",
+              "width": "fill_container",
+              "fill": "$success-tint",
+              "cornerRadius": "$r-panel",
+              "stroke": "$success",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "gap": 12,
+              "padding": 16,
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "mTo11",
+                  "name": "I",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "circle-check",
+                  "library": "lucide",
+                  "fill": "$success"
+                },
+                {
+                  "type": "frame",
+                  "id": "Slfim",
+                  "name": "Tx",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "KCN0z",
+                      "name": "T",
+                      "fill": "$fg",
+                      "content": "Check-in berhasil",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$font",
+                      "fontSize": 14,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "acxJZ",
+                      "name": "B",
+                      "fill": "$muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Janji temu Anda sudah dicatat di fasilitas.",
+                      "lineHeight": 1.5,
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
               "id": "cUsU3",
               "name": "Ticket",
               "width": "fill_container",

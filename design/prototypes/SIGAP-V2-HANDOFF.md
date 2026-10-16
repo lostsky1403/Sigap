@@ -1,7 +1,7 @@
 # SIGAP V2.2 — Pen.dev Prototype Handoff
 
 **Artifact (canonical):** `F:\Sehat-Hub\design\prototypes\sigap.pen`
-**SHA-256:** `9b06902f4aa067cfa45612d0d9f92a0dc3a8879e0a169b672ce01b67bafb0bb7` — 1,457,099 bytes
+**SHA-256:** `237946c92b91c57c46c5b0c19d92fbeec4a3dc278e0562b4b61f4f4e53f914c5` — 1,459,122 bytes
 **Byte-identical mirror:** `F:\sigap-design-v2\design\prototypes\sigap-civic-v2.pen` (branch `design/sigap-v2-prototype`)
 **Superseded V2.1:** `d05d6f3f96ec426fa11925c5f17ecc5dfce993f8aa320d9abb8d5c80b1163fa5`, preserved at `design/prototypes/backup-v22/sigap-v2.1-20261016-1827.pen`
 

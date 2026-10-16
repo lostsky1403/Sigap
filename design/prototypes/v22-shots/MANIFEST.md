@@ -2,8 +2,8 @@
 
 Generated: 2026-10-16
 Source: `F:\Sehat-Hub\design\prototypes\sigap.pen`
-Source SHA-256: `9b06902f4aa067cfa45612d0d9f92a0dc3a8879e0a169b672ce01b67bafb0bb7`
-Source size: 1,457,099 bytes
+Source SHA-256: `237946c92b91c57c46c5b0c19d92fbeec4a3dc278e0562b4b61f4f4e53f914c5`
+Source size: 1,459,122 bytes
 Mirror (byte-identical): `F:\sigap-design-v2\design\prototypes\sigap-civic-v2.pen`
 Superseded V2.1 SHA-256: `d05d6f3f96ec426fa11925c5f17ecc5dfce993f8aa320d9abb8d5c80b1163fa5` (preserved at `backup-v22/`)
 Frame count: **45** (V2.1 had 37)
@@ -50,7 +50,7 @@ Export dir: `F:\Sehat-Hub\design\prototypes\v22-shots\`
 | 34 | 18 Citizen / Daftar / 1440 | `IAI2N` | 1520,12700 | auto | `IAI2N.png` | `63514d60cfabb1e34bf8cfb255656b794b59053791ee54320048aee3eeeff7f6` |
 | 35 | 35 Citizen Mobile / Walk-In / Isi data / 390 | `KNWMV` | 3040,12700 | 390×699 | `KNWMV.png` | `dcdc6b0766535643a2dbf79d3671d48c33c21d68d46d1ede154d0efbf7554dbd` |
 | 36 | 39 Citizen Mobile / Check-In / Isi data / 390 | `xRtxS` | 3600,12700 | 390×729 | `xRtxS.png` | `3bbb67e3fb1e17a368ffcd05fb737f0add25caf9f25338a3a15cda2fdbd908e1` |
-| 37 | 39a Citizen Mobile / Check-In / Berhasil / 390 | `kv4Js` | 4060,12700 | auto | `kv4Js.png` | `c7342a03392f9c387a112875b280dd9b06d8c1d171945d0d080890087870761f` |
+| 37 | 39a Citizen Mobile / Check-In / Berhasil / 390 | `kv4Js` | 4060,12700 | auto | `kv4Js.png` | `27d7d0a3d665e980311aba6aee92069baf9cefe5a29bf526d7c3102afd0ef3ce` |
 | 38 | 39b Citizen Mobile / Check-In / Kode salah / 390 | `DC6sO` | 4520,12700 | auto | `DC6sO.png` | `5d1b789b93945cac94eaddfff0e6ced56c27083706e2ad5b6b6c2d90daf1779b` |
 | 39 | 37 Citizen Mobile / Walk-In / Terkirim / 390 | `X6WNmi` | 0,14200 | auto | `X6WNmi.png` | `d126d2d75f232f94da1e034a027bb12444b8d5c141c0605d64d0aa50a113f89f` |
 | 40 | 38 Citizen Mobile / Walk-In / Gagal / 390 | `m3JirM` | 460,14200 | auto | `m3JirM.png` | `2b9a7cfb127b7bc9ba449f9e9471d8e1ef56dcb2eb00878b4726687443f1aeee` |
@@ -60,11 +60,22 @@ Export dir: `F:\Sehat-Hub\design\prototypes\v22-shots\`
 | 44 | 33c Citizen Mobile / Buat Janji / 3 Waktu + Data Diri / 390 | `afaSY` | 460,17400 | auto | `afaSY.png` | `922b4bfd636081e2bc1412a92d5b5325507bf75f334060eeb1c6e45557a825c5` |
 | 45 | 33d Citizen Mobile / Buat Janji / Sukses / 390 | `A0G96` | 920,17400 | auto | `A0G96.png` | `43529f00c744dc93110b8ef4200574d29cc7781c22521b70438dcf1291a12541` |
 
+## Before/after evidence
+
+| File | Defect |
+|---|---|
+| `EVIDENCE-P0-1-homepage-cta.png` | homepage CTA collision |
+| `EVIDENCE-P0-2-nav-active.png` | nav active-state semantics |
+| `EVIDENCE-P0-3-checkin-desktop.png` | check-in desktop parity |
+| `EVIDENCE-P0-3-checkin-mobile.png` | check-in mobile parity |
+| `EVIDENCE-P0-4-booking-mobile.png` | mobile booking progression |
+| `EVIDENCE-P0-5-walkin.png` | walk-in pre/post-submit ambiguity |
+
 ## Overview sheet
 
 | File | Description | SHA-256 |
 |---|---|---|
-| `00-OVERVIEW.png` | contact sheet of all 45 frames | `26570cd7f2ba85f272fa10fe3f2469f6227508ef0ebe7c41d0c45e73d56db380` |
+| `00-OVERVIEW.png` | contact sheet of all 45 frames | `aea9285c90ca4bf6f0d3bb85f9ea15e755614f4c8eb9ebd6da2fce1479e646b9` |
 
 ## Verification
 
@@ -73,8 +84,9 @@ Export dir: `F:\Sehat-Hub\design\prototypes\v22-shots\`
 - Internal child overflow / clipping (01 Components gallery excluded, it intentionally bleeds): **0**
 - Broken component references: **0**
 - Text nodes below the 11px floor: **0**
-- Nav refs with exactly one active tab, or zero where no tab maps: **27 / 27**
+- Nav refs: **27** — 24 with exactly one active tab, 3 with zero where no tab maps (`/wallet`, `/auth/login`, `/auth/register`)
 - Fabricated visit records: **0**
 - Wrong weekdays (20 Okt 2026 = Selasa): **0**
+- Proximity claims (`terdekat`): **0**
 - Route map matches the 16 real SvelteKit routes: **yes**
 - Missing PNGs: **0**
