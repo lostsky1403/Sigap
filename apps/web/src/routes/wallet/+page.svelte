@@ -1,102 +1,176 @@
 <script lang="ts">
-	// /wallet — Dompet Jejak Medis (Immutable Health Records)
-	// Cards with visit details + cryptographic SHA-256 signature (from Rust engine) as anti-tamper proof.
-	// Uses emerald-600 accents, clean Tailwind, monospace for sig.
-
-	let phone = $state('081234567890');
-	let records = $state<MedicalRecord[]>([]);
-	let loading = $state(false);
-	let err = $state('');
-
-	async function loadWallet() {
-		loading = true;
-		err = '';
-		try {
-			const res = await fetch(`/api/v1/medical-records?phone=${encodeURIComponent(phone)}`);
-			const json = await res.json();
-			if (json.success && json.data) {
-				records = json.data;
-			} else {
-				err = json.error || 'Gagal memuat dompet.';
-			}
-		} catch (e) {
-			err = 'Tidak dapat menghubungi API.';
-		} finally {
-			loading = false;
-		}
-	}
-
-	// auto load demo on mount
-	import { onMount } from 'svelte';
-	import type { MedicalRecord } from '$lib/api/types/api';
-	onMount(() => {
-		loadWallet();
-	});
+	/**
+	 * /wallet — Jejak Kunjungan.
+	 *
+	 * This route has no working data source. `GET /api/v1/medical-records` is
+	 * not registered in the Go server and has no SvelteKit proxy, so the page
+	 * cannot load a record and must not pretend otherwise.
+	 *
+	 * The previous implementation called that endpoint with a hardcoded demo
+	 * phone number, rendered an Apple-Wallet-style card with a fabricated QR
+	 * block, and asserted that a SHA-256 signature was "anti-tamper proof from
+	 * the Rust Engine". None of that was true, and it put a patient lookup
+	 * behind a phone number typed into a public page.
+	 *
+	 * What ships instead is the approved V2.2 frame: an honest empty state that
+	 * tells the citizen the feature is not ready and routes them to the thing
+	 * that does work — the live visit status. No fetch, no phone field, no
+	 * fabricated record, no cryptographic claim.
+	 */
+	import PageHeader from '$lib/ui/PageHeader.svelte';
 </script>
 
-<div class="px-6 py-8 max-w-3xl mx-auto">
-	<div class="mb-8">
-		<h1 class="text-3xl font-semibold tracking-[-0.02em]">Dompet Jejak Medis</h1>
-		<p class="mt-2 text-slate-600 dark:text-slate-400">Riwayat kunjungan & antrean Anda. Setiap entri dilindungi signature kriptografi SHA-256 (dihasilkan di Rust Engine) sebagai bukti immutable / anti-ubah.</p>
+<svelte:head>
+	<title>Jejak Kunjungan — Sigap</title>
+	<meta
+		name="description"
+		content="Riwayat kunjungan Anda di Sigap. Fitur ini belum tersedia."
+	/>
+</svelte:head>
+
+<div class="sigap-wallet">
+	<PageHeader
+		title="Riwayat kunjungan"
+		description="Riwayat kunjungan Anda akan tampil di sini setelah fitur ini tersedia. Saat ini kami belum bisa menampilkan daftar kunjungan sebelumnya."
+	/>
+
+	<div class="sigap-wallet__notice" role="status">
+		<p class="sigap-wallet__notice-text">
+			Kami belum bisa menampilkan riwayat kunjungan. Simpan nomor antrean dan kode check-in Anda;
+			status kunjungan yang sedang berjalan tetap bisa dilihat kapan saja.
+		</p>
 	</div>
 
-	<div class="mb-4 flex gap-2">
-		<input
-			type="tel"
-			bind:value={phone}
-			placeholder="Nomor HP pasien"
-			class="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm focus:border-emerald-600 dark:bg-slate-950 dark:border-slate-700"
-		/>
-		<button
-			onclick={loadWallet}
-			disabled={loading}
-			class="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-		>
-			{loading ? 'Memuat...' : 'Muat Dompet'}
-		</button>
+	<div class="sigap-wallet__panel">
+		<h2 class="sigap-wallet__panel-title">Riwayat kunjungan belum tersedia</h2>
+		<p class="sigap-wallet__panel-body">
+			Belum ada riwayat yang bisa ditampilkan. Kami sedang menyiapkannya.
+		</p>
+
+		<ul class="sigap-wallet__facts">
+			<li>Status kunjungan yang sedang berjalan tetap bisa Anda lihat kapan saja.</li>
+			<li>Simpan nomor antrean dan kode check-in Anda sampai fitur riwayat tersedia.</li>
+		</ul>
+
+		<div class="sigap-wallet__actions">
+			<a class="sigap-wallet__action sigap-wallet__action--primary" href="/patient/status">
+				Buka status kunjungan
+			</a>
+			<a class="sigap-wallet__action" href="/">Kembali ke beranda</a>
+		</div>
 	</div>
-
-	{#if err}
-		<div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">{err}</div>
-	{/if}
-
-	{#if records.length === 0 && !loading}
-		<p class="text-slate-500 dark:text-slate-400 text-sm">Belum ada riwayat. Lakukan antrean untuk mengisi dompet (signature dibuat otomatis di Rust).</p>
-	{/if}
-
-	<div class="space-y-4">
-		{#each records as rec}
-			<!-- Apple Wallet style per Stitch Sigap design: high-contrast Slate header, perforated line, QR, punched 12px corners, technical metadata -->
-			<div class="rounded-[12px] border border-slate-300 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-950 overflow-hidden" style="box-shadow: 0 6px 8px #00000024;">
-				<!-- Slate header -->
-				<div class="bg-slate-900 text-white p-3">
-					<div class="flex justify-between items-center">
-						<div>
-							<div class="text-[10px] font-medium uppercase tracking-[1px] text-slate-400">{rec.facility_name}</div>
-							<div class="font-mono text-2xl font-semibold tracking-[-0.02em]">{rec.formatted_number}</div>
-						</div>
-						<!-- QR placeholder -->
-						<div class="w-10 h-10 border border-white/70 bg-white/10 flex items-center justify-center rounded text-[7px] font-mono text-white/60">QR</div>
-					</div>
-				</div>
-				
-				<!-- Perforated separator -->
-				<div class="border-t border-dashed border-slate-300 dark:border-slate-600 mx-3"></div>
-				
-				<div class="p-3 text-xs">
-					<div class="text-slate-500 dark:text-slate-400">{new Date(rec.visit_time).toLocaleString('id-ID')}</div>
-					
-					<div class="mt-2 pt-2 border-t border-dashed border-slate-200 dark:border-slate-700">
-						<div class="text-[9px] uppercase tracking-[1px] text-emerald-600 dark:text-emerald-400">Hash Signature (SHA-256 — Immutable Proof)</div>
-						<div class="mt-0.5 font-mono text-[10px] break-all text-slate-700 dark:text-slate-300 bg-emerald-50 dark:bg-emerald-950/40 p-1.5 rounded">
-							{rec.signature}
-						</div>
-						<div class="mt-0.5 text-[8px] text-emerald-500/70">Bukti kriptografi dari Rust Engine — rekam medis anti-ubah.</div>
-					</div>
-				</div>
-			</div>
-		{/each}
-	</div>
-
-	<p class="mt-8 text-center text-[10px] text-slate-400 dark:text-slate-600">Sigap Super App • Health Wallet • Powered by Rust SHA-256 + Postgres</p>
 </div>
+
+<style>
+	/*
+	 * Every value below resolves from the frozen token source. The wallet page
+	 * carries no palette of its own: the earlier version was the only route in
+	 * the app with a dark theme, and a second theme is a second design system.
+	 */
+	.sigap-wallet {
+		max-width: 720px;
+		margin: 0 auto;
+		padding: var(--sigap-space-6) var(--sigap-space-4) var(--sigap-space-7);
+	}
+
+	.sigap-wallet__notice {
+		margin-top: var(--sigap-space-5);
+		padding: var(--sigap-space-4);
+		background-color: var(--sigap-warning-tint);
+		border: 1px solid var(--sigap-warning);
+		border-radius: var(--sigap-radius-panel);
+	}
+
+	.sigap-wallet__notice-text {
+		margin: 0;
+		font-size: 13px;
+		font-weight: 600;
+		line-height: 1.5;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-wallet__panel {
+		margin-top: var(--sigap-space-5);
+		padding: var(--sigap-space-6) var(--sigap-space-5);
+		background-color: var(--sigap-surface);
+		border: 1px solid var(--sigap-border-subtle);
+		border-radius: var(--sigap-radius-panel);
+		text-align: center;
+	}
+
+	.sigap-wallet__panel-title {
+		margin: 0;
+		font-size: 16px;
+		font-weight: 600;
+		line-height: 1.4;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-wallet__panel-body {
+		margin: var(--sigap-space-2) 0 0;
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--sigap-muted);
+	}
+
+	.sigap-wallet__facts {
+		margin: var(--sigap-space-4) 0 0;
+		padding: var(--sigap-space-3) var(--sigap-space-4);
+		list-style: none;
+		text-align: left;
+		background-color: var(--sigap-surface-sunken);
+		border-radius: var(--sigap-radius-control);
+	}
+
+	.sigap-wallet__facts li {
+		font-size: 12px;
+		line-height: 1.5;
+		color: var(--sigap-muted);
+	}
+
+	.sigap-wallet__facts li + li {
+		margin-top: var(--sigap-space-2);
+	}
+
+	.sigap-wallet__actions {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: var(--sigap-space-3);
+		margin-top: var(--sigap-space-5);
+	}
+
+	.sigap-wallet__action {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-height: var(--sigap-control-citizen);
+		padding: 0 var(--sigap-space-4);
+		font-size: 13px;
+		font-weight: 600;
+		text-decoration: none;
+		color: var(--sigap-foreground);
+		background-color: var(--sigap-surface);
+		border: 1px solid var(--sigap-border);
+		border-radius: var(--sigap-radius-control);
+	}
+
+	.sigap-wallet__action--primary {
+		color: var(--sigap-on-primary);
+		background-color: var(--sigap-primary);
+		border-color: var(--sigap-primary);
+	}
+
+	.sigap-wallet__action:hover {
+		background-color: var(--sigap-surface-sunken);
+	}
+
+	.sigap-wallet__action--primary:hover {
+		background-color: var(--sigap-primary-hover);
+	}
+
+	.sigap-wallet__action:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
+	}
+</style>

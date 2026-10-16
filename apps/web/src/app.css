@@ -4,58 +4,134 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Sigap strict minimalist design system
- * - Generous whitespace
- * - Single brand: teal 700 (#0F766E), defined in lib/design/tokens.css
- * - Inter / system typography
- * - Calm, high-contrast, no AI slop
+/* SIGAP V2.2 — "Calm Civic Healthcare Utility"
  *
- * The legacy `--accent: #059669` emerald token was removed in Phase 3B1. The
- * brand color now comes exclusively from the frozen token source.
+ * - Generous whitespace, rules instead of boxes
+ * - Single brand: teal 700 (#0F766E), from the frozen token source
+ * - Inter / system typography, with JetBrains Mono for identifiers
+ * - Calm, high-contrast, no gradient, no shadow, no glassmorphism
+ *
+ * Every value below resolves from lib/design/tokens.css. No raw hex appears in
+ * this file; the token test fails the build if one does.
  */
 
 body {
 	font-family: Inter, system-ui, -apple-system, sans-serif;
+	background-color: var(--sigap-canvas);
+	color: var(--sigap-foreground);
 }
 
 /*
- * Shared page-level typography for citizen routes.
+ * ---------------------------------------------------------------------------
+ * Section opening: eyebrow, 2px rule, title, description
+ * ---------------------------------------------------------------------------
  *
- * These live here rather than in a component because Beranda and /faskes are
- * separate pages that must present the same heading hierarchy. Scoping them to
- * one component would guarantee the two pages drift apart. Sizes follow the
- * frozen references: a 20px page title on mobile, 24px on desktop, with a
- * 13px section title above grouped content.
+ * The signature device of the design. Every citizen section opens the same way,
+ * so these live here rather than in a component: scoping them to one section
+ * would guarantee the sections drift apart.
  *
- * Only semantic tokens are used. No raw colour, no gradient, no shadow.
+ * The rule is a content-measure rule, never full-bleed. On desktop it is 620px;
+ * on mobile 140px. It is the ONLY decorative teal on a page besides the primary
+ * action and the active nav item.
+ */
+
+.sigap-rule {
+	width: 140px;
+	height: 2px;
+	background-color: var(--sigap-primary);
+	flex: none;
+}
+
+@media (min-width: 768px) {
+	.sigap-rule {
+		width: 620px;
+	}
+}
+
+/*
+ * The uppercase micro-label above a section title. Replaces the 2px rule on
+ * mobile, where a second teal rule per screen would overspend the teal budget.
+ */
+.sigap-eyebrow {
+	margin: 0;
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 1.45;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--sigap-muted);
+}
+
+/*
+ * Page titles. Two steps: 22px on a phone, 32px on a desktop.
+ *
+ * The previous scale stopped at 24px, which is why no page could open with the
+ * display weight the design calls for.
  */
 .sigap-page-title {
 	margin: 0;
-	font-size: 20px;
+	font-size: 22px;
 	font-weight: 600;
-	line-height: 1.5rem;
+	line-height: 1.25;
+	letter-spacing: -0.02em;
 	color: var(--sigap-foreground);
 }
 
 @media (min-width: 1024px) {
 	.sigap-page-title {
-		font-size: 24px;
+		font-size: 32px;
 	}
 }
 
 .sigap-page-subtitle {
 	margin: 4px 0 0;
 	font-size: 14px;
-	line-height: 1.25rem;
+	line-height: 1.5;
 	color: var(--sigap-muted);
 }
 
 .sigap-section-title {
 	margin: 0;
-	font-size: 13px;
+	font-size: 18px;
 	font-weight: 600;
+	line-height: 1.4;
+	letter-spacing: -0.01em;
 	color: var(--sigap-foreground);
 }
+
+@media (min-width: 1024px) {
+	.sigap-section-title {
+		font-size: 20px;
+	}
+}
+
+.sigap-section-desc {
+	margin: 0;
+	font-size: 14px;
+	line-height: 1.5;
+	color: var(--sigap-muted);
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * Identifiers
+ * ---------------------------------------------------------------------------
+ *
+ * A queue number, a check-in code and an appointment id are read aloud, typed
+ * back, and compared character by character. They get the monospace stack and
+ * tabular figures so a 1 and a 7 are distinguishable and the digits line up.
+ */
+.sigap-identifier {
+	font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0.06em;
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * Accessible helper
+ * ---------------------------------------------------------------------------
+ */
 
 /*
  * Available to assistive technology, invisible on screen.
