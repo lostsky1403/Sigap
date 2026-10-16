@@ -39,6 +39,7 @@ const bottomNavSource = readFileSync(join(here, 'CitizenBottomNav.svelte'), 'utf
 const desktopNavSource = readFileSync(join(here, 'CitizenDesktopNav.svelte'), 'utf8');
 const accountSource = readFileSync(join(here, 'AccountMenu.svelte'), 'utf8');
 const layoutSource = readFileSync(join(webRoot, 'src', 'routes', '+layout.svelte'), 'utf8');
+const appCssSource = readFileSync(join(webRoot, 'src', 'app.css'), 'utf8');
 
 describe('citizen navigation contract', () => {
 	it('declares exactly four destinations', () => {
@@ -164,11 +165,16 @@ describe('citizen shell: mobile at 390px', () => {
 	});
 
 	it('reserves content clearance so the bar cannot cover the page', () => {
-		// The layout, not the nav, owns the reserved space: the bar is fixed, so
-		// without padding on the content the last row would sit underneath it.
-		expect(layoutSource).toMatch(/sigap-citizen-main/);
-		expect(layoutSource).toMatch(/padding-bottom/);
-		expect(layoutSource).toMatch(/safe-area-inset-bottom/);
+		// The reserve lives on `.sigap-page`, the container every page renders,
+		// rather than on the layout's `<main>`. It has to be exactly one place:
+		// on both, every page would carry the clearance twice, and a page that
+		// does not use the container would get none.
+		expect(appCssSource).toMatch(/\.sigap-page\s*\{[^}]*padding:/);
+		expect(appCssSource).toMatch(/env\(safe-area-inset-bottom/);
+		expect(appCssSource).toMatch(/96px/);
+		// And the layout must NOT carry it, which is what makes the above the
+		// only owner rather than a second copy.
+		expect(layoutSource).not.toMatch(/padding-bottom:\s*calc\(96px/);
 	});
 
 	it('hides the bottom nav at desktop widths and shows the desktop nav', () => {

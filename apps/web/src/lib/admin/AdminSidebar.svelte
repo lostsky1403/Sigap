@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ADMIN_DESTINATIONS, isActiveDestination } from './navigation';
+	import { ADMIN_DESTINATIONS, ADMIN_GROUPS, isActiveDestination } from './navigation';
 	import { RADIUS } from '$lib/design/tokens';
 	import { LayoutDashboard, ListOrdered, CalendarCheck, CalendarClock, Building2, Bell } from 'lucide-svelte';
 	import Icon from '$lib/ui/Icon.svelte';
@@ -48,25 +48,37 @@
 	</div>
 
 	<nav class="sigap-admin-sidebar__nav" aria-label="Menu operasi">
-		<ul class="sigap-admin-sidebar__list">
-			{#each ADMIN_DESTINATIONS as destination (destination.href)}
-				{@const IconComponent = ICONS[destination.icon]}
-				<li class="sigap-admin-sidebar__item">
-					<a
-						class="sigap-admin-sidebar__link"
-						style:border-radius={RADIUS.control}
-						href={destination.href}
-						aria-label={destination.label}
-						aria-current={isActiveDestination(path, destination.href) ? 'page' : undefined}
-					>
-						{#if IconComponent}
-							<Icon icon={IconComponent} size={16} />
-						{/if}
-						<span class="sigap-admin-sidebar__label">{destination.label}</span>
-					</a>
-				</li>
-			{/each}
-		</ul>
+		<!--
+			Two labelled groups, as the reference draws them. The label is a
+			`<p>` rather than a heading: these are labels within one navigation
+			landmark, and six headings inside a nav would put six entries into the
+			document outline for a set of six links. The link list carries the
+			structure that matters.
+		-->
+		{#each ADMIN_GROUPS as group (group)}
+			<div class="sigap-admin-sidebar__group">
+				<p class="sigap-admin-sidebar__group-label">{group}</p>
+				<ul class="sigap-admin-sidebar__list">
+					{#each ADMIN_DESTINATIONS.filter((d) => d.group === group) as destination (destination.href)}
+						{@const IconComponent = ICONS[destination.icon]}
+						<li class="sigap-admin-sidebar__item">
+							<a
+								class="sigap-admin-sidebar__link"
+								style:border-radius={RADIUS.control}
+								href={destination.href}
+								aria-label={destination.label}
+								aria-current={isActiveDestination(path, destination.href) ? 'page' : undefined}
+							>
+								{#if IconComponent}
+									<Icon icon={IconComponent} size={16} />
+								{/if}
+								<span class="sigap-admin-sidebar__label">{destination.label}</span>
+							</a>
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{/each}
 	</nav>
 
 	<div class="sigap-admin-sidebar__account">
@@ -91,8 +103,8 @@
 <style>
 	/*
 		Layout, not control, so it is held to no control scale. The two widths are
-		the frozen ones: 224px expanded, 56px collapsed. The collapse breakpoint
-		is 1179px, which is where a 224px rail plus a readable table stops fitting
+		the frozen ones: 240px expanded, 56px collapsed. The collapse breakpoint
+		is 1179px, which is where a 240px rail plus a readable table stops fitting
 		on a 1024px monitor.
 	*/
 	.sigap-admin-sidebar {
@@ -101,7 +113,8 @@
 		flex-shrink: 0;
 		position: sticky;
 		top: 0;
-		width: 224px;
+		/* Measured off the Pen: the admin rail is 240px on every admin frame. */
+		width: 240px;
 		height: 100vh;
 		background-color: var(--sigap-surface);
 		/* Decorative: the sidebar's right edge is a rule, not a control boundary. */
@@ -156,6 +169,28 @@
 		flex: 1;
 		padding: var(--sigap-space-3);
 		overflow-y: auto;
+	}
+
+	.sigap-admin-sidebar__group + .sigap-admin-sidebar__group {
+		margin-top: var(--sigap-space-5);
+	}
+
+	/*
+		The group label. 11px uppercase muted, the same micro-label the citizen
+		section eyebrows use, so the two shells share one label treatment rather
+		than inventing a second.
+
+		It is NOT a heading: six headings inside one nav would put six entries
+		into the document outline for a set of six links.
+	*/
+	.sigap-admin-sidebar__group-label {
+		margin: 0 0 var(--sigap-space-2);
+		padding: 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-micro);
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-sidebar__list {
@@ -271,6 +306,16 @@
 	@media (max-width: 1179px) {
 		.sigap-admin-sidebar {
 			width: 56px;
+		}
+
+		/*
+			The group labels go with the text. In the 56px rail there is no room
+			for them, and a label that wraps to three lines above each group would
+			make the rail taller than the viewport for a word the icons already
+			carry in their accessible names.
+		*/
+		.sigap-admin-sidebar__group-label {
+			display: none;
 		}
 
 		.sigap-admin-sidebar__brand,

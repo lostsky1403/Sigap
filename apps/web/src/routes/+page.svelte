@@ -124,18 +124,16 @@
 	<title>Beranda — Sigap</title>
 </svelte:head>
 
-<div class="sigap-beranda">
+<div class="sigap-page sigap-page--roomy sigap-beranda">
 	<PageHeader
 		eyebrow="Layanan kesehatan warga"
 		title="Cari faskes, buat janji temu, dan pantau kunjungan Anda"
 		description="Satu layanan untuk menemukan fasilitas kesehatan, membuat janji temu, check-in, dan memantau status kunjungan."
 	/>
 
-	<div class="sigap-beranda__tasks">
-		<QuickActions />
-	</div>
+	<QuickActions />
 
-	<section class="sigap-beranda__section" aria-labelledby="sigap-beranda-facilities">
+	<section aria-labelledby="sigap-beranda-facilities">
 		<div class="sigap-beranda__section-head">
 			<div class="sigap-beranda__section-intro">
 				<p class="sigap-eyebrow">Faskes aktif</p>
@@ -237,7 +235,7 @@
 		{/if}
 	</section>
 
-	<section class="sigap-beranda__section" aria-labelledby="sigap-beranda-steps">
+	<section aria-labelledby="sigap-beranda-steps">
 		<div class="sigap-beranda__section-intro">
 			<p class="sigap-eyebrow">Cara menggunakan Sigap</p>
 			<h2 id="sigap-beranda-steps" class="sigap-section-title">Tiga langkah</h2>
@@ -258,30 +256,20 @@
 </div>
 
 <style>
+	/*
+		Beranda is the one page whose `Body` gap differs: the Pen runs 64px
+		between sections on desktop and 32px on a phone, against the 24px every
+		other citizen page uses. Layout, width and the top offset all come from
+		`.sigap-page--roomy`.
+	*/
 	.sigap-beranda {
-		/*
-			The shell measure, taken from the reference: 48px gutters at 1440
-			leaving a 1344px content column. A narrower cap (1024px) is the
-			obvious-looking choice and the wrong one — it makes every page
-			visibly narrower than the approved frame at the review viewport.
-		*/
-		max-width: 1440px;
-		margin: 0 auto;
-		padding: var(--sigap-space-6) var(--sigap-space-4) var(--sigap-space-2);
+		--sigap-page-gap: var(--sigap-space-6);
 	}
 
 	@media (min-width: 1024px) {
 		.sigap-beranda {
-			padding: var(--sigap-space-6) var(--sigap-space-7) var(--sigap-space-2);
+			--sigap-page-gap: var(--sigap-space-8);
 		}
-	}
-
-	.sigap-beranda__tasks {
-		margin-top: var(--sigap-space-6);
-	}
-
-	.sigap-beranda__section {
-		margin-top: var(--sigap-space-7);
 	}
 
 	/*

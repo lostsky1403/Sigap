@@ -28,7 +28,26 @@ export interface AdminDestination {
 	href: string;
 	/** Lucide component name, resolved by the sidebar to keep this module data-only. */
 	icon: string;
+	/**
+	 * The sidebar group this destination belongs to.
+	 *
+	 * The approved reference draws two labelled groups — OPERASIONAL (the three
+	 * daily work surfaces) and KONFIGURASI (the three set-up surfaces) — and the
+	 * split is the design's claim about how an operator uses the product, not
+	 * decoration. It is a field rather than a second array so the order, the
+	 * count and the flat iteration all stay in one place.
+	 */
+	group: 'Operasional' | 'Konfigurasi';
 }
+
+/**
+ * The two group labels, in render order, uppercase as the reference draws them.
+ *
+ * Exported so the sidebar iterates the same list the destinations are keyed
+ * against; a group name that appears in one and not the other would silently
+ * drop three destinations from the sidebar.
+ */
+export const ADMIN_GROUPS = ['Operasional', 'Konfigurasi'] as const;
 
 /**
  * Exactly six, in the frozen order.
@@ -38,12 +57,12 @@ export interface AdminDestination {
  * reaches first.
  */
 export const ADMIN_DESTINATIONS: readonly AdminDestination[] = [
-	{ label: 'Ringkasan', href: '/admin', icon: 'LayoutDashboard' },
-	{ label: 'Antrean', href: '/admin/queues', icon: 'ListOrdered' },
-	{ label: 'Janji Temu', href: '/admin/appointments', icon: 'CalendarCheck' },
-	{ label: 'Jadwal', href: '/admin/schedules', icon: 'CalendarClock' },
-	{ label: 'Fasilitas', href: '/admin/facilities', icon: 'Building2' },
-	{ label: 'Notifikasi', href: '/admin/notifications', icon: 'Bell' }
+	{ label: 'Ringkasan', href: '/admin', icon: 'LayoutDashboard', group: 'Operasional' },
+	{ label: 'Antrean', href: '/admin/queues', icon: 'ListOrdered', group: 'Operasional' },
+	{ label: 'Janji Temu', href: '/admin/appointments', icon: 'CalendarCheck', group: 'Operasional' },
+	{ label: 'Jadwal', href: '/admin/schedules', icon: 'CalendarClock', group: 'Konfigurasi' },
+	{ label: 'Fasilitas', href: '/admin/facilities', icon: 'Building2', group: 'Konfigurasi' },
+	{ label: 'Notifikasi', href: '/admin/notifications', icon: 'Bell', group: 'Konfigurasi' }
 ] as const;
 
 /**

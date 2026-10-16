@@ -13,7 +13,9 @@
     "test:unit:watch": "vitest",
     "preview:e2e": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
     "e2e": "playwright test",
-    "e2e:install": "playwright install chromium"
+    "e2e:install": "playwright install chromium",
+    "capture:review": "node scripts/capture-review.mjs",
+    "seed:review": "node scripts/seed-review.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",

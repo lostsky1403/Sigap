@@ -5,7 +5,7 @@
 	 * The three-step booking indicator.
 	 *
 	 * Exactly three steps, and they are concepts rather than screens: Fasilitas,
-	 * Layanan, Waktu + Data Diri. A four-step version would split patient
+	 * Layanan, Waktu + data. A four-step version would split patient
 	 * details away from the time they are booking, which is the decision people
 	 * make together, and a two-step version would hide the middle transition
 	 * where the service list changes.
@@ -20,7 +20,7 @@
 	export let current: 1 | 2 | 3 = 1;
 	export let total: number = 3;
 
-	export const STEP_LABELS = ['Fasilitas', 'Layanan', 'Waktu + Data Diri'];
+	export const STEP_LABELS = ['Fasilitas', 'Layanan', 'Waktu + data'];
 
 	/**
 	 * A step is reachable once the one before it is satisfied. Used for the
@@ -138,7 +138,7 @@
 		min-width: 0;
 		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
-		/* Long step names wrap rather than truncating: "Waktu + Data Diri" cut
+		/* Long step names wrap rather than truncating: "Waktu + data" cut
 		   to "Waktu + Data..." tells the citizen less than wrapping it, and at
 		   390px wrapping costs one line. */
 		overflow-wrap: anywhere;

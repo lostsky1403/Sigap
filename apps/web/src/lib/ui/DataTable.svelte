@@ -155,13 +155,20 @@
 		position: sticky;
 		top: 0;
 		z-index: 1;
-		background-color: var(--sigap-surface);
+		/*
+			`--sigap-surface-sunken`, not `--sigap-surface`. The Pen's
+			`C/Table/HeaderRow` fills the header band with `$surface-sunken`, and
+			that band is what separates the column labels from the data at a
+			glance — the 11px uppercase alone is not enough once the table scrolls
+			under a sticky header of the same colour as its own rows.
+		*/
+		background-color: var(--sigap-surface-sunken);
 		padding: 10px 12px;
 		text-align: left;
 		/* 11px uppercase: the frozen admin header scale. */
 		font-size: 11px;
 		font-weight: 600;
-		letter-spacing: 0.04em;
+		letter-spacing: 0.06em;
 		text-transform: uppercase;
 		color: var(--sigap-muted);
 		border-bottom: 1px solid var(--sigap-border-subtle);

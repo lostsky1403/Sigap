@@ -152,11 +152,10 @@
 	<title>Check-In — Sigap</title>
 </svelte:head>
 
-<div class="sigap-checkin">
+<div class="sigap-page sigap-checkin">
 	<PageHeader
-		eyebrow="Janji temu"
-		title="Check-In"
-		description="Masukkan kode check-in dari janji temu Anda untuk mendapat nomor antrean."
+		title="Check-in janji temu"
+		description="Masukkan ID janji temu dan kode check-in yang Anda terima. Kode bersifat case-insensitive."
 	/>
 
 	<!--
@@ -224,24 +223,21 @@
 </div>
 
 <style>
-	.sigap-checkin {
-		max-width: 640px;
-		margin: 0 auto;
-		padding: var(--sigap-space-5) var(--sigap-space-4) var(--sigap-space-2);
-	}
+	/*
+		Layout comes from `.sigap-page`: the standard 40px desktop offset and
+		48px gutter.
 
-	@media (min-width: 768px) {
-		.sigap-checkin {
-			padding: var(--sigap-space-6) var(--sigap-space-5) var(--sigap-space-2);
-		}
-	}
-
+		The 560px cap is on the PANEL, not on the page, and that is the whole
+		point of the correction. The Pen draws the check-in card from x 48 to
+		x 607 — 560px wide, sitting against the left gutter — so capping the
+		container instead would centre a narrow column on a 1440 screen and
+		leave margins the approved frame does not have.
+	*/
 	.sigap-checkin__alt {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--sigap-space-2);
-		margin-top: var(--sigap-space-4);
 	}
 
 	.sigap-checkin__alt-label {
@@ -282,7 +278,7 @@
 		`--sigap-border` boundaries.
 	*/
 	.sigap-checkin__panel {
-		margin-top: var(--sigap-space-4);
+		max-width: 560px;
 		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
 		border: 1px solid var(--sigap-border-subtle);

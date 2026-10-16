@@ -192,10 +192,11 @@
 	<title>Cari Faskes — Sigap</title>
 </svelte:head>
 
-<div class="sigap-faskes">
+<div class="sigap-page sigap-page--tight sigap-faskes">
 	<PageHeader
+		rule="compact"
 		title="Cari fasilitas kesehatan"
-		description="Telusuri faskes yang tersedia. Pencarian dan filter di bawahnya mempersempit data yang sudah dimuat."
+		description="Telusuri faskes yang tersedia. Pencarian dan filter di bawah hanya mempersempit data yang sudah dimuat."
 	/>
 
 	<!--
@@ -362,25 +363,12 @@
 </div>
 
 <style>
-	.sigap-faskes {
-		/* Same shell measure as Beranda: 1344px content at 1440 with 48px
-		   gutters, so the two catalog pages do not disagree about their width. */
-		max-width: 1440px;
-		margin: 0 auto;
-		padding: var(--sigap-space-6) var(--sigap-space-4) var(--sigap-space-2);
-	}
-
-	@media (min-width: 1024px) {
-		.sigap-faskes {
-			padding: var(--sigap-space-6) var(--sigap-space-7) var(--sigap-space-2);
-		}
-	}
-
-	.sigap-faskes__search {
-		margin-top: var(--sigap-space-4);
-	}
-
 	/*
+		Layout, width, gutter and the 24px section gap all come from
+		`.sigap-page--tight`, which the Pen draws Faskes and Status on: 40px from
+		the masthead on desktop, 20px on a phone, against the standard 48px/16px
+		gutter.
+
 		The chip row, transcribed from the frozen reference's `.sw-m-chip`
 		container: a horizontal, single-line scroller. `overflow-x: auto` rather
 		than a wrap, because at 390px three chips plus gaps are close to the
@@ -439,10 +427,6 @@
 	.sigap-faskes__chip:focus-visible {
 		outline: 2px solid var(--sigap-primary);
 		outline-offset: 2px;
-	}
-
-	.sigap-faskes__results {
-		margin-top: 16px;
 	}
 
 	.sigap-faskes__status-text {

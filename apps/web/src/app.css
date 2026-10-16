@@ -23,6 +23,78 @@ body {
 
 /*
  * ---------------------------------------------------------------------------
+ * Page container
+ * ---------------------------------------------------------------------------
+ *
+ * Every citizen page is the same object: a centred 1440px column with a top
+ * offset, a gutter, and a reserved strip at the bottom for the fixed tab bar.
+ *
+ * The values are measured off the approved frames rather than derived from the
+ * spacing ladder, because the Pen does not use ladder steps for page padding:
+ * `Body` is `[40,48]` on the standard desktop page, `[64,48]` on Beranda and
+ * the auth pages, `[24,16]` on mobile, and `[20,16]` on the two mobile browse
+ * pages. Neither 40 nor 20 is a ladder step, so expressing them as one would be
+ * a fiction.
+ *
+ * Bottom padding is not a separate value: the Pen's `Body` padding is symmetric,
+ * so the bottom offset equals the top one. On a phone that is replaced by the
+ * tab-bar reserve — 96px plus the home-indicator inset — which is what keeps the
+ * last row of a long page from ending up underneath the fixed bar. On desktop
+ * the bar is hidden, so the reserve would be dead space and the symmetric value
+ * applies instead.
+ *
+ * The container is a flex column with `--sigap-page-gap` between its children,
+ * because every frame's `Body` is one. The Pen runs a 24px gap on every citizen
+ * page at both breakpoints, and 64px desktop / 32px phone on Beranda alone, so
+ * the value is a variable a page can override rather than a per-page margin.
+ */
+.sigap-page {
+	--sigap-page-top: 24px;
+	--sigap-page-gutter: var(--sigap-space-4);
+	--sigap-page-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+	--sigap-page-gap: var(--sigap-space-5);
+	display: flex;
+	flex-direction: column;
+	gap: var(--sigap-page-gap);
+	max-width: 1440px;
+	margin: 0 auto;
+	padding: var(--sigap-page-top) var(--sigap-page-gutter) var(--sigap-page-bottom);
+}
+
+@media (min-width: 1024px) {
+	.sigap-page {
+		--sigap-page-top: 40px;
+		--sigap-page-gutter: var(--sigap-space-7);
+		--sigap-page-bottom: var(--sigap-page-top);
+	}
+}
+
+/*
+ * Beranda and the auth cards, which the Pen gives 64px of air at the top.
+ *
+ * The modifier only needs to exist inside the desktop query: the phone value is
+ * already the base 24px.
+ */
+@media (min-width: 1024px) {
+	.sigap-page--roomy {
+		--sigap-page-top: var(--sigap-space-8);
+	}
+}
+
+/*
+ * The two mobile browse pages, which the Pen draws 4px tighter than the rest of
+ * the phone frames. Scoped to the phone breakpoint rather than left
+ * unconditional: a bare class here would land after the desktop query above and
+ * override the standard 40px offset with 20px on a 1440px screen.
+ */
+@media (max-width: 1023px) {
+	.sigap-page--tight {
+		--sigap-page-top: 20px;
+	}
+}
+
+/*
+ * ---------------------------------------------------------------------------
  * Section opening: eyebrow, 2px rule, title, description
  * ---------------------------------------------------------------------------
  *
@@ -30,16 +102,20 @@ body {
  * so these live here rather than in a component: scoping them to one section
  * would guarantee the sections drift apart.
  *
- * The rule is a content-measure rule, never full-bleed. On desktop it is 620px;
- * on mobile 140px. It is the ONLY decorative teal on a page besides the primary
- * action and the active nav item.
+ * The rule is a content-measure rule, never full-bleed. On desktop it is 620px
+ * on every page; on mobile it is 140px, except on the two browse pages where
+ * the Pen draws 100px. It is the ONLY decorative teal on a page besides the
+ * primary action and the active nav item.
  */
-
 .sigap-rule {
-	width: 140px;
+	width: var(--sigap-rule-mobile, 140px);
 	height: 2px;
 	background-color: var(--sigap-primary);
 	flex: none;
+}
+
+.sigap-rule--compact {
+	--sigap-rule-mobile: 100px;
 }
 
 @media (min-width: 768px) {
@@ -49,8 +125,15 @@ body {
 }
 
 /*
- * The uppercase micro-label above a section title. Replaces the 2px rule on
- * mobile, where a second teal rule per screen would overspend the teal budget.
+ * The uppercase micro-label between the rule and the title.
+ *
+ * Used for two different things, and they behave differently:
+ *
+ * - A SECTION eyebrow (`FASKES AKTIF`, `CARA MENGGUNAKAN SIGAP` on Beranda) is
+ *   visible at every viewport. The mobile frames draw it.
+ * - A PAGE eyebrow is desktop-only. The Pen gives Beranda one at 1440
+ *   (`LAYANAN KESEHATAN WARGA`) and drops it on the 390px frame, where the rule
+ *   and the title alone open the page. `PageHeader` scopes its own to `md` up.
  */
 .sigap-eyebrow {
 	margin: 0;

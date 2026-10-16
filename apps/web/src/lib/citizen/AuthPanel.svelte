@@ -21,7 +21,7 @@
 	export let description: string = '';
 </script>
 
-<div class="sigap-auth">
+<div class="sigap-page sigap-page--roomy sigap-auth">
 	<section class="sigap-auth__panel">
 		<h1 class="sigap-auth__title">{title}</h1>
 		{#if description}
@@ -47,22 +47,22 @@
 </div>
 
 <style>
-	.sigap-auth {
-		/* 440px is the reference measure, held at every viewport above the
-		   phone breakpoint; below it the column is the viewport minus gutters. */
-		max-width: 440px;
-		margin: 0 auto;
-		padding: var(--sigap-space-6) var(--sigap-space-4) var(--sigap-space-2);
-	}
+	/*
+		The container is the shared one — `.sigap-page--roomy` gives the Pen's
+		64px top offset at 1440, the standard 48px gutter, the symmetric bottom
+		padding, and the tab-bar reserve on a phone. Only two things are local:
+		the children centre, and the card itself is 440px.
 
-	@media (min-width: 768px) {
-		.sigap-auth {
-			/* 64px below the masthead, as measured. */
-			padding: var(--sigap-space-8) var(--sigap-space-5) var(--sigap-space-2);
-		}
+		The measure is measured, not chosen: the reference draws the card at
+		x 500–939.5 on a 1440 viewport, which is 440px wide and centred.
+	*/
+	.sigap-auth {
+		align-items: center;
 	}
 
 	.sigap-auth__panel {
+		width: 100%;
+		max-width: 440px;
 		padding: var(--sigap-space-5);
 		background-color: var(--sigap-surface);
 		/* Card edge, not a control edge: the fields inside carry their own. */

@@ -5,6 +5,7 @@ import AdminShell from './AdminShell.svelte';
 import {
 	ADMIN_ACCOUNT_HREF,
 	ADMIN_DESTINATIONS,
+	ADMIN_GROUPS,
 	isActiveDestination
 } from './navigation';
 
@@ -49,6 +50,28 @@ describe('admin navigation: the frozen six destinations', () => {
 			'/admin/facilities',
 			'/admin/notifications'
 		]);
+	});
+
+	it('groups the six destinations exactly as the reference labels them', () => {
+		// Two labelled groups, three destinations each. The split is the design's
+		// claim about how an operator works — daily surfaces first, set-up
+		// surfaces second — so an entry landing in the wrong group is a content
+		// defect, not a cosmetic one.
+		expect(ADMIN_GROUPS).toEqual(['Operasional', 'Konfigurasi']);
+		for (const group of ADMIN_GROUPS) {
+			expect(
+				ADMIN_DESTINATIONS.filter((d) => d.group === group),
+				`${group} must not be empty`
+			).toHaveLength(3);
+		}
+		// Every destination belongs to a declared group. A group name that exists
+		// in one list and not the other would drop destinations from the sidebar
+		// silently, which is why both directions are checked.
+		for (const destination of ADMIN_DESTINATIONS) {
+			expect(ADMIN_GROUPS, `${destination.label} is in an undeclared group`).toContain(
+				destination.group
+			);
+		}
 	});
 
 	it('gives every destination a distinct href and an icon', () => {

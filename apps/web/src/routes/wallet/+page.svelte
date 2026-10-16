@@ -28,7 +28,7 @@
 	/>
 </svelte:head>
 
-<div class="sigap-wallet">
+<div class="sigap-page sigap-wallet">
 	<PageHeader
 		title="Riwayat kunjungan"
 		description="Riwayat kunjungan Anda akan tampil di sini setelah fitur ini tersedia. Saat ini kami belum bisa menampilkan daftar kunjungan sebelumnya."
@@ -67,14 +67,13 @@
 	 * carries no palette of its own: the earlier version was the only route in
 	 * the app with a dark theme, and a second theme is a second design system.
 	 */
-	.sigap-wallet {
-		max-width: 720px;
-		margin: 0 auto;
-		padding: var(--sigap-space-6) var(--sigap-space-4) var(--sigap-space-7);
-	}
+	/*
+		Layout comes from `.sigap-page`. The Jejak Kunjungan frame runs across
+		the full content column, so the page is not capped; the notice and the
+		panel below keep their own reading measures.
+	*/
 
 	.sigap-wallet__notice {
-		margin-top: var(--sigap-space-5);
 		padding: var(--sigap-space-4);
 		background-color: var(--sigap-warning-tint);
 		border: 1px solid var(--sigap-warning);
@@ -90,7 +89,6 @@
 	}
 
 	.sigap-wallet__panel {
-		margin-top: var(--sigap-space-5);
 		padding: var(--sigap-space-6) var(--sigap-space-5);
 		background-color: var(--sigap-surface);
 		border: 1px solid var(--sigap-border-subtle);

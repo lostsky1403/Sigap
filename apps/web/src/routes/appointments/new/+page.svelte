@@ -39,7 +39,7 @@
 	/**
 	 * /appointments/new — public booking.
 	 *
-	 * Three steps (Fasilitas, Layanan, Waktu + Data Diri) that map to three
+	 * Three steps (Fasilitas, Layanan, Waktu + data) that map to three
 	 * ideas rather than three pages. A step is not a route and not a separate
 	 * submit: the whole thing is one form, one request, validated as a unit.
 	 * Stepping shows progress and lets the form sections come into focus one at
@@ -402,16 +402,20 @@
 	<title>Buat Janji Temu — Sigap</title>
 </svelte:head>
 
-<div class="sigap-booking">
+<div class="sigap-page sigap-booking">
 	<!--
-		The shared section opener: eyebrow, 2px content-measure rule, title, lede.
-		Every citizen page opens with it, so it is one component rather than a
-		hand-rolled block per page that would drift from the others.
+		The shared page opener, in its no-rule variant.
+
+		The Pen draws every booking frame with an eyebrow and a title but no 2px
+		rule, so this journey opens with the label rather than the mark. The
+		lede tracks the step: it names what this step asks for, which is why it
+		is a value here and not a constant.
 	-->
 	<PageHeader
-		eyebrow="Janji temu"
-		title="Buat Janji Temu"
-		description="Pilih fasilitas, layanan, dan waktu. Data Anda hanya dipakai untuk janji temu ini."
+		rule="none"
+		eyebrow="Buat janji temu"
+		title="Buat janji temu"
+		description="Pilih fasilitas kesehatan terlebih dahulu."
 	/>
 
 	<!--
@@ -454,10 +458,10 @@
 				</span>
 				<div>
 					<h2 class="sigap-section-title" id="sigap-booking-confirmed-title">
-						Janji temu berhasil dibuat
+						Janji temu berhasil
 					</h2>
 					<p class="sigap-booking__confirm-sub">
-						Simpan kode check-in berikut. Anda membutuhkannya saat datang ke fasilitas.
+						Simpan kode check-in Anda. Kode ini dipakai untuk check-in di fasilitas.
 					</p>
 				</div>
 			</div>
@@ -598,13 +602,13 @@
 				</Field>
 			</fieldset>
 
-			<!-- STEP 3: Waktu + Data Diri -->
+			<!-- STEP 3: Waktu + data -->
 			<fieldset
 				class="sigap-booking__step"
 				class:sigap-booking__step--active={step === 3}
 				disabled={!validServiceUnitId}
 			>
-				<legend class="sigap-booking__step-title">3. Waktu + Data Diri</legend>
+				<legend class="sigap-booking__step-title">3. Waktu + data</legend>
 
 				<Field
 					id="sigap-booking-appointment_time"
@@ -699,23 +703,19 @@
 </div>
 
 <style>
-	.sigap-booking {
-		max-width: 1024px;
-		margin: 0 auto;
-		padding: var(--sigap-space-5) var(--sigap-space-4) var(--sigap-space-2);
-	}
-
-	@media (min-width: 1024px) {
-		.sigap-booking {
-			padding: var(--sigap-space-6) var(--sigap-space-5) var(--sigap-space-2);
-		}
-	}
-
-	.sigap-booking__section {
-		margin-top: var(--sigap-space-4);
-	}
+	/*
+		Layout comes from `.sigap-page`. The booking frame is the one citizen
+		page the Pen draws as a two-column split across the full 1344px content
+		column, so the page is not capped — the `__layout` rule below is what
+		decides when the aside moves beside the form.
+	*/
 
 	/*
+		Note there is no `.sigap-booking__section` rule. The sections are direct
+		children of `.sigap-page`, which already puts `--sigap-page-gap` between
+		them; a margin here would stack on that gap and give this page a rhythm
+		no other page has.
+
 		A loading region is not a control, so its outline is the decorative
 		hairline and the sunken ground does the work of separating it. Wiring
 		`--sigap-border` here would draw a 4.16:1 box around a non-interactive
@@ -743,7 +743,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--sigap-space-4);
-		margin-top: var(--sigap-space-4);
 	}
 
 	@media (min-width: 1024px) {
@@ -757,11 +756,18 @@
 			min-width: 0;
 		}
 
-		/* 320px keeps the summary readable beside a form that still has room
-		   for a two-field row at 1024px. */
+		/*
+			320px keeps the summary readable beside a form that still has room
+			for a two-field row at 1024px.
+
+			The sticky offset clears the masthead, which is itself sticky at
+			`top: 0` and 56px tall. Without the offset the summary slides under
+			the masthead and its heading disappears behind the brand as the page
+			scrolls.
+		*/
 		.sigap-booking__aside {
 			position: sticky;
-			top: var(--sigap-space-4);
+			top: calc(56px + var(--sigap-space-4));
 			width: 320px;
 			flex: none;
 		}

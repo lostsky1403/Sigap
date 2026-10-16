@@ -144,11 +144,10 @@
 	<title>Ambil Antrean Walk-In — Sigap</title>
 </svelte:head>
 
-<div class="sigap-walkin">
+<div class="sigap-page sigap-walkin">
 	<PageHeader
-		eyebrow="Antrean"
-		title="Ambil Antrean Walk-In"
-		description="Untuk kunjungan tanpa janji temu. Datang langsung ke fasilitas dan ambil nomor antrean di sini."
+		title="Ambil antrean tanpa janji"
+		description="Datang langsung ke fasilitas dan ambil nomor antrean. Tidak perlu membuat janji temu terlebih dahulu."
 	/>
 
 	<!--
@@ -261,17 +260,11 @@
 </div>
 
 <style>
-	.sigap-walkin {
-		max-width: 640px;
-		margin: 0 auto;
-		padding: var(--sigap-space-5) var(--sigap-space-4) var(--sigap-space-2);
-	}
-
-	@media (min-width: 768px) {
-		.sigap-walkin {
-			padding: var(--sigap-space-6) var(--sigap-space-5) var(--sigap-space-2);
-		}
-	}
+	/*
+		Layout comes from `.sigap-page`. The Pen gives the walk-in frame the
+		standard 40px desktop offset and runs its sections across the full
+		content column, so there is no panel cap here.
+	*/
 
 	/*
 		The form panel frames fields; it is not a control. Decorative hairline,
@@ -279,7 +272,6 @@
 		`--sigap-border` boundaries.
 	*/
 	.sigap-walkin__section {
-		margin-top: var(--sigap-space-4);
 		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
 		border: 1px solid var(--sigap-border-subtle);
@@ -290,7 +282,6 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--sigap-space-2);
-		margin-top: var(--sigap-space-4);
 	}
 
 	.sigap-walkin__alt-label {
@@ -354,7 +345,6 @@
 		decorative hairline. The number inside carries the emphasis.
 	*/
 	.sigap-walkin__ticket {
-		margin-top: var(--sigap-space-4);
 		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
 		border: 1px solid var(--sigap-border-subtle);

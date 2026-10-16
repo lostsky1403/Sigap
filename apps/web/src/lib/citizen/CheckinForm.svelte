@@ -47,24 +47,42 @@
 </script>
 
 <form class="sigap-checkin-form" novalidate on:submit|preventDefault={handleSubmit}>
-	<Field id="sigap-checkin-appointment_id" label="ID janji temu" required error={appointmentError}>
+	<!--
+		The helpers are the approved copy and they carry real information: where
+		the appointment id comes from, and the exact shape of the code. Without
+		them a citizen who cannot find the id has nothing to go on, and one who
+		types a five-character code learns nothing until it fails.
+	-->
+	<Field
+		id="sigap-checkin-appointment_id"
+		label="ID janji temu"
+		helper="Dari email atau halaman konfirmasi janji temu."
+		required
+		error={appointmentError}
+	>
 		<Input
 			id="sigap-checkin-appointment_id"
 			bind:value={appointmentId}
 			describedBy={appointmentError ? 'sigap-checkin-appointment_id-error' : ''}
 			invalid={Boolean(appointmentError)}
-			placeholder="ID janji temu"
+			placeholder="Contoh: 4d5e6f7a-…"
 			autocomplete="off"
 		/>
 	</Field>
 
-	<Field id="sigap-checkin-checkin_code" label="Kode check-in" required error={codeError}>
+	<Field
+		id="sigap-checkin-checkin_code"
+		label="Kode check-in"
+		helper="6 karakter huruf dan angka, misalnya 4F8K2Q."
+		required
+		error={codeError}
+	>
 		<Input
 			id="sigap-checkin-checkin_code"
 			bind:value={checkinCode}
 			describedBy={codeError ? 'sigap-checkin-checkin_code-error' : ''}
 			invalid={Boolean(codeError)}
-			placeholder="Kode check-in"
+			placeholder="Contoh: 4F8K2Q"
 			autocomplete="off"
 		/>
 	</Field>

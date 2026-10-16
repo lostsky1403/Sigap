@@ -360,7 +360,7 @@ describe('/appointments/new', () => {
 		const steps = Array.from(document.querySelectorAll('.sigap-stepper__label')).map(
 			(node) => node.textContent?.trim()
 		);
-		expect(steps).toEqual(['Fasilitas', 'Layanan', 'Waktu + Data Diri']);
+		expect(steps).toEqual(['Fasilitas', 'Layanan', 'Waktu + data']);
 		// The current step is marked, not just implied by position.
 		expect(document.querySelector('[aria-current="step"]')?.textContent).toContain('Fasilitas');
 	});
@@ -605,7 +605,7 @@ describe('/appointments/new', () => {
 		await fillValidBooking();
 		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
 
-		await waitFor(() => expect(document.body.textContent).toContain('berhasil dibuat'));
+		await waitFor(() => expect(document.body.textContent).toContain('Janji temu berhasil'));
 		// The code the citizen has to write down.
 		expect(document.querySelector('[data-testid="booking-checkin-code"]')?.textContent?.trim()).toBe('ZZ99YY');
 		expect(document.querySelector('[data-testid="booking-appointment-id"]')?.textContent?.trim()).toBe('appt-xyz');

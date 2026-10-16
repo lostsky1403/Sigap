@@ -45,8 +45,15 @@
 		min-width: 0;
 	}
 
+	/*
+		The Pen's admin `Content` frame is `[20,24]`: 20px vertical, 24px
+		horizontal. 20 is not a step on the 4px ladder, so it is written as the
+		literal the frame specifies rather than rounded to 16 or 24 — a 4px
+		difference on every admin page is visible as the header sitting closer
+		to or further from the toolbar than the reference.
+	*/
 	:global(.sigap-admin-page) {
 		min-width: 0;
-		padding: var(--sigap-space-5) var(--sigap-space-5);
+		padding: 20px var(--sigap-space-5);
 	}
 </style>

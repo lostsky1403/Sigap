@@ -102,15 +102,25 @@
 	<title>Status Kunjungan — Sigap</title>
 </svelte:head>
 
-<div class="sigap-status">
+<div class="sigap-page sigap-page--tight sigap-status">
 	<PageHeader
-		eyebrow="Kunjungan"
-		title="Status Kunjungan"
+		rule="compact"
+		title="Status kunjungan"
 		description="Masukkan kode check-in atau nomor antrean untuk melihat posisi kunjungan Anda saat ini."
 	/>
 
-	<section class="sigap-status__panel" style:border-radius={RADIUS.panel}>
-		<form novalidate on:submit|preventDefault={lookup}>
+	<!--
+		Two columns from 1024px up, as the Pen draws them: the lookup on the
+		left, a static explainer on the right. The explainer is not decoration —
+		the most common question this page raises is "what happens after I press
+		the button", and answering it here costs nothing and saves a support
+		call. It is the approved copy, verbatim, and it makes no claim about
+		this citizen's position: the position is only ever what the server
+		returned into the panel beside it.
+	-->
+	<div class="sigap-status__columns">
+		<section class="sigap-status__panel" style:border-radius={RADIUS.panel}>
+			<form novalidate on:submit|preventDefault={lookup}>
 			<Field
 				id="sigap-status-code"
 				label="Kode check-in atau nomor antrean"
@@ -183,25 +193,58 @@
 						yang tertera di tiket.
 					</p>
 				</div>
-			{:else if state === 'error'}
-				<div class="sigap-status__error" role="alert" data-testid="status-error">
-					{rateLimitMessage || otherErrorMessage || GENERIC_UNAVAILABLE}
-				</div>
-			{/if}
-		</div>
-	</section>
+				{:else if state === 'error'}
+					<div class="sigap-status__error" role="alert" data-testid="status-error">
+						{rateLimitMessage || otherErrorMessage || GENERIC_UNAVAILABLE}
+					</div>
+				{/if}
+			</div>
+		</section>
+
+		<aside class="sigap-status__aside" aria-labelledby="sigap-status-next-title">
+			<h2 id="sigap-status-next-title" class="sigap-status__aside-title">
+				Apa yang terjadi berikutnya
+			</h2>
+			<p class="sigap-status__aside-body">
+				Tunggu nomor antrean Anda dipanggil. Nomor akan muncul di layar tunggu fasilitas.
+				Pastikan Anda berada di ruang tunggu.
+			</p>
+		</aside>
+	</div>
 </div>
 
 <style>
-	.sigap-status {
-		max-width: 640px;
-		margin: 0 auto;
-		padding: var(--sigap-space-5) var(--sigap-space-4) var(--sigap-space-2);
+	/*
+		Layout, width and gutter come from `.sigap-page--tight`: the Pen draws
+		this page and Faskes on the same tighter frame, 40px from the masthead on
+		desktop and 20px on a phone.
+
+		Two columns from 1024px up, which is the correction that matters at
+		1440. The Pen runs the lookup at x 48 -> 959 against the left gutter and
+		puts a static explainer beside it, not a centred 640px strip with two
+		wide empty margins. The split is 2fr/1fr because that is the measured
+		proportion of the frame's two columns.
+	*/
+	.sigap-status__columns {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sigap-space-5);
 	}
 
-	@media (min-width: 768px) {
-		.sigap-status {
-			padding: var(--sigap-space-6) var(--sigap-space-5) var(--sigap-space-2);
+	@media (min-width: 1024px) {
+		.sigap-status__columns {
+			flex-direction: row;
+			align-items: flex-start;
+		}
+
+		.sigap-status__panel {
+			flex: 2 1 0;
+			min-width: 0;
+		}
+
+		.sigap-status__aside {
+			flex: 1 1 0;
+			min-width: 0;
 		}
 	}
 
@@ -211,10 +254,29 @@
 		button inside keep their own `--sigap-border` boundaries.
 	*/
 	.sigap-status__panel {
-		margin-top: var(--sigap-space-4);
 		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
 		border: 1px solid var(--sigap-border-subtle);
+	}
+
+	/*
+		The explainer. Deliberately NOT a panel: the Pen draws it as plain text
+		beside the card, and giving it a border would make two competing boxes
+		where the design has one. Its heading is a section title, one step down
+		from the page title, so it reads as an aside rather than a second page.
+	*/
+	.sigap-status__aside-title {
+		margin: 0;
+		font-size: var(--sigap-type-subtitle);
+		font-weight: 600;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-status__aside-body {
+		margin: var(--sigap-space-2) 0 0;
+		font-size: var(--sigap-type-body);
+		line-height: 1.6;
+		color: var(--sigap-muted);
 	}
 
 	.sigap-status__panel form {

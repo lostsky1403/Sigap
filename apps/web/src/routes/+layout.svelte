@@ -82,21 +82,12 @@
 	<CitizenHeader path={$page.url.pathname} {hasSession} {userEmail} {ctaEmphasis} />
 
 	<!--
-		The bottom padding reserves the fixed tab bar plus the device safe-area
-		inset, so the last element of a long page can never end up underneath it.
+		`<main>` is a bare landmark. The bottom reserve that keeps content clear
+		of the fixed tab bar lives on `.sigap-page`, the container every page
+		already renders — not here, because a page that does not use that
+		container would then get the reserve twice.
 	-->
-	<main class="sigap-citizen-main">
+	<main>
 		<slot />
 	</main>
 {/if}
-
-<style>
-	.sigap-citizen-main {
-		/*
-		 * 96px clears the 56px tab bar with room to spare, and
-		 * env(safe-area-inset-bottom) adds the home-indicator inset on devices
-		 * that have one.
-		 */
-		padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
-	}
-</style>

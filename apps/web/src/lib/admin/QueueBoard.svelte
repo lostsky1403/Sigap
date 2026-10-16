@@ -90,7 +90,14 @@
 						{ label: 'Nomor' },
 						{ label: 'Status' },
 						{ label: 'Fasilitas' },
-						{ label: 'Terdaftar' },
+						/*
+							Secondary: hidden below 1280px, per the Pen's own note
+							on the 768 frame — "Kolom sekunder disembunyikan di
+							bawah 1280px. Status dan Aksi tidak pernah
+							disembunyikan." At 768 the frame shows exactly Nomor,
+							Status, Fasilitas, Aksi.
+						*/
+						{ label: 'Terdaftar', secondary: true },
 						{ label: 'Dipanggil', secondary: true },
 						{ label: 'Selesai', secondary: true },
 						{ label: 'Aksi' }
