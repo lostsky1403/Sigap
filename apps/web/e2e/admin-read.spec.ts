@@ -579,7 +579,19 @@ test.describe('admin reads are real and scoped', () => {
 		// The summary cards settle first; the list may legitimately be empty.
 		await expect(page.getByText(/Menunggu/).first()).toBeVisible(SETTLE);
 
-		const body = (await page.locator('body').textContent()) ?? '';
+		// Read the VISIBLE text, with <script> removed.
+		//
+		// `body.textContent` includes inline script source, and in dev Vite
+		// injects `/@vite/client` plus a `__sveltekit_dev` bootstrap whose text
+		// contains a URL with an `@`. That made this assertion fail on a page
+		// that leaks nothing — the pattern matched the dev tooling, not the
+		// notification data. Cloning and stripping scripts keeps the test about
+		// what an operator can actually read.
+		const body = await page.evaluate(() => {
+			const clone = document.body.cloneNode(true) as HTMLElement;
+			clone.querySelectorAll('script').forEach((s) => s.remove());
+			return clone.textContent ?? '';
+		});
 		// The internal dedup key is never in the response, and nothing here may
 		// reconstruct a longer contact from the masked form.
 		expect(body, 'no hash may be shown').not.toMatch(/hash/i);

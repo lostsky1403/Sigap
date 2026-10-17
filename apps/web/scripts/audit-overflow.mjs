@@ -35,6 +35,7 @@ const ROUTES = [
 	['/appointments/check-in', 'check-in'],
 	['/queues/new', 'walk-in'],
 	['/patient/status', 'status'],
+	['/wallet', 'wallet'],
 	['/auth/login', 'login'],
 	['/auth/register', 'register'],
 	['/auth/logout', 'logout'],

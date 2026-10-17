@@ -39,3 +39,11 @@ review-shots/
 
 # Go build output (Makefile `build` target writes apps/api/bin/sigap-api).
 apps/api/bin/
+
+# Local preview runtime: logs, pid files, and the disposable E2E cluster.
+.local-preview/
+.local-e2e/
+
+# Playwright artifacts
+apps/web/test-results/
+apps/web/playwright-report/

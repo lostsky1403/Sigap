@@ -122,7 +122,7 @@ func logAuthzDenied(ctx context.Context, route router.Route, actor Actor, reason
 		ResourceType: "authz",
 		ResourceID:   resourceID,
 		ActorType:    string(actor.Type),
-		ActorUserID:  actor.UserID,
+		ActorUserID:  actor.AuditUserID(),
 		RequestID:    RequestIDFromContext(ctx),
 		Metadata: audit.SanitizeMetadata(map[string]any{
 			"reason":   reason,

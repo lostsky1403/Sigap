@@ -153,14 +153,17 @@ async function expectNoHorizontalOverflow(page: Page) {
 async function expectContentClearsBottomNav(page: Page) {
 	const clearance = await page.evaluate(() => {
 		const nav = document.querySelector('.sigap-bottom-nav');
-		const main = document.querySelector('.sigap-citizen-main');
-		if (!nav || !main) return null;
+		// The reserve lives on `.sigap-page`, not on `<main>`: `<main>` is a bare
+		// landmark (routes/+layout.svelte) and has no padding of its own. There is
+		// no `.sigap-citizen-main` element in the markup.
+		const container = document.querySelector('.sigap-page');
+		if (!nav || !container) return null;
 		return {
-			mainPaddingBottom: parseFloat(getComputedStyle(main).paddingBottom) || 0,
+			mainPaddingBottom: parseFloat(getComputedStyle(container).paddingBottom) || 0,
 			navHeight: nav.getBoundingClientRect().height
 		};
 	});
-	expect(clearance, 'the bottom nav and main must both exist').not.toBeNull();
+	expect(clearance, 'the bottom nav and the page container must both exist').not.toBeNull();
 	if (!clearance) return;
 	expect(clearance.mainPaddingBottom).toBeGreaterThanOrEqual(clearance.navHeight);
 }
@@ -760,7 +763,7 @@ test.describe('responsive and accessibility', () => {
 				// Clipping is the failure: a step whose label is cut off tells a
 				// citizen the form is longer than it is, and hides which step
 				// they are on.
-				for (const label of ['Fasilitas', 'Layanan', 'Waktu + Data Diri']) {
+				for (const label of ['Fasilitas', 'Layanan', 'Waktu + data']) {
 					const item = stepper.locator('li', { hasText: label });
 					await expect(item).toBeVisible();
 					const clipped = await item.evaluate((el) => {

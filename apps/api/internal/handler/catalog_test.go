@@ -371,3 +371,81 @@ func TestListPublicFacilities_EmptyCatalogIsNullOrEmpty(t *testing.T) {
 		t.Errorf("expected zero rows for an empty catalog, got %d", len(got))
 	}
 }
+
+// A service unit with no code must not fail the whole catalog response.
+//
+// `service_units.code` is nullable, and most seeded units leave it NULL: the
+// code is an operator-assigned shorthand, not something the system needs to
+// function. The handler scanned it into a plain string, so the first NULL
+// aborted the scan and the endpoint answered 500 — taking the booking
+// dropdown down for every facility, not just the one with the un-coded unit.
+//
+// This is the exact shape of the defect the live database exposed: 6 of 8
+// active units had a NULL code, so the endpoint was 100% broken while the
+// facilities endpoint beside it was fine.
+func TestPublicServiceUnits_ToleratesNullCode(t *testing.T) {
+	pool, h := setupCatalogTest(t)
+	ctx := context.Background()
+
+	facilityID := seedCatalogFacility(t, pool, "Puskesmas Uji Kode Null", "puskesmas", true)
+
+	codedID := uuid.NewString()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO service_units (id, facility_id, name, code, is_active)
+		 VALUES ($1, $2, 'Poli Berkode', 'BER-KODE', true)`, codedID, facilityID); err != nil {
+		t.Fatalf("seed coded unit: %v", err)
+	}
+	// The NULL-code row is the one under test: it is seeded second so a scan
+	// failure surfaces after at least one good row, which is how it happens in
+	// production.
+	nullID := uuid.NewString()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO service_units (id, facility_id, name, code, is_active)
+		 VALUES ($1, $2, 'Poli Tanpa Kode', NULL, true)`, nullID, facilityID); err != nil {
+		t.Fatalf("seed null-code unit: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM service_units WHERE id = ANY($1)`, []string{codedID, nullID})
+	})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/public/service-units?facility_id="+facilityID, nil)
+	rec := httptest.NewRecorder()
+	h.ListPublicServiceUnits(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with a NULL code present, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var envelope struct {
+		Success bool `json:"success"`
+		Data    []struct {
+			ID   string `json:"id"`
+			Code string `json:"code"`
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !envelope.Success {
+		t.Error("expected success:true")
+	}
+	if len(envelope.Data) != 2 {
+		t.Fatalf("expected both units, got %d", len(envelope.Data))
+	}
+
+	byID := map[string]string{}
+	for _, u := range envelope.Data {
+		byID[u.ID] = u.Code
+	}
+	if got := byID[codedID]; got != "BER-KODE" {
+		t.Errorf("coded unit: expected BER-KODE, got %q", got)
+	}
+	// The absence is carried as "", not omitted and not null: the web client
+	// types this field as `code: string`.
+	if got, present := byID[nullID]; !present || got != "" {
+		t.Errorf("null-code unit: expected an empty-string code, got %q (present=%v)", got, present)
+	}
+}

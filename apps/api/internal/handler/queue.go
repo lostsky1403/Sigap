@@ -104,7 +104,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		ResourceType: "queue",
 		ResourceID:   result.TicketID,
 		ActorType:    string(actor.Type),
-		ActorUserID:  actor.UserID,
+		ActorUserID:  actor.AuditUserID(),
 		FacilityID:   req.FacilityID,
 		RequestID:    identity.RequestIDFromContext(r.Context()),
 		Metadata: audit.SanitizeMetadata(map[string]any{

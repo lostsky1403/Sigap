@@ -42,17 +42,21 @@ async function expectNoHorizontalOverflow(page: Page) {
 async function expectContentClearsBottomNav(page: Page) {
 	const clearance = await page.evaluate(() => {
 		const nav = document.querySelector('.sigap-bottom-nav');
-		const main = document.querySelector('.sigap-citizen-main');
-		if (!nav || !main) return null;
-		const navStyle = getComputedStyle(nav);
-		const mainStyle = getComputedStyle(main);
+		// The reserve lives on `.sigap-page`, the container every page renders
+		// (see the `<main>` comment in routes/+layout.svelte). `<main>` itself is
+		// a bare landmark with no padding, so reading its padding-bottom returns
+		// 0 and the assertion fails on a layout that is correct. There is no
+		// `.sigap-citizen-main` element at all.
+		const container = document.querySelector('.sigap-page');
+		if (!nav || !container) return null;
+		const containerStyle = getComputedStyle(container);
 		return {
 			navBottom: nav.getBoundingClientRect().bottom,
-			mainPaddingBottom: parseFloat(mainStyle.paddingBottom) || 0,
+			mainPaddingBottom: parseFloat(containerStyle.paddingBottom) || 0,
 			navHeight: nav.getBoundingClientRect().height
 		};
 	});
-	expect(clearance, 'the bottom nav and main must both exist').not.toBeNull();
+	expect(clearance, 'the bottom nav and the page container must both exist').not.toBeNull();
 	if (!clearance) return;
 	// The content region reserves at least the height of the bar, so the last
 	// element of a long page cannot be covered by it.
@@ -199,10 +203,13 @@ test.describe('Beranda: real data, no demo content', () => {
 	test('renders the real seeded facility catalog', async ({ page }) => {
 		await page.goto('/');
 
-		// The heading the frozen reference specifies, so a shell that renders
-		// without a page cannot pass.
+		// The heading the frozen reference specifies for the 1440 frame
+		// (10 Citizen / Beranda / 1440, node `Title`), so a shell that renders
+		// without a page cannot pass. The 390 frame opens with a shorter
+		// question heading; the desktop hero title is what this breakpoint
+		// (Desktop Chrome, 1280x720) renders.
 		await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-			'Apa yang bisa Anda lakukan di Sigap?'
+			'Cari faskes, buat janji temu, dan pantau kunjungan Anda'
 		);
 
 		// Backed by the seeded database: the facility names come from the Go API,
@@ -267,7 +274,7 @@ test.describe('/faskes: the public facility catalog', () => {
 	test('lists real facilities from the local backend', async ({ page }) => {
 		await page.goto('/faskes');
 
-		await expect(page.getByRole('heading', { level: 1 })).toHaveText('Cari Faskes');
+		await expect(page.getByRole('heading', { level: 1 })).toHaveText('Cari fasilitas kesehatan');
 
 		// Seeded data, reached through the same-origin proxy.
 		const rows = page.locator('#sigap-facility-results li');

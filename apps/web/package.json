@@ -23,7 +23,8 @@
     "verify:type-scale": "node scripts/verify-type-scale.mjs",
     "verify:secondary-columns": "node scripts/verify-secondary-columns.mjs",
     "verify:read-states": "node scripts/verify-admin-read-states.mjs",
-    "verify:findings": "node scripts/verify-findings.mjs"
+    "verify:findings": "node scripts/verify-findings.mjs",
+    "verify:integration": "node scripts/verify-real-integration.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",
