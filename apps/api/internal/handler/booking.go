@@ -260,16 +260,30 @@ func normalizePhone(s string) string {
 	return re.ReplaceAllString(s, "")
 }
 
-// generateCheckinCode creates a random alphanumeric code of given length.
+// checkinCodeAlphabet is the symbol set a check-in code is drawn from.
+//
+// It deliberately omits I, O, 0 and 1. A check-in code is read off a
+// confirmation screen or an SMS and typed into a phone, often at a facility
+// entrance, and "O" versus "0" and "I" versus "1" are indistinguishable in
+// most sans faces. A citizen who transcribes the letter faithfully but the
+// screen renders a digit (or vice versa) gets "Kode tidak ditemukan" — the
+// code they hold is correct, they copied what they saw, and the system tells
+// them it does not exist. That is unfixable by the user and is exactly the
+// failure this alphabet prevents.
+//
+// 32 symbols over 6 positions is 32^6 = 1.07e9 combinations, which remains far
+// outside anything the endpoint's per-IP limit (30 requests/minute) can walk.
+const checkinCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+// generateCheckinCode creates a random code of the given length.
 func generateCheckinCode(length int) (string, error) {
-	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	result := make([]byte, length)
 	for i := range result {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(checkinCodeAlphabet))))
 		if err != nil {
 			return "", err
 		}
-		result[i] = charset[n.Int64()]
+		result[i] = checkinCodeAlphabet[n.Int64()]
 	}
 	return string(result), nil
 }

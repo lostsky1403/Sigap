@@ -229,15 +229,35 @@
 
 	function validate(): Record<string, string> {
 		const errors: Record<string, string> = {};
+
+		/*
+			Validate only the step the citizen can actually see.
+
+			Steps 2 and 3 are `disabled` and hidden until their predecessor is
+			satisfied, so reporting their errors tells someone to fill in fields
+			that are `display: none` — five messages at once on a pristine form,
+			four of them pointing at controls that cannot be reached. The first
+			incomplete step is the only one whose errors are actionable, so the
+			form reports that step and stops.
+		*/
 		const facilityError = validateRequired(facilityId, 'Fasilitas');
-		if (facilityError) errors.facility_id = facilityError;
+		if (facilityError) {
+			errors.facility_id = facilityError;
+			return errors;
+		}
 		// Validated against the DERIVED selection, not the raw one. Submitting
 		// `serviceUnitId` directly would send a stale unit belonging to another
 		// clinic whenever the citizen changed facility mid-form, and the server
 		// would answer "Unit layanan tidak ditemukan" — a correct error about a
 		// choice they never made.
 		const unitError = validateRequired(validServiceUnitId, 'Layanan');
-		if (unitError) errors.service_unit_id = unitError;
+		if (unitError) {
+			errors.service_unit_id = unitError;
+			return errors;
+		}
+
+		// Step 3 is now on screen, so all three of its fields are fair to
+		// report together.
 		const timeError = validateAppointmentTime(appointmentTime);
 		if (timeError) errors.appointment_time = timeError;
 		const nameError = validateName(patientName);

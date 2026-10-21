@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import Select, { type Option } from '$lib/ui/Select.svelte';
@@ -51,14 +52,37 @@
 	$: locked = disabled || submitting;
 
 	$: facilityError = errors.facility_id ?? (attempted ? validateRequired(facilityId, 'Fasilitas') : '');
-	$: nameError = errors.fullName ?? (attempted ? validateName(fullName) : '');
+	$: nameError = errors.fullName ?? (attempted ? validateName(fullName, 'Nama lengkap') : '');
 	$: phoneError = errors.phone ?? (attempted ? validatePhone(phone) : '');
 
-	function handleSubmit() {
+	async function handleSubmit() {
 		attempted = true;
-		if (validateRequired(facilityId, 'Fasilitas')) return;
-		if (validateName(fullName)) return;
-		if (validatePhone(phone)) return;
+
+		/*
+			Focus the first control that failed, after the error text has been
+			rendered.
+
+			Without this a keyboard or screen-reader user is left on the submit
+			button: the errors appear above them, they are told something is
+			wrong, and the only way back to the field is to Shift+Tab through the
+			form guessing where the problem is. The `tick()` is required — the
+			error is a reactive statement, so the field does not exist as invalid
+			until after the update flushes.
+		*/
+		const firstInvalidId = validateRequired(facilityId, 'Fasilitas')
+			? 'sigap-walkin-facilityId'
+			: validateName(fullName, 'Nama lengkap')
+				? 'sigap-walkin-fullName'
+				: validatePhone(phone)
+					? 'sigap-walkin-phone'
+					: null;
+
+		if (firstInvalidId) {
+			await tick();
+			document.getElementById(firstInvalidId)?.focus();
+			return;
+		}
+
 		onSubmit();
 	}
 </script>

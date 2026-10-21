@@ -88,10 +88,14 @@ describe('create demands the full required set', () => {
 
 	it('requires the type, and rejects one outside the enum', () => {
 		expect(validateFacilityForm(validForm({ type: '' }), 'create').type).toBeDefined();
+		// The message names the choices as the operator sees them in the select,
+		// not as the database stores them. It previously printed
+		// "rumah_sakit, puskesmas" while the control offered "Rumah sakit" and
+		// "Puskesmas", so the instruction could not be followed.
 		expect(
 			validateFacilityForm(validForm({ type: 'klinik' as FacilityFormValues['type'] }), 'create')
 				.type
-		).toBe('Tipe fasilitas tidak valid (pilih: rumah_sakit, puskesmas).');
+		).toBe('Tipe fasilitas tidak valid (pilih: Rumah Sakit, Puskesmas).');
 	});
 
 	it('requires the short code, which is the uniqueness key', () => {

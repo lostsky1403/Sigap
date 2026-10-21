@@ -1,7 +1,7 @@
 <script lang="ts">
 	import AuthForms from '$lib/citizen/AuthForms.svelte';
 	import AuthPanel from '$lib/citizen/AuthPanel.svelte';
-	import type { ActionData } from './$types';
+	import type { ActionData, PageData } from './$types';
 
 	/**
 	 * Presentation only.
@@ -23,6 +23,7 @@
 	 */
 
 	export let form: ActionData;
+	export let data: PageData | undefined = undefined;
 
 	// SvelteKit passes the page only the `fail(status, data)` payload, so the
 	// message is the whole signal available. See the login page for the same
@@ -38,7 +39,7 @@
 	title="Daftar"
 	description="Buat akun untuk memantau status kunjungan dan janji temu Anda."
 >
-	<AuthForms mode="register" {message} />
+	<AuthForms mode="register" {message} authConfigured={data?.authConfigured} />
 
 	<div slot="footer">
 		Sudah punya akun?

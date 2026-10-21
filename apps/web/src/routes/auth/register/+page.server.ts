@@ -1,5 +1,10 @@
 import { fail, redirect } from '@sveltejs/kit';
-import type { Actions } from './$types';
+import type { Actions, PageServerLoad } from './$types';
+
+/** See the note in auth/login/+page.server.ts: announce this before typing. */
+export const load: PageServerLoad = ({ locals }) => ({
+	authConfigured: Boolean(locals.supabase)
+});
 
 export const actions: Actions = {
 	async default({ request, locals }) {

@@ -115,7 +115,28 @@ func TestValidateBookAppointment(t *testing.T) {
 	}
 }
 
+// The generator must not emit characters a citizen cannot tell apart.
+//
+// This is the regression guard for the owner-reported failure: codes were drawn
+// from A-Z0-9, so "O" and "0" (and "I" and "1") both appeared. A citizen reading
+// a code off a screen and typing it into a phone had no way to know which glyph
+// the font was showing, and a correct code plus one reasonable transcription
+// produced "Kode tidak ditemukan".
 func TestGenerateCheckinCode(t *testing.T) {
+	// Assert on the alphabet itself, not on a sample. A sampled test would pass
+	// on a wrong alphabet most of the time and fail intermittently in CI, which
+	// is the worst possible signal.
+	for _, forbidden := range []rune{'I', 'O', '0', '1'} {
+		if strings.ContainsRune(checkinCodeAlphabet, forbidden) {
+			t.Errorf("alphabet contains the confusable character %q; "+
+				"a citizen cannot distinguish it from its lookalike", forbidden)
+		}
+	}
+	if len(checkinCodeAlphabet) < 30 {
+		t.Errorf("alphabet shrank to %d symbols; expected at least 30 for 6-char codes",
+			len(checkinCodeAlphabet))
+	}
+
 	code, err := generateCheckinCode(6)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -124,7 +145,7 @@ func TestGenerateCheckinCode(t *testing.T) {
 		t.Errorf("expected length 6, got %d", len(code))
 	}
 	for _, c := range code {
-		if !strings.ContainsRune("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", c) {
+		if !strings.ContainsRune(checkinCodeAlphabet, c) {
 			t.Errorf("unexpected character in code: %c", c)
 		}
 	}

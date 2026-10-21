@@ -63,6 +63,14 @@
 	export let message: string = '';
 	export let registered: boolean = false;
 	export let submitting: boolean = false;
+	/**
+	 * Whether signing in can succeed at all in this environment, decided by the
+	 * server before the page renders.
+	 *
+	 * `undefined` means "not told", which keeps the previous behaviour (only
+	 * report after a submit) for any caller that does not pass it.
+	 */
+	export let authConfigured: boolean | undefined = undefined;
 
 	$: serverMessage = message;
 
@@ -72,7 +80,7 @@
 	 * department has not finished setting up the service, which is not useful
 	 * to them and is not theirs to fix.
 	 */
-	$: isUnavailable = /belum dikonfigurasi/i.test(serverMessage);
+	$: isUnavailable = authConfigured === false || /belum dikonfigurasi/i.test(serverMessage);
 
 	/**
 	 * Only the confirmation mismatch is attributed to a field. Everything else
@@ -105,8 +113,14 @@
 			<Icon icon={ServerCrash} size={20} />
 		</span>
 		<div>
-			<p class="sigap-auth__notice-title">Masuk gagal karena terjadi gangguan pada layanan.</p>
-			<p class="sigap-auth__notice-hint">Silakan coba lagi dalam beberapa saat.</p>
+			<p class="sigap-auth__notice-title">
+				{authConfigured === false ? 'Masuk belum tersedia di lingkungan ini.' : 'Masuk gagal karena terjadi gangguan pada layanan.'}
+			</p>
+			<p class="sigap-auth__notice-hint">
+				{authConfigured === false
+					? 'Layanan akun belum diaktifkan di lingkungan pengembangan ini. Halaman admin tetap dapat dibuka dengan identitas pengembangan.'
+					: 'Silakan coba lagi dalam beberapa saat.'}
+			</p>
 		</div>
 	</div>
 {:else}

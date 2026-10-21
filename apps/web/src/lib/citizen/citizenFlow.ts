@@ -80,12 +80,19 @@ export function validateRequired(value: string, label: string): string {
 	return '';
 }
 
-export function validateName(value: string): string {
+/**
+ * A person's name, with the label the caller actually rendered.
+ *
+ * The message used to be hardcoded as "Nama pasien" while the walk-in form
+ * labels the field "Nama lengkap". An error that names a field the citizen
+ * cannot see on the page sends them looking for something that is not there.
+ */
+export function validateName(value: string, label = 'Nama pasien'): string {
 	const trimmed = asText(value).trim();
-	if (!trimmed) return 'Nama pasien wajib diisi.';
+	if (!trimmed) return `${label} wajib diisi.`;
 	// Same ceiling as validateBookAppointment, so a 51-character name is caught
 	// here rather than after a round trip.
-	if (trimmed.length > 100) return 'Nama pasien maksimal 100 karakter.';
+	if (trimmed.length > 100) return `${label} maksimal 100 karakter.`;
 	return '';
 }
 
@@ -109,9 +116,23 @@ export function validateAppointmentTime(value: string, now: Date = new Date()): 
 	return '';
 }
 
+/**
+ * Strips every space a citizen might insert while reading a code aloud or
+ * copying it out of an SMS ("5ZE IOO").
+ *
+ * Only whitespace. Dashes are NOT stripped: `PHB-0004` is a real ticket format
+ * and a dash is a meaningful character in this system, so removing it would
+ * change which strings are accepted rather than absorbing a formatting
+ * accident. The backend applies the same rule (`strings.Fields` join), so the
+ * two layers agree on what a code is.
+ */
+export function normalizeLookupCode(value: string): string {
+	return asText(value).replace(/\s+/g, '');
+}
+
 /** The backend's cap on a lookup code, from `maxPatientCodeLen` in patient.go. */
 export function validateLookupCode(value: string): string {
-	const trimmed = asText(value).trim();
+	const trimmed = normalizeLookupCode(value);
 	if (!trimmed) return 'Kode wajib diisi.';
 	if (trimmed.length > 64) return 'Kode terlalu panjang.';
 	// The backend's safeCodeRe. Checking it here turns a round trip into an
@@ -350,23 +371,53 @@ export type VisitProgress =
 /**
  * Maps the backend's `checkin_status` onto a progress presentation.
  *
- * The switch mirrors `mapCheckinStatus` in patient.go:
+ * `in_queue` is NOT "being served". The backend derives it from
+ * `appointment_status = 'queued'`, which is set the moment a queue ticket
+ * exists — the citizen is holding a number and waiting, which is step 2
+ * (Antre), not step 3 (Dilayani). Mapping it to Dilayani told every
+ * checked-in citizen they were already being seen while they sat in the
+ * waiting room; the ticket status is what distinguishes the two.
+ *
+ * `queueStatus` is the ticket's own state, already present on the response.
+ * It is optional because a scheduled appointment has no ticket yet:
+ *
+ *   waiting                -> Antre   (holding a number)
+ *   called / in_service    -> Dilayani (their turn has come)
+ *   completed              -> Selesai
+ *   cancelled              -> Dibatalkan
+ *
+ * The switch otherwise mirrors `mapCheckinStatus` in patient.go:
  *   not_checked_in → Check-In
  *   checked_in     → Antre
- *   in_queue       → Dilayani
  *   selesai        → Selesai
  *   dibatalkan     → Dibatalkan
  *   tidak_hadir    → Tidak hadir
  *   anything else  → returned unchanged by the backend, and passed through here
  */
-export function visitProgressFrom(checkinStatus: string): VisitProgress {
+export function visitProgressFrom(checkinStatus: string, queueStatus?: string): VisitProgress {
 	switch (checkinStatus) {
 		case 'not_checked_in':
 			return { kind: 'step', step: 'check-in' };
 		case 'checked_in':
 			return { kind: 'step', step: 'antre' };
 		case 'in_queue':
-			return { kind: 'step', step: 'dilayani' };
+			switch (queueStatus) {
+				case 'called':
+				case 'in_service':
+					return { kind: 'step', step: 'dilayani' };
+				case 'completed':
+					return { kind: 'step', step: 'selesai' };
+				case 'cancelled':
+					return { kind: 'cancelled' };
+				case 'skipped':
+					// Passed over. Not a step and not `no_show` either — the
+					// citizen did arrive — so it is surfaced as itself.
+					return { kind: 'unknown', raw: 'skipped' };
+				default:
+					// No ticket status, or `waiting`: they hold a number and are
+					// waiting. This is the common case after check-in.
+					return { kind: 'step', step: 'antre' };
+			}
 		case 'selesai':
 			return { kind: 'step', step: 'selesai' };
 		case 'dibatalkan':

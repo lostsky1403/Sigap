@@ -672,10 +672,15 @@ test.describe('D. walk-in', () => {
 			expect(text, `walk-in must not claim ${forbidden}`).not.toContain(forbidden);
 		}
 
-		// The way onward, now that there is a number to check on.
-		await expect(
-			page.getByRole('link', { name: /Cek status kunjungan/i })
-		).toHaveAttribute('href', '/patient/status');
+		// There is no status link, and that is the fix, not a regression.
+		//
+		// /patient/status resolves CHECK-IN CODES only: a formatted queue number
+		// is a per-facility daily sequence, and accepting it would let anyone
+		// walk the sequence and read other patients' visits. The old CTA sent
+		// every walk-in patient to a lookup that could only answer "Kode tidak
+		// ditemukan", then told them their number could not be used there.
+		await expect(page.getByRole('link', { name: /Cek status kunjungan/i })).toHaveCount(0);
+		await expect(page.getByTestId('walkin-track-note')).toContainText(/layar ruang tunggu/i);
 		await expect(page.locator('[data-testid="walkin-error"]')).toHaveCount(0);
 
 		// The booking-code route remains available as the alternative for a

@@ -218,17 +218,30 @@
 			{/if}
 
 			<div class="sigap-walkin__actions">
-				<a
-					class="sigap-walkin__cta"
-					style:border-radius={RADIUS.control}
-					href="/patient/status"
-				>
-					Cek status kunjungan
-				</a>
+				<!--
+					There is deliberately no "check your status" link here.
+
+					`/patient/status` resolves CHECK-IN CODES only. A queue number
+					is sequential per facility per day ("PHB-0004"), so accepting
+					it would let anyone walk the sequence and read other patients'
+					visit status — the enumeration vector that endpoint exists to
+					close. Offering the link anyway sent every walk-in patient to
+					a lookup that could only ever answer "Kode tidak ditemukan",
+					and the page then told them their number could not be used
+					there: a dead end presented as a feature.
+
+					What a walk-in patient can actually do is watch the facility's
+					waiting-room display, which is where the number is called.
+				-->
 				<Button variant="ghost" onClick={reset}>Ambil antrean lain</Button>
 			</div>
 
 			<p class="sigap-walkin__copy-hint" role="status" aria-live="polite">{copyHint}</p>
+
+			<p class="sigap-walkin__track-note" data-testid="walkin-track-note">
+				Pantau nomor ini di layar ruang tunggu fasilitas. Untuk memantau dari ponsel,
+				Anda memerlukan kode check-in, yang hanya diterbitkan untuk janji temu.
+			</p>
 		</section>
 	{:else}
 		<section class="sigap-walkin__section" style:border-radius={RADIUS.panel}>
@@ -440,26 +453,13 @@
 	}
 
 	/*
-		The one filled primary action in this action context. Text on the brand
-		fill is `--sigap-on-primary`, the frozen pairing — not `--sigap-surface`,
-		which happens to be white today and would silently drift if it were not.
+		Where the citizen can actually follow their number. Sits below the copy
+		hint, in the same muted weight: it is guidance, not an alert.
 	*/
-	.sigap-walkin__cta {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-height: var(--sigap-control-citizen);
-		padding: 0 var(--sigap-space-4);
-		font-size: var(--sigap-type-body);
-		font-weight: 500;
-		color: var(--sigap-on-primary);
-		background-color: var(--sigap-primary);
-		text-decoration: none;
-	}
-
-	.sigap-walkin__cta:focus-visible {
-		outline: 2px solid var(--sigap-primary);
-		outline-offset: 2px;
+	.sigap-walkin__track-note {
+		margin: var(--sigap-space-3) 0 0;
+		font-size: var(--sigap-type-label);
+		color: var(--sigap-muted);
 	}
 
 	.sigap-walkin__copy-hint {

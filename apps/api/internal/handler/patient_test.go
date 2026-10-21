@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -355,5 +357,136 @@ func TestPatientStatusLookup_RateLimited(t *testing.T) {
 	}
 	if body["error"] != "Terlalu banyak permintaan. Coba lagi nanti." {
 		t.Errorf("expected rate limit error, got %v", body["error"])
+	}
+}
+
+// The owner-reported failure, as a regression test.
+//
+// A check-in code was drawn from A-Z0-9, so it could contain both "O" and "0"
+// and both "I" and "1". A citizen reading the code off a screen and typing it
+// into a phone cannot tell which glyph the font is showing; the code they hold
+// is correct, their transcription is reasonable, and the system answered
+// "Kode tidak ditemukan" with no way forward.
+//
+// The lookup now folds those four characters on BOTH sides, so a digit-for-
+// letter transcription resolves. This test proves the folding works and that
+// the exact match still wins.
+func TestPatientStatusLookup_ToleratesConfusableCharacters(t *testing.T) {
+	pool, h := setupPatientTest(t)
+	ctx := context.Background()
+
+	if err := seedFacility(ctx, pool); err != nil {
+		t.Fatalf("seed facility: %v", err)
+	}
+	if err := seedServiceUnit(ctx, pool); err != nil {
+		t.Fatalf("seed service_unit: %v", err)
+	}
+
+	// A legacy-shaped code: the alphabet that produced the owner's failure.
+	// Distinct phone and day from `seedAppointment`: `uq_active_booking_per_
+	// patient_day` keys on (phone, facility, day), so reusing the shared fixture
+	// values would make this test pass alone and collide in a full run.
+	const legacyCode = "AB0IEF"
+	id := "ffffffff-ffff-ffff-ffff-ffffffffffff"
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO appointments (id, facility_id, service_unit_id, patient_display_name,
+			patient_phone, appointment_time, status, checkin_code)
+		 VALUES ($1, $2, $3, 'Pasien Demo', '085550000099',
+			NOW() + INTERVAL '2 days', 'scheduled', $4)`,
+		id, testFacID, testServiceUnitID, legacyCode); err != nil {
+		t.Fatalf("seed legacy appointment: %v", err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM appointments WHERE id = $1`, id)
+		cleanupTestData(context.Background(), pool)
+	})
+
+	cases := []struct {
+		name string
+		code string
+		want int
+	}{
+		{"exact", legacyCode, http.StatusOK},
+		{"lowercase", strings.ToLower(legacyCode), http.StatusOK},
+		// The two directions a transcription actually goes wrong: the citizen
+		// reads the digit 0 and types the letter O, or reads the letter I and
+		// types the digit 1.
+		{"letter O for digit zero", "ABOIEF", http.StatusOK},
+		{"digit one for letter I", "AB01EF", http.StatusOK},
+		{"both substituted", "ABO1EF", http.StatusOK},
+		{"space inserted mid-code", "AB0 IEF", http.StatusOK},
+		{"a different code entirely", "ZZZZZZ", http.StatusNotFound},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet,
+				"/api/v1/patient/status?code="+url.QueryEscape(tc.code), nil)
+			rec := httptest.NewRecorder()
+			h.PatientStatusLookup(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("code %q: expected %d, got %d: %s", tc.code, tc.want, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// Folding must never disclose one patient's status to the holder of another's
+// code. Two codes that differ only by a confusable pair canonicalise to the
+// same value, so the folded lookup has to refuse rather than return the first
+// row it finds.
+func TestPatientStatusLookup_AmbiguousFoldFailsClosed(t *testing.T) {
+	pool, h := setupPatientTest(t)
+	ctx := context.Background()
+
+	if err := seedFacility(ctx, pool); err != nil {
+		t.Fatalf("seed facility: %v", err)
+	}
+	if err := seedServiceUnit(ctx, pool); err != nil {
+		t.Fatalf("seed service_unit: %v", err)
+	}
+
+	const idA = "11111111-1111-1111-1111-111111111111"
+	const idB = "22222222-2222-2222-2222-222222222222"
+	// Distinct phones: `uq_active_booking_per_patient_day` allows one active
+	// booking per (phone, facility, day), so two rows sharing a number would
+	// collide on the fixture rather than on the behaviour under test.
+	for i, row := range []struct{ id, code, phone string }{
+		{idA, "QQ0QQQ", "085550000011"},
+		{idB, "QQOQQQ", "085550000012"},
+	} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO appointments (id, facility_id, service_unit_id, patient_display_name,
+				patient_phone, appointment_time, status, checkin_code)
+			 VALUES ($1, $2, $3, 'Pasien Demo', $4,
+				NOW() + INTERVAL '3 days' + ($5 || ' minutes')::interval, 'scheduled', $6)`,
+			row.id, testFacID, testServiceUnitID, row.phone, strconv.Itoa(i*30), row.code); err != nil {
+			t.Fatalf("seed %s: %v", row.code, err)
+		}
+	}
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM appointments WHERE id = ANY($1)`,
+			[]string{idA, idB})
+		cleanupTestData(context.Background(), pool)
+	})
+
+	// Both exact codes still resolve to their OWN row — folding must not
+	// interfere with an unambiguous match.
+	for _, code := range []string{"QQ0QQQ", "QQOQQQ"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/patient/status?code="+code, nil)
+		rec := httptest.NewRecorder()
+		h.PatientStatusLookup(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("exact code %q should resolve, got %d", code, rec.Code)
+		}
+	}
+
+	// A code that only matches after folding is ambiguous, and must be refused
+	// rather than resolved to whichever row the planner happened to return.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/patient/status?code=QQ1QQQ", nil)
+	rec := httptest.NewRecorder()
+	h.PatientStatusLookup(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("ambiguous fold must fail closed with 404, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

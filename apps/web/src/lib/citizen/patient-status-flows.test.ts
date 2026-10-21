@@ -56,12 +56,27 @@ describe('visit progress reproduces mapCheckinStatus', () => {
 	 * for it.
 	 */
 	it.each([
-		['not_checked_in', 'check-in'],
-		['checked_in', 'antre'],
-		['in_queue', 'dilayani'],
-		['selesai', 'selesai']
-	])('maps %s to the %s step', (backend, step) => {
-		expect(visitProgressFrom(backend)).toEqual({ kind: 'step', step });
+		['not_checked_in', undefined, 'check-in'],
+		['checked_in', undefined, 'antre'],
+		// `in_queue` alone means the citizen holds a ticket and is WAITING.
+		// The previous mapping sent them to "Dilayani" (being served) the moment
+		// a ticket existed, which told every checked-in citizen they were
+		// already with a clinician while they sat in the waiting room.
+		['in_queue', 'waiting', 'antre'],
+		['in_queue', undefined, 'antre'],
+		['in_queue', 'called', 'dilayani'],
+		['in_queue', 'in_service', 'dilayani'],
+		['in_queue', 'completed', 'selesai'],
+		['selesai', undefined, 'selesai']
+	])('maps %s (queue %s) to the %s step', (backend, queueStatus, step) => {
+		expect(visitProgressFrom(backend, queueStatus)).toEqual({ kind: 'step', step });
+	});
+
+	it('treats a cancelled ticket as cancelled even while the appointment is queued', () => {
+		// The ticket can be cancelled without the appointment being updated, so
+		// the ticket status has to win: showing "Antre" for a cancelled ticket
+		// keeps a citizen waiting for a call that will never come.
+		expect(visitProgressFrom('in_queue', 'cancelled')).toEqual({ kind: 'cancelled' });
 	});
 
 	it('treats dibatalkan and tidak_hadir as outcomes, not progress', () => {
@@ -142,10 +157,26 @@ describe('/patient/status', () => {
 		await waitFor(() => expect(document.querySelector('[data-testid="visit-steps"]')).toBeTruthy());
 
 		expect(document.body.textContent).toContain('Puskesmas Sukajaya');
-		// in_queue is the current step.
+		// FOUND has checkin_status 'in_queue' AND queue_status 'waiting': the
+		// citizen holds a ticket and is waiting, so the current step is Antre.
+		// Only a called or in-service ticket is Dilayani.
+		const current = document.querySelector('[aria-current="step"]');
+		expect(current?.textContent).toContain('Antre');
+		// And the earlier step is marked done, not just recoloured.
+		expect(document.querySelectorAll('.sigap-visit__step--done')).toHaveLength(1);
+	});
+
+	it('advances to Dilayani only once the ticket is called', async () => {
+		await lookupWith(() =>
+			jsonResponse({
+				success: true,
+				data: { ...FOUND, queue_status: 'called' }
+			})
+		);
+		await waitFor(() => expect(document.querySelector('[data-testid="visit-steps"]')).toBeTruthy());
+
 		const current = document.querySelector('[aria-current="step"]');
 		expect(current?.textContent).toContain('Dilayani');
-		// And the earlier steps are marked done, not just recoloured.
 		expect(document.querySelectorAll('.sigap-visit__step--done')).toHaveLength(2);
 	});
 
@@ -223,14 +254,35 @@ describe('/patient/status', () => {
 	it('rejects a malformed code without sending a request', async () => {
 		// safeCodeRe in patient.go is ^[A-Za-z0-9-]+$, and maxPatientCodeLen
 		// is 64. Catching it here turns a round trip into an inline message.
+		//
+		// The input is a character the code can never contain. Whitespace is
+		// deliberately NOT used here: it is now absorbed rather than rejected,
+		// because a code read aloud or copied from an SMS arrives as
+		// "5ZE IOO" often enough that refusing it blames the citizen for a
+		// formatting difference the lookup can absorb.
 		const calls = mockApi(() => jsonResponse({ success: true, data: FOUND }));
 		render(Status);
 		await waitFor(() => expect(field('Kode check-in')).toBeTruthy());
 
-		await fireEvent.input(field('Kode check-in'), { target: { value: 'has space' } });
+		await fireEvent.input(field('Kode check-in'), { target: { value: 'kode!salah' } });
 		await fireEvent.click(screen.getByRole('button', { name: /Cek Status/ }));
 		await waitFor(() => expect(document.body.textContent).toContain('huruf, angka'));
 		expect(calls).toHaveLength(0);
+	});
+
+	it('absorbs spaces in a code instead of rejecting it', async () => {
+		// The owner-reported failure: a citizen typed the code the way they read
+		// it and the app told them it was invalid or not found. Spaces are
+		// removed before validation and before the request.
+		const calls = mockApi(() => jsonResponse({ success: true, data: FOUND }));
+		render(Status);
+		await waitFor(() => expect(field('Kode check-in')).toBeTruthy());
+
+		await fireEvent.input(field('Kode check-in'), { target: { value: 'AB 12 CD' } });
+		await fireEvent.click(screen.getByRole('button', { name: /Cek Status/ }));
+
+		await waitFor(() => expect(calls).toHaveLength(1));
+		expect(calls[0].url).toContain('code=AB12CD');
 	});
 
 	it('does not send a request for an empty code', async () => {

@@ -234,12 +234,26 @@ describe('/queues/new: the exact contract', () => {
 		expect(link.getAttribute('href')).toBe('/appointments/check-in');
 	});
 
-	it('offers the status lookup after a successful walk-in', async () => {
+	it('does not offer a status lookup that cannot resolve a queue number', async () => {
+		/*
+			It used to. The success screen linked to /patient/status, but that
+			endpoint resolves check-in codes ONLY — a queue number returns 404 by
+			design, because the formatted number is a per-facility sequence and
+			accepting it would let anyone walk the sequence and read other
+			patients' visits. The link sent every walk-in patient to a lookup
+			that could only answer "Kode tidak ditemukan".
+
+			What replaces it is the truth: the number is called on the facility's
+			waiting-room display, and the phone lookup needs a check-in code that
+			a walk-in never receives.
+		*/
 		await submitWalkin(() => jsonResponse({ success: true, data: { formatted_number: 'A-001' } }));
-		await waitFor(() => expect(screen.getByRole('link', { name: /Cek status kunjungan/ })).toBeTruthy());
-		expect(
-			screen.getByRole('link', { name: /Cek status kunjungan/ }).getAttribute('href')
-		).toBe('/patient/status');
+
+		expect(screen.queryByRole('link', { name: /Cek status kunjungan/ })).toBeNull();
+
+		const note = await screen.findByTestId('walkin-track-note');
+		expect(note.textContent).toMatch(/layar ruang tunggu/i);
+		expect(note.textContent).toMatch(/kode check-in/i);
 	});
 });
 

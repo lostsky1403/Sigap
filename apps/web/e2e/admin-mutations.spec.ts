@@ -253,6 +253,25 @@ function queueRow(page: Page, formattedNumber: string): Locator {
 	return page.locator('tr', { has: page.getByText(formattedNumber, { exact: true }) });
 }
 
+/**
+ * The row for one specific ticket, located by id and asserted by its visible
+ * number.
+ *
+ * The original helper scoped rows by formatted number so a test would fail if
+ * the number were not rendered — a good property. It broke for a reason that
+ * has nothing to do with rendering: the daily counter resets, so "DEMO-0001"
+ * exists once per facility per DAY, and a dev database with a few days of
+ * walk-ins contains several. Playwright's strict mode then matched two rows and
+ * the test failed on a database that was merely older, not wrong.
+ *
+ * So the row is found by the id (unique), and the visible number is asserted
+ * separately by the caller — the operator-visibility property survives, and the
+ * locator stops depending on how much history the database happens to hold.
+ */
+function queueRowById(page: Page, ticketId: string): Locator {
+	return page.locator(`tr[data-ticket-id="${ticketId}"]`);
+}
+
 test.describe.configure({ mode: 'serial' });
 
 test.describe('T-3B5-01 queue status mutation', () => {
@@ -269,8 +288,10 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		const ticket = await createWalkIn(page, 'E2E Antrean Called');
 		await gotoAdmin(page, '/admin/queues');
 
-		const row = queueRow(page, ticket.number);
+		const row = queueRowById(page, ticket.id);
 		await expect(row, 'the new walk-in must appear on the board').toBeVisible(SETTLE);
+		// The operator reads the formatted number, so the row must show it.
+		await expect(row).toContainText(ticket.number);
 
 		// A waiting ticket offers EXACTLY called + cancelled. Anything else on
 		// the row would be an affordance the server would refuse.
@@ -289,7 +310,7 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		).toBeVisible(SETTLE);
 
 		// And the awaiting set is exactly what `called` allows.
-		const moved = queueRow(page, ticket.number);
+		const moved = queueRowById(page, ticket.id);
 		await expect(moved.getByRole('button')).toHaveCount(3);
 		await expect(moved.getByRole('button', { name: 'Layani' })).toBeVisible();
 		await expect(moved.getByRole('button', { name: 'Batalkan' })).toBeVisible();
@@ -300,7 +321,7 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		const ticket = await createWalkIn(page, 'E2E Antrean Toast');
 		await gotoAdmin(page, '/admin/queues');
 
-		const row = queueRow(page, ticket.number);
+		const row = queueRowById(page, ticket.id);
 		await expect(row).toBeVisible(SETTLE);
 		await row.getByRole('button', { name: 'Panggil' }).click();
 
@@ -319,7 +340,7 @@ test.describe('T-3B5-01 queue status mutation', () => {
 	test('surfaces the backend 400 message verbatim on an invalid transition', async ({ page }) => {
 		const ticket = await createWalkIn(page, 'E2E Antreai Invalid');
 		await gotoAdmin(page, '/admin/queues');
-		await expect(queueRow(page, ticket.number)).toBeVisible(SETTLE);
+		await expect(queueRowById(page, ticket.id)).toBeVisible(SETTLE);
 
 		// waiting -> completed is illegal in the state machine. The UI will not
 		// offer it, which is the point — so the only way to reach the refusal is
@@ -357,7 +378,7 @@ test.describe('T-3B5-01 queue status mutation', () => {
 			}
 		);
 
-		const row = queueRow(page, ticket.number);
+		const row = queueRowById(page, ticket.id);
 		await row.getByRole('button', { name: 'Panggil' }).click();
 
 		// VERBATIM. The row must show the server's own words, character for
@@ -370,7 +391,7 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		const ticket = await createWalkIn(page, 'E2E Antrean Terminal');
 		await gotoAdmin(page, '/admin/queues');
 
-		const row = queueRow(page, ticket.number);
+		const row = queueRowById(page, ticket.id);
 		await expect(row).toBeVisible(SETTLE);
 		// Drive it to `skipped`, which is terminal: called -> skipped.
 		await row.getByRole('button', { name: 'Panggil' }).click();
@@ -379,12 +400,12 @@ test.describe('T-3B5-01 queue status mutation', () => {
 				.locator('tr', { has: page.getByText(ticket.number, { exact: true }) })
 		).toBeVisible(SETTLE);
 
-		const calledRow = queueRow(page, ticket.number);
+		const calledRow = queueRowById(page, ticket.id);
 		await calledRow.getByRole('button', { name: 'Lewati' }).click();
 
 		// A terminal state says so in words. An empty cell would read as
 		// "still loading", which is a different and wrong claim.
-		const finished = queueRow(page, ticket.number);
+		const finished = queueRowById(page, ticket.id);
 		await expect(finished.getByText('Tidak ada aksi lanjutan')).toBeVisible(SETTLE);
 		await expect(finished.getByRole('button')).toHaveCount(0);
 	});
@@ -415,8 +436,10 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		const ticket = await createWalkIn(page, 'E2E Antrean Filter');
 		await gotoAdmin(page, '/admin/queues');
 
-		const row = queueRow(page, ticket.number);
+		const row = queueRowById(page, ticket.id);
 		await expect(row, 'the new walk-in must appear on the board').toBeVisible(SETTLE);
+		// The operator reads the formatted number, so the row must show it.
+		await expect(row).toContainText(ticket.number);
 
 		// The facility is read from the server's own list, not hardcoded, so the
 		// same assertion holds for every actor in the matrix.
@@ -467,10 +490,10 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		// applied at all, this row would still be visible too — which is why the
 		// control's value above is the real assertion and this one is the
 		// consequence.
-		await expect(queueRow(page, ticket.number)).toBeVisible(SETTLE);
+		await expect(queueRowById(page, ticket.id)).toBeVisible(SETTLE);
 
 		// The mutation, through the page's own control.
-		await queueRow(page, ticket.number).getByRole('button', { name: 'Panggil' }).click();
+		await queueRowById(page, ticket.id).getByRole('button', { name: 'Panggil' }).click();
 		await expect(
 			page.locator('section', { has: page.getByRole('heading', { name: 'Dipanggil' }) })
 				.locator('tr', { has: page.getByText(ticket.number, { exact: true }) })
@@ -488,7 +511,7 @@ test.describe('T-3B5-01 queue status mutation', () => {
 
 		// And the narrowing is still in force: the mutated row is still on the
 		// page, and the count label still reports a subset.
-		await expect(queueRow(page, ticket.number)).toBeVisible(SETTLE);
+		await expect(queueRowById(page, ticket.id)).toBeVisible(SETTLE);
 		await expect(page.locator('.sigap-facility-filter__count')).toContainText(
 			'Menampilkan:',
 			SETTLE

@@ -2,7 +2,7 @@
 	import { page } from '$app/stores';
 	import AuthForms from '$lib/citizen/AuthForms.svelte';
 	import AuthPanel from '$lib/citizen/AuthPanel.svelte';
-	import type { ActionData } from './$types';
+	import type { ActionData, PageData } from './$types';
 
 	/**
 	 * Presentation only.
@@ -15,6 +15,7 @@
 	 */
 
 	export let form: ActionData;
+	export let data: PageData | undefined = undefined;
 
 	/**
 	 * The action's outcome.
@@ -46,7 +47,7 @@
 	title="Masuk"
 	description="Masuk untuk mengelola fasilitas dan antrean."
 >
-	<AuthForms mode="login" {message} {registered} />
+	<AuthForms mode="login" {message} {registered} authConfigured={data?.authConfigured} />
 
 	<div slot="footer">
 		Belum punya akun?

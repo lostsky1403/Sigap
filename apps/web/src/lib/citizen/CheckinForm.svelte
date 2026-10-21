@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -38,10 +39,24 @@
 		errors.appointment_id ?? (attempted ? validateRequired(appointmentId, 'ID janji temu') : '');
 	$: codeError = errors.checkin_code ?? (attempted ? validateRequired(checkinCode, 'Kode check-in') : '');
 
-	function handleSubmit() {
+	async function handleSubmit() {
 		attempted = true;
-		if (validateRequired(appointmentId, 'ID janji temu')) return;
-		if (validateRequired(checkinCode, 'Kode check-in')) return;
+
+		// Focus the first invalid control once its error has rendered, so a
+		// keyboard user is taken to the problem instead of being left on the
+		// submit button with two messages somewhere above them.
+		const firstInvalidId = validateRequired(appointmentId, 'ID janji temu')
+			? 'sigap-checkin-appointment_id'
+			: validateRequired(checkinCode, 'Kode check-in')
+				? 'sigap-checkin-checkin_code'
+				: null;
+
+		if (firstInvalidId) {
+			await tick();
+			document.getElementById(firstInvalidId)?.focus();
+			return;
+		}
+
 		onSubmit();
 	}
 </script>

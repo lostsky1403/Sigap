@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import VisitProgress from '$lib/citizen/VisitProgress.svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
@@ -13,6 +14,7 @@
 	import {
 		GENERIC_UNAVAILABLE,
 		formatAppointmentTime,
+		normalizeLookupCode,
 		validateLookupCode
 	} from '$lib/citizen/citizenFlow';
 
@@ -45,7 +47,14 @@
 	async function lookup() {
 		attempted = true;
 		fieldError = validateLookupCode(code);
-		if (fieldError) return;
+		if (fieldError) {
+			// Focus the field the error belongs to. Leaving focus on the submit
+			// button means a keyboard user is told "Kode wajib diisi." with no
+			// indication of where, and must Shift+Tab back to find it.
+			await tick();
+			document.getElementById('sigap-status-code')?.focus();
+			return;
+		}
 		if (state === 'loading') return;
 
 		state = 'loading';
@@ -53,7 +62,7 @@
 		rateLimitMessage = '';
 		otherErrorMessage = '';
 
-		const outcome = await lookupPatientStatus(String(code ?? "").trim());
+		const outcome = await lookupPatientStatus(normalizeLookupCode(code));
 
 		if (outcome.ok) {
 			status = outcome.data;
@@ -127,14 +136,14 @@
 				label="Kode check-in"
 				required
 				error={fieldError}
-				helper="Kode diberikan saat membuat janji temu atau saat check-in."
+				helper="Enam karakter, dari halaman konfirmasi janji temu Anda. Tidak peka huruf besar-kecil."
 			>
 				<Input
 					id="sigap-status-code"
 					bind:value={code}
 					describedBy={fieldError ? 'sigap-status-code-error' : ''}
 					invalid={Boolean(fieldError)}
-					placeholder="Contoh: AB12CD"
+					placeholder="Contoh: AB24CD"
 					autocomplete="off"
 					disabled={state === 'loading'}
 				/>
@@ -167,6 +176,7 @@
 					<VisitProgress
 						checkinStatus={status.checkin_status}
 						queueNumber={status.queue_formatted_number ?? ''}
+						queueStatus={status.queue_status}
 					/>
 
 					<!--
@@ -189,8 +199,29 @@
 					</span>
 					<h2 class="sigap-status__empty-title">Kode tidak ditemukan</h2>
 					<p class="sigap-status__empty-body">
-						Periksa kembali kode Anda. Kode check-in dibuat saat Anda membuat janji temu dan
-						ditampilkan di halaman konfirmasi janji temu Anda.
+						Kode check-in terdiri dari enam karakter dan tertulis di halaman konfirmasi
+						janji temu Anda. Perhatikan huruf <strong>O</strong> dan angka <strong>0</strong>,
+						serta huruf <strong>I</strong> dan angka <strong>1</strong> — keduanya mudah
+						tertukar saat dibaca dari layar.
+					</p>
+					<!--
+						A recovery path, not just a restatement of the failure. Before
+						this, a citizen whose code did not resolve was told only that
+						the code was wrong and had nowhere to go next: the page named
+						no alternative and offered no way to reach the facility.
+					-->
+					<ul class="sigap-status__recovery">
+						<li>
+							Belum punya janji temu?
+							<a class="sigap-inline-link" href="/appointments/new">Buat janji temu</a>
+						</li>
+						<li>
+							Sudah punya janji temu tapi kodenya hilang? Hubungi fasilitas tempat Anda
+							membuat janji temu — petugas dapat mencocokkan data Anda di sana.
+						</li>
+					</ul>
+					<p class="sigap-status__empty-note">
+						Hanya kode check-in yang dapat dicari di halaman ini.
 					</p>
 				</div>
 				{:else if state === 'error'}
@@ -354,6 +385,31 @@
 	.sigap-status__empty-body {
 		margin: 0;
 		font-size: var(--sigap-type-label);
+		color: var(--sigap-muted);
+	}
+
+	/*
+		The recovery list. A numbered/ordered treatment would imply a sequence the
+		citizen must follow; these are alternatives, so they are an unordered list
+		with a visible marker and a real gap between the items.
+	*/
+	.sigap-status__recovery {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sigap-space-2);
+		margin: 0;
+		padding-left: 1.1em;
+		font-size: var(--sigap-type-label);
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-status__recovery li::marker {
+		color: var(--sigap-muted);
+	}
+
+	.sigap-status__empty-note {
+		margin: 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 

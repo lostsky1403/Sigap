@@ -30,8 +30,15 @@
 	 */
 	export let checkinStatus: string;
 	export let queueNumber: string = '';
+	/**
+	 * The ticket's own state (`waiting`, `called`, `in_service`, ...).
+	 *
+	 * Required to tell "holding a number" from "being served": the appointment
+	 * status alone cannot, because it is `queued` for both.
+	 */
+	export let queueStatus: string | undefined = undefined;
 
-	$: progress = visitProgressFrom(checkinStatus);
+	$: progress = visitProgressFrom(checkinStatus, queueStatus);
 	/*
 	 * Narrowed once, in the script, rather than with a `: this is ...` guard in
 	 * the template. The template then reads a plain optional value, and the

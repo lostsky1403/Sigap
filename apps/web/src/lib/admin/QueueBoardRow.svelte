@@ -48,7 +48,15 @@
 	export let errorMessage: string = '';
 </script>
 
-<tr class="sigap-queue-row">
+<!--
+	`data-ticket-id` is the stable key for this row.
+
+	A formatted number is NOT unique across time: the daily counter resets, so
+	"DEMO-0001" exists once per facility per day. Anything that needs to point at
+	one specific ticket — a test, a future deep link from a notification — has to
+	use the id, not the number the citizen reads.
+-->
+<tr class="sigap-queue-row" data-ticket-id={ticketId}>
 	<td class="sigap-queue-row__number">{formattedNumber}</td>
 	<td class="sigap-queue-row__status">
 		<AdminStatusBadge

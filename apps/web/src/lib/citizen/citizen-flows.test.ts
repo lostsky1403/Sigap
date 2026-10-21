@@ -9,6 +9,7 @@ import {
 	validateName,
 	validateAppointmentTime,
 	validateLookupCode,
+	normalizeLookupCode,
 	estimatedWaitLabel,
 	checkInDeepLink,
 	classifyCheckInFailure,
@@ -191,8 +192,21 @@ describe('citizen flow helpers', () => {
 		expect(validateLookupCode('')).toContain('wajib diisi');
 		expect(validateLookupCode('ABC123')).toBe('');
 		expect(validateLookupCode('A-1')).toBe('');
-		expect(validateLookupCode('has space')).toContain('huruf, angka');
+		expect(validateLookupCode('kode!salah')).toContain('huruf, angka');
 		expect(validateLookupCode('x'.repeat(65))).toContain('terlalu panjang');
+	});
+
+	it('absorbs whitespace in a lookup code rather than rejecting it', () => {
+		// A citizen reading a code aloud or pasting it from an SMS produces
+		// "AB 12 CD". The old rule called that malformed and told them to fix
+		// characters they had not got wrong.
+		expect(validateLookupCode('AB 12 CD')).toBe('');
+		expect(normalizeLookupCode('AB 12 CD')).toBe('AB12CD');
+		expect(normalizeLookupCode('  ab12cd  ')).toBe('ab12cd');
+		// A dash is a real character in this system (ticket numbers are
+		// "PHB-0004"), so it is NOT stripped — that would change which strings
+		// are accepted rather than absorb a formatting accident.
+		expect(normalizeLookupCode('PHB-0004')).toBe('PHB-0004');
 	});
 
 	it('words a wait time as an estimate, never as a live figure', () => {
