@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="concept-a-title">
+  <title id="concept-a-title">Sigap concept A — the route S</title>
+  <g id="symbol" fill="#0F766E">
+    <path d="M190.96 100.92 A67 67 0 1 0 128 145 L128 109 A31 31 0 1 1 157.13 88.6 Z"/>
+    <path d="M65.04 153.08 A67 67 0 1 0 128 109 L128 145 A31 31 0 1 1 98.87 165.4 Z"/>
+  </g>
+</svg>

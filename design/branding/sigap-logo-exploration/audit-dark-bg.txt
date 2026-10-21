@@ -1,0 +1,21 @@
+
+=== concept-a.svg  (432 bytes)
+viewBox 0 0 256 256 · aspect 1.0 (square)
+colours 1: #0f766e · gradients 0 · anchors 10
+margins L61.2 R61.2 T11.0 B13.0 · bbox fill 0.473
+✔ no issues found
+production-readiness score: 100/100 (heuristic)
+
+=== concept-b.svg  (350 bytes)
+viewBox 0 0 256 256 · aspect 1.0 (square)
+colours 1: #0f766e · gradients 0 · anchors 9
+margins L32.0 R32.0 T32.0 B32.0 · bbox fill 0.562
+✔ no issues found
+production-readiness score: 100/100 (heuristic)
+
+=== concept-c.svg  (367 bytes)
+viewBox 0 0 256 256 · aspect 1.0 (square)
+colours 1: #0f766e · gradients 0 · anchors 6
+margins L28.0 R28.0 T29.3 B29.3 · bbox fill 0.602
+✔ no issues found
+production-readiness score: 100/100 (heuristic)
