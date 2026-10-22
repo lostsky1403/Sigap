@@ -376,9 +376,16 @@
 				Move focus to the confirmation. Otherwise a screen reader or
 				keyboard user is left focused on a submit button that no longer
 				exists, and the next Tab goes somewhere arbitrary.
+
+				`preventScroll` because focusing normally scrolls the section into
+				view, and the section sits below the page header — so the browser
+				scrolled 88px and left the h1 "Janji temu berhasil" clipped under
+				the sticky masthead. The citizen's first sight of the success
+				message was a sliced-off word. The page is already at the top when
+				the form is replaced, so there is nothing to scroll to.
 			*/
 			await tick();
-			document.getElementById('sigap-booking-confirmation')?.focus();
+			document.getElementById('sigap-booking-confirmation')?.focus({ preventScroll: true });
 			return;
 		}
 
@@ -1026,6 +1033,14 @@
 		margin-top: var(--sigap-space-4);
 		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
+		/*
+			The section receives focus when the booking succeeds, and the browser
+			scrolls a focused element into view. The masthead is sticky and 56px
+			tall, so without this the page scrolls the h1 up underneath it and
+			the confirmation's own heading is clipped — the citizen's first
+			glimpse of "Janji temu berhasil" is a sliced-off word.
+		*/
+		scroll-margin-top: 72px;
 		border: 1px solid var(--sigap-border-subtle);
 	}
 

@@ -96,7 +96,10 @@
 			 */
 			ticket = normalizeQueueTicket(outcome.data);
 			await tick();
-			document.getElementById('sigap-walkin-result')?.focus();
+			// preventScroll: same reason as check-in — focusing would scroll the
+			// ticket into view and clip the page heading under the sticky
+			// masthead.
+			document.getElementById('sigap-walkin-result')?.focus({ preventScroll: true });
 			return;
 		}
 		if (isAbort(outcome.error)) return;
@@ -361,6 +364,11 @@
 		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
 		border: 1px solid var(--sigap-border-subtle);
+		/*
+			Focused on success, so the browser scrolls it into view. The sticky
+			56px masthead would otherwise cover its heading.
+		*/
+		scroll-margin-top: 72px;
 	}
 
 	.sigap-walkin__ticket-head {

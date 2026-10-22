@@ -111,7 +111,11 @@
 		if (outcome.ok) {
 			ticket = outcome.data;
 			await tick();
-			document.getElementById('sigap-checkin-result')?.focus();
+			// preventScroll: the result sits below the page header, and focusing
+			// normally scrolls it into view — leaving the h1 clipped under the
+			// sticky masthead. The form is replaced in place, so there is
+			// nothing to scroll to.
+			document.getElementById('sigap-checkin-result')?.focus({ preventScroll: true });
 			return;
 		}
 		if (isAbort(outcome.error)) return;
@@ -233,6 +237,15 @@
 		container instead would centre a narrow column on a 1440 screen and
 		leave margins the approved frame does not have.
 	*/
+	/*
+		The result block receives focus when check-in succeeds, and the browser
+		scrolls a focused element into view. The masthead is sticky and 56px
+		tall, so without this the heading it lands on is clipped underneath it.
+	*/
+	#sigap-checkin-result {
+		scroll-margin-top: 72px;
+	}
+
 	.sigap-checkin__alt {
 		display: flex;
 		flex-wrap: wrap;
