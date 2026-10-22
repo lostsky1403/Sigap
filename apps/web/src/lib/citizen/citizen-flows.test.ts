@@ -111,16 +111,24 @@ const defaultHandler = (url: string) => {
 };
 
 /**
- * Finds a labelled control by a substring of its accessible name.
+ * Finds a labelled form control by a substring of its accessible name.
  *
  * Not `getByLabelText(exact)`. A required Field renders its label as
- * "Fasilities *(wajib diisi)*" — the visible asterisk plus a visually hidden
+ * "Fasilitas *(wajib diisi)*" — the visible asterisk plus a visually hidden
  * "(wajib diisi)" for screen readers — so the accessible name is the whole
  * string, not the bare word. Querying the exact bare word fails on every
  * required field, which is a test-authoring trap rather than a product defect.
+ *
+ * Scoped to form controls on purpose. The stepper above the form also names
+ * "Fasilitas" and "Layanan" — and, since those steps became revisitable, it
+ * names them in a button whose accessible name is "Ubah fasilitas". A bare
+ * `getByLabelText(/Fasilitas/i)` therefore matches two elements and throws,
+ * which says nothing about the behaviour under test.
  */
 function labelled(name: string): HTMLElement {
-	return screen.getByLabelText(new RegExp(name, 'i'));
+	return screen.getByLabelText(new RegExp(name, 'i'), {
+		selector: 'select, input, textarea'
+	});
 }
 
 const facilityField = () => labelled('Fasilitas') as HTMLSelectElement;

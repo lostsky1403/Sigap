@@ -19,6 +19,19 @@
 		numeric?: boolean;
 		/** Header alignment, when it differs from the column's body alignment. */
 		headerNumeric?: boolean;
+		/**
+		 * Keep this column against the region's right edge while the rest of the
+		 * table scrolls under it.
+		 *
+		 * For the action column. Below 1280px a queue table is wider than a phone,
+		 * and an action button that lives past the right edge of a scroll box with
+		 * no visible scrollbar is an action the operator cannot find. The flag is
+		 * on the COLUMN because the header cell is rendered here while the body
+		 * cell is rendered by the caller's row component: the caller adds
+		 * `sigap-table-col-pinned` to its own `<td>`, exactly as it already does
+		 * for `sigap-table-col-secondary`.
+		 */
+		pin?: boolean;
 	}
 </script>
 
@@ -72,6 +85,7 @@
 					<th
 						scope="col"
 						class:sigap-table-col-secondary={column.secondary}
+						class:sigap-table-col-pinned={column.pin}
 						class:sigap-data-table__th--numeric={column.numeric ?? column.headerNumeric}
 					>
 						{column.label}
@@ -268,6 +282,59 @@
 		padding: 24px 12px;
 		text-align: center;
 		color: var(--sigap-muted);
+	}
+
+	/*
+		THE PINNED COLUMN.
+
+		`position: sticky` on a `td` sticks it to the scrollport of the nearest
+		scrolling ancestor, which is the region above. The header cell is already
+		`position: sticky` on the vertical axis; adding `right: 0` to it keeps the
+		label above its own cells on the horizontal axis too, and the higher
+		`z-index` keeps it over the headers scrolling past it.
+
+		WHY AN INSET SHADOW AND NOT A BORDER. The table is `border-collapse:
+		collapse`, and a collapsed border belongs to the table's border grid, not
+		to the cell — it stays behind when the cell sticks, leaving the pinned
+		column looking detached from the row it is part of. An inset shadow is
+		painted by the cell itself and travels with it.
+
+		The background is OPAQUE and matches the row, and the hover rule below
+		matches the row hover, because a transparent pinned cell lets the columns
+		scrolling underneath show through it — which reads as a rendering fault
+		rather than as a pin.
+	*/
+	:global(.sigap-data-table thead th.sigap-table-col-pinned) {
+		right: 0;
+		z-index: 2;
+		/*
+			`width: 1%` is the table-layout idiom for "take only what you need":
+			an auto-layout table treats a 1% column as min-content and gives the
+			remaining width to its siblings. Without it the action column absorbs
+			its share of a wide table, and on a phone the pinned column ends up
+			covering most of the row it is meant to keep reachable.
+		*/
+		width: 1%;
+	}
+
+	:global(.sigap-data-table tbody td.sigap-table-col-pinned) {
+		position: sticky;
+		right: 0;
+		z-index: 1;
+		width: 1%;
+		background-color: var(--sigap-surface);
+		/*
+			A border, not a shadow. This system has no shadows at all — focus
+			indication uses `outline` — so adding one here would be the single
+			decorative exception, and the visual audit refuses it. A left border
+			draws the same seam between the pinned cell and the content sliding
+			underneath it.
+		*/
+		border-left: 1px solid var(--sigap-border-subtle);
+	}
+
+	:global(.sigap-data-table tbody tr:hover td.sigap-table-col-pinned) {
+		background-color: var(--sigap-canvas);
 	}
 
 	/*

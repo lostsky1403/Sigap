@@ -1,5 +1,5 @@
 import { apiFetchList, type ApiResult } from '../client';
-import type { PatientStatus, PublicServiceUnit } from '../types/api';
+import type { PublicServiceUnit } from '../types/api';
 
 /**
  * Citizen-authenticated endpoints.
@@ -9,17 +9,14 @@ import type { PatientStatus, PublicServiceUnit } from '../types/api';
  * units they can book with, but never another citizen's data: the backend
  * scopes these by the session's identity, and the client adds no identifier of
  * its own.
- */
-
-/**
- * Status of the signed-in citizen's own appointments.
  *
- * The backend resolves the citizen from the session, so no id is sent. Sending
- * one anyway would be asking the server to trust a client-supplied identifier.
+ * There is deliberately no `myAppointments()` here. A previous version called
+ * `/api/v1/patient/appointments`, which is not registered in the Go route table
+ * and has no SvelteKit proxy — it was answered by the deny-by-default
+ * middleware, so it could only ever fail. Listing a citizen's appointments
+ * needs an identity to scope them to, and that is a product decision (see
+ * design/sigap-v2-capability-matrix.md, F1), not a client helper.
  */
-export function myAppointments(signal?: AbortSignal): Promise<ApiResult<PatientStatus[]>> {
-	return apiFetchList<PatientStatus>('/api/v1/patient/appointments', { signal });
-}
 
 /** Service units available for booking, optionally narrowed to one facility. */
 export function bookableServiceUnits(

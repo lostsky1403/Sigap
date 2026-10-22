@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // GenerateInput matches the public contract (validated at handler boundary).
@@ -66,9 +68,12 @@ func (f *fakeQueueService) Generate(ctx context.Context, input GenerateInput) (G
 	f.counter++
 	now := time.Now().UTC().Format(time.RFC3339)
 
+	// TicketID is persisted into uuid columns (appointments.queue_ticket_id), so
+	// it must be a real UUID: a synthetic "ticket-N" string fails at the column
+	// with a driver-level syntax error the caller cannot classify or recover.
 	return GenerateResult{
-		TicketID:             fmt.Sprintf("ticket-%d", f.counter),
-		FormattedNumber:      "RSK-0001",
+		TicketID:             uuid.New().String(),
+		FormattedNumber:      fmt.Sprintf("RSK-%04d", f.counter),
 		Status:               "waiting",
 		RegisteredAt:         now,
 		EstimatedWaitMinutes: 25,

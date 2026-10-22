@@ -175,15 +175,28 @@ export interface ServiceUnitInput {
 	description?: string;
 }
 
+/**
+ * Creates a service unit under one facility.
+ *
+ * `facility_id` travels in the BODY, not the path. The path form
+ * (`/api/v1/admin/facilities/{id}/service-units`) is not registered in the Go
+ * route table, so every call to it was answered by the deny-by-default
+ * middleware with a 401 that reads like an auth failure. The handler
+ * (`CreateServiceUnit` in admin.go) parses the facility from the request body
+ * and then checks `schedule.manage` at that specific facility — which is the
+ * real authorization step, and the reason the id must be the caller's target
+ * rather than something the server infers.
+ */
 export function createServiceUnit(
 	facilityId: string,
 	input: ServiceUnitInput,
 	signal?: AbortSignal
 ): Promise<ApiResult<{ id: string }>> {
-	return apiFetch<{ id: string }>(
-		`/api/v1/admin/facilities/${encodeURIComponent(facilityId)}/service-units`,
-		{ method: 'POST', body: input, signal }
-	);
+	return apiFetch<{ id: string }>('/api/v1/admin/service-units', {
+		method: 'POST',
+		body: { facility_id: facilityId, ...input },
+		signal
+	});
 }
 
 /* ------------------------------- schedules ------------------------------ */

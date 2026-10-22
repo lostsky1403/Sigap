@@ -177,7 +177,7 @@
 
 	{#if ticket}
 		<div id="sigap-checkin-result" tabindex="-1">
-			<QueueTicket {ticket} onReset={reset} onCopy={copyValue} />
+			<QueueTicket {ticket} {checkinCode} onReset={reset} onCopy={copyValue} />
 		</div>
 	{:else}
 		<section class="sigap-checkin__panel" style:border-radius={RADIUS.panel}>

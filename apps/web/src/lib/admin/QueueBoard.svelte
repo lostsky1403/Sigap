@@ -1,27 +1,37 @@
 <script lang="ts">
-	import DataTable from '$lib/ui/DataTable.svelte';
-	import QueueBoardRow from './QueueBoardRow.svelte';
-	import { indexBy, facilityName } from '$lib/domain/joins';
-	import { allowedQueueTransitions } from '$lib/domain/status';
-	import { latestQueueChange } from './queueSource';
+	import QueueBand from './QueueBand.svelte';
+	import { indexBy } from '$lib/domain/joins';
+	import { latestQueueChange, partitionQueueDay } from './queueSource';
 	import { formatDateTime } from '$lib/domain/format';
 	import type { AdminFacility, AdminQueueTicket, QueueStatus } from '$lib/api/types/api';
 
 	/**
 	 * The queue read board.
 	 *
-	 * Groups the scoped tickets into the three frozen bands — Dipanggil, Menunggu,
-	 * Selesai hari ini — and renders each as its own table so an operator can
-	 * scan one band without sorting. The grouping is DERIVED from the current
-	 * status field, not from a date comparison: a ticket's status is the server's
-	 * authoritative answer, and re-deriving "is it done today" from a timestamp
-	 * would contradict the backend the moment the two disagreed.
+	 * BANDS, IN THE ORDER A CLERK WORKS THEM. Menunggu is first because the
+	 * recurring task on this screen is "call the next waiting patient": with
+	 * sixty waiting rows, putting that band second meant no waiting patient was
+	 * on screen at 1440x900 at all — the operator had to scroll past fifteen
+	 * tickets nobody was working. Dipanggil follows (the ones already in hand),
+	 * Selesai last.
+	 *
+	 * DAY SCOPE. Dipanggil and Selesai are scoped to the LOCAL calendar day of
+	 * their own stamp (`called_at` for the first, `completed_at` for the second,
+	 * with the `skipped` exception documented in `queueSource.queueBandStamp`).
+	 * Rows provably from an earlier day are folded into a closed `<details>`
+	 * group under their band, so the live band means what its heading says while
+	 * the archive stays one click away. Menunggu is deliberately NOT scoped: a
+	 * patient registered yesterday is still waiting today.
+	 *
+	 * A row with no readable stamp is UNKNOWN, not old, and stays in the live
+	 * band. The heading of the third band says so when that happens, because
+	 * "Selesai hari ini" over a row with no completion time would be a claim the
+	 * data cannot support.
 	 *
 	 * The board is READ-ONLY in this phase. The transition buttons are rendered
-	 * disabled, from the same verified state machine the server enforces, so an
-	 * operator can see what is possible next without being offered an action that
-	 * would 409. Phase 3B5 wires execution; `actionsEnabled` is the single switch
-	 * that turns them on, so nothing else has to change to make them live.
+	 * from the same verified state machine the server enforces, so an operator
+	 * can see what is possible next without being offered an action that would
+	 * 409.
 	 */
 	export let tickets: readonly AdminQueueTicket[] = [];
 	export let facilities: readonly AdminFacility[] = [];
@@ -38,16 +48,77 @@
 	$: facilityIndex = indexBy(facilities, (facility) => facility.id);
 
 	/**
-	 * The three bands. Membership is by status alone:
-	 *   Dipanggil  — called, or in service. These are the tickets an operator acts on now.
-	 *   Menunggu   — waiting.
-	 *   Selesai    — completed today, plus the closed states (cancelled, skipped).
+	 * Membership by status alone — the server's answer, not a re-derivation.
+	 * Only the DAY SCOPE below is computed here, and only for the two bands that
+	 * claim a day.
 	 */
-	$: called = tickets.filter((t) => t.status === 'called' || t.status === 'in_service');
 	$: waiting = tickets.filter((t) => t.status === 'waiting');
+	$: called = tickets.filter((t) => t.status === 'called' || t.status === 'in_service');
 	$: finished = tickets.filter(
 		(t) => t.status === 'completed' || t.status === 'cancelled' || t.status === 'skipped'
 	);
+
+	/*
+		`partitionQueueDay` defaults to `new Date()` on every evaluation rather
+		than a clock captured once at mount. The board polls, so each poll
+		re-evaluates these statements and the day boundary moves with the wall
+		clock; a `now` captured at init would keep filing a 00.05 visit under
+		yesterday until the page was reloaded.
+	*/
+	$: calledScope = partitionQueueDay(called, 'called');
+	$: finishedScope = partitionQueueDay(finished, 'finished');
+
+	/**
+	 * The third band's heading has to be true of its rows.
+	 *
+	 * With every row stamped today, "Selesai hari ini" is exact. When some rows
+	 * carry no readable stamp they stay in the band (a missing time is not
+	 * evidence of an old row), so the heading names them instead of claiming a
+	 * scope it cannot prove.
+	 */
+	$: finishedLabel =
+		finishedScope.unknownCount === 0
+			? 'Selesai hari ini'
+			: finishedScope.todayCount === 0
+				? 'Selesai — waktu tidak diketahui'
+				: 'Selesai hari ini dan waktu tidak diketahui';
+
+	$: finishedHint =
+		finishedScope.unknownCount === 0
+			? 'Sudah diselesaikan atau ditutup'
+			: 'Sudah diselesaikan atau ditutup; sebagian baris tidak membawa cap waktu yang bisa dibaca';
+
+	/**
+	 * The bands in work order. Kept as one derived array so the order is stated
+	 * once, in one place, rather than implied by the order of three markup
+	 * blocks that a later edit could silently swap.
+	 */
+	$: bands = [
+		{
+			key: 'waiting',
+			label: 'Menunggu',
+			hint: 'Sudah terdaftar, belum dipanggil',
+			rows: waiting,
+			olderRows: [] as AdminQueueTicket[],
+			olderLabel: ''
+		},
+		{
+			key: 'called',
+			label: 'Dipanggil',
+			hint: 'Sedang dipanggil atau dilayani',
+			rows: calledScope.live,
+			olderRows: calledScope.older,
+			olderLabel: 'Dipanggil sebelum hari ini'
+		},
+		{
+			key: 'finished',
+			label: finishedLabel,
+			hint: finishedHint,
+			rows: finishedScope.live,
+			olderRows: finishedScope.older,
+			olderLabel: 'Selesai sebelum hari ini'
+		}
+	];
 
 	/**
 	 * The board-level source marker. Delegates to `latestQueueChange`, which owns
@@ -56,71 +127,24 @@
 	 * transition actually stamps.
 	 */
 	$: lastRowChange = latestQueueChange(tickets);
-
-	const GROUPS = [
-		{ key: 'called', label: 'Dipanggil', hint: 'Sedang dipanggil atau dilayani' },
-		{ key: 'waiting', label: 'Menunggu', hint: 'Sudah terdaftar, belum dipanggil' },
-		{ key: 'finished', label: 'Selesai hari ini', hint: 'Sudah diselesaikan atau ditutup' }
-	] as const;
 </script>
 
 <div class="sigap-queue-board">
-	{#each GROUPS as group (group.key)}
-		{@const rows = group.key === 'called' ? called : group.key === 'waiting' ? waiting : finished}
-		<section class="sigap-queue-board__group" aria-labelledby="queue-group-{group.key}">
-			<div class="sigap-queue-board__group-head">
-				<h2 class="sigap-queue-board__group-title" id="queue-group-{group.key}">
-					{group.label}
-				</h2>
-				<!--
-					The count is in the heading rather than a badge beside it, so a
-					screen reader announcing the section hears the number as part of the
-					group name instead of as an unlabelled number floating nearby.
-				-->
-				<span class="sigap-queue-board__group-count">{rows.length}</span>
-				<p class="sigap-queue-board__group-hint">{group.hint}</p>
-			</div>
-
-			{#if rows.length === 0}
-				<p class="sigap-queue-board__group-empty">Tidak ada antrean pada kelompok ini.</p>
-			{:else}
-				<DataTable
-					caption="{group.label} — {rows.length} antrean dalam lingkup akses"
-					columns={[
-						{ label: 'Nomor' },
-						{ label: 'Status' },
-						{ label: 'Fasilitas' },
-						/*
-							Secondary: hidden below 1280px, per the Pen's own note
-							on the 768 frame — "Kolom sekunder disembunyikan di
-							bawah 1280px. Status dan Aksi tidak pernah
-							disembunyikan." At 768 the frame shows exactly Nomor,
-							Status, Fasilitas, Aksi.
-						*/
-						{ label: 'Terdaftar', secondary: true },
-						{ label: 'Dipanggil', secondary: true },
-						{ label: 'Selesai', secondary: true },
-						{ label: 'Aksi' }
-					]}
-				>
-					{#each rows as ticket (ticket.id)}
-						<QueueBoardRow
-							ticketId={ticket.id}
-							formattedNumber={ticket.formatted_number}
-							status={ticket.status}
-							facilityName={facilityName(facilityIndex, ticket.facility_id)}
-							registeredAt={ticket.registered_at}
-							calledAt={ticket.called_at}
-							completedAt={ticket.completed_at}
-							transitions={allowedQueueTransitions(ticket.status)}
-							{onTransition}
-							pendingStatus={pendingTicketId === ticket.id ? pendingStatus : ''}
-							errorMessage={errorTicketId === ticket.id ? errorMessage : ''}
-						/>
-					{/each}
-				</DataTable>
-			{/if}
-		</section>
+	{#each bands as band (band.key)}
+		<QueueBand
+			bandKey={band.key}
+			label={band.label}
+			hint={band.hint}
+			rows={band.rows}
+			olderRows={band.olderRows}
+			olderLabel={band.olderLabel}
+			{facilityIndex}
+			{onTransition}
+			{pendingTicketId}
+			{pendingStatus}
+			{errorTicketId}
+			{errorMessage}
+		/>
 	{/each}
 
 	<!--
@@ -140,48 +164,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--sigap-space-5);
-	}
-
-	.sigap-queue-board__group-head {
-		display: flex;
-		align-items: baseline;
-		gap: var(--sigap-space-2);
-		flex-wrap: wrap;
-		margin-bottom: var(--sigap-space-2);
-	}
-
-	.sigap-queue-board__group-title {
-		margin: 0;
-		font-size: var(--sigap-type-label);
-		font-weight: 600;
-		color: var(--sigap-foreground);
-	}
-
-	.sigap-queue-board__group-count {
-		/* `min-width: 2ch` keeps a single-digit count from shifting the hint. */
-		min-width: 2ch;
-		font-size: var(--sigap-type-label);
-		font-weight: 600;
-		text-align: right;
-		color: var(--sigap-primary);
-		font-variant-numeric: tabular-nums;
-	}
-
-	.sigap-queue-board__group-hint {
-		margin: 0;
-		font-size: var(--sigap-type-caption);
-		color: var(--sigap-muted);
-	}
-
-	.sigap-queue-board__group-empty {
-		margin: 0;
-		padding: var(--sigap-space-4) var(--sigap-space-3);
-		font-size: var(--sigap-type-label);
-		color: var(--sigap-muted);
-		background-color: var(--sigap-surface);
-		/* A panel outline is decorative: it is a placeholder ground, not a control. */
-		border: 1px dashed var(--sigap-border-subtle);
-		border-radius: var(--sigap-radius-panel);
 	}
 
 	.sigap-queue-board__source {

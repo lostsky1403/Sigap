@@ -9,7 +9,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sigap/sigap/apps/api/internal/service"
@@ -407,5 +409,161 @@ func TestCheckIn_QueueFallback_Enabled_Succeeds(t *testing.T) {
 	}
 	if qTicketID == nil || *qTicketID != ticketID {
 		t.Errorf("expected queue_ticket_id=%s, got %v", ticketID, qTicketID)
+	}
+}
+
+// engineTicketQueueService mimics the real gRPC engine: it issues a valid UUID
+// ticket and formatted number, but writes nothing to this database — the engine
+// commits into whichever database it is configured with.
+type engineTicketQueueService struct {
+	ticketID  string
+	formatted string
+}
+
+func (e *engineTicketQueueService) Generate(ctx context.Context, input service.GenerateInput) (service.GenerateResult, error) {
+	return service.GenerateResult{
+		TicketID:             e.ticketID,
+		FormattedNumber:      e.formatted,
+		Status:               "waiting",
+		EstimatedWaitMinutes: 25,
+	}, nil
+}
+
+func (e *engineTicketQueueService) Probe(ctx context.Context) error { return nil }
+
+// TestCheckIn_EngineTicketNotInLocalDB_IsRefusedAndReleased reproduces the
+// production failure: the engine issued a valid UUID and committed the ticket
+// into a different database, so this one had no queue_tickets row for it. The
+// foreign key on appointments.queue_ticket_id rejected the finalize UPDATE and
+// the appointment was left checked_in with no ticket, where a retry answers 409
+// forever.
+//
+// The handler must NOT repair this by inserting a local copy. The waiting-room
+// display reads the engine's database, so a locally invented row would give the
+// citizen a number that is never called, and would fork the numbering sequence.
+// The correct behaviour is to refuse, release the appointment back to scheduled
+// so the citizen can retry, and say the queue service is out of sync.
+// Requires DATABASE_URL to be set; skipped otherwise.
+func TestCheckIn_EngineTicketNotInLocalDB_IsRefusedAndReleased(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	pool, err := pgxpool.New(context.Background(), dbURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	apptID, code, _, cleanup := seedCheckinDataV2(t, pool)
+	defer cleanup()
+
+	ticketID := uuid.New().String()
+	h := NewBookingHandler(pool, nil).
+		WithQueueService(&engineTicketQueueService{ticketID: ticketID, formatted: "TST-0042"})
+
+	body, _ := json.Marshal(map[string]string{"checkin_code": code})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/appointments/"+apptID+"/check-in", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.CheckIn(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for an out-of-sync queue service, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The appointment is released, not stranded: a retry must be possible.
+	var apptStatus string
+	var qTicketID *string
+	var checkinAt *time.Time
+	if err := pool.QueryRow(context.Background(),
+		`SELECT status, queue_ticket_id, checkin_at FROM appointments WHERE id = $1`, apptID,
+	).Scan(&apptStatus, &qTicketID, &checkinAt); err != nil {
+		t.Fatalf("verify appointment: %v", err)
+	}
+	if apptStatus != "scheduled" {
+		t.Errorf("expected appointment released to 'scheduled', got %q", apptStatus)
+	}
+	if qTicketID != nil {
+		t.Errorf("expected no queue_ticket_id, got %v", *qTicketID)
+	}
+	if checkinAt != nil {
+		t.Errorf("expected checkin_at cleared, got %v", checkinAt)
+	}
+
+	// And no ticket was invented locally.
+	var invented int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM queue_tickets WHERE id = $1`, ticketID,
+	).Scan(&invented); err != nil {
+		t.Fatalf("count queue_tickets: %v", err)
+	}
+	if invented != 0 {
+		t.Errorf("handler fabricated a local queue ticket; expected 0 rows, got %d", invented)
+	}
+}
+
+// TestCheckIn_EngineTicketAlreadyLocal_NotDuplicated covers the healthy case:
+// the engine committed the ticket into this database, so the handler must
+// reference it without inserting a second row or renumbering it.
+// Requires DATABASE_URL to be set; skipped otherwise.
+func TestCheckIn_EngineTicketAlreadyLocal_NotDuplicated(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	pool, err := pgxpool.New(context.Background(), dbURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	apptID, code, facID, cleanup := seedCheckinDataV2(t, pool)
+	defer cleanup()
+
+	ctx := context.Background()
+	var patientID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO patients (full_name, phone, date_of_birth)
+		 VALUES ('Engine Patient', '085550008888', '1990-01-01')
+		 ON CONFLICT (phone) DO UPDATE SET full_name = patients.full_name
+		 RETURNING id`).Scan(&patientID); err != nil {
+		t.Fatalf("seed patient: %v", err)
+	}
+
+	ticketID := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status)
+		 VALUES ($1, $2, $3, 77, 'TST-0077', 'waiting')`, ticketID, facID, patientID); err != nil {
+		t.Fatalf("seed ticket: %v", err)
+	}
+
+	h := NewBookingHandler(pool, nil).
+		WithQueueService(&engineTicketQueueService{ticketID: ticketID, formatted: "TST-0077"})
+
+	body, _ := json.Marshal(map[string]string{"checkin_code": code})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/appointments/"+apptID+"/check-in", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.CheckIn(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var rows int
+	var queueNumber int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*), COALESCE(MAX(queue_number), 0) FROM queue_tickets WHERE id = $1`, ticketID,
+	).Scan(&rows, &queueNumber); err != nil {
+		t.Fatalf("verify ticket: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("expected the engine's ticket row to be reused, got %d rows", rows)
+	}
+	if queueNumber != 77 {
+		t.Errorf("expected the engine's queue_number 77 to survive, got %d", queueNumber)
 	}
 }

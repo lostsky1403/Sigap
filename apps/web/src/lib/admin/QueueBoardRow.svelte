@@ -70,7 +70,13 @@
 	<td class="sigap-queue-row__time sigap-table-col-secondary">{formatDateTime(registeredAt)}</td>
 	<td class="sigap-queue-row__time sigap-table-col-secondary">{formatDateTime(calledAt)}</td>
 	<td class="sigap-queue-row__time sigap-table-col-secondary">{formatDateTime(completedAt)}</td>
-	<td class="sigap-queue-row__actions">
+	<!--
+		`sigap-table-col-pinned` is applied HERE, not in DataTable, because the
+		cell belongs to this component: the table renders the header and this row
+		renders the body, so the column flag and the cell class are two halves of
+		one column. DataTable owns the rule; this is where the cell opts into it.
+	-->
+	<td class="sigap-queue-row__actions sigap-table-col-pinned">
 		{#if transitions.length === 0}
 			<!--
 				A terminal state says so in words. An empty cell would read as

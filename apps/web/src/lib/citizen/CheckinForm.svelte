@@ -67,11 +67,19 @@
 		the appointment id comes from, and the exact shape of the code. Without
 		them a citizen who cannot find the id has nothing to go on, and one who
 		types a five-character code learns nothing until it fails.
+
+		The label names the source because "ID janji temu" alone does not tell a
+		citizen holding only a six-character code that a long identifier exists
+		at all, and the helper repeats the exact screen and section: a generic
+		"check your booking" would leave them searching the confirmation page
+		for something it calls appointment_id. The previous helper said "dari
+		email", which is false here — notification_outbox rows stay at
+		status=pending on the dev channel, so nothing is ever delivered.
 	-->
 	<Field
 		id="sigap-checkin-appointment_id"
-		label="ID janji temu"
-		helper="Dari email atau halaman konfirmasi janji temu."
+		label="ID janji temu (dari halaman konfirmasi)"
+		helper="Ada di halaman konfirmasi janji temu Anda, di bagian 'Detail teknis' — baris appointment_id. Salin seluruh nilainya."
 		required
 		error={appointmentError}
 	>
@@ -80,7 +88,7 @@
 			bind:value={appointmentId}
 			describedBy={appointmentError ? 'sigap-checkin-appointment_id-error' : ''}
 			invalid={Boolean(appointmentError)}
-			placeholder="Contoh: 4d5e6f7a-…"
+			placeholder="Tempel ID dari halaman konfirmasi"
 			autocomplete="off"
 		/>
 	</Field>

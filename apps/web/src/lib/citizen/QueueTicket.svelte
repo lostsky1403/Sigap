@@ -22,10 +22,25 @@
 	 * behind a tooltip.
 	 */
 	export let ticket: CheckInResult;
+	/**
+	 * The code this ticket was produced from, carried so the status CTA can
+	 * prefill the next screen. `CheckInResult` does not echo it back, and the
+	 * citizen cannot be expected to retype a code the ticket never showed.
+	 */
+	export let checkinCode: string = '';
 	export let onReset: () => void = () => {};
 	export let onCopy: (label: string, value: string) => void = () => {};
 
 	let copied = false;
+
+	/**
+	 * The status page reads `?code=`. Encoded because this is user input and a
+	 * stray `&` or `#` would otherwise truncate the parameter; the fallback
+	 * keeps the plain link working if the code is somehow absent.
+	 */
+	$: statusHref = checkinCode.trim()
+		? `/patient/status?code=${encodeURIComponent(checkinCode.trim())}`
+		: '/patient/status';
 </script>
 
 <section
@@ -82,7 +97,7 @@
 	{/if}
 
 	<div class="sigap-ticket__actions">
-		<a class="sigap-ticket__cta" style:border-radius={RADIUS.control} href="/patient/status">
+		<a class="sigap-ticket__cta" style:border-radius={RADIUS.control} href={statusHref}>
 			Cek status kunjungan
 		</a>
 		<Button variant="ghost" onClick={onReset}>Check-in lain</Button>

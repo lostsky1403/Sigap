@@ -374,10 +374,12 @@ test.describe('B. check-in', () => {
 			expect(body, `the ticket must not claim ${forbidden}`).not.toContain(forbidden);
 		}
 
-		// The way onward.
+		// The way onward, carrying the code. A bare link opens the status page
+		// with an empty field, and the ticket never displayed the code, so the
+		// citizen would have to retype something they cannot see.
 		await expect(
 			page.getByRole('link', { name: /Cek status kunjungan/i })
-		).toHaveAttribute('href', '/patient/status');
+		).toHaveAttribute('href', `/patient/status?code=${journey.checkinCode}`);
 	});
 
 	test('a wrong check-in code is a wrong code, not a sign-in prompt', async ({ page }) => {

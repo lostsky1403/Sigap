@@ -512,7 +512,15 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 			err2 := h.pool.QueryRow(ctx,
 				`SELECT EXISTS(SELECT 1 FROM appointments WHERE id = $1)`, id,
 			).Scan(&exists)
-			if err2 != nil || !exists {
+			if err2 != nil {
+				// A database failure is not evidence the appointment is absent;
+				// answering 404 here would hide an outage behind a user error.
+				slog.Error("check-in existence probe failed",
+					"appointment_id", id, "err", err2.Error())
+				writeError(w, http.StatusInternalServerError, "Gagal memverifikasi check-in.")
+				return
+			}
+			if !exists {
 				writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
 				return
 			}
@@ -525,6 +533,8 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 				`SELECT checkin_code, status FROM appointments WHERE id = $1`, id,
 			).Scan(&dbCode, &dbStatus)
 			if err3 != nil {
+				slog.Error("check-in code verification failed",
+					"appointment_id", id, "err", err3.Error())
 				writeError(w, http.StatusInternalServerError, "Gagal memverifikasi check-in.")
 				return
 			}
@@ -536,6 +546,8 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "Janji temu tidak dapat check-in dengan status: "+dbStatus)
 			return
 		}
+		slog.Error("atomic check-in transition failed",
+			"appointment_id", id, "err", err.Error())
 		writeError(w, http.StatusInternalServerError, "Gagal memperbarui status check-in.")
 		return
 	}
@@ -553,9 +565,11 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 	// safe behavior.
 	if h.queueSvc == nil {
 		// Roll back to scheduled so the appointment is not stranded.
-		// Guarded: only this request (which set status='checked_in') can release.
-		_, _ = h.pool.Exec(ctx,
-			`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
+		slog.Error("queue service not configured", "appointment_id", id)
+		if _, rbErr := h.rollbackCheckIn(ctx, id); rbErr != nil {
+			slog.Error("rollback to scheduled failed",
+				"appointment_id", id, "err", rbErr.Error())
+		}
 		writeError(w, http.StatusInternalServerError, "Layanan antrean tidak tersedia.")
 		return
 	}
@@ -573,13 +587,11 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 			"facility_id", facilityID,
 			"err", err.Error())
 		// Roll back to scheduled so the appointment can be retried.
-		// Guarded: only this request (which set status='checked_in') can release.
-		ct, rbErr := h.pool.Exec(ctx,
-			`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
+		rows, rbErr := h.rollbackCheckIn(ctx, id)
 		if rbErr != nil {
 			slog.Error("rollback to scheduled failed",
 				"appointment_id", id, "err", rbErr.Error())
-		} else if ct.RowsAffected() == 0 {
+		} else if rows == 0 {
 			slog.Warn("rollback guard: appointment no longer in checked_in state",
 				"appointment_id", id)
 			writeError(w, http.StatusConflict, "Janji temu sudah diproses oleh permintaan lain.")
@@ -601,6 +613,8 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 				`UPDATE appointments SET status = 'checked_in', checkin_at = NOW(), updated_at = NOW() WHERE id = $1 AND status = 'scheduled' AND queue_ticket_id IS NULL`,
 				id)
 			if err != nil {
+				slog.Error("fallback re-acquire failed",
+					"appointment_id", id, "err", err.Error())
 				writeError(w, http.StatusInternalServerError, "Gagal memperbarui status check-in.")
 				return
 			}
@@ -620,44 +634,57 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 				},
 			})
 			if err != nil {
+				slog.Error("fallback queue generation failed",
+					"appointment_id", id, "err", err.Error())
 				// We hold checked_in but produced no ticket — release so a retry works.
-				_, _ = h.pool.Exec(ctx,
-					`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
+				if _, rbErr := h.rollbackCheckIn(ctx, id); rbErr != nil {
+					slog.Error("rollback to scheduled failed",
+						"appointment_id", id, "err", rbErr.Error())
+				}
 				writeError(w, http.StatusInternalServerError, "Gagal mengambil nomor antrean.")
 				return
 			}
 
-			// Insert a real queue_tickets row so the UUID FK is valid.
-			ticketUUID := uuid.New().String()
-			err = h.pool.QueryRow(ctx,
-				`WITH p AS (
-				    INSERT INTO patients (id, full_name, phone, date_of_birth)
-				    VALUES ($1::uuid, $2, $3, '2000-01-01')
-				    ON CONFLICT (phone) DO UPDATE SET full_name = EXCLUDED.full_name
-				    RETURNING id
-				),
-				q AS (
-				    INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status)
-				    SELECT $4::uuid, $5::uuid, p.id,
-				           COALESCE((SELECT MAX(qt2.queue_number) FROM queue_tickets qt2 WHERE qt2.facility_id = $5::uuid AND qt2.registered_at::date = CURRENT_DATE), 0) + 1,
-				           $6, 'waiting'
-				    FROM p
-				    RETURNING id
-				)
-				SELECT id FROM q`,
-				uuid.New().String(), patientName, patientPhone, ticketUUID, facilityID, res.FormattedNumber,
-			).Scan(&ticketUUID)
-			if err != nil {
-				_, _ = h.pool.Exec(ctx,
-					`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
+			// No engine issued this ticket, so this process mints the id and
+			// stores the row itself.
+			res.TicketID = uuid.New().String()
+			if err := h.recordQueueTicket(ctx, res.TicketID, facilityID, patientName, patientPhone, res.FormattedNumber); err != nil {
+				slog.Error("fallback ticket insert failed",
+					"appointment_id", id, "queue_ticket_id", res.TicketID, "err", err.Error())
+				if _, rbErr := h.rollbackCheckIn(ctx, id); rbErr != nil {
+					slog.Error("rollback to scheduled failed",
+						"appointment_id", id, "err", rbErr.Error())
+				}
 				writeError(w, http.StatusInternalServerError, "Gagal membuat tiket antrean.")
 				return
 			}
-			res.TicketID = ticketUUID
 		} else {
 			writeError(w, http.StatusInternalServerError, "Gagal mengambil nomor antrean.")
 			return
 		}
+	}
+
+	// The engine commits queue_tickets in its own transaction, against whatever
+	// DATABASE_URL it was started with. When that is not this database the row
+	// is invisible here and the foreign key on appointments.queue_ticket_id
+	// rejects the finalize below, leaving the citizen checked_in with no ticket.
+	//
+	// This is a configuration fault, and it is reported as one. An earlier
+	// attempt inserted a local copy of the engine-issued ticket so the finalize
+	// would succeed — that was worse than the bug: the waiting-room display
+	// reads the engine's database, so the number the citizen received would
+	// never be called, and the local insert would silently fork the numbering
+	// sequence into duplicate numbers on the board. A failed check-in the
+	// citizen can retry is honest; a ticket that looks real and is not is not.
+	if err := h.verifyQueueTicketVisible(ctx, res.TicketID); err != nil {
+		slog.Error("queue ticket is not visible in this database; check that the queue engine and the API share one DATABASE_URL",
+			"appointment_id", id, "queue_ticket_id", res.TicketID, "err", err.Error())
+		if _, rbErr := h.rollbackCheckIn(ctx, id); rbErr != nil {
+			slog.Error("rollback to scheduled failed",
+				"appointment_id", id, "err", rbErr.Error())
+		}
+		writeError(w, http.StatusServiceUnavailable, "Layanan antrean tidak sinkron. Coba lagi sebentar lagi.")
+		return
 	}
 
 	// Transition to queued with queue_ticket_id
@@ -666,6 +693,18 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 		`UPDATE appointments SET status = 'queued', queue_ticket_id = $1, updated_at = NOW() WHERE id = $2 AND status = 'checked_in' AND queue_ticket_id IS NULL`,
 		res.TicketID, id)
 	if err != nil {
+		slog.Error("check-in finalization failed",
+			"appointment_id", id, "queue_ticket_id", res.TicketID, "err", err.Error())
+		// A failed finalize must not leave the appointment checked_in without a
+		// ticket: that state has no exit, because a retry no longer matches the
+		// status='scheduled' guard and is answered 409 forever. Releasing it back
+		// to scheduled lets the citizen retry with the same code; the ticket
+		// row already recorded stays behind as an unused number, which is
+		// cheaper than an appointment nobody can check in.
+		if _, rbErr := h.rollbackCheckIn(ctx, id); rbErr != nil {
+			slog.Error("rollback to scheduled failed",
+				"appointment_id", id, "err", rbErr.Error())
+		}
 		writeError(w, http.StatusInternalServerError, "Gagal menyelesaikan check-in.")
 		return
 	}
@@ -715,6 +754,76 @@ func (h *BookingHandler) PublicAppointmentsRouter(w http.ResponseWriter, r *http
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// rollbackCheckIn releases an appointment this request claimed but could not
+// finalize. The guard keeps the release idempotent and stops it from undoing a
+// concurrent request that already completed the transition.
+//
+// The release runs on a context detached from the request: the failure that
+// brought us here is often a timeout, and a rollback inheriting the expired
+// deadline would leave exactly the stranded row it exists to prevent.
+func (h *BookingHandler) rollbackCheckIn(ctx context.Context, id string) (int64, error) {
+	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
+	ct, err := h.pool.Exec(rbCtx,
+		`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
+}
+
+// verifyQueueTicketVisible confirms the ticket the queue service issued actually
+// exists in THIS database, before the appointment is allowed to reference it.
+//
+// A non-UUID id is rejected here rather than by the uuid column, so a
+// misbehaving queue service surfaces as a named error instead of a driver-level
+// syntax failure. A UUID that is absent means the engine committed somewhere
+// else — see the comment at the call site for why that is reported rather than
+// repaired.
+func (h *BookingHandler) verifyQueueTicketVisible(ctx context.Context, ticketID string) error {
+	if _, err := uuid.Parse(ticketID); err != nil {
+		return fmt.Errorf("queue service returned a non-UUID ticket id %q: %w", ticketID, err)
+	}
+
+	var exists bool
+	if err := h.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM queue_tickets WHERE id = $1)`, ticketID,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("look up queue ticket: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("queue ticket %s was issued but is not in this database", ticketID)
+	}
+	return nil
+}
+
+// recordQueueTicket inserts a queue ticket this process minted itself.
+//
+// It exists for exactly one caller: the SIGAP_ENGINE_FALLBACK=dev path, where
+// the in-memory FakeQueueService answers without touching any database, so the
+// API must persist the ticket or the appointment would reference nothing. It is
+// NOT used to paper over a real engine that committed elsewhere — that case is
+// reported by verifyQueueTicketVisible.
+func (h *BookingHandler) recordQueueTicket(ctx context.Context, ticketID, facilityID, patientName, patientPhone, formattedNumber string) error {
+	_, err := h.pool.Exec(ctx,
+		`WITH p AS (
+		    INSERT INTO patients (id, full_name, phone, date_of_birth)
+		    VALUES ($1::uuid, $2, $3, '2000-01-01')
+		    ON CONFLICT (phone) DO UPDATE SET full_name = EXCLUDED.full_name
+		    RETURNING id
+		)
+		INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status)
+		SELECT $4::uuid, $5::uuid, p.id,
+		       (SELECT COALESCE(MAX(qt.queue_number), 0) + 1 FROM queue_tickets qt
+		         WHERE qt.facility_id = $5::uuid AND qt.registered_at::date = CURRENT_DATE),
+		       $6, 'waiting'
+		FROM p
+		ON CONFLICT (id) DO NOTHING`,
+		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber)
+	return err
 }
 
 func (h *BookingHandler) logBookingEvent(r *http.Request, action, status, detail string) {

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import VisitProgress from '$lib/citizen/VisitProgress.svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
@@ -43,6 +43,35 @@
 	let otherErrorMessage = '';
 	let fieldError = '';
 	let attempted = false;
+
+	/**
+	 * Prefills the field when another screen hands the code over in `?code=`.
+	 *
+	 * The check-in ticket links here, and the citizen cannot be asked to retype
+	 * a code that screen never displayed. Reading it from the URL is safe in
+	 * itself — this is a same-origin navigation, not a third-party referrer.
+	 *
+	 * What is NOT safe is leaving it there. A check-in code is a bearer token:
+	 * anyone holding it can read that visit's status. In the address bar it
+	 * persists in history, is copied by "share this page", and travels in the
+	 * Referer header of any outbound request. So the value is moved into the
+	 * field and immediately removed from the URL, keeping every other
+	 * parameter intact.
+	 */
+	onMount(() => {
+		const params = new URLSearchParams(window.location.search);
+		const handedOver = params.get('code');
+		if (!handedOver) return;
+
+		code = handedOver;
+		params.delete('code');
+		const rest = params.toString();
+		window.history.replaceState(
+			null,
+			'',
+			`${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`
+		);
+	});
 
 	async function lookup() {
 		attempted = true;

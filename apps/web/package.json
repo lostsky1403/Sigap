@@ -24,7 +24,8 @@
     "verify:secondary-columns": "node scripts/verify-secondary-columns.mjs",
     "verify:read-states": "node scripts/verify-admin-read-states.mjs",
     "verify:findings": "node scripts/verify-findings.mjs",
-    "verify:integration": "node scripts/verify-real-integration.mjs"
+    "verify:integration": "node scripts/verify-real-integration.mjs",
+    "verify:status-errors": "node scripts/verify-status-error-map.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",

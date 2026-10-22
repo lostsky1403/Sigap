@@ -197,9 +197,12 @@ describe('/appointments/check-in: submission', () => {
 		await fireEvent.click(screen.getByRole('button', { name: /^Check-In$/ }));
 
 		await waitFor(() => expect(screen.getByRole('link', { name: /Cek status kunjungan/ })).toBeTruthy());
+		// The ticket carries the code into the lookup. A bare link would make the
+		// citizen retype a code this screen already has, and the ticket itself
+		// never displays it.
 		expect(
 			screen.getByRole('link', { name: /Cek status kunjungan/ }).getAttribute('href')
-		).toBe('/patient/status');
+		).toBe(`/patient/status?code=${CODE}`);
 	});
 });
 

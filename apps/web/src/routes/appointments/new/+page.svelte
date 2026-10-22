@@ -27,7 +27,6 @@
 	import {
 		checkInDeepLink,
 		classifyTransactionFailure,
-		formatAppointmentTime,
 		resolveFailureMessage,
 		validateAppointmentTime,
 		validateName,
@@ -283,6 +282,56 @@
 		return error ? `${id}-error` : '';
 	}
 
+	/**
+	 * Reopens a step the citizen has already completed.
+	 *
+	 * The selections live on this page, so clearing them is this page's job;
+	 * the stepper only reports which step was chosen. Clearing the facility
+	 * also clears the service, because a unit belongs to one clinic — keeping
+	 * it would either submit a mismatched pair or, once the new clinic's list
+	 * arrived, silently bounce the citizen back to step 3 with a unit they
+	 * never chose.
+	 *
+	 * The guard is not distrust of the stepper, which only renders buttons for
+	 * completed steps. It keeps "no jumping ahead" true at the one place that
+	 * could break it.
+	 */
+	async function revisitStep(target: number) {
+		if (target >= step) return;
+
+		if (target === 1) {
+			facilityId = '';
+			serviceUnitId = '';
+			// The reactive block on `facilityId` drops the loaded units, so the
+			// next clinic is never offered the previous clinic's services.
+		} else {
+			serviceUnitId = '';
+		}
+
+		const nextErrors = { ...fieldErrors };
+		delete nextErrors.facility_id;
+		delete nextErrors.service_unit_id;
+		fieldErrors = nextErrors;
+		// A failure message about the previous attempt is stale as soon as the
+		// selection behind it changes.
+		submitFailure = null;
+
+		/*
+			The button that was clicked stops being a button the moment the step
+			is no longer completed, so focus would fall back to <body> and the
+			next Tab would restart at the top of the page. Moving it to the
+			control that now needs a choice keeps the keyboard journey
+			continuous. After `tick()`, because the reopened fieldset is still
+			`display:none` for this frame and a hidden control cannot take focus.
+		*/
+		await tick();
+		document
+			.getElementById(
+				target === 1 ? 'sigap-booking-facility_id' : 'sigap-booking-service_unit_id'
+			)
+			?.focus();
+	}
+
 	async function submit() {
 		if (submitting) return;
 
@@ -344,6 +393,28 @@
 		if (isAbort(outcome.error)) return;
 
 		submitFailure = classifyTransactionFailure(outcome.error);
+
+		/*
+			The banner is the first child of the form, above the step-3
+			fieldset. On a phone the submit button is a long scroll below it, so
+			before this the alert rendered entirely off-screen at a negative
+			offset: the citizen saw an unchanged form and tapped again, and
+			`document.activeElement` stayed on <body> so nothing was announced
+			either. Scrolling it to the middle and focusing it fixes both halves
+			— the sighted citizen is shown where the failure is, and a screen
+			reader user lands on the message instead of on a button that has
+			just become a no-op.
+
+			`tick()` first: the node does not exist until the update that renders
+			it has been applied, and measuring before that finds nothing.
+		*/
+		await tick();
+		const failureNode = document.getElementById('sigap-booking-failure');
+		// scrollIntoView is not implemented under jsdom, and a failed submit
+		// must not throw there; the optional call leaves the focus below
+		// unconditional.
+		failureNode?.scrollIntoView?.({ block: 'center' });
+		failureNode?.focus();
 	}
 
 	/**
@@ -430,12 +501,19 @@
 		rule, so this journey opens with the label rather than the mark. The
 		lede tracks the step: it names what this step asks for, which is why it
 		is a value here and not a constant.
+
+		On success the same opener changes its claim rather than staying behind
+		as an instruction the citizen has already followed. A header still
+		asking them to choose a facility sits above a panel saying the booking
+		is done, and the contradiction is the first thing read.
 	-->
 	<PageHeader
 		rule="none"
 		eyebrow="Buat janji temu"
-		title="Buat janji temu"
-		description="Pilih fasilitas kesehatan terlebih dahulu."
+		title={result ? 'Janji temu berhasil' : 'Buat janji temu'}
+		description={result
+			? 'Tunjukkan kode ini di loket fasilitas.'
+			: 'Pilih fasilitas kesehatan terlebih dahulu.'}
 	/>
 
 	<!--
@@ -510,9 +588,28 @@
 				</Button>
 			</div>
 
-			<p class="sigap-booking__when">
-				Waktu: {formatAppointmentTime(result.appointment_time) || result.appointment_time}
-			</p>
+			<!--
+				The receipt. The citizen was reading these four rows a moment
+				before submitting, and the confirmation is the copy they keep —
+				screenshotted, or shown at the counter. Repeating the values here
+				is the only thing on the page that answers "what did I book?",
+				and dropping them at exactly the moment they stop being editable
+				would leave a code with no subject.
+
+				Reused rather than re-drawn so the confirmation and the form can
+				never disagree about which rows a booking has. The values are the
+				ones submitted; the time is the server's stored instant, because
+				that is what the facility will work from.
+			-->
+			<div class="sigap-booking__receipt">
+				<BookingSummary
+					facility={selectedFacility}
+					serviceUnit={selectedServiceUnit}
+					appointmentTime={result.appointment_time}
+					patientName={patientName}
+					{patientPhone}
+				/>
+			</div>
 
 			<div class="sigap-booking__actions">
 				<a class="sigap-booking__cta" style:border-radius={RADIUS.control} href={deepLink}>
@@ -526,15 +623,27 @@
 				link depends on it, so it is surfaced rather than hidden. It is a
 				UUID identifying a booking, not patient data.
 
+				The check-in form asks for this value under the name "ID janji
+				temu", so both names appear here. A citizen who opens check-in
+				without the deep link — from a bookmark, or on another device —
+				has to be able to find it on the screen that created the booking,
+				and a heading of "appointment_id" alone would not tell them this
+				is the thing being asked for.
+
 				build-verification.test.js asserts this file references
 				`result.id` and `checkin_code` by name, which is why the response
 				fields are used directly here instead of renamed locals.
 			-->
 			<details class="sigap-booking__details">
 				<summary>Detail teknis</summary>
+				<p class="sigap-booking__detail-note">
+					Baris <code>appointment_id</code> di bawah ini adalah ID janji temu yang diminta
+					formulir check-in. Salin seluruh nilainya jika Anda membuka check-in tanpa tautan
+					langsung.
+				</p>
 				<dl class="sigap-booking__detail-list">
 					<div>
-						<dt>appointment_id</dt>
+						<dt>appointment_id — ID janji temu</dt>
 						<dd class="sigap-identifier" data-testid="booking-appointment-id">{result.id}</dd>
 					</div>
 					<div>
@@ -552,7 +661,7 @@
 		</section>
 	{:else}
 		<!-- ============================= FORM ============================= -->
-		<BookingStepper current={step} />
+		<BookingStepper current={step} onRevisit={revisitStep} />
 
 		<div class="sigap-booking__layout">
 			<form class="sigap-booking__form" novalidate on:submit|preventDefault={submit}>
@@ -561,9 +670,20 @@
 					repeats the server's own message rather than replacing it — the
 					backend writes specific, actionable text per status, and
 					paraphrasing it is strictly worse than showing it.
+
+					tabindex="-1" exists so `submit()` can move focus here. The
+					banner stays at the top of the form rather than being moved
+					next to the button: in document order a screen reader reaches
+					it before the fields it is about, which is the order the
+					message makes sense in.
 				-->
 				{#if submitFailure}
-					<div class="sigap-booking__failure" role="alert">
+					<div
+						class="sigap-booking__failure"
+						id="sigap-booking-failure"
+						role="alert"
+						tabindex="-1"
+					>
 						<span class="sigap-booking__failure-icon" aria-hidden="true">
 							<Icon icon={AlertTriangle} size={18} />
 						</span>
@@ -975,10 +1095,13 @@
 		overflow-wrap: anywhere;
 	}
 
-	.sigap-booking__when {
-		margin: var(--sigap-space-4) 0 0;
-		font-size: var(--sigap-type-label);
-		color: var(--sigap-muted);
+	/*
+		Spacing only. The summary brings its own hairline and surface, and that
+		is deliberate: the receipt is a distinct block inside the confirmation,
+		not a continuation of the code box above it.
+	*/
+	.sigap-booking__receipt {
+		margin-top: var(--sigap-space-4);
 	}
 
 	.sigap-booking__actions {
@@ -1018,6 +1141,12 @@
 		display: flex;
 		align-items: center;
 		cursor: pointer;
+	}
+
+	.sigap-booking__detail-note {
+		margin: var(--sigap-space-2) 0 0;
+		font-size: var(--sigap-type-caption);
+		color: var(--sigap-muted);
 	}
 
 	.sigap-booking__detail-list {

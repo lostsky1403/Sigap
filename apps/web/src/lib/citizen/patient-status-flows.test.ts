@@ -295,6 +295,22 @@ describe('/patient/status', () => {
 		expect(calls).toHaveLength(0);
 	});
 
+	it('prefills from a ?code= link and strips it from the address bar', async () => {
+		// The queue ticket links here with the code it was just checked in
+		// with. The code is a bearer token, so it is copied into the field and
+		// removed from the URL — it must not stay in history or travel onward
+		// in a Referer header.
+		window.history.replaceState({}, '', '/patient/status?code=AB12CD&from=ticket');
+		mockApi(() => jsonResponse({ success: true, data: FOUND }));
+		render(Status);
+
+		await waitFor(() =>
+			expect((field('Kode check-in') as HTMLInputElement).value).toBe('AB12CD')
+		);
+		// Other parameters are preserved; only the code is removed.
+		expect(window.location.search).toBe('?from=ticket');
+	});
+
 	it('has one h1 and one lookup input', async () => {
 		mockApi(() => jsonResponse({ success: true, data: FOUND }));
 		render(Status);
