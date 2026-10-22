@@ -1,10 +1,12 @@
 import type { RequestEvent, RequestHandler } from '@sveltejs/kit';
 import { authHeaders } from '$lib/server/auth';
-
-const apiBase = () => process.env.SIGAP_API_INTERNAL || 'http://api:8080';
+import { resolveApiBase } from '$lib/server/upstream';
 
 async function proxy(request: Request, path: string, event: RequestEvent): Promise<Response> {
-	const upstream = await fetch(`${apiBase()}${path}`, {
+	const resolved = resolveApiBase();
+	if ('unavailable' in resolved) return resolved.unavailable;
+
+	const upstream = await fetch(`${resolved.base}${path}`, {
 		method: request.method,
 		headers: {
 			'Content-Type': 'application/json',
