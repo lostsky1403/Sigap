@@ -84,9 +84,17 @@
 			-->
 			<span class="sigap-queue-row__terminal">Tidak ada aksi lanjutan</span>
 		{:else}
+			<!--
+				The FIRST transition is the forward/progressing action — Panggil on a
+				waiting row, Layani on a called row, Selesaikan in service. It is the
+				action a clerk reaches for most, so it is the filled `primary` while
+				the sideline actions (Batalkan, Lewati) stay `secondary`. The state
+				machine's array order is what makes "first" mean "forward": every
+				status lists its advancing target before its cancellations/skips.
+			-->
 			{#each transitions as next (next)}
 				<Button
-					variant={next === 'completed' ? 'primary' : 'secondary'}
+					variant={next === transitions[0] ? 'primary' : 'secondary'}
 					size={DENSITY.adminCompact}
 					label={QUEUE_TRANSITION_LABEL[next]}
 					disabled={pendingStatus !== ''}
@@ -129,11 +137,21 @@
 		state; duplicating them here would give the two densities a second place
 		to drift apart.
 	*/
+	/*
+		The queue number is the thing a clerk reads out to call a patient, so it
+		is the loudest cell on the row: larger and heavier than the 13px table
+		text and the 12px muted timestamps. It stays on the foreground color so
+		its prominence is carried by size and weight alone, never by a hue that
+		could be mistaken for a status tone.
+	*/
 	.sigap-queue-row__number {
-		font-weight: 600;
+		font-size: 16px;
+		font-weight: 700;
+		color: var(--sigap-foreground);
 		/* Tabular figures so the numbers align and a column of them is scannable. */
 		font-variant-numeric: tabular-nums;
-		letter-spacing: 0.02em;
+		white-space: nowrap;
+		letter-spacing: 0.01em;
 	}
 
 	.sigap-queue-row__time {

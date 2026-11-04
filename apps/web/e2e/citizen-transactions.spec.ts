@@ -231,7 +231,7 @@ test.describe('A. booking', () => {
 		const bookingLink = rows
 			.filter({ hasText: chosen!.name })
 			.first()
-			.getByRole('link');
+			.getByRole('link', { name: /Buat janji temu/ });
 		await expect(bookingLink).toHaveAttribute('href', /\/appointments\/new\?facility_id=/);
 		await bookingLink.click();
 

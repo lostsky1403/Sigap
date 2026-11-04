@@ -407,7 +407,7 @@ describe('/faskes', () => {
 		await waitFor(() => expect(screen.getByRole('searchbox')).toBeTruthy());
 
 		const row = document.querySelector('#sigap-facility-results li');
-		const link = within(row as HTMLElement).getByRole('link');
+		const link = within(row as HTMLElement).getByRole('link', { name: /Buat janji temu/ });
 		const href = link.getAttribute('href') ?? '';
 
 		// Booking is Phase 3B3; this phase only has to arrive there with the

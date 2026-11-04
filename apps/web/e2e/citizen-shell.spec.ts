@@ -342,7 +342,7 @@ test.describe('/faskes: the public facility catalog', () => {
 		const rows = page.locator('#sigap-facility-results li');
 		await expect(rows.first()).toBeVisible({ timeout: 10_000 });
 
-		const bookingHref = await rows.first().getByRole('link').getAttribute('href');
+		const bookingHref = await rows.first().getByRole('link', { name: /Buat janji temu/ }).getAttribute('href');
 		expect(bookingHref).toContain('/appointments/new');
 		// The facility id travels as a query parameter so the booking form can
 		// preselect it. Booking itself is Phase 3B3 and is not exercised here.

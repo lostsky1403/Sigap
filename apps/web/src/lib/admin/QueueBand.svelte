@@ -58,7 +58,7 @@
 	] as const;
 </script>
 
-<div class="sigap-queue-band">
+<div class="sigap-queue-band" data-band-key={bandKey}>
 	<section aria-labelledby="queue-group-{bandKey}">
 		<div class="sigap-queue-band__head">
 			<h2 class="sigap-queue-band__title" id="queue-group-{bandKey}">{label}</h2>
@@ -138,6 +138,33 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--sigap-space-2);
+	}
+
+	/*
+		QUEUE BOARD ROW DENSITY: 36px, the bottom of the 36-40px admin band.
+
+		The shared `DataTable` pins every data row at 40px — the comfortable
+		admin row. The queue board is different from the appointment/schedule
+		tables: a clerk works it for a whole shift, advancing ticket after
+		ticket, so it benefits from more rows per screen. The action buttons here
+		are already the 36px ADMIN-COMPACT density (`DENSITY.adminCompact` in
+		QueueBoardRow), so a 36px row holds them exactly — no control is shrunk
+		to hit the number — while ~10% more waiting patients fit in a viewport.
+
+		The override is scoped to `.sigap-queue-band`, so it reaches only this
+		board and never the shared tables whose 40px contract is measured by
+		e2e/admin-table-density.spec.ts (whose TABLES list deliberately omits
+		/admin/queues).
+
+		`:global` is load-bearing for the same reason `DataTable` documents: the
+		`<td>` cells live in `QueueBoardRow`, a different Svelte component, so a
+		scoped selector here would match nothing and the board would silently
+		stay at the shared 40px. `height` on a table cell is a minimum under
+		auto layout, so the long outcome message on a failed mutation still
+		expands its row rather than clipping.
+	*/
+	.sigap-queue-band :global(.sigap-data-table tbody td) {
+		height: 36px;
 	}
 
 	.sigap-queue-band__head {

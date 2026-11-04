@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { afterUpdate } from 'svelte';
 	import QueueBand from './QueueBand.svelte';
 	import { indexBy } from '$lib/domain/joins';
 	import { latestQueueChange, partitionQueueDay } from './queueSource';
@@ -127,9 +128,68 @@
 	 * transition actually stamps.
 	 */
 	$: lastRowChange = latestQueueChange(tickets);
+
+	/**
+	 * FOCUS AFTER A MUTATION.
+	 *
+	 * The queue is worked in a tight loop — Panggil, Panggil, Layani, Panggil —
+	 * and every SUCCESSFUL transition moves the clicked row out of its band. That
+	 * DESTROYS the button the operator just pressed, so focus falls to <body> and
+	 * they must re-find their place before the next call: the single most
+	 * expensive interruption repeated across a shift. So on success, focus moves
+	 * to the next waiting patient's primary (Panggil) action instead.
+	 *
+	 * On FAILURE the row does not move: its (re-enabled) button stays exactly
+	 * where it was and focus is already on it, so nothing is done there and focus
+	 * never collapses to <body>.
+	 *
+	 * Detection reuses the page's single pending slot. The page drives
+	 * `pendingTicketId` from '' to the ticket id while a request is in flight and
+	 * back to '' once it settles — and by then the reload has already resolved,
+	 * so the bands reflect the server's new truth. An idle poll refresh never
+	 * changes `pendingTicketId`, so it can never yank focus from the operator.
+	 */
+	let boardEl: HTMLDivElement;
+	let previousPendingId = '';
+
+	afterUpdate(() => {
+		if (previousPendingId !== '' && pendingTicketId === '') {
+			const finishedId = previousPendingId;
+			previousPendingId = pendingTicketId;
+			if (errorTicketId !== finishedId) {
+				focusNextPatient();
+			}
+			return;
+		}
+		previousPendingId = pendingTicketId;
+	});
+
+	/**
+	 * Moves focus to the next waiting patient's primary action, falling back to
+	 * the first action left on the board, then to the board itself — so focus
+	 * never collapses to <body> even when the queue is empty.
+	 */
+	function focusNextPatient() {
+		if (typeof document === 'undefined') return;
+		const button = boardEl?.querySelector<HTMLButtonElement>(
+			'.sigap-queue-band[data-band-key="waiting"] .sigap-queue-row__actions button'
+		);
+		if (button) {
+			button.focus();
+			return;
+		}
+		const any = boardEl?.querySelector<HTMLButtonElement>(
+			'.sigap-queue-row__actions button'
+		);
+		if (any) {
+			any.focus();
+			return;
+		}
+		boardEl?.focus();
+	}
 </script>
 
-<div class="sigap-queue-board">
+<div class="sigap-queue-board" bind:this={boardEl} tabindex="-1">
 	{#each bands as band (band.key)}
 		<QueueBand
 			bandKey={band.key}

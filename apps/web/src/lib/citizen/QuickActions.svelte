@@ -35,6 +35,7 @@
 
 	const PRIMARY = {
 		label: 'Cari faskes dan buat janji temu',
+		why: 'Temukan fasilitas kesehatan aktif dan buat janji temu di satu tempat',
 		href: '/faskes'
 	} as const;
 
@@ -60,14 +61,17 @@
 	];
 </script>
 
-<section class="sigap-tasks" aria-labelledby="sigap-tasks-title">
+<section class="sigap-tasks sigap-quick-actions" aria-labelledby="sigap-tasks-title">
 	<div class="sigap-tasks__head">
 		<p class="sigap-eyebrow">Mulai dari sini</p>
 		<h2 id="sigap-tasks-title" class="sigap-section-title">Pilih tugas Anda</h2>
 	</div>
 
 	<a class="sigap-tasks__primary" href={PRIMARY.href}>
-		<span>{PRIMARY.label}</span>
+		<span class="sigap-tasks__primary-text">
+			<span class="sigap-tasks__primary-label">{PRIMARY.label}</span>
+			<span class="sigap-tasks__primary-why">{PRIMARY.why}</span>
+		</span>
 		<Icon icon={ChevronRight} size={18} />
 	</a>
 
@@ -111,15 +115,37 @@
 		gap: var(--sigap-space-3);
 		width: 100%;
 		max-width: 480px;
-		min-height: 52px;
+		min-height: 56px;
 		margin-top: var(--sigap-space-4);
-		padding: 0 var(--sigap-space-4);
-		font-size: 15px;
-		font-weight: 600;
+		padding: var(--sigap-space-2) var(--sigap-space-4);
 		color: var(--sigap-on-primary);
 		background-color: var(--sigap-primary);
 		border-radius: var(--sigap-radius-control);
 		text-decoration: none;
+	}
+
+	.sigap-tasks__primary-text {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+
+	.sigap-tasks__primary-label {
+		font-size: 15px;
+		font-weight: 600;
+	}
+
+	/*
+	 * The one-line "why" under the primary action. On primary teal it reads on
+	 * the light tint rather than the darker strong, which would sink into the
+	 * fill; the tint clears against the brand ground the way a second line of
+	 * hierarchy should without competing with the label above it.
+	 */
+	.sigap-tasks__primary-why {
+		font-size: 12px;
+		font-weight: 400;
+		color: var(--sigap-primary-tint);
 	}
 
 	.sigap-tasks__primary:hover {

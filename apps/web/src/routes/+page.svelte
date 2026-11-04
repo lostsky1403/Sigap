@@ -7,7 +7,13 @@
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorState from '$lib/ui/ErrorState.svelte';
 	import Icon from '$lib/ui/Icon.svelte';
-	import { facilityTypeLabel } from '$lib/citizen/facilityType';
+	import {
+		facilityTypeLabel,
+		FACILITY_TYPE_LABELS,
+		PUBLIC_FACILITY_TYPES,
+		isPublicFacilityType
+	} from '$lib/citizen/facilityType';
+	import type { PublicFacilityType } from '$lib/api/types/api';
 	import { hasSession as readHasSession } from '$lib/stores/session';
 	import { ChevronRight, CloudOff, FolderSearch } from 'lucide-svelte';
 
@@ -66,6 +72,12 @@
 	const PREVIEW_LIMIT = 4;
 
 	/**
+	 * The preview's own type filter — null is "Semua", mirroring /faskes. A
+	 * sentinel string would collide with the wire enum values.
+	 */
+	let selectedPreviewType: PublicFacilityType | null = null;
+
+	/**
 	 * Sorted here, not trusted from the wire.
 	 *
 	 * The public endpoint does `ORDER BY name`, so this is a no-op against the
@@ -79,8 +91,22 @@
 	 * than by code point.
 	 */
 	$: sorted = [...catalog.facilities].sort((a, b) => a.name.localeCompare(b.name, 'id'));
-	$: preview = sorted.slice(0, PREVIEW_LIMIT);
-	$: hasMore = sorted.length > PREVIEW_LIMIT;
+	$: filteredSorted =
+		selectedPreviewType === null
+			? sorted
+			: sorted.filter(
+					(facility) =>
+						isPublicFacilityType(facility.type) && facility.type === selectedPreviewType
+				);
+	$: preview = filteredSorted.slice(0, PREVIEW_LIMIT);
+	$: hasMore = filteredSorted.length > PREVIEW_LIMIT;
+
+	/** Filter chips in frozen order: Semua, Puskesmas, Rumah Sakit. */
+	$: previewTypeFilters = [
+		{ value: null, label: 'Semua' },
+		...PUBLIC_FACILITY_TYPES.map((value) => ({ value, label: FACILITY_TYPE_LABELS[value] }))
+	];
+	$: selectedPreviewTypeLabel = selectedPreviewType ? FACILITY_TYPE_LABELS[selectedPreviewType] : '';
 
 	/**
 	 * Two strings per slot, because one of them is a claim about the list.
@@ -90,12 +116,18 @@
 	 * the list you are looking at, which is exactly the class of statement this
 	 * page is not allowed to make.
 	 */
-	$: previewDescription = hasMore
-		? `Empat faskes pertama menurut nama, dari katalog publik yang aktif.`
-		: `Seluruh faskes aktif, dari katalog publik.`;
-	$: previewNote = hasMore
-		? `Menampilkan ${PREVIEW_LIMIT} faskes pertama (diurutkan menurut nama)`
-		: `Menampilkan ${preview.length} faskes (diurutkan menurut nama)`;
+	$: previewDescription =
+		selectedPreviewType !== null
+			? `Faskes bertipe ${selectedPreviewTypeLabel} dari katalog publik yang aktif.`
+			: hasMore
+				? `Empat faskes pertama menurut nama, dari katalog publik yang aktif.`
+				: `Seluruh faskes aktif, dari katalog publik.`;
+	$: previewNote =
+		selectedPreviewType !== null
+			? `Menampilkan ${preview.length} faskes bertipe ${selectedPreviewTypeLabel}`
+			: hasMore
+				? `Menampilkan ${PREVIEW_LIMIT} faskes pertama (diurutkan menurut nama)`
+				: `Menampilkan ${preview.length} faskes (diurutkan menurut nama)`;
 
 	// The store exposes a getter function, not a value. Calling it keeps the
 	// prop a plain boolean, which is all ErrorState is allowed to know about.
@@ -125,6 +157,14 @@
 </svelte:head>
 
 <div class="sigap-page sigap-page--roomy sigap-beranda">
+	<div class="sigap-beranda__masthead">
+		<span class="sigap-beranda__masthead-mark" aria-hidden="true">S</span>
+		<div class="sigap-beranda__masthead-copy">
+			<span class="sigap-beranda__masthead-word">Sigap</span>
+			<span class="sigap-beranda__masthead-tagline">Layanan Kesehatan Warga</span>
+		</div>
+	</div>
+
 	<PageHeader
 		eyebrow="Layanan kesehatan warga"
 		title="Cari faskes, buat janji temu, dan pantau kunjungan Anda"
@@ -144,7 +184,7 @@
 			</div>
 
 			<a class="sigap-inline-link" href="/faskes">
-				Lihat semua
+				Lihat semua fasilitas
 				<Icon icon={ChevronRight} size={14} />
 			</a>
 		</div>
@@ -192,46 +232,69 @@
 				onAction={reload}
 			/>
 		{:else}
-			<ul class="sigap-beranda__facility-list">
-				{#each preview as facility (facility.id)}
-					<!--
-						The whole row is the target, as the reference draws it: a
-						chevron, not a labelled sub-button. The hit area is the
-						anchor, so it is 56px tall at every viewport rather than a
-						small link inside a static row.
-					-->
-					<li>
-						<a
-							class="sigap-beranda__facility"
-							href={`/appointments/new?facility_id=${encodeURIComponent(facility.id)}`}
-						>
-							<span class="sigap-beranda__facility-text">
-								<span class="sigap-beranda__facility-name">{facility.name}</span>
-								<!--
-									The real enum through the shared label map, so a
-									facility named "RS Foo" registered as a Puskesmas
-									reads as "Puskesmas" here exactly as on /faskes.
-								-->
-								<span class="sigap-beranda__facility-type">
-									{facilityTypeLabel(facility.type)}
-								</span>
-							</span>
-
-							{#if facility.short_code}
-								<span class="sigap-beranda__facility-code sigap-identifier">
-									{facility.short_code}
-								</span>
-							{/if}
-
-							<span class="sigap-beranda__facility-chevron" aria-hidden="true">
-								<Icon icon={ChevronRight} size={16} />
-							</span>
-						</a>
-					</li>
+			<div
+				class="sigap-beranda__filter"
+				role="group"
+				aria-label="Saring pratinjau berdasarkan tipe"
+			>
+				{#each previewTypeFilters as ft (ft.label)}
+					<button
+						type="button"
+						class="sigap-beranda__filter-chip"
+						aria-pressed={selectedPreviewType === ft.value ? 'true' : 'false'}
+						on:click={() => (selectedPreviewType = ft.value)}
+					>
+						{ft.label}
+					</button>
 				{/each}
-			</ul>
+			</div>
 
-			<p class="sigap-beranda__more">{previewNote}</p>
+			{#if filteredSorted.length === 0}
+				<p class="sigap-beranda__filter-empty">
+					Tidak ada faskes bertipe {selectedPreviewTypeLabel} dalam katalog.
+				</p>
+			{:else}
+				<ul class="sigap-beranda__facility-list">
+					{#each preview as facility (facility.id)}
+						<!--
+							The whole row is the target, as the reference draws it: a
+							chevron, not a labelled sub-button. The hit area is the
+							anchor, so it is 56px tall at every viewport rather than a
+							small link inside a static row.
+						-->
+						<li>
+							<a
+								class="sigap-beranda__facility"
+								href={`/appointments/new?facility_id=${encodeURIComponent(facility.id)}`}
+							>
+								<span class="sigap-beranda__facility-text">
+									<span class="sigap-beranda__facility-name">{facility.name}</span>
+									<!--
+										The real enum through the shared label map, so a
+										facility named "RS Foo" registered as a Puskesmas
+										reads as "Puskesmas" here exactly as on /faskes.
+									-->
+									<span class="sigap-beranda__facility-type">
+										{facilityTypeLabel(facility.type)}
+									</span>
+								</span>
+
+								{#if facility.short_code}
+									<span class="sigap-beranda__facility-code sigap-identifier">
+										{facility.short_code}
+									</span>
+								{/if}
+
+								<span class="sigap-beranda__facility-chevron" aria-hidden="true">
+									<Icon icon={ChevronRight} size={16} />
+								</span>
+							</a>
+						</li>
+					{/each}
+				</ul>
+
+				<p class="sigap-beranda__more">{previewNote}</p>
+			{/if}
 		{/if}
 	</section>
 
@@ -509,6 +572,103 @@
 	.sigap-steps__text {
 		margin: 2px 0 0;
 		font-size: 12px;
+		color: var(--sigap-muted);
+	}
+
+	/*
+		Beranda's civic masthead. The wordmark lockup that opens the page, larger
+		than the compact brand in the shell header so the landing reads as an
+		identity statement rather than a SaaS hero. It is not a heading: it is
+		the brand signature, and the page title below it is the single h1.
+	*/
+	.sigap-beranda__masthead {
+		display: flex;
+		align-items: center;
+		gap: var(--sigap-space-3);
+	}
+
+	.sigap-beranda__masthead-mark {
+		flex: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 40px;
+		height: 40px;
+		font-size: 22px;
+		font-weight: 700;
+		line-height: 1;
+		color: var(--sigap-on-primary);
+		background-color: var(--sigap-primary);
+		border-radius: var(--sigap-radius-control);
+	}
+
+	.sigap-beranda__masthead-copy {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+
+	.sigap-beranda__masthead-word {
+		font-size: 28px;
+		font-weight: 700;
+		line-height: 1.1;
+		letter-spacing: -0.01em;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-beranda__masthead-tagline {
+		font-size: 14px;
+		color: var(--sigap-muted);
+	}
+
+	/*
+		The preview's type filter, a smaller, quieter echo of the /faskes chip
+		row. The same three controls, but on the preview they sit inside the
+		section rather than above the results, and they are compact rather than
+		full-height, so they read as a refinement, not a second search surface.
+	*/
+	.sigap-beranda__filter {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--sigap-space-2);
+		margin-top: var(--sigap-space-3);
+	}
+
+	.sigap-beranda__filter-chip {
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		height: 36px;
+		padding: 0 var(--sigap-space-3);
+		font-family: inherit;
+		font-size: 12px;
+		color: var(--sigap-muted);
+		background-color: var(--sigap-surface);
+		border: 1px solid var(--sigap-border);
+		border-radius: var(--sigap-radius-control);
+		cursor: pointer;
+	}
+
+	.sigap-beranda__filter-chip[aria-pressed='true'] {
+		font-weight: 500;
+		color: var(--sigap-primary);
+		border-color: var(--sigap-primary);
+	}
+
+	.sigap-beranda__filter-chip:hover {
+		background-color: var(--sigap-canvas);
+	}
+
+	.sigap-beranda__filter-chip:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
+	}
+
+	.sigap-beranda__filter-empty {
+		margin: var(--sigap-space-3) 0 0;
+		font-size: 13px;
 		color: var(--sigap-muted);
 	}
 </style>
