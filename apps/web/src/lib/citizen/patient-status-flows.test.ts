@@ -321,4 +321,110 @@ describe('/patient/status', () => {
 		// same parameter.
 		expect(document.querySelectorAll('input')).toHaveLength(1);
 	});
+
+	describe('cancellation of a scheduled visit', () => {
+		const SCHEDULED = {
+			found_by: 'checkin_code' as const,
+			facility_name: 'Puskesmas Sukajaya',
+			service_unit_name: 'Poli Umum',
+			appointment_status: 'scheduled' as const,
+			checkin_status: 'not_checked_in'
+		};
+
+		/**
+		 * Routes the status GET and the cancel POST to separate handlers, returns
+		 * the calls so a test can assert URL/method/body. The cancel mutation is
+		 * keyed to the code the lookup resolved, so the body is under test here.
+		 */
+		async function cancelFlow({
+			status,
+			cancel
+		}: {
+			status: () => Response | Promise<Response>;
+			cancel?: () => Response | Promise<Response>;
+		}) {
+			const calls: { url: string; method: string; body?: unknown }[] = [];
+			globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = String(input);
+				const method = (init?.method ?? 'GET').toUpperCase();
+				calls.push({
+					url,
+					method,
+					body: init?.body ? JSON.parse(String(init.body)) : undefined
+				});
+				if (url.includes('/appointments/cancel')) return await (cancel ?? status)();
+				return await status();
+			}) as never;
+
+			render(Status);
+			await waitFor(() => expect(field('Kode check-in')).toBeTruthy());
+			await fireEvent.input(field('Kode check-in'), { target: { value: 'AB12CD' } });
+			await fireEvent.click(screen.getByRole('button', { name: /Cek Status/ }));
+			await screen.findByRole('button', { name: /Batalkan janji/ });
+			await fireEvent.click(screen.getByRole('button', { name: /Batalkan janji/ }));
+			await screen.findByRole('button', { name: /Ya, batalkan/ });
+			return calls;
+		}
+
+		it('200 replaces the pass with the cancelled state', async () => {
+			const calls = await cancelFlow({
+				status: () => jsonResponse({ success: true, data: SCHEDULED }),
+				cancel: () => jsonResponse({ success: true, data: { appointment_id: 'x', status: 'cancelled' } })
+			});
+			await fireEvent.click(screen.getByRole('button', { name: /Ya, batalkan/ }));
+			await waitFor(() => expect(document.querySelector('[data-testid="status-cancelled"]')).toBeTruthy());
+			// The cancel was keyed to the resolved code, not the raw field.
+			expect(calls[calls.length - 1].body).toEqual({ checkin_code: 'AB12CD' });
+		});
+
+		it('409 stays on the receipt with the server message inline', async () => {
+			await cancelFlow({
+				status: () => jsonResponse({ success: true, data: SCHEDULED }),
+				cancel: () =>
+					jsonResponse({ success: false, error: 'Janji temu sudah tidak dapat dibatalkan.' }, 409)
+			});
+			await fireEvent.click(screen.getByRole('button', { name: /Ya, batalkan/ }));
+			await waitFor(() => expect(document.querySelector('[data-testid="cancel-error"]')).toBeTruthy());
+			expect(document.body.textContent).toContain('sudah tidak dapat dibatalkan');
+			// Still the receipt, not an error or not-found state.
+			expect(document.querySelector('[data-testid="status-not-found"]')).toBeNull();
+			expect(document.querySelector('[data-testid="status-error"]')).toBeNull();
+		});
+
+		it('404 becomes the not-found state, distinct from an error', async () => {
+			await cancelFlow({
+				status: () => jsonResponse({ success: true, data: SCHEDULED }),
+				cancel: () => jsonResponse({ success: false, error: 'Kode tidak ditemukan.' }, 404)
+			});
+			await fireEvent.click(screen.getByRole('button', { name: /Ya, batalkan/ }));
+			await waitFor(() => expect(document.querySelector('[data-testid="status-not-found"]')).toBeTruthy());
+		});
+
+		it('429 renders the unavailable banner, never "Kode tidak ditemukan"', async () => {
+			await cancelFlow({
+				status: () => jsonResponse({ success: true, data: SCHEDULED }),
+				cancel: () =>
+					jsonResponse({ success: false, error: 'Terlalu banyak permintaan. Coba lagi nanti.' }, 429)
+			});
+			await fireEvent.click(screen.getByRole('button', { name: /Ya, batalkan/ }));
+			await waitFor(() => expect(document.querySelector('[data-testid="status-error"]')).toBeTruthy());
+			expect(document.querySelector('[data-testid="status-not-found"]')).toBeNull();
+		});
+
+		it('cancels the RESOLVED code, not whatever is now in the field', async () => {
+			// A citizen looks up A, then edits the field to B. Cancelling by the
+			// live field would cancel B — a different (possibly a relative's)
+			// appointment. The mutation must use the code that resolved A.
+			const calls = await cancelFlow({
+				status: () => jsonResponse({ success: true, data: SCHEDULED }),
+				cancel: () => jsonResponse({ success: false, error: 'x' }, 409) // never reached; body is the assertion
+			});
+			// Divert the field before confirming.
+			await fireEvent.input(field('Kode check-in'), { target: { value: 'ZZ99ZZ' } });
+			await fireEvent.click(screen.getByRole('button', { name: /Ya, batalkan/ }));
+			await waitFor(() => expect(calls.some((c) => c.url.includes('/appointments/cancel'))).toBe(true));
+			const cancelCall = calls.find((c) => c.url.includes('/appointments/cancel'));
+			expect(cancelCall?.body).toEqual({ checkin_code: 'AB12CD' });
+		});
+	});
 });

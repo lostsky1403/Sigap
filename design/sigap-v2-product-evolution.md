@@ -109,27 +109,46 @@ UUID returns 404; 30 req/min per IP.
 
 ### 2.3 Appointment cancellation and rescheduling by the citizen
 
-**Gap.** A citizen cannot cancel or move their own appointment. `/admin/*` can,
-but that is an operator tool. The Pen draws no citizen cancellation frame, and
-no endpoint exists.
-
-**Proposed contract.**
+**Cancellation — IMPLEMENTED (v2.3).**
 
 ```
-POST /api/v1/appointments/{id}/cancel   { checkin_code }
-POST /api/v1/appointments/{id}/reschedule { checkin_code, appointment_time }
+POST /api/v1/appointments/cancel   { checkin_code }
 ```
+
+No `{id}` path segment: the check-in code is the only identifier a citizen
+holds, and it selects the appointment server-side exactly as the status lookup
+does. Behaviour, verified end-to-end:
+
+- `scheduled` → `200 { data: { appointment_id, status: "cancelled" } }`.
+- already `cancelled` → `200 { status: "cancelled" }` (idempotent: a retry after
+  a dropped response is not reported as a loss).
+- `checked_in` / `queued` / `completed` / `no_show` → `409 "Janji temu sudah
+  tidak dapat dibatalkan."` (the citizen no longer controls the visit).
+- unknown code (or the confusable-fold ambiguity) → `404 "Kode tidak
+  ditemukan."` — fails closed, indistinguishable from an unknown code.
+- malformed (>64 chars / bad chars) → `400`.
+- rate limited by the SAME 30/min/IP instance as the status lookup, so a code
+  cannot be probed at double the rate by spreading across the two surfaces.
+- audited as `appointment.cancelled` (facility + appointment id).
 
 **Authorization.** The check-in code is the bearer token, exactly as for
-check-in. This is the same security model, not a new one.
+check-in — the same security model, not a new one. The mutation arrives via the
+same code-only, rate-limited path, and never returns data the caller did not
+already hold.
+
+**Rescheduling — proposed (not implemented).**
+
+```
+POST /api/v1/appointments/reschedule   { checkin_code, appointment_time }
+```
 
 **Constraint.** Rescheduling must re-run the slot-capacity and
 `uq_active_booking_per_patient_day` checks; a reschedule that violates either
 must fail with the same 409 the booking path returns.
 
-**Policy decision required.** Whether cancellation is allowed after check-in
-(the ticket already exists in the queue). Recommendation: no — once checked in,
-the facility controls the ticket.
+**Policy decision still required.** Whether cancellation is allowed after
+check-in. Implemented decision: no — once checked in, the facility controls the
+ticket (`409` above). Rescheduling after check-in is likewise not offered.
 
 ### 2.4 Slot availability
 

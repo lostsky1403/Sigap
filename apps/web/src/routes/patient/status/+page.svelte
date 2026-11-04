@@ -15,7 +15,6 @@
 	import type { PatientStatus } from '$lib/api/types/api';
 	import {
 		GENERIC_UNAVAILABLE,
-		formatAppointmentTime,
 		normalizeLookupCode,
 		validateLookupCode
 	} from '$lib/citizen/citizenFlow';
@@ -44,6 +43,15 @@
 		| 'cancelled';
 
 	let code = '';
+	/**
+	 * The code that RESOLVED the currently displayed visit, in the backend's
+	 * canonical shape. The input field stays editable after a successful lookup,
+	 * so `code` can diverge from the code that produced the result on screen —
+	 * and cancelling by the live field would cancel a DIFFERENT appointment than
+	 * the one the citizen is looking at (possibly a family member's). Every
+	 * mutation is therefore keyed to this value, never to the field.
+	 */
+	let resolvedCode = '';
 	let state: ResultState = 'idle';
 	let status: PatientStatus | null = null;
 	/** 429 keeps the server's own copy, which explains the limit and the reset. */
@@ -116,6 +124,7 @@
 
 		if (outcome.ok) {
 			status = outcome.data;
+			resolvedCode = normalizeLookupCode(code);
 			state = 'found';
 			return;
 		}
@@ -151,6 +160,7 @@
 	function reset() {
 		state = 'idle';
 		status = null;
+		resolvedCode = '';
 		rateLimitMessage = '';
 		otherErrorMessage = '';
 		fieldError = '';
@@ -188,8 +198,10 @@
 		cancelling = true;
 		cancelError = '';
 
-		// The code that resolved this visit, in the same shape the backend trusts.
-		const outcome = await cancelAppointmentByCode(normalizeLookupCode(code));
+		// Cancel the appointment the result was FOR. `resolvedCode` was captured
+		// at lookup time; the field may have been edited since then. Cancelling
+		// `code` would target whatever is in the box now, not what is on screen.
+		const outcome = await cancelAppointmentByCode(resolvedCode);
 
 		if (outcome.ok) {
 			state = 'cancelled';
@@ -293,17 +305,11 @@
 						so the receipt reads as one list, not two visual systems.
 					-->
 {#if status.service_unit_name}
-					<div class="sigap-status__facility" data-testid="status-service-unit">
-						<span class="sigap-status__facility-label">Layanan</span>
+					<div class="sigap-status__service" data-testid="status-service-unit">
+						<span class="sigap-status__service-label">Layanan</span>
 						<span class="sigap-status__service-name">{status.service_unit_name}</span>
 					</div>
 				{/if}
-
-					{#if status.appointment_time}
-						<p class="sigap-status__when">
-							Jadwal: {formatAppointmentTime(status.appointment_time) || status.appointment_time}
-						</p>
-					{/if}
 
 					<VisitProgress
 						checkinStatus={status.checkin_status}
@@ -408,7 +414,9 @@
 			<Dialog
 				open={cancelOpen}
 				title="Batalkan janji temu?"
-				description="Jadwal Anda akan dibebaskan untuk warga lain, dan tindakan ini tidak dapat dibatalkan."
+				description={status
+					? `Anda akan membatalkan janji temu di ${status.facility_name}${status.service_unit_name ? ` untuk ${status.service_unit_name}` : ''}. Jadwal Anda dibebaskan untuk warga lain, dan tindakan ini tidak dapat dibatalkan.`
+					: 'Jadwal Anda akan dibebaskan untuk warga lain, dan tindakan ini tidak dapat dibatalkan.'}
 				onClose={closeCancel}
 				closeLabel="Tutup dialog"
 			>
@@ -517,33 +525,24 @@
 		gap: var(--sigap-space-4);
 	}
 
-	.sigap-status__facility {
+	.sigap-status__facility,
+	.sigap-status__service {
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
 	}
 
-	.sigap-status__facility-label {
+	.sigap-status__facility-label,
+	.sigap-status__service-label {
 		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
-	.sigap-status__facility-name {
-		font-size: var(--sigap-type-subtitle);
-		font-weight: 600;
-		color: var(--sigap-foreground);
-	}
-
+	.sigap-status__facility-name,
 	.sigap-status__service-name {
 		font-size: var(--sigap-type-subtitle);
 		font-weight: 600;
 		color: var(--sigap-foreground);
-	}
-
-	.sigap-status__when {
-		margin: 0;
-		font-size: var(--sigap-type-label);
-		color: var(--sigap-muted);
 	}
 
 	.sigap-status__found-by {

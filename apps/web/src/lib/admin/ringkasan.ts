@@ -72,12 +72,15 @@ export function activeFacilityCount(facilities: readonly AdminFacility[]): numbe
  *
  * The client never learns role or scope from the server (see session.ts); the
  * one scoped read it has is the facility list itself. One facility means a
- * scoped operator and is named; anything more is the unscoped all-facilities
- * view. Zero is the class-1 empty scope, which the page surfaces before this
- * label can render, so it has no honest name here.
+ * scoped operator and is named. More than one is NOT the same as "all": a user
+ * can hold roles at a subset of facilities (user_roles has no constraint that a
+ * holder must cover the whole catalogue), so the label names the count, not an
+ * "all" the client cannot prove. Zero is the class-1 empty scope, surfaced
+ * before this label can render.
  */
 export function scopeLabel(facilities: readonly AdminFacility[]): string {
-	return facilities.length === 1 ? facilities[0].name : 'Semua fasilitas';
+	if (facilities.length === 1) return facilities[0].name;
+	return `${facilities.length} fasilitas dalam lingkup Anda`;
 }
 
 /**

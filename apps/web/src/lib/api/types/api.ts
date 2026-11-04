@@ -136,7 +136,11 @@ export interface PatientStatus {
 	 */
 	service_unit_name?: string;
 	appointment_status: AppointmentStatus;
-	appointment_time: string;
+	/**
+	 * The backend deliberately does NOT return the visit time on this code-only
+	 * public endpoint: exposing it enables correlation attacks (attendance /
+	 * facility-visit patterns) and is PHI-adjacent. Do not re-add it here.
+	 */
 	/** Derived label, not the raw status: e.g. "not_checked_in", "in_queue". */
 	checkin_status: string;
 	queue_number?: number;
