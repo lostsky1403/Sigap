@@ -21,7 +21,8 @@
 		activeQueueCount,
 		attentionItems,
 		headlineMetrics,
-		nextSchedule
+		nextSchedule,
+		scopeLabel
 	} from '$lib/admin/ringkasan';
 	import { getSession, subscribeToSession } from '$lib/stores/session';
 	import type { ApiError } from '$lib/api/errors';
@@ -100,7 +101,7 @@
 			listFacilities()
 		])
 			.then(([queueResult, appointmentResult, scheduleResult, facilityResult]) => {
-				// A partial failure is still a failure. Showing a headline strip with
+				// A partial failure is still a failure. Showing a headline summary with
 				// three of four numbers would present an incomplete overview as a
 				// complete one, and the operator cannot tell which figure is missing.
 				if (!queueResult.ok) return (error = queueResult.error);
@@ -123,7 +124,7 @@
 	 * The header's `Perbarui`. Re-reads without blanking the overview.
 	 *
 	 * It cannot call `loadOverview` directly: that sets `loading`, which swaps
-	 * the strip for a loading panel, so every figure would flicker on each
+	 * the summary for a loading panel, so every figure would flicker on each
 	 * refresh. The tradeoff is explicit — a refresh that fails leaves the
 	 * previous figures on screen with a stale `loadedAt`, which is the honest
 	 * state, rather than showing an error over numbers that are still the last
@@ -141,6 +142,7 @@
 	$: metrics = headlineMetrics({ queues, appointments, schedules, facilities });
 	$: attention = attentionItems({ queues, appointments, schedules, facilities });
 	$: upcoming = nextSchedule(schedules);
+	$: scope = scopeLabel(facilities);
 	$: facilityIndex = indexBy(facilities, (facility) => facility.id);
 
 	const QUEUE_BANDS: readonly QueueStatus[] = ['called', 'waiting', 'in_service'];
@@ -163,26 +165,67 @@
 		onRetry={() => void loadOverview()}
 	>
 		<!--
-			The headline strip. Each figure names its source, because a count an
-			operator cannot trace is a number they have to take on faith.
+			The scope, stated before any figure. Every number below is bounded by
+			WHICH facilities the operator holds in scope (one named facility, or the
+			unscoped all-facilities view), so a glance cannot mistake a scoped
+			snapshot for a whole-clinic total. Freshness stays in the page header
+			(AdminFreshness) — stating the timestamp twice would make the two
+			disagree on a re-read.
 		-->
-		<section class="sigap-ringkasan-strip" aria-label="Ringkasan angka utama">
-			{#each metrics as metric (metric.label)}
-				<div class="sigap-ringkasan-strip__item">
-					<p class="sigap-ringkasan-strip__label">{metric.label}</p>
-					<p class="sigap-ringkasan-strip__value">{formatNumber(metric.value)}</p>
-					<p class="sigap-ringkasan-strip__source">
-						{#if metric.href && metric.detail}
-							<a class="sigap-ringkasan-strip__link" href={metric.href}>
+		<p class="sigap-ringkasan-scope">
+			<span class="sigap-ringkasan-scope__name">{scope}</span>
+		</p>
+
+		<!--
+			The attention list comes FIRST: it is the actionable half. Each row is
+			a count, the source it was counted from, and where to act on it — and
+			nothing else. A row an operator cannot follow is noise sitting above
+			the numbers that actually matter.
+		-->
+		<section class="sigap-ringkasan-section" aria-labelledby="ringkasan-attention">
+			<h2 class="sigap-ringkasan-section__title" id="ringkasan-attention">Perlu perhatian</h2>
+			{#if attention.length === 0}
+				<p class="sigap-ringkasan-section__empty">
+					Tidak ada hal yang perlu perhatian dari data yang dimuat.
+				</p>
+			{:else}
+				<ul class="sigap-ringkasan-attention">
+					{#each attention as item (item.label)}
+						<li class="sigap-ringkasan-attention__row">
+							<span class="sigap-ringkasan-attention__count">{formatNumber(item.value)}</span>
+							<span class="sigap-ringkasan-attention__label">{item.label}</span>
+							<span class="sigap-ringkasan-attention__source">{item.source}</span>
+							{#if item.href}
+								<a class="sigap-ringkasan-link" href={item.href}>Buka</a>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+
+		<!--
+			The compact summary, AFTER the attention list. Labelled lines rather
+			than a KPI-card grid: each figure is one traceable line, and a row of
+			shadowed tiles would imply comparisons and trends these four scoped
+			reads cannot support.
+		-->
+		<section class="sigap-ringkasan-section" aria-label="Ringkasan angka utama">
+			<ul class="sigap-ringkasan-summary">
+				{#each metrics as metric (metric.label)}
+					<li class="sigap-ringkasan-summary__row">
+						<span class="sigap-ringkasan-summary__label">{metric.label}</span>
+						<span class="sigap-ringkasan-summary__value">{formatNumber(metric.value)}</span>
+						<span class="sigap-ringkasan-summary__source">
+							{#if metric.href}
+								<a class="sigap-ringkasan-link" href={metric.href}>{metric.source}</a>
+							{:else}
 								{metric.source}
-							</a>
-							<span class="sigap-ringkasan-strip__detail">{metric.detail}</span>
-						{:else}
-							{metric.source}
-						{/if}
-					</p>
-				</div>
-			{/each}
+							{/if}
+						</span>
+					</li>
+				{/each}
+			</ul>
 		</section>
 
 		<!--
@@ -198,27 +241,6 @@
 			Ringkasan dihitung dari data yang dimuat untuk fasilitas dalam lingkup operator.
 			Bukan data real-time, dan bukan angka untuk seluruh klinik.
 		</p>
-
-		<section class="sigap-ringkasan-section" aria-labelledby="ringkasan-attention">
-			<h2 class="sigap-ringkasan-section__title" id="ringkasan-attention">Perlu perhatian</h2>
-			{#if attention.length === 0}
-				<p class="sigap-ringkasan-section__empty">
-					Tidak ada hal yang perlu perhatian dari data yang dimuat.
-				</p>
-			{:else}
-				<ul class="sigap-ringkasan-attention">
-					{#each attention as item (item.label)}
-						<li class="sigap-ringkasan-attention__row">
-							<span class="sigap-ringkasan-attention__count">{formatNumber(item.value)}</span>
-							<span class="sigap-ringkasan-attention__label">{item.label}</span>
-							{#if item.href}
-								<a class="sigap-ringkasan-strip__link" href={item.href}>Buka</a>
-							{/if}
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</section>
 
 		<section class="sigap-ringkasan-section" aria-labelledby="ringkasan-queue">
 			<h2 class="sigap-ringkasan-section__title" id="ringkasan-queue">Antrean saat ini</h2>
@@ -242,7 +264,7 @@
 					</div>
 				{/each}
 			</div>
-			<a class="sigap-ringkasan-strip__link" href="/admin/queues">Buka Antrean</a>
+			<a class="sigap-ringkasan-link" href="/admin/queues">Buka Antrean</a>
 		</section>
 
 		<section class="sigap-ringkasan-section" aria-labelledby="ringkasan-schedule">
@@ -309,84 +331,90 @@
 
 
 	/*
-		The count strip. A rule-separated strip on `--sigap-surface`, NOT a row of
-		KPI cards.
-
-		Why the distinction is load-bearing: a shadowed, tinted,
-		big-number-in-a-box tile is the visual grammar of a generic SaaS dashboard,
-		and it implies a comparison and a trend that these four scoped reads cannot
-		support. The page carries integers and their provenance and nothing else, so
-		the strip carries the numbers on the page ground, with a hairline between
-		them and an 11px uppercase label above each one. No shadow, no tint, no box
-		per figure.
+		The scope + freshness line. Stated before any figure, it names the TWO
+		horizons every number below is bounded by — the facility scope (derived
+		from the loaded facility list) and the read time (the same `loadedAt`
+		the sticky header shows). It is a sentence, not a tile, so it cannot be
+		mistaken for a metric.
 	*/
-	.sigap-ringkasan-strip {
+	.sigap-ringkasan-scope {
 		display: flex;
 		flex-wrap: wrap;
-		background-color: var(--sigap-surface);
+		align-items: baseline;
+		gap: var(--sigap-space-2);
+		margin: 0 0 var(--sigap-space-4);
+		font-size: var(--sigap-type-label);
+	}
+
+	.sigap-ringkasan-scope__name {
+		font-weight: 600;
+		color: var(--sigap-foreground);
+	}
+
+	/*
+		The compact summary: labelled lines, NOT a KPI-card grid. A shadowed,
+		tinted, big-number-in-a-box tile is the visual grammar of a generic SaaS
+		dashboard and implies comparisons and trends these four scoped reads
+		cannot support. Each line is one figure plus its provenance, on the page
+		ground with hairline separators. No shadow, no tint, no box per figure.
+	*/
+	.sigap-ringkasan-summary {
+		margin: 0;
+		padding: 0;
+		list-style: none;
 		border-top: 1px solid var(--sigap-border-subtle);
 		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
-	.sigap-ringkasan-strip__item {
-		flex: 1 1 160px;
-		min-width: 160px;
-		padding: var(--sigap-space-4);
-		/* The rule between two figures. Decorative, so the subtle token. */
-		border-right: 1px solid var(--sigap-border-subtle);
+	.sigap-ringkasan-summary__row {
+		display: flex;
+		align-items: baseline;
+		gap: var(--sigap-space-3);
+		min-height: var(--sigap-control-admin-comfortable);
+		font-size: var(--sigap-type-label);
+		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
-	.sigap-ringkasan-strip__item:last-child {
-		border-right: none;
+	.sigap-ringkasan-summary__row:last-child {
+		border-bottom: none;
 	}
 
-	.sigap-ringkasan-strip__label {
-		margin: 0 0 var(--sigap-space-1);
-		/*
-			Sentence case at 12px, which is what the Pen draws (`Antrean aktif`,
-			`Janji temu terjadwal`, `Fasilitas aktif` at fs=12, fw=normal). It was
-			an 11px uppercase micro-label, which reads as a column header rather
-			than as the name of the figure beneath it — and it made this strip
-			disagree with the Notifikasi summary cards, which use sentence-case
-			badge labels for the same kind of datum.
-		*/
-		font-size: var(--sigap-type-caption);
-		font-weight: 400;
-		color: var(--sigap-muted);
-	}
-
-	.sigap-ringkasan-strip__value {
-		margin: 0;
-		font-size: var(--sigap-type-page-title);
-		font-weight: 600;
+	.sigap-ringkasan-summary__label {
+		flex: 1;
+		min-width: 0;
 		color: var(--sigap-foreground);
-		font-variant-numeric: tabular-nums;
 	}
 
-	.sigap-ringkasan-strip__source {
-		margin: var(--sigap-space-1) 0 0;
+	.sigap-ringkasan-summary__value {
+		/* Two-digit alignment so the sources line up as counts change width. */
+		min-width: 2ch;
+		text-align: right;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-ringkasan-summary__source {
+		text-align: right;
 		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
+		white-space: nowrap;
 	}
 
-	.sigap-ringkasan-strip__link {
+	.sigap-ringkasan-link {
 		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		text-decoration: none;
 	}
 
-	.sigap-ringkasan-strip__link:hover {
+	.sigap-ringkasan-link:hover {
 		text-decoration: underline;
 	}
 
-	.sigap-ringkasan-strip__link:focus-visible {
+	.sigap-ringkasan-link:focus-visible {
 		outline: 2px solid var(--sigap-primary);
 		outline-offset: 2px;
-	}
-
-	.sigap-ringkasan-strip__detail {
-		display: block;
 	}
 
 	.sigap-ringkasan-note {
@@ -445,6 +473,12 @@
 	.sigap-ringkasan-attention__label {
 		flex: 1;
 		min-width: 0;
+	}
+
+	.sigap-ringkasan-attention__source {
+		font-size: var(--sigap-type-caption);
+		color: var(--sigap-muted);
+		white-space: nowrap;
 	}
 
 	.sigap-ringkasan-bands {

@@ -149,6 +149,9 @@ func TestPatientStatusLookup_SuccessByCheckinCode(t *testing.T) {
 	if data["facility_name"] != "Faskes Test" {
 		t.Errorf("expected facility_name 'Faskes Test', got %v", data["facility_name"])
 	}
+	if data["service_unit_name"] != "Poli Umum Test" {
+		t.Errorf("expected service_unit_name 'Poli Umum Test', got %v", data["service_unit_name"])
+	}
 	if data["appointment_status"] != "scheduled" {
 		t.Errorf("expected appointment_status 'scheduled', got %v", data["appointment_status"])
 	}

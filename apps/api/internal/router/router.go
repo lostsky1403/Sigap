@@ -31,6 +31,7 @@ var AllowList = []string{"/health", "/readyz"}
 var Registry = []Route{
 	{Method: http.MethodPost, Path: "/api/v1/queues/generate"},
 	{Method: http.MethodPost, Path: "/api/v1/appointments"},
+	{Method: http.MethodPost, Path: "/api/v1/appointments/cancel"},
 	{Method: http.MethodPost, Path: "/api/v1/appointments/", Prefix: true},
 	{Method: http.MethodGet, Path: "/api/v1/events/beds"},
 	{Method: http.MethodGet, Path: "/api/v1/facilities/nearby"},

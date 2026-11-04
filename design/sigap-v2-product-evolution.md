@@ -31,6 +31,16 @@ proposal awaiting owner approval.
 | Auth availability announced before typing | The 503 only appeared after a submit, described as a transient outage. | — |
 | Admin preview identity banner | States on screen that the admin screens act as a seeded test subject. | — |
 
+> **Check-in code format contract (authoritative).** Generated codes are
+> exactly **6 characters** drawn from a **32-symbol alphabet** that excludes
+> `I`, `O`, `0` and `1` — the four glyphs a citizen cannot reliably tell apart
+> on a screen. The *lookup* is deliberately more permissive for legacy
+> tolerance: it accepts alphanumeric characters plus `-`, up to **64
+> characters**, and folds `0`↔`O` / `1`↔`I` on both sides. A 7-character
+> `SMOKE01` does not exist in the repository and is **not** a code the
+> generator can produce: it contains `O`, `0` and `1`, and it is the wrong
+> length.
+
 ---
 
 ## 2. Requires backend work (class 2) — NOT implemented

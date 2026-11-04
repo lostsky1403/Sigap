@@ -380,12 +380,20 @@ func main() {
 	if adminH != nil {
 		registerAdminRoutes(mux, adminH)
 
+		// Shared per-IP limiter for the two code-bearing public surfaces: the
+		// patient status lookup and the citizen self-cancellation endpoint. One
+		// instance means a code cannot be probed at double the rate by
+		// alternating between the two endpoints.
+		patientRL := limiter.NewRateLimiter(30, 1*time.Minute)
+
 		// Public booking endpoint (no auth required)
 		bookingH := handler.NewBookingHandler(dbPool, rl)
 		bookingH.WithAudit(auditSvc)
 		bookingH.WithQueueService(svc)
 		// AUDIT-302: check-in brute-force protection — 5 attempts per5 min per (IP, appointment).
 		bookingH.WithCheckinLimiter(limiter.NewRateLimiter(5, 5*time.Minute))
+		// Citizen cancellation shares the status lookup's 30/min/IP budget.
+		bookingH.WithCancelLimiter(patientRL)
 		mux.HandleFunc("/api/v1/appointments", enableCORS(bookingH.PublicAppointmentsRouter))
 		mux.HandleFunc("/api/v1/appointments/", enableCORS(bookingH.PublicAppointmentsRouter))
 		slog.Info("booking routes registered", "paths", []string{
@@ -394,7 +402,6 @@ func main() {
 		})
 
 		// Patient portal: public status lookup (no auth required)
-		patientRL := limiter.NewRateLimiter(30, 1*time.Minute)
 		patientH := handler.NewPatientHandler(dbPool, patientRL)
 		mux.HandleFunc("/api/v1/patient/status", enableCORS(patientH.PatientStatusLookup))
 		slog.Info("patient portal routes registered", "paths", []string{"/api/v1/patient/status"})

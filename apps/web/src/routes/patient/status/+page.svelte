@@ -4,11 +4,13 @@
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import Dialog from '$lib/ui/Dialog.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import { RADIUS } from '$lib/design/tokens';
 	import { Search } from 'lucide-svelte';
 	import Icon from '$lib/ui/Icon.svelte';
 	import { lookupPatientStatus } from '$lib/api/endpoints/public';
+	import { cancelAppointmentByCode } from '$lib/api/endpoints/citizen';
 	import { isAbort } from '$lib/api/errors';
 	import type { PatientStatus } from '$lib/api/types/api';
 	import {
@@ -33,7 +35,13 @@
 	 * inventing it. The result is explicitly the CURRENT state.
 	 */
 
-	type ResultState = 'idle' | 'loading' | 'found' | 'not-found' | 'error';
+	type ResultState =
+		| 'idle'
+		| 'loading'
+		| 'found'
+		| 'not-found'
+		| 'error'
+		| 'cancelled';
 
 	let code = '';
 	let state: ResultState = 'idle';
@@ -43,6 +51,19 @@
 	let otherErrorMessage = '';
 	let fieldError = '';
 	let attempted = false;
+
+	/**
+	 * Cancel-a-scheduled-appointment state, orthogonal to the lookup result.
+	 *
+	 * `cancelOpen` is the dialog, `cancelling` the in-flight guard, and
+	 * `cancelError` the server's 409 refusal — held apart from `otherErrorMessage`
+	 * so a conflict (appointment already checked in / completed) never collapses
+	 * into the generic unavailable banner, and from `state === 'not-found'` so a
+	 * code that vanished after booking elsewhere is not shown as an error.
+	 */
+	let cancelOpen = false;
+	let cancelling = false;
+	let cancelError = '';
 
 	/**
 	 * Prefills the field when another screen hands the code over in `?code=`.
@@ -134,6 +155,75 @@
 		otherErrorMessage = '';
 		fieldError = '';
 		attempted = false;
+		cancelError = '';
+	}
+
+	/** Opens the cancel confirm dialog, clearing any earlier inline refusal. */
+	function openCancel() {
+		cancelError = '';
+		cancelOpen = true;
+	}
+
+	/** Closes the cancel confirm dialog. Guarded so a close during the request is a no-op. */
+	function closeCancel() {
+		if (cancelling) return;
+		cancelOpen = false;
+	}
+
+	/**
+	 * Confirms the cancellation.
+	 *
+	 * The four outcomes stay distinct on purpose:
+	 *
+	 * - 200: the pass is replaced by the cancelled state, and the dialog closes.
+	 * - 409 `conflict`: the server refused (checked in / completed). The server's
+	 *   own message is shown inline, and this must never read as not-found.
+	 * - 404 `not_found`: the code no longer resolves (cancelled elsewhere or
+	 *   expired) — that IS the not-found state, not an error.
+	 * - 429 / network / 5xx / unknown: generic unavailable. The generic banner
+	 *   must never masquerade as "Kode tidak ditemukan".
+	 */
+	async function confirmCancel() {
+		if (cancelling) return;
+		cancelling = true;
+		cancelError = '';
+
+		// The code that resolved this visit, in the same shape the backend trusts.
+		const outcome = await cancelAppointmentByCode(normalizeLookupCode(code));
+
+		if (outcome.ok) {
+			state = 'cancelled';
+			cancelOpen = false;
+			cancelling = false;
+			return;
+		}
+
+		// An abort is a navigation away; the pending guard is all that matters.
+		if (isAbort(outcome.error)) {
+			cancelling = false;
+			return;
+		}
+
+		if (outcome.error.kind === 'not_found') {
+			state = 'not-found';
+			status = null;
+			cancelOpen = false;
+			cancelling = false;
+			return;
+		}
+
+		if (outcome.error.kind === 'conflict') {
+			cancelError = outcome.error.message || 'Janji temu sudah tidak dapat dibatalkan.';
+			cancelOpen = false;
+			cancelling = false;
+			return;
+		}
+
+		// 429 / network / 5xx / unknown: unavailable, never "not found".
+		otherErrorMessage = GENERIC_UNAVAILABLE;
+		state = 'error';
+		cancelOpen = false;
+		cancelling = false;
 	}
 </script>
 
@@ -196,6 +286,19 @@
 						<span class="sigap-status__facility-name">{status.facility_name}</span>
 					</div>
 
+					<!--
+						The service is public catalog data (e.g. "Poli Umum"),
+						never patient data, and omitted entirely when the backend
+						did not send it. It reuses the facility label/value styling
+						so the receipt reads as one list, not two visual systems.
+					-->
+{#if status.service_unit_name}
+					<div class="sigap-status__facility" data-testid="status-service-unit">
+						<span class="sigap-status__facility-label">Layanan</span>
+						<span class="sigap-status__service-name">{status.service_unit_name}</span>
+					</div>
+				{/if}
+
 					{#if status.appointment_time}
 						<p class="sigap-status__when">
 							Jadwal: {formatAppointmentTime(status.appointment_time) || status.appointment_time}
@@ -217,6 +320,41 @@
 						Ditemukan lewat {status.found_by === 'checkin_code'
 							? 'kode check-in'
 							: 'nomor antrean'}.
+					</p>
+
+					<Button variant="ghost" onClick={reset}>Cek kode lain</Button>
+
+					<!--
+						Cancelling is only offered for a scheduled appointment: it is
+						the one state a citizen still controls. A checked-in / queued /
+						completed visit cannot be undone from here, so the affordance
+						does not appear and the citizen is not offered an action the
+						server would always refuse.
+					-->
+					{#if status.appointment_status === 'scheduled'}
+						<div class="sigap-status__cancel" data-testid="cancel-appointment">
+							<Button variant="secondary" onClick={openCancel}>Batalkan janji</Button>
+						</div>
+					{/if}
+
+					{#if cancelError}
+						<p class="sigap-status__cancel-error" role="alert" data-testid="cancel-error">
+							{cancelError}
+						</p>
+					{/if}
+				</div>
+			{:else if state === 'cancelled' && status}
+				<div class="sigap-status__cancelled" data-testid="status-cancelled">
+					<div class="sigap-status__facility">
+						<span class="sigap-status__facility-label">Fasilitas</span>
+						<span class="sigap-status__facility-name">{status.facility_name}</span>
+					</div>
+
+					<h2 class="sigap-status__cancelled-title">Janji temu dibatalkan</h2>
+					<p class="sigap-status__cancelled-body">
+						Jadwal Anda telah dibatalkan. Anda dapat
+						<a class="sigap-inline-link" href="/appointments/new">membuat janji temu baru</a>
+						kapan saja.
 					</p>
 
 					<Button variant="ghost" onClick={reset}>Cek kode lain</Button>
@@ -259,6 +397,30 @@
 					</div>
 				{/if}
 			</div>
+
+			<!--
+				The cancel confirmation. Rendered conditionally on `open` by
+				Dialog itself; `showModal()` puts it in the top layer, so its
+				placement in the DOM is irrelevant to layout. The footer's two
+				buttons are a secondary "Kembali" (closes, no-op while pending)
+				and a danger primary "Ya, batalkan" that carries the pending label.
+			-->
+			<Dialog
+				open={cancelOpen}
+				title="Batalkan janji temu?"
+				description="Jadwal Anda akan dibebaskan untuk warga lain, dan tindakan ini tidak dapat dibatalkan."
+				onClose={closeCancel}
+				closeLabel="Tutup dialog"
+			>
+				<svelte:fragment slot="footer">
+					<Button variant="secondary" onClick={closeCancel} disabled={cancelling}>
+						Kembali
+					</Button>
+					<Button variant="danger" onClick={confirmCancel} disabled={cancelling}>
+						{cancelling ? 'Membatalkan…' : 'Ya, batalkan'}
+					</Button>
+				</svelte:fragment>
+			</Dialog>
 		</section>
 
 		<aside class="sigap-status__aside" aria-labelledby="sigap-status-next-title">
@@ -372,6 +534,12 @@
 		color: var(--sigap-foreground);
 	}
 
+	.sigap-status__service-name {
+		font-size: var(--sigap-type-subtitle);
+		font-weight: 600;
+		color: var(--sigap-foreground);
+	}
+
 	.sigap-status__when {
 		margin: 0;
 		font-size: var(--sigap-type-label);
@@ -381,6 +549,55 @@
 	.sigap-status__found-by {
 		margin: 0;
 		font-size: var(--sigap-type-caption);
+		color: var(--sigap-muted);
+	}
+
+	/*
+		The cancel trigger is a secondary button whose label reads in the danger
+		token ("destructive text"): low emphasis so it does not compete with the
+		receipt, but the words signal that this action cannot be undone. Without
+		the override, the secondary variant's text is the neutral foreground and
+		its hover swings to the brand primary — which reads as navigation, not as
+		an irreversible action.
+	*/
+	:global(.sigap-status__cancel .sigap-button--secondary),
+	:global(.sigap-status__cancel .sigap-button--secondary:hover:not(:disabled)) {
+		color: var(--sigap-danger);
+	}
+
+	/*
+		Inline cancel refusal (409). Danger text only, no tinted panel: it sits
+		inside the receipt beside the trigger, so it must read as its own message
+		rather than the full-page unavailable banner, and never as "not found".
+	*/
+	.sigap-status__cancel-error {
+		margin: 0;
+		font-size: var(--sigap-type-label);
+		color: var(--sigap-danger);
+	}
+
+	/*
+		The post-cancel state. The pass is gone, so the receipt is replaced by a
+		short confirmation: the same facility block, the outcome as a heading,
+		and a concrete path back to booking.
+	*/
+	.sigap-status__cancelled {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sigap-space-4);
+	}
+
+	.sigap-status__cancelled-title {
+		margin: 0;
+		font-size: var(--sigap-type-subtitle);
+		font-weight: 600;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-status__cancelled-body {
+		margin: 0;
+		font-size: var(--sigap-type-label);
+		line-height: 1.6;
 		color: var(--sigap-muted);
 	}
 

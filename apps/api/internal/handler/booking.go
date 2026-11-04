@@ -31,6 +31,7 @@ type BookingHandler struct {
 	audit          *audit.Service
 	limiter        *limiter.RateLimiter
 	checkinLimiter *limiter.RateLimiter // AUDIT-302: per-IP+appointment brute-force protection
+	cancelLimiter  *limiter.RateLimiter // shared with patient status lookup: 30/min/IP
 	queueSvc       service.QueueService
 	notify         *notification.Service
 }
@@ -44,6 +45,16 @@ func NewBookingHandler(pool *pgxpool.Pool, rl *limiter.RateLimiter) *BookingHand
 // AUDIT-302: 5 attempts per5 minutes per (IP, appointment) pair.
 func (h *BookingHandler) WithCheckinLimiter(rl *limiter.RateLimiter) *BookingHandler {
 	h.checkinLimiter = rl
+	return h
+}
+
+// WithCancelLimiter attaches the SAME per-IP limiter the public status lookup
+// uses (30 req/min). Sharing the instance, rather than creating a second
+// limiter, means a code cannot be probed at 60 combined req/min by spreading
+// attempts across the status and cancel surfaces — the two endpoints burn the
+// same budget.
+func (h *BookingHandler) WithCancelLimiter(rl *limiter.RateLimiter) *BookingHandler {
+	h.cancelLimiter = rl
 	return h
 }
 
@@ -734,8 +745,170 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 	h.fireCheckInConfirmation(id, patientPhone, facilityID, res.FormattedNumber)
 }
 
+// CancelAppointment handles POST /api/v1/appointments/cancel (public).
+//
+// A citizen cancels their own appointment by check-in code, mirroring the
+// status lookup: no auth, code-only access, per-IP rate limiting, and the same
+// confusable-fold fallback so a mistyped "O"/"0" or "I"/"1" still resolves.
+//
+// Information-oracle resistance: an ambiguous fold fails closed as "not found"
+// (indistinguishable from an unknown code), and the error classification never
+// distinguishes "wrong code" from "already checked in".
+func (h *BookingHandler) CancelAppointment(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CheckinCode string `json:"checkin_code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Format permintaan tidak valid.")
+		return
+	}
+
+	// Whitespace anywhere, not just at the ends: a code copied from an SMS or
+	// read aloud often arrives with stray spaces, exactly as the status lookup
+	// tolerates.
+	code := strings.Join(strings.Fields(req.CheckinCode), "")
+	if code == "" {
+		writeError(w, http.StatusBadRequest, "Kode check-in wajib diisi.")
+		return
+	}
+	if len(code) > maxPatientCodeLen || !safeCodeRe.MatchString(code) {
+		writeError(w, http.StatusBadRequest, "Kode tidak valid.")
+		return
+	}
+
+	// Rate limit with the SAME limiter instance the status lookup uses
+	// (30 req/min per IP). WHY shared, not a second instance: a code must not
+	// be probeable at 60 combined req/min by spreading attempts across the
+	// status and cancel surfaces.
+	if h.cancelLimiter != nil && !h.cancelLimiter.Allow(extractIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "Terlalu banyak permintaan. Coba lagi nanti.")
+		return
+	}
+
+	if h.pool == nil {
+		writeError(w, http.StatusInternalServerError, "Database connection unavailable.")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Exact match first, folded as a fallback — the same two-query strategy as
+	// the status lookup. SELECTing id/facility_id/status only; no patient data.
+	const resolveSQL = `
+		SELECT a.id, a.facility_id, a.status
+		FROM appointments a
+		WHERE %s`
+
+	id, facilityID, status, err := h.resolveByCheckinCode(
+		ctx, fmt.Sprintf(resolveSQL, `upper(a.checkin_code) = upper($1)`), code)
+	if err == errAmbiguousCode {
+		writeError(w, http.StatusNotFound, "Kode tidak ditemukan.")
+		return
+	}
+	if err == pgx.ErrNoRows {
+		id, facilityID, status, err = h.resolveByCheckinCode(
+			ctx,
+			fmt.Sprintf(resolveSQL, `translate(upper(a.checkin_code), '01', 'OI') = translate(upper($1), '01', 'OI') LIMIT 2`),
+			code,
+		)
+		if err == errAmbiguousCode {
+			writeError(w, http.StatusNotFound, "Kode tidak ditemukan.")
+			return
+		}
+	}
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "Kode tidak ditemukan.")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "Gagal memproses pembatalan.")
+		return
+	}
+
+	switch status {
+	case "cancelled":
+		// Idempotent: a double-tap or a retry after a dropped response reaches
+		// an already-cancelled appointment and should not be reported as a loss.
+		writeJSON(w, http.StatusOK, map[string]any{"status": status})
+		return
+	case "checked_in", "queued", "completed", "no_show":
+		// The citizen is past the point they still control the appointment;
+		// staff must handle these. WHY 409 rather than a silent no-op: saying
+		// "cancelled" here would be false — the appointment is still live.
+		writeError(w, http.StatusConflict, "Janji temu sudah tidak dapat dibatalkan.")
+		return
+	case "scheduled":
+		// Proceed to the guarded transition below.
+	default:
+		// Any status the codebase does not model is treated as
+		// non-cancellable-by-citizen rather than risk cancelling something
+		// staff owns.
+		writeError(w, http.StatusConflict, "Janji temu sudah tidak dapat dibatalkan.")
+		return
+	}
+
+	// Guarded transition: WHERE id=$1 AND status='scheduled' so a concurrent
+	// request that already moved this appointment cannot be overwritten.
+	ct, err := h.pool.Exec(ctx,
+		`UPDATE appointments SET status = 'cancelled', cancelled_at = NOW(), updated_at = NOW()
+		 WHERE id = $1 AND status = 'scheduled'`, id)
+	if err != nil {
+		slog.Error("cancel transition failed", "appointment_id", id, "err", err.Error())
+		writeError(w, http.StatusInternalServerError, "Gagal membatalkan janji temu.")
+		return
+	}
+	if ct.RowsAffected() == 0 {
+		// Lost a race: the appointment left 'scheduled' between resolve and
+		// update. Report the conflict rather than claiming success.
+		writeError(w, http.StatusConflict, "Janji temu sudah tidak dapat dibatalkan.")
+		return
+	}
+
+	h.logBookingEvent(r, "appointment.cancelled", "ok",
+		fmt.Sprintf("facility=%s appointment=%s", facilityID, id))
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"data": map[string]any{
+			"appointment_id": id,
+			"status":         "cancelled",
+		},
+	})
+}
+
+// resolveByCheckinCode runs one lookup and returns the resolved appointment's
+// id, facility id and current status, following lookupBy's ambiguity contract
+// (more than one canonical row → errAmbiguousCode).
+func (h *BookingHandler) resolveByCheckinCode(ctx context.Context, query, code string) (id, facilityID, status string, err error) {
+	rows, err := h.pool.Query(ctx, query, code)
+	if err != nil {
+		return "", "", "", err
+	}
+	defer rows.Close()
+
+	matched := 0
+	for rows.Next() {
+		matched++
+		if matched > 1 {
+			return "", "", "", errAmbiguousCode
+		}
+		if err := rows.Scan(&id, &facilityID, &status); err != nil {
+			return "", "", "", err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", "", err
+	}
+	if matched == 0 {
+		return "", "", "", pgx.ErrNoRows
+	}
+	return id, facilityID, status, nil
+}
+
 // PublicAppointmentsRouter dispatches public appointment endpoints.
 // POST /api/v1/appointments               → BookAppointment
+// POST /api/v1/appointments/cancel        → CancelAppointment
 // POST /api/v1/appointments/{id}/check-in → CheckIn
 func (h *BookingHandler) PublicAppointmentsRouter(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -746,6 +919,10 @@ func (h *BookingHandler) PublicAppointmentsRouter(w http.ResponseWriter, r *http
 			return
 		}
 		parts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(parts) == 4 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "appointments" && parts[3] == "cancel" {
+			h.CancelAppointment(w, r)
+			return
+		}
 		if len(parts) == 5 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "appointments" && parts[4] == "check-in" {
 			h.CheckIn(w, r)
 			return

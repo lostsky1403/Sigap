@@ -43,8 +43,13 @@ func NewPatientHandler(pool *pgxpool.Pool, rl *limiter.RateLimiter) *PatientHand
 type PatientStatusResponse struct {
 	FoundBy         string `json:"found_by"`
 	FacilityName    string `json:"facility_name"`
+	// ServiceUnitName is public service-catalog data: the unit a citizen
+	// booked at (e.g. "Poli Umum"). It is already exposed, unauthenticated,
+	// through GET /api/v1/public/service-units, so surfacing it here adds no
+	// new disclosure surface. It is NOT appointment timing and carries no PII.
+	ServiceUnitName   string `json:"service_unit_name,omitempty"`
 	AppointmentStatus string `json:"appointment_status"`
-	CheckinStatus   string `json:"checkin_status"`
+	CheckinStatus     string `json:"checkin_status"`
 	// QueueNumber is the integer position within the facility's day.
 	// QueueFormattedNumber is the ticket string printed on the slip and shown
 	// on the waiting-room screen ("PHB-0004"), which is what a citizen can
@@ -97,9 +102,10 @@ func (h *PatientHandler) PatientStatusLookup(w http.ResponseWriter, r *http.Requ
 	// The exact match runs first and decides on its own. Folding is a fallback
 	// for a code the citizen mistyped, never a replacement for a correct one.
 	const lookupSQL = `
-		SELECT f.name, a.status, qt.queue_number, qt.formatted_number, qt.status
+		SELECT f.name, a.status, su.name, qt.queue_number, qt.formatted_number, qt.status
 		FROM appointments a
 		JOIN facilities f ON f.id = a.facility_id
+		LEFT JOIN service_units su ON su.id = a.service_unit_id
 		LEFT JOIN queue_tickets qt ON qt.id = a.queue_ticket_id
 		WHERE %s`
 
@@ -158,6 +164,7 @@ var errAmbiguousCode = errors.New("ambiguous check-in code")
 func (h *PatientHandler) lookupBy(ctx context.Context, query, code string) (PatientStatusResponse, error) {
 	var resp PatientStatusResponse
 	var aptStatus *string
+	var suName *string
 	var qNum *int
 	var qFormatted *string
 	var qStatus *string
@@ -175,7 +182,7 @@ func (h *PatientHandler) lookupBy(ctx context.Context, query, code string) (Pati
 			// The query that can return more than one row is the folded one.
 			return resp, errAmbiguousCode
 		}
-		if err := rows.Scan(&resp.FacilityName, &aptStatus, &qNum, &qFormatted, &qStatus); err != nil {
+		if err := rows.Scan(&resp.FacilityName, &aptStatus, &suName, &qNum, &qFormatted, &qStatus); err != nil {
 			return resp, err
 		}
 	}
@@ -190,6 +197,9 @@ func (h *PatientHandler) lookupBy(ctx context.Context, query, code string) (Pati
 	if aptStatus != nil {
 		resp.AppointmentStatus = *aptStatus
 		resp.CheckinStatus = mapCheckinStatus(*aptStatus)
+	}
+	if suName != nil {
+		resp.ServiceUnitName = *suName
 	}
 	resp.QueueNumber = qNum
 	resp.QueueFormattedNumber = qFormatted

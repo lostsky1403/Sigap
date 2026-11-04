@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/sigap/sigap/apps/api/internal/limiter"
 	"github.com/sigap/sigap/apps/api/internal/service"
 )
 
@@ -150,6 +151,42 @@ func TestGenerateCheckinCode(t *testing.T) {
 		if !strings.ContainsRune(checkinCodeAlphabet, c) {
 			t.Errorf("unexpected character in code: %c", c)
 		}
+	}
+}
+
+// TestGenerateCheckinCode_Distinct pins the generator's OUTPUT contract par
+// excellence: a call yields exactly 6 characters, each drawn from
+// checkinCodeAlphabet (the 32-symbol set with no I/O/0/1), and repeated calls
+// differ. This guards a stale report that cited a 7-char "SMOKE01" code — that
+// string cannot come out of generateCheckinCode: it is neither 6 chars nor
+// drawn from the alphabet (it contains O, 0 and 1, all excluded).
+func TestGenerateCheckinCode_Distinct(t *testing.T) {
+	code, err := generateCheckinCode(6)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(code) != 6 {
+		t.Fatalf("expected 6 characters, got %d (%q)", len(code), code)
+	}
+	for _, c := range code {
+		if !strings.ContainsRune(checkinCodeAlphabet, c) {
+			t.Fatalf("character %q is not in checkinCodeAlphabet", c)
+		}
+	}
+
+	// Repeated calls differ: the generator must be random, not a fixed or
+	// sequential sequence. 32^6 ≈ 1.07e9, so a duplicate across these few calls
+	// would indicate a broken generator rather than bad luck.
+	seen := map[string]bool{code: true}
+	for i := range 8 {
+		next, err := generateCheckinCode(6)
+		if err != nil {
+			t.Fatalf("unexpected error on call %d: %v", i, err)
+		}
+		if seen[next] {
+			t.Fatalf("generateCheckinCode(6) returned a duplicate %q across %d calls", next, i+1)
+		}
+		seen[next] = true
 	}
 }
 
@@ -565,5 +602,265 @@ func TestCheckIn_EngineTicketAlreadyLocal_NotDuplicated(t *testing.T) {
 	}
 	if queueNumber != 77 {
 		t.Errorf("expected the engine's queue_number 77 to survive, got %d", queueNumber)
+	}
+}
+
+// --- Citizen cancellation by check-in code ---
+
+// seedCancelAppt inserts a facility + service_unit + appointment for cancel
+// integration tests. Unique IDs avoid collisions with other tests.
+func seedCancelAppt(t *testing.T, pool *pgxpool.Pool, code, status string) (apptID string, cleanup func()) {
+	t.Helper()
+	ctx := context.Background()
+	u := time.Now().UnixNano()
+	facID := "40000000-0000-0000-0000-" + padID(u)
+	svcID := "50000000-0000-0000-0000-" + padID(u)
+	apptID = "60000000-0000-0000-0000-" + padID(u)
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO facilities (id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, short_code)
+		 VALUES ($1, 'Cancel Fac', 'puskesmas', 'Addr', 'Kec', 'Kab', 'Prov', '000', 'CF')
+		 ON CONFLICT (id) DO NOTHING`, facID); err != nil {
+		t.Fatalf("seed facility: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO service_units (id, facility_id, name)
+		 VALUES ($1, $2, 'Cancel Unit')
+		 ON CONFLICT (id) DO NOTHING`, svcID, facID); err != nil {
+		t.Fatalf("seed service_unit: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO appointments (id, facility_id, service_unit_id, patient_display_name,
+			patient_phone, appointment_time, status, checkin_code)
+		 VALUES ($1, $2, $3, 'Cancel Patient', '085550000777',
+			NOW() + INTERVAL '1 day', $4, $5)
+		 ON CONFLICT (id) DO NOTHING`,
+		apptID, facID, svcID, status, code); err != nil {
+		t.Fatalf("seed appointment: %v", err)
+	}
+
+	cleanup = func() {
+		pool.Exec(context.Background(), `DELETE FROM appointments WHERE id = $1`, apptID)
+		pool.Exec(context.Background(), `DELETE FROM service_units WHERE id = $1`, svcID)
+		pool.Exec(context.Background(), `DELETE FROM facilities WHERE id = $1`, facID)
+	}
+	return apptID, cleanup
+}
+
+func TestCancel_EmptyCode_Returns400(t *testing.T) {
+	// Validation runs before the DB lookup, so a nil pool is sufficient here.
+	h := NewBookingHandler(nil, nil)
+	body, _ := json.Marshal(map[string]string{"checkin_code": "   "})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/appointments/cancel", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.CancelAppointment(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty code, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCancel_InvalidCharacters_Returns400(t *testing.T) {
+	h := NewBookingHandler(nil, nil)
+	body, _ := json.Marshal(map[string]string{"checkin_code": "<script>"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/appointments/cancel", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.CancelAppointment(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid characters, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCancel_RateLimited_Returns429(t *testing.T) {
+	rl := limiter.NewRateLimiter(1, 1*time.Minute)
+	h := NewBookingHandler(nil, nil).WithCancelLimiter(rl)
+	body, _ := json.Marshal(map[string]string{"checkin_code": "CNCLAB"})
+
+	// First request passes the limiter, then hits the nil pool → 500 (not 429).
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/appointments/cancel", bytes.NewReader(body))
+	req1.Header.Set("Content-Type", "application/json")
+	req1.RemoteAddr = "10.0.0.9:1234"
+	rec1 := httptest.NewRecorder()
+	h.CancelAppointment(rec1, req1)
+	if rec1.Code == http.StatusTooManyRequests {
+		t.Fatalf("first request should not be rate limited")
+	}
+
+	// Second request from the same IP exceeds the limit → 429.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/appointments/cancel", bytes.NewReader(body))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.RemoteAddr = "10.0.0.9:1234"
+	rec2 := httptest.NewRecorder()
+	h.CancelAppointment(rec2, req2)
+	if rec2.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+}
+
+func TestCancel_Scheduled_Returns200AndCancels(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	pool, err := pgxpool.New(context.Background(), dbURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	apptID, cleanup := seedCancelAppt(t, pool, "CNCLAB", "scheduled")
+	defer cleanup()
+
+	h := NewBookingHandler(pool, nil)
+
+	// Lowercase on purpose: the lookup is case-insensitive.
+	body, _ := json.Marshal(map[string]string{"checkin_code": "cnclab"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/appointments/cancel", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.CancelAppointment(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["success"] != true {
+		t.Errorf("expected success=true, got %v", resp["success"])
+	}
+	data, _ := resp["data"].(map[string]any)
+	if data["status"] != "cancelled" {
+		t.Errorf("expected data.status cancelled, got %v", data["status"])
+	}
+	if data["appointment_id"] != apptID {
+		t.Errorf("expected appointment_id %s, got %v", apptID, data["appointment_id"])
+	}
+
+	var st string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT status FROM appointments WHERE id = $1`, apptID).Scan(&st); err != nil {
+		t.Fatalf("verify appointment: %v", err)
+	}
+	if st != "cancelled" {
+		t.Errorf("expected DB status cancelled, got %q", st)
+	}
+}
+
+func TestCancel_ConfusableFolded_Resolves(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	pool, err := pgxpool.New(context.Background(), dbURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	// "AB0IEF" contains a digit 0 and digit 1; substituting letter O/I must
+	// still resolve via the confusable fold, exactly like the status lookup.
+	_, cleanup := seedCancelAppt(t, pool, "AB0IEF", "scheduled")
+	defer cleanup()
+
+	h := NewBookingHandler(pool, nil)
+	body, _ := json.Marshal(map[string]string{"checkin_code": "ABOIEF"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/appointments/cancel", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.CancelAppointment(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("folded code should resolve to 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCancel_AlreadyCancelled_Idempotent200(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	pool, err := pgxpool.New(context.Background(), dbURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	_, cleanup := seedCancelAppt(t, pool, "CNCLDX", "cancelled")
+	defer cleanup()
+
+	h := NewBookingHandler(pool, nil)
+	body, _ := json.Marshal(map[string]string{"checkin_code": "CNCLDX"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/appointments/cancel", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.CancelAppointment(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for already-cancelled, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["status"] != "cancelled" {
+		t.Errorf("expected {status:cancelled} no-op, got %v", resp)
+	}
+	if _, ok := resp["data"]; ok {
+		t.Errorf("idempotent no-op must NOT wrap in data, got %v", resp)
+	}
+}
+
+func TestCancel_CheckedIn_Returns409(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	pool, err := pgxpool.New(context.Background(), dbURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	_, cleanup := seedCancelAppt(t, pool, "CNCLCK", "checked_in")
+	defer cleanup()
+
+	h := NewBookingHandler(pool, nil)
+	body, _ := json.Marshal(map[string]string{"checkin_code": "CNCLCK"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/appointments/cancel", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.CancelAppointment(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for checked-in, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCancel_UnknownCode_Returns404(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	pool, err := pgxpool.New(context.Background(), dbURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pool.Close()
+
+	h := NewBookingHandler(pool, nil)
+	body, _ := json.Marshal(map[string]string{"checkin_code": "NOPE01"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/appointments/cancel", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.CancelAppointment(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown code, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

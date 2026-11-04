@@ -130,6 +130,11 @@ export interface PatientStatus {
 	 */
 	found_by: 'checkin_code';
 	facility_name: string;
+	/**
+	 * What the citizen is here for — public service-catalog data (e.g.
+	 * "Poli Umum"), never patient data. Omitted by the backend when absent.
+	 */
+	service_unit_name?: string;
 	appointment_status: AppointmentStatus;
 	appointment_time: string;
 	/** Derived label, not the raw status: e.g. "not_checked_in", "in_queue". */

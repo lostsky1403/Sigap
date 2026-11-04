@@ -68,7 +68,20 @@ export function activeFacilityCount(facilities: readonly AdminFacility[]): numbe
 }
 
 /**
- * The headline strip. Three figures, each traceable to one scoped list.
+ * The operator's facility scope, stated from the loaded facility list.
+ *
+ * The client never learns role or scope from the server (see session.ts); the
+ * one scoped read it has is the facility list itself. One facility means a
+ * scoped operator and is named; anything more is the unscoped all-facilities
+ * view. Zero is the class-1 empty scope, which the page surfaces before this
+ * label can render, so it has no honest name here.
+ */
+export function scopeLabel(facilities: readonly AdminFacility[]): string {
+	return facilities.length === 1 ? facilities[0].name : 'Semua fasilitas';
+}
+
+/**
+ * The headline figures, each traceable to one scoped list.
  *
  * Notification counts are deliberately ABSENT. The outbox summary is scoped to
  * the operator's own facilities but counts delivery attempts, not clinic
@@ -117,6 +130,20 @@ export function attentionItems(input: RingkasanInput): DerivedMetric[] {
 		items.push({
 			label: 'Antrean menunggu belum dipanggil',
 			value: waiting,
+			source: 'Daftar antrean',
+			href: '/admin/queues'
+		});
+	}
+
+	// A called ticket that has not reached a terminal state is a patient who
+	// has been summoned and is still waiting to be served. It is the second
+	// half of the queue's actionable surface, and it is derivable from the
+	// same scoped list with no new figure or heuristic.
+	const called = input.queues.filter((ticket) => ticket.status === 'called').length;
+	if (called > 0) {
+		items.push({
+			label: 'Pasien dipanggil, menunggu dilayani',
+			value: called,
 			source: 'Daftar antrean',
 			href: '/admin/queues'
 		});

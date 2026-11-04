@@ -1,4 +1,4 @@
-import { apiFetchList, type ApiResult } from '../client';
+import { apiFetch, apiFetchList, type ApiResult } from '../client';
 import type { PublicServiceUnit } from '../types/api';
 
 /**
@@ -26,5 +26,26 @@ export function bookableServiceUnits(
 	return apiFetchList<PublicServiceUnit>('/api/v1/public/service-units', {
 		signal,
 		query: { facility_id: facilityId }
+	});
+}
+
+/**
+ * Cancels a scheduled appointment by its check-in code.
+ *
+ * A scheduled appointment is the one state a citizen still controls; the
+ * check-in code is the credential that proves they are the one who holds it
+ * (the same trust model as the public status lookup, which is code-only and
+ * rate limited). The backend owns every transition rule — 409 "tidak dapat
+ * dibatalkan" and 404 "kode tidak ditemukan" arrive here as distinct error
+ * kinds and stay distinct for the caller to render.
+ */
+export function cancelAppointmentByCode(
+	code: string,
+	signal?: AbortSignal
+): Promise<ApiResult<{ appointment_id: string; status: string }>> {
+	return apiFetch<{ appointment_id: string; status: string }>('/api/v1/appointments/cancel', {
+		method: 'POST',
+		body: { checkin_code: code },
+		signal
 	});
 }
