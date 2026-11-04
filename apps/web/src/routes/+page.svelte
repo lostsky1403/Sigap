@@ -157,14 +157,6 @@
 </svelte:head>
 
 <div class="sigap-page sigap-page--roomy sigap-beranda">
-	<div class="sigap-beranda__masthead">
-		<span class="sigap-beranda__masthead-mark" aria-hidden="true">S</span>
-		<div class="sigap-beranda__masthead-copy">
-			<span class="sigap-beranda__masthead-word">Sigap</span>
-			<span class="sigap-beranda__masthead-tagline">Layanan Kesehatan Warga</span>
-		</div>
-	</div>
-
 	<PageHeader
 		eyebrow="Layanan kesehatan warga"
 		title="Cari faskes, buat janji temu, dan pantau kunjungan Anda"
@@ -576,57 +568,10 @@
 	}
 
 	/*
-		Beranda's civic masthead. The wordmark lockup that opens the page, larger
-		than the compact brand in the shell header so the landing reads as an
-		identity statement rather than a SaaS hero. It is not a heading: it is
-		the brand signature, and the page title below it is the single h1.
-	*/
-	.sigap-beranda__masthead {
-		display: flex;
-		align-items: center;
-		gap: var(--sigap-space-3);
-	}
-
-	.sigap-beranda__masthead-mark {
-		flex: none;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 40px;
-		height: 40px;
-		font-size: 22px;
-		font-weight: 700;
-		line-height: 1;
-		color: var(--sigap-on-primary);
-		background-color: var(--sigap-primary);
-		border-radius: var(--sigap-radius-control);
-	}
-
-	.sigap-beranda__masthead-copy {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		min-width: 0;
-	}
-
-	.sigap-beranda__masthead-word {
-		font-size: 28px;
-		font-weight: 700;
-		line-height: 1.1;
-		letter-spacing: -0.01em;
-		color: var(--sigap-foreground);
-	}
-
-	.sigap-beranda__masthead-tagline {
-		font-size: 14px;
-		color: var(--sigap-muted);
-	}
-
-	/*
-		The preview's type filter, a smaller, quieter echo of the /faskes chip
-		row. The same three controls, but on the preview they sit inside the
-		section rather than above the results, and they are compact rather than
-		full-height, so they read as a refinement, not a second search surface.
+		The preview's type filter, the same three chips as /faskes, in the same
+		full-height citizen control. They sit inside the section rather than
+		above the results, but the control itself stays identical so a chip that
+		means "Puskesmas" here taps the same as it does on the discovery page.
 	*/
 	.sigap-beranda__filter {
 		display: flex;
@@ -640,7 +585,7 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		height: 36px;
+		height: var(--sigap-control-citizen);
 		padding: 0 var(--sigap-space-3);
 		font-family: inherit;
 		font-size: 12px;
