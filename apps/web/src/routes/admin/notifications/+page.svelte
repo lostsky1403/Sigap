@@ -5,6 +5,7 @@
 	import AdminFreshness from '$lib/admin/AdminFreshness.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
 	import DataTable from '$lib/ui/DataTable.svelte';
+	import PaginationControls from '$lib/ui/PaginationControls.svelte';
 	import AdminStatusBadge, {
 		NOTIFICATION_STATUS_ICON
 	} from '$lib/admin/AdminStatusBadge.svelte';
@@ -36,6 +37,7 @@
 		zeroSummary,
 		type NotificationFilters
 	} from '$lib/admin/notifications';
+	import { ADMIN_PAGE_SIZE, clampPage, pageSlice } from '$lib/admin/paginate';
 	import type { ApiError } from '$lib/api/errors';
 	import type {
 		AdminFacility,
@@ -78,6 +80,7 @@
 	let hasSession = getSession().hasSession;
 	let unsubscribeSession: (() => void) | undefined;
 	let filters: NotificationFilters = emptyFilters();
+	let currentPage = 1;
 
 	const CHANNELS = ['dev', 'sms', 'whatsapp', 'email'] as const;
 
@@ -89,10 +92,21 @@
 	 */
 	$: filters = filtersFromParams($page.url.searchParams);
 
+	// The list is paged client-side over what has ALREADY been loaded. The page
+	// number is clamped so a filter (or a mutation) that shrinks the list past the
+	// current page lands on the last valid page instead of an empty one, and the
+	// control is told the clamped page so its range line never claims a page the
+	// operator is not actually on.
+	$: safePage = clampPage(currentPage, rows.length, ADMIN_PAGE_SIZE);
+	$: visibleRows = pageSlice(rows, currentPage, ADMIN_PAGE_SIZE);
+
 	function onFilterChange<K extends keyof NotificationFilters>(
 		key: K,
 		value: NotificationFilters[K]
 	) {
+		// A narrowing filter changes the number of pages, and the operator should
+		// land back at the top of the result, not on a page number from the old set.
+		currentPage = 1;
 		const next = { ...filters, [key]: value };
 		const url = applyFiltersToUrl(new URL($page.url), next);
 		// replaceState rather than pushState: typing in a filter should not fill the
@@ -101,6 +115,7 @@
 	}
 
 	function clearFilters() {
+		currentPage = 1;
 		const url = applyFiltersToUrl(new URL($page.url), emptyFilters());
 		history.replaceState(history.state, '', url.toString());
 	}
@@ -454,7 +469,7 @@
 				{ label: 'Aksi' }
 				]}
 			>
-				{#each rows as row (row.id)}
+				{#each visibleRows as row (row.id)}
 					<tr>
 						<td class="sigap-notif-row__time">
 							<!--
@@ -544,6 +559,15 @@
 				{/if}
 				{/each}
 			</DataTable>
+
+			<PaginationControls
+				page={safePage}
+				pageSize={ADMIN_PAGE_SIZE}
+				total={rows.length}
+				label="Navigasi halaman notifikasi"
+				itemLabel="notifikasi"
+				onPageChange={(next) => (currentPage = next)}
+			/>
 		{/if}
 	</AdminReadState>
 

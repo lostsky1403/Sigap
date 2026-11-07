@@ -792,7 +792,7 @@ func (h *AdminHandler) ListQueueTickets(w http.ResponseWriter, r *http.Request) 
 		query += " WHERE facility_id = ANY($1)"
 		args = append(args, readSet.IDs)
 	}
-	query += " ORDER BY registered_at DESC"
+	query += " ORDER BY registered_at DESC, id DESC"
 
 	var rows pgx.Rows
 	var err error
@@ -2402,7 +2402,7 @@ func (h *AdminHandler) ListAppointments(w http.ResponseWriter, r *http.Request) 
 		query += " WHERE facility_id = ANY($1)"
 		args = append(args, readSet.IDs)
 	}
-	query += " ORDER BY appointment_time DESC"
+	query += " ORDER BY appointment_time DESC, updated_at DESC, id DESC"
 
 	rows, err := h.pool.Query(ctx, query, args...)
 	if err != nil {

@@ -402,6 +402,14 @@
 	}
 
 	.sigap-ringkasan-link {
+		/*
+			An inline follow-through ("Buka", "Daftar antrean", "Buka Antrean"),
+			not a word: an invisible 36px compact floor so the link is a target
+			without restyling the row it sits in.
+		*/
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sigap-control-admin-compact);
 		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);

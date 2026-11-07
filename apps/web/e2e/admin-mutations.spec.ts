@@ -1405,6 +1405,67 @@ test.describe('T-3B5-05 notification actions', () => {
 
 	test.skip(HOLDS_NO_DATA, 'this actor holds nothing to act on; its refusal is asserted in admin-read.spec.ts');
 
+	/**
+	 * Walks every page of the client-side paginated notifications table in DOM
+	 * order, calling `visit` once per page. Returns to page 1 first via
+	 * "Sebelumnya" — NOT via a refetch — so the DOM set stays exactly the set
+	 * the stable-tally loop above pinned. A refetch could pick up a row another
+	 * suite appended in the window and desync the comparison that the loop just
+	 * made exact.
+	 */
+	async function walkNotificationPages(
+		page: Page,
+		visit: (table: Locator) => Promise<void>
+	): Promise<void> {
+		const table = page.locator('table');
+		const prev = page.getByRole('button', { name: 'Sebelumnya' });
+		const next = page.getByRole('button', { name: 'Berikutnya' });
+		const pageIndicator = page.locator('.sigap-pagination__page');
+
+		while ((await prev.count()) > 0 && (await prev.isEnabled())) {
+			const before = (await pageIndicator.textContent()) ?? '';
+			await prev.click();
+			await expect
+				.poll(() => pageIndicator.textContent(), { timeout: SETTLE.timeout })
+				.not.toBe(before);
+		}
+
+		for (;;) {
+			await visit(table);
+			// The pager is absent on a single page, and "Berikutnya" is disabled
+			// on the last page — either way there is nowhere left to go.
+			if ((await next.count()) === 0 || !(await next.isEnabled())) break;
+			const before = (await pageIndicator.textContent()) ?? '';
+			await next.click();
+			// Key on the page indicator, not a settle timeout: its text flips in
+			// the SAME Svelte flush that swaps the rows, so once it changes the
+			// next page's rows are present and the next `visit` cannot read a
+			// stale slice.
+			await expect
+				.poll(() => pageIndicator.textContent(), { timeout: SETTLE.timeout })
+				.not.toBe(before);
+		}
+	}
+
+	/**
+	 * Sums the buttons whose accessible name is `name` across EVERY page of the
+	 * notifications table.
+	 *
+	 * WHY THIS EXISTS: the page renders only 25 rows per page while the server
+	 * tallies count every row the API returned, so counting buttons on a single
+	 * page and comparing that count to a ~321-row total can never match. Walking
+	 * the client's own pages — the rows the client actually drew — keeps the §12
+	 * comparison "the DOM's buttons equal the server's two booleans and nothing
+	 * else".
+	 */
+	async function countActionButtonsAcrossPages(page: Page, name: string): Promise<number> {
+		let total = 0;
+		await walkNotificationPages(page, async (table) => {
+			total += await table.getByRole('button', { name }).count();
+		});
+		return total;
+	}
+
 	test('shows action buttons strictly from can_retry and can_cancel', async ({ page }) => {
 		/**
 		 * Reads the server's own per-row affordance tallies.
@@ -1476,25 +1537,32 @@ test.describe('T-3B5-05 notification actions', () => {
 			await expect(table).toBeVisible(SETTLE);
 		}
 
-		// Counted across the WHOLE table, and compared to the server's own tallies.
-		// This is the §12 assertion: the visible button set is the server's two
-		// booleans and nothing else. A client-side rule keyed on status, role,
-		// facility, or an email-shaped heuristic would produce a different count
-		// here, which is exactly the class of bug this phase forbids.
-		await expect(table.getByRole('button', { name: 'Kirim ulang' })).toHaveCount(tallies.retry);
-		await expect(table.getByRole('button', { name: 'Batalkan' })).toHaveCount(tallies.cancel);
+		// Counted across the WHOLE table — every client-rendered page — and
+		// compared to the server's own tallies. This is the §12 assertion: the
+		// visible button set is the server's two booleans and nothing else. A
+		// client-side rule keyed on status, role, facility, or an email-shaped
+		// heuristic would produce a different count here, which is exactly the
+		// class of bug this phase forbids.
+		expect(await countActionButtonsAcrossPages(page, 'Kirim ulang')).toBe(tallies.retry);
+		expect(await countActionButtonsAcrossPages(page, 'Batalkan')).toBe(tallies.cancel);
 
 		// A row the server marked unactionable says so in words rather than
-		// showing an empty cell an operator would read as a failed load.
+		// showing an empty cell an operator would read as a failed load. Walked
+		// like the buttons so the wording is verified against the whole set,
+		// not just the first rendered page.
+		let renderedText = '';
+		await walkNotificationPages(page, async (tbody) => {
+			renderedText += (await tbody.textContent()) ?? '';
+		});
+
 		if (tallies.retry === 0 || tallies.cancel === 0) {
-			await expect(table).toContainText('Tidak ada aksi');
+			expect(renderedText).toContain('Tidak ada aksi');
 		}
 
 		// The two boolean names themselves must never reach the DOM. They are a
 		// wire contract, not UI copy.
-		const text = (await table.textContent()) ?? '';
-		expect(text).not.toContain('can_retry');
-		expect(text).not.toContain('can_cancel');
+		expect(renderedText).not.toContain('can_retry');
+		expect(renderedText).not.toContain('can_cancel');
 	});
 
 	test('preserves the URL filters and the masked recipient across a mutation', async ({
@@ -1666,14 +1734,14 @@ test.describe('T-3B5-05 notification actions', () => {
 						false
 					);
 				}
-				await expect(
-					table.getByRole('button', { name: 'Kirim ulang' }),
+				expect(
+					await countActionButtonsAcrossPages(page, 'Kirim ulang'),
 					'a read-only outbox must offer no retry control'
-				).toHaveCount(0);
-				await expect(
-					table.getByRole('button', { name: 'Batalkan' }),
+				).toBe(0);
+				expect(
+					await countActionButtonsAcrossPages(page, 'Batalkan'),
 					'a read-only outbox must offer no cancel control'
-				).toHaveCount(0);
+				).toBe(0);
 				return;
 			}
 			for (const row of rows.slice(0, 5)) {

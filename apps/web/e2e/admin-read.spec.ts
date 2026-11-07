@@ -600,7 +600,7 @@ test.describe('admin reads are real and scoped', () => {
 		expect(body).not.toMatch(/\+62\d{9,}/);
 	});
 
-	test('Notifikasi offers URL-synced filters and no pagination controls', async ({ page }) => {
+	test('Notifikasi offers URL-synced filters and a client-side pager', async ({ page }) => {
 		await gotoAdmin(page, '/admin/notifications');
 		await expect(page.getByText(/Menunggu/).first()).toBeVisible(SETTLE);
 
@@ -614,12 +614,16 @@ test.describe('admin reads are real and scoped', () => {
 		await page.getByLabel('Status').selectOption('failed');
 		await page.waitForURL(/status=failed/, { timeout: SETTLE.timeout });
 
-		// NO pagination. The endpoint returns a bounded list with no cursor and no
-		// total, so a page-number control would be a control that cannot work.
+		// Pagination is CLIENT-side: it pages what the list endpoint has ALREADY
+		// returned. The control is therefore absent when the loaded list fits one
+		// page (the seeded smoke rows do), and — when present — is the honest
+		// bounded pager over the loaded total, never a "muat lebih" cursor and never
+		// a set of numbered page buttons that would imply a server-side page
+		// parameter the endpoint does not accept.
+		const nav = page.getByRole('navigation', { name: 'Navigasi halaman notifikasi' });
+		expect(await nav.count(), 'the pager appears at most once').toBeLessThanOrEqual(1);
 		const body = ((await page.locator('body').textContent()) ?? '').toLowerCase();
-		for (const forbidden of ['halaman', 'berikutnya', 'sebelumnya', 'muat lebih']) {
-			expect(body, `must not offer ${forbidden}`).not.toContain(forbidden);
-		}
+		expect(body, 'must not offer a cursor-style load-more').not.toContain('muat lebih');
 		await expect(page.getByRole('button', { name: /^\d+$/ })).toHaveCount(0);
 	});
 

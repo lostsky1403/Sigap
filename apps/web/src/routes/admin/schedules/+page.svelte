@@ -619,6 +619,14 @@
 	}
 
 	.sigap-admin-checkfield__label {
+		/*
+			The label is the checkbox's hit area (`for` associates them). Stretch
+			it to the checkfield's 36px row so the whole row toggles, instead of
+			only the 16px box and the ~17px text line.
+		*/
+		display: flex;
+		align-items: center;
+		align-self: stretch;
 		font-size: var(--sigap-type-label);
 		color: var(--sigap-foreground);
 	}

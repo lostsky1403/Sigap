@@ -108,6 +108,14 @@
 	}
 
 	.sigap-auth__footer :global(a) {
+		/*
+			The alternate-auth link ("Daftar"/"Masuk") is a control, not a word.
+			Same inline-link treatment as `.sigap-inline-link`: an invisible
+			44px floor without restyling the sentence it sits in.
+		*/
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sigap-control-citizen);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		text-decoration: none;

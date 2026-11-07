@@ -73,6 +73,9 @@
 		display: inline-flex;
 		align-items: center;
 		height: 44px;
+		/* "Status" is only ~39px wide; a 44px min-width makes the whole label
+		   a touch target without widening the visible text. */
+		min-width: var(--sigap-control-citizen);
 		font-size: 14px;
 		font-weight: 500;
 		color: var(--sigap-muted);

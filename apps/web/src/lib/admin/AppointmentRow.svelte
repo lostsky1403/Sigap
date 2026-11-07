@@ -62,15 +62,15 @@
 </script>
 
 <tr class="sigap-appointment-row">
-	<td class="sigap-appointment-row__time">
+	<td class="sigap-appointment-row__time" data-label="Waktu">
 		{formatDateTime(appointment.appointment_time)}
 	</td>
-	<td class="sigap-appointment-row__patient">
+	<td class="sigap-appointment-row__patient" data-label="Pasien">
 		{appointment.patient_display_name}
 	</td>
 	<td class="sigap-table-col-secondary">{facilityName}</td>
 	<td class="sigap-table-col-secondary">{serviceUnitName}</td>
-	<td>
+	<td class="sigap-appointment-row__status" data-label="Status">
 		<AdminStatusBadge
 			label={APPOINTMENT_STATUS_LABEL[appointment.status]}
 			tone={appointmentTone(appointment.status)}
@@ -78,7 +78,7 @@
 			icon={APPOINTMENT_STATUS_ICON[appointment.status]}
 		/>
 	</td>
-	<td class="sigap-appointment-row__actions">
+	<td class="sigap-appointment-row__actions sigap-table-col-pinned">
 		{#if terminal}
 			<span class="sigap-appointment-row__terminal">Tidak ada aksi lanjutan</span>
 		{:else}
@@ -153,5 +153,121 @@
 		line-height: 1.45;
 		background-color: var(--sigap-surface);
 		border-left: 3px solid var(--sigap-border-subtle);
+	}
+
+	/*
+		MOBILE (≤767px): the row reflows into a stacked card.
+
+		The desktop presentation pins the Aksi column to the right edge (via
+		DataTable's `pin`, which adds `sigap-table-col-pinned`) and lets the rest
+		of the table scroll under it, which works down to the 1280px secondary
+		breakpoint. Below that the visible columns are Waktu, Pasien, Status and
+		the three inline buttons — and at 390/360 the three buttons alone are
+		measured ~429px wide, more than the ~334px content area a phone leaves
+		after the 56px rail. The pinned cell cannot compress three `nowrap`
+		buttons, so they render past the right edge while remaining
+		keyboard-focusable: a WCAG 2.4.11 violation.
+
+		The card is option (1) of the directive: every authorized action stays
+		VISIBLE and tappable on its own full-width row, with no horizontal
+		scroll. The `<tr>`/`<td>` structure is preserved in the DOM — the desktop
+		table and every `tr`-scoped e2e locator keep matching — only the paint
+		changes, so the tests that count/locate the action buttons are untouched.
+	*/
+	@media (max-width: 767px) {
+		/*
+			The block reflow needs the table and its body to stop imposing
+			table-row-group geometry on block children, and the header band
+			hidden: each card carries its own field labels below.
+		*/
+		:global(.sigap-data-table) {
+			display: block;
+		}
+
+		:global(.sigap-data-table tbody) {
+			display: block;
+		}
+
+		:global(.sigap-data-table thead) {
+			display: none;
+		}
+
+		.sigap-appointment-row {
+			display: block;
+			padding: var(--sigap-space-3);
+			background-color: var(--sigap-surface);
+			border-bottom: 1px solid var(--sigap-border-subtle);
+		}
+
+		.sigap-appointment-row__outcome {
+			display: block;
+		}
+
+		/*
+			Label lines. Each non-secondary column becomes a labelled, full-width
+			line. (Fasilitas/Layanan are already hidden below 1280px.)
+		*/
+		.sigap-appointment-row__time,
+		.sigap-appointment-row__patient,
+		.sigap-appointment-row__status {
+			display: block;
+			width: auto;
+			height: auto;
+			padding: var(--sigap-space-1) 0;
+			border-bottom: 0;
+		}
+
+		/*
+			The frozen 11px uppercase field-label treatment, matching the admin
+			header scale. `attr(data-label)` reads the label from the cell so the
+			column heading and the card field stay in one place.
+		*/
+		.sigap-appointment-row__time::before,
+		.sigap-appointment-row__patient::before,
+		.sigap-appointment-row__status::before {
+			content: attr(data-label);
+			display: block;
+			margin-bottom: var(--sigap-space-1);
+			font-size: var(--sigap-type-micro);
+			font-weight: 600;
+			letter-spacing: 0.06em;
+			text-transform: uppercase;
+			color: var(--sigap-muted);
+		}
+
+		/*
+			Actions lose the right-edge pin and stack full-width. The compound
+			selector names the pinned class too, so this rule outranks
+			DataTable's `td.sigap-table-col-pinned` sticky rule — which would
+			otherwise keep the buttons glued to the right edge and off-screen.
+		*/
+		.sigap-appointment-row__actions.sigap-table-col-pinned {
+			position: static;
+			width: auto;
+			margin-top: var(--sigap-space-2);
+			padding: 0;
+			white-space: normal;
+			border-left: 0;
+			background-color: transparent;
+			display: flex;
+			flex-direction: column;
+			align-items: stretch;
+			gap: var(--sigap-space-2);
+		}
+
+		.sigap-appointment-row__actions.sigap-table-col-pinned :global(.sigap-button) {
+			width: 100%;
+			margin-right: 0;
+		}
+
+		/*
+			The outcome line keeps its leading accent but drops the table-row
+			geometry so it sits flush under its card.
+		*/
+		.sigap-appointment-row__outcome-cell {
+			display: block;
+			width: auto;
+			height: auto;
+		}
 	}
 </style>

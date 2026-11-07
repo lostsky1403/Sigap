@@ -185,6 +185,41 @@
 		</div>
 	{:else}
 		<section class="sigap-checkin__panel" style:border-radius={RADIUS.panel}>
+			<!--
+				The three identifiers, distinguished before the citizen reaches
+				the fields. A booking produces two things — the appointment id
+				and the check-in code — and check-in produces a third, the queue
+				number. Naming all three up front, with their sources, stops a
+				citizen from pasting a six-character code into the id field, or
+				looking for a queue number before there is one.
+			-->
+			<div class="sigap-checkin__explainer">
+				<h2 class="sigap-checkin__explainer-title">Tiga pengenal yang perlu Anda pahami</h2>
+				<dl class="sigap-checkin__explainer-list">
+					<div class="sigap-checkin__explainer-item">
+						<dt class="sigap-checkin__explainer-term">ID janji temu</dt>
+						<dd class="sigap-checkin__explainer-def">
+							Pengenal untuk menemukan janji temu Anda. Ada di halaman konfirmasi
+							janji temu, bagian 'Detail teknis'.
+						</dd>
+					</div>
+					<div class="sigap-checkin__explainer-item">
+						<dt class="sigap-checkin__explainer-term">Kode check-in</dt>
+						<dd class="sigap-checkin__explainer-def">
+							6 karakter yang membuka check-in janji temu Anda. Ada di bagian
+							'Detail teknis' yang sama.
+						</dd>
+					</div>
+					<div class="sigap-checkin__explainer-item">
+						<dt class="sigap-checkin__explainer-term">Nomor antrean</dt>
+						<dd class="sigap-checkin__explainer-def">
+							Urutan Anda setelah check-in berhasil. Diterbitkan setelah check-in,
+							tampil di tiket dan layar ruang tunggu — tidak diisi di halaman ini.
+						</dd>
+					</div>
+				</dl>
+			</div>
+
 			{#if failure}
 				<!--
 					The wrong-code case gets its own message. `role="alert"` because
@@ -295,6 +330,49 @@
 		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
 		border: 1px solid var(--sigap-border-subtle);
+	}
+
+	/*
+		The identifier explainer: a sunken inset that sits above the form, so
+		the three identifiers are named before the citizen reaches the two
+		fields that need the first two of them. Decorative outline on the
+		inset; the terms carry the emphasis.
+	*/
+	.sigap-checkin__explainer {
+		margin-bottom: var(--sigap-space-4);
+		padding: var(--sigap-space-3);
+		background-color: var(--sigap-surface-sunken);
+		border: 1px solid var(--sigap-border-subtle);
+		border-radius: var(--sigap-radius-control);
+	}
+
+	.sigap-checkin__explainer-title {
+		margin: 0 0 var(--sigap-space-2);
+		font-size: var(--sigap-type-label);
+		font-weight: 600;
+		line-height: 1.4;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-checkin__explainer-list {
+		margin: 0;
+	}
+
+	.sigap-checkin__explainer-item + .sigap-checkin__explainer-item {
+		margin-top: var(--sigap-space-2);
+	}
+
+	.sigap-checkin__explainer-term {
+		font-size: var(--sigap-type-caption);
+		font-weight: 600;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-checkin__explainer-def {
+		margin: 2px 0 0;
+		font-size: var(--sigap-type-caption);
+		line-height: 1.5;
+		color: var(--sigap-muted);
 	}
 
 	/*

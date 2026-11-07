@@ -6,9 +6,11 @@
 	import AdminToolbar from '$lib/admin/AdminToolbar.svelte';
 	import FacilityFilter from '$lib/admin/FacilityFilter.svelte';
 	import DataTable from '$lib/ui/DataTable.svelte';
+	import PaginationControls from '$lib/ui/PaginationControls.svelte';
 	import AppointmentRow from '$lib/admin/AppointmentRow.svelte';
 	import AdminConfirmDialog from '$lib/admin/AdminConfirmDialog.svelte';
 	import AdminMutationFeedback from '$lib/admin/AdminMutationFeedback.svelte';
+	import { ADMIN_PAGE_SIZE, clampPage, pageSlice } from '$lib/admin/paginate';
 	import { RADIUS } from '$lib/design/tokens';
 	import {
 		listAppointments,
@@ -113,6 +115,36 @@
 		if (statusFilter && appointment.status !== statusFilter) return false;
 		return true;
 	});
+
+	/**
+	 * The page operator is reading, and the one rule about it.
+	 *
+	 * `currentPage` is what the pager requests; `visiblePage` is what is actually
+	 * rendered. The two can differ for exactly one reason: a shrink. When a
+	 * filter narrows the list, or a mutation removes a row, the requested page
+	 * can pass the end of the now-smaller list, and `clampPage` pulls it back so
+	 * the operator never reads a page that no longer exists.
+	 *
+	 * A filter change resets to page 1 (below). A mutation reload replaces
+	 * `appointments` WITHOUT touching `facilityFilter`/`statusFilter`, so that
+	 * reset does not fire and the row the operator acted on stays on their
+	 * screen — but `visiblePage` still clamps if the reload genuinely emptied the
+	 * page they were on.
+	 */
+	let currentPage = 1;
+
+	$: {
+		// These two reads bind the reset to the filters only. `appointments` is
+		// deliberately absent: a mutation reload replaces it WITHOUT touching the
+		// filters, so the operator keeps their place. `void` marks each read as
+		// deliberate dependency wiring rather than a dead statement.
+		void facilityFilter;
+		void statusFilter;
+		currentPage = 1;
+	}
+
+	$: visiblePage = clampPage(currentPage, filtered.length);
+	$: paged = pageSlice(filtered, visiblePage);
 
 	/**
 	 * The status filter's labels, in the order an operator would use them.
@@ -343,10 +375,10 @@
 					{ label: 'Fasilitas', secondary: true },
 					{ label: 'Layanan', secondary: true },
 					{ label: 'Status' },
-					{ label: 'Aksi' }
+					{ label: 'Aksi', pin: true }
 				]}
 			>
-				{#each filtered as appointment (appointment.id)}
+				{#each paged as appointment (appointment.id)}
 					<AppointmentRow
 						{appointment}
 						facilityName={facilityName(facilityIndex, appointment.facility_id)}
@@ -369,6 +401,21 @@
 				Diperbarui pukul {formatDateTime(appointments[0]?.updated_at ?? null)} — waktu
 				perubahan status terakhir yang tercatat pada data ini.
 			</p>
+
+			<!--
+				Bounded paging of the already-loaded rows. `total={filtered.length}`
+				matches the client-side filter; `page` is the CLAMPED page (never a
+				page the filter mutation left empty) so the control's own disabled
+				states and range line always describe the rows actually on screen.
+			-->
+			<PaginationControls
+				page={visiblePage}
+				pageSize={ADMIN_PAGE_SIZE}
+				total={filtered.length}
+				label="Navigasi halaman janji temu"
+				itemLabel="janji temu"
+				onPageChange={(next) => (currentPage = next)}
+			/>
 		{/if}
 	</AdminReadState>
 </div>

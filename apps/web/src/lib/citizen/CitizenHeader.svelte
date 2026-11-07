@@ -104,6 +104,12 @@
 		gap: var(--sigap-space-2);
 		flex: none;
 		min-width: 0;
+		/*
+			The wordmark is a target, not a word. A 44px touch floor keeps the
+			brand reachable without growing the mark's 24px visual block, so the
+			56px masthead composition stays untouched.
+		*/
+		min-height: var(--sigap-control-citizen);
 		text-decoration: none;
 	}
 

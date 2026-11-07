@@ -309,6 +309,19 @@
 		}
 
 		/*
+			The rail is 56px but the nav/account gutters were 12px, leaving each
+			link a ~32px tap target. Shrinking only the horizontal gutters to 8px
+			widens every link to 40px (above the 36px compact floor) while the
+			16px icon stays at the same centred offset, so the VISUAL rail does
+			not move — only the dead space beside it becomes tappable.
+		*/
+		.sigap-admin-sidebar__nav,
+		.sigap-admin-sidebar__account {
+			padding-left: var(--sigap-space-2);
+			padding-right: var(--sigap-space-2);
+		}
+
+		/*
 			The group labels go with the text. In the 56px rail there is no room
 			for them, and a label that wraps to three lines above each group would
 			make the rail taller than the viewport for a word the icons already
