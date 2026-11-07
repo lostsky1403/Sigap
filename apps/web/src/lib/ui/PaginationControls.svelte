@@ -1,6 +1,9 @@
 <script lang="ts">
 	import Button from './Button.svelte';
 	import { DENSITY } from './density';
+	import { clampPage, pageCount, pageRange } from '$lib/admin/paginate';
+
+	/** See the long comment above `clampPage` in paginate.ts for why this exists. */
 
 	/**
 	 * Bounded pagination for the admin list surfaces.
@@ -31,14 +34,14 @@
 	/** The noun counted, so the range reads "dari 254 janji temu". */
 	export let itemLabel: string = 'baris';
 
-	$: pageCount = Math.max(1, Math.ceil(total / pageSize));
-	$: from = total === 0 ? 0 : (page - 1) * pageSize + 1;
-	$: to = Math.min(page * pageSize, total);
-	$: canPrev = page > 1;
-	$: canNext = page < pageCount;
+	$: safePage = clampPage(page, total, pageSize);
+	$: pageCountValue = pageCount(total, pageSize);
+	$: range = pageRange(safePage, total, pageSize);
+	$: canPrev = safePage > 1;
+	$: canNext = safePage < pageCountValue;
 
 	function go(next: number) {
-		if (next < 1 || next > pageCount || next === page) return;
+		if (next < 1 || next > pageCountValue || next === safePage) return;
 		onPageChange(next);
 	}
 </script>
@@ -47,10 +50,10 @@
 	Rendered only when there is more than one page. A single page of results
 	does not need a control that can only be pressed to no effect.
 -->
-{#if pageCount > 1}
+{#if pageCountValue > 1}
 	<nav class="sigap-pagination" aria-label={label}>
 		<p class="sigap-pagination__range" role="status" aria-live="polite">
-			Menampilkan {from}–{to} dari {total}
+			Menampilkan {range.from}–{range.to} dari {total}
 			{itemLabel}
 		</p>
 		<div class="sigap-pagination__controls">
@@ -58,14 +61,14 @@
 				variant="secondary"
 				size={DENSITY.adminCompact}
 				disabled={!canPrev}
-				onClick={() => go(page - 1)}>Sebelumnya</Button
+				onClick={() => go(safePage - 1)}>Sebelumnya</Button
 			>
-			<span class="sigap-pagination__page">Halaman {page} dari {pageCount}</span>
+			<span class="sigap-pagination__page">Halaman {safePage} dari {pageCountValue}</span>
 			<Button
 				variant="secondary"
 				size={DENSITY.adminCompact}
 				disabled={!canNext}
-				onClick={() => go(page + 1)}>Berikutnya</Button
+				onClick={() => go(safePage + 1)}>Berikutnya</Button
 			>
 		</div>
 	</nav>
