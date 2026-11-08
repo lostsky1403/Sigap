@@ -39,6 +39,8 @@
 	export let onTransition: (ticketId: string, status: QueueStatus) => void = () => {};
 	/** History scope: no transition buttons are offered beyond the today view. */
 	export let readOnly: boolean = false;
+	/** The selected service day (`YYYY-MM-DD`); undefined means today (WIB). */
+	export let serviceDay: string | undefined = undefined;
 	/** Ticket id whose transition is in flight, or ''. */
 	export let pendingTicketId: string = '';
 	/** The status that transition is moving to, for the in-flight row's label. */
@@ -68,8 +70,16 @@
 		clock; a `now` captured at init would keep filing a 00.05 visit under
 		yesterday until the page was reloaded.
 	*/
-	$: calledScope = partitionQueueDay(called, 'called');
-	$: finishedScope = partitionQueueDay(finished, 'finished');
+	$: calledScope = partitionQueueDay(
+		called,
+		'called',
+		serviceDay ? new Date(`${serviceDay}T12:00:00+07:00`) : new Date()
+	);
+	$: finishedScope = partitionQueueDay(
+		finished,
+		'finished',
+		serviceDay ? new Date(`${serviceDay}T12:00:00+07:00`) : new Date()
+	);
 
 	/**
 	 * The third band's heading has to be true of its rows.
@@ -79,8 +89,9 @@
 	 * evidence of an old row), so the heading names them instead of claiming a
 	 * scope it cannot prove.
 	 */
-	$: finishedLabel =
-		finishedScope.unknownCount === 0
+	$: finishedLabel = serviceDay
+		? 'Selesai'
+		: finishedScope.unknownCount === 0
 			? 'Selesai hari ini'
 			: finishedScope.todayCount === 0
 				? 'Selesai — waktu tidak diketahui'

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { latestQueueChange, queueChangeStamps } from './queueSource';
+import { latestQueueChange, partitionQueueDay, queueChangeStamps } from './queueSource';
 import type { AdminQueueTicket } from '$lib/api/types/api';
 
 /**
@@ -87,5 +87,27 @@ describe('latestQueueChange', () => {
 		// If the marker ever started reading that field, this would drift.
 		const withBogus = { ...ticket({ registered_at: '2026-01-01T08:00:00Z' }), updated_at: '2099-12-31T00:00:00Z' };
 		expect(latestQueueChange([withBogus as AdminQueueTicket])).toBe('2026-01-01T08:00:00Z');
+	});
+});
+
+describe('partitionQueueDay', () => {
+	it('files a prior-day stamp under older when measured against today', () => {
+		const ref = new Date('2026-11-08T12:00:00+07:00');
+		const todayRow = ticket({ id: 'a', called_at: '2026-11-08T04:00:00+07:00', status: 'called' });
+		const olderRow = ticket({ id: 'b', called_at: '2026-11-07T04:00:00+07:00', status: 'called' });
+		const p = partitionQueueDay([olderRow, todayRow], 'called', ref);
+		expect(p.live.map((t) => t.id)).toEqual(['a']);
+		expect(p.older.map((t) => t.id)).toEqual(['b']);
+	});
+
+	it('treats a historical reference day as today so its rows stay live', () => {
+		// History view: the server returned exactly 2026-11-07, so the board must
+		// measure against that day — otherwise every row would collapse into the
+		// "before today" archive and the live band would read empty.
+		const ref = new Date('2026-11-07T12:00:00+07:00');
+		const row = ticket({ id: 'c', completed_at: '2026-11-07T05:00:00+07:00', status: 'completed' });
+		const p = partitionQueueDay([row], 'finished', ref);
+		expect(p.live.map((t) => t.id)).toEqual(['c']);
+		expect(p.older).toHaveLength(0);
 	});
 });

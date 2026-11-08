@@ -319,6 +319,7 @@
 				{facilities}
 				onTransition={handleTransition}
 				readOnly={!isTodayScope}
+				serviceDay={!isTodayScope ? serviceDate : undefined}
 				{pendingTicketId}
 				{pendingStatus}
 				{errorTicketId}
