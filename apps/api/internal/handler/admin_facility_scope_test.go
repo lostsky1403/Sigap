@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -419,5 +420,118 @@ func TestFacilityScope_AdminConsumersFailClosed(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// TestFacilityScope_ListQueueTicketsServiceDay proves the service-day contract
+// on the queue list: a `date` query param narrows the board to one WIB calendar
+// day, and an omitted `date` defaults to today in WIB — never all-time. It also
+// pins the rejection of a malformed date and that the filter is invisible to
+// facility scoping (the global super admin reads every seeded day-scoped row).
+func TestFacilityScope_ListQueueTicketsServiceDay(t *testing.T) {
+	pool, cleanup := newScopeTestPool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	appUserID := uuid.NewString()
+	if err := seedAppUser(ctx, pool, appUserID, "service-day-global"); err != nil {
+		t.Fatalf("seed app user: %v", err)
+	}
+	if err := seedGlobalSuperAdminRole(ctx, pool, appUserID); err != nil {
+		t.Fatalf("seed global super admin: %v", err)
+	}
+
+	facilityID := uuid.NewString()
+	if err := seedFacilityByName(ctx, pool, facilityID, "Service Day Facility"); err != nil {
+		t.Fatalf("seed facility: %v", err)
+	}
+	patientID := uuid.NewString()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO patients (id, full_name, phone, gender, date_of_birth)
+		 VALUES ($1, 'Service Day Patient', '08555001000', 'L', '1990-01-01')`, patientID); err != nil {
+		t.Fatalf("seed patient: %v", err)
+	}
+
+	// Anchor every ticket to a fixed midday so "today" cannot ambiguously straddle
+	// a midnight boundary regardless of when the test runs.
+	now := time.Now().In(serviceDayWIB)
+	todayNoon := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, serviceDayWIB)
+
+	tickets := []struct {
+		number     string
+		registered time.Time
+	}{
+		{"SDY-0001", todayNoon.AddDate(0, 0, -1)}, // yesterday WIB
+		{"SDY-0002", todayNoon},                   // today WIB
+		{"SDY-0003", todayNoon.AddDate(0, 0, 1)},  // tomorrow WIB
+	}
+	for _, tk := range tickets {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status, registered_at)
+			 VALUES ($1, $2, $3, 1, $4, 'waiting', $5)`,
+			uuid.NewString(), facilityID, patientID, tk.number, tk.registered); err != nil {
+			t.Fatalf("seed queue ticket %s: %v", tk.number, err)
+		}
+	}
+
+	h := scopedHandler(pool)
+	actor := dbScopedActor(t, pool, appUserID)
+	doRequest := func(query string) []string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/queues"+query, nil)
+		req = req.WithContext(identity.ContextWithActor(req.Context(), actor))
+		rec := httptest.NewRecorder()
+		h.ListQueueTickets(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("queue list %q: got %d want 200: %s", query, rec.Code, rec.Body.String())
+		}
+		var response struct {
+			Data []struct {
+				FormattedNumber string `json:"formatted_number"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode queue list: %v", err)
+		}
+		numbers := make([]string, 0, len(response.Data))
+		for _, row := range response.Data {
+			numbers = append(numbers, row.FormattedNumber)
+		}
+		return numbers
+	}
+	dateOf := func(tm time.Time) string {
+		return tm.In(serviceDayWIB).Format("2006-01-02")
+	}
+	assertNumbers := func(got []string, want ...string) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("got %d tickets %v want %v", len(got), got, want)
+		}
+		wantSet := make(map[string]bool, len(want))
+		for _, w := range want {
+			wantSet[w] = true
+		}
+		for _, g := range got {
+			if !wantSet[g] {
+				t.Fatalf("unexpected ticket %q in %v; want %v", g, got, want)
+			}
+		}
+	}
+
+	// Omitted => today in WIB, never all-time.
+	assertNumbers(doRequest(""), "SDY-0002")
+	// Explicit today is the same scope as the default.
+	assertNumbers(doRequest("?date="+dateOf(todayNoon)), "SDY-0002")
+	// Yesterday and tomorrow each resolve to exactly their own day.
+	assertNumbers(doRequest("?date="+dateOf(todayNoon.AddDate(0, 0, -1))), "SDY-0001")
+	assertNumbers(doRequest("?date="+dateOf(todayNoon.AddDate(0, 0, 1))), "SDY-0003")
+
+	// Malformed date => 400 rejection, no query issued.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/queues?date=08-11-2026", nil)
+	req = req.WithContext(identity.ContextWithActor(req.Context(), actor))
+	rec := httptest.NewRecorder()
+	h.ListQueueTickets(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed date: got %d want 400: %s", rec.Code, rec.Body.String())
 	}
 }

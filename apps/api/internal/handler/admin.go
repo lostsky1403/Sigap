@@ -770,11 +770,48 @@ type queueTicketResponse struct {
 
 // --- Queue admin handlers ---
 
-// ListQueueTickets handles GET /api/v1/admin/queues?facility_id=...
+// serviceDayWIB is the single timezone the service day is defined in. Indonesia
+// runs Asia/Jakarta (WIB) at UTC+7 with no daylight-saving transition, so a
+// fixed-offset zone is exact and avoids a tzdata file dependency at boot. The
+// facilities table carries no timezone column today; a future per-facility
+// timezone column is the additive way to localise the day boundary per facility.
+var serviceDayWIB = time.FixedZone("WIB", 7*60*60)
+
+// resolveServiceDay turns the optional `date` query value into the WIB calendar
+// day it names and its half-open [start, end) instant bounds. An empty value is
+// replaced by TODAY in WIB — the live-board default that also scopes the admin
+// overview. A malformed value returns an error; the caller reports it as a 400
+// without ever touching the database. Filtering is WIB-only by design: the
+// facilities table does not yet carry a per-facility timezone.
+func resolveServiceDay(raw string) (start, end time.Time, err error) {
+	var day time.Time
+	if raw == "" {
+		now := time.Now().In(serviceDayWIB)
+		day = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, serviceDayWIB)
+	} else {
+		parsed, perr := time.ParseInLocation("2006-01-02", raw, serviceDayWIB)
+		if perr != nil {
+			return time.Time{}, time.Time{}, perr
+		}
+		day = parsed
+	}
+	return day, day.AddDate(0, 0, 1), nil
+}
+
+// ListQueueTickets handles GET /api/v1/admin/queues?facility_id=...&date=YYYY-MM-DD.
 //
 // The route-level queue.read check is COARSE. The list is restricted to the
 // facilities where queue.read is GRANTED, so a queue.read held at one facility
 // cannot be used to read another facility's tickets.
+//
+// Service-day scope: `date` selects the facility-local calendar day to read,
+// expressed as a WIB (Asia/Jakarta) day. When `date` is omitted the board
+// defaults to TODAY in WIB, so a caller reading the live board never sees
+// all-time history by accident — and the admin overview (Ringkasan), which
+// consumes this same endpoint without a `date`, inherits the same today scope.
+// An explicit past date is read-only history. The list is never filtered by
+// status, so unresolved prior-day tickets remain visible under the requested
+// day (see design/service-day-queue-policy.md).
 func (h *AdminHandler) ListQueueTickets(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 
@@ -797,18 +834,24 @@ func (h *AdminHandler) ListQueueTickets(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	dayStart, dayEnd, derr := resolveServiceDay(r.URL.Query().Get("date"))
+	if derr != nil {
+		writeError(w, http.StatusBadRequest, "Format tanggal tidak valid. Gunakan YYYY-MM-DD.")
+		h.logQueueAccess(r, actor, "queue.list", "validation_error", "invalid date")
+		return
+	}
+
 	query := `SELECT id, facility_id, queue_number, formatted_number, status,
-			registered_at, called_at, completed_at FROM queue_tickets`
-	args := []any{}
+			registered_at, called_at, completed_at FROM queue_tickets
+		WHERE registered_at >= $1 AND registered_at < $2`
+	args := []any{dayStart, dayEnd}
 	if !readSet.Unrestricted {
-		query += " WHERE facility_id = ANY($1)"
+		query += " AND facility_id = ANY($3)"
 		args = append(args, readSet.IDs)
 	}
 	query += " ORDER BY registered_at DESC, id DESC"
 
-	var rows pgx.Rows
-	var err error
-	rows, err = h.pool.Query(ctx, query, args...)
+	rows, err := h.pool.Query(ctx, query, args...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Gagal mengambil data antrean.")
 		h.logQueueAccess(r, actor, "queue.list", "error", err.Error())

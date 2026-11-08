@@ -163,8 +163,20 @@
 		auto layout, so the long outcome message on a failed mutation still
 		expands its row rather than clipping.
 	*/
-	.sigap-queue-band :global(.sigap-data-table tbody td) {
-		height: 36px;
+	/*
+		The 36px band applies ONLY while the board is a real `<table>` (≥768px).
+		Below 768px `QueueBoard` reflows `<table>`/`<tbody>`/`<tr>` into block
+		boxes and `QueueBoardRow` turns each row into a stacked CARD whose height
+		is its content. A fixed 36px cell there pins the actions cell shorter than
+		its stacked buttons, so the controls paint past the card into the next row
+		(measured 31px of overlap at 390/360). Scoping the density to the table
+		breakpoint removes the conflicting height and lets QueueBoardRow's
+		`height: auto` govern the card.
+	*/
+	@media (min-width: 768px) {
+		.sigap-queue-band :global(.sigap-data-table tbody td) {
+			height: 36px;
+		}
 	}
 
 	.sigap-queue-band__head {

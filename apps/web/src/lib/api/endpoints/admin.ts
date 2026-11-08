@@ -110,10 +110,27 @@ export function deactivateFacility(
 
 /* -------------------------------- queues -------------------------------- */
 
+export interface ListQueueTicketsOptions {
+	/**
+	 * The service day to read, `YYYY-MM-DD` in WIB. Omit to let the server apply
+	 * its own default — today in Asia/Jakarta. A past date reads that day's
+	 * history, never a different write path. See
+	 * `design/service-day-queue-policy.md`.
+	 */
+	date?: string;
+	signal?: AbortSignal;
+}
+
 export function listQueueTickets(
-	signal?: AbortSignal
+	options: ListQueueTicketsOptions = {}
 ): Promise<ApiResult<AdminQueueTicket[]>> {
-	return apiFetchList<AdminQueueTicket>('/api/v1/admin/queues', { signal });
+	return apiFetchList<AdminQueueTicket>('/api/v1/admin/queues', {
+		signal: options.signal,
+		// `query.date` is dropped by `buildUrl` when undefined/null, so omitting
+		// `date` produces the plain `/api/v1/admin/queues` URL and the server's
+		// today-in-WIB default applies.
+		query: { date: options.date }
+	});
 }
 
 export function getQueueTicket(

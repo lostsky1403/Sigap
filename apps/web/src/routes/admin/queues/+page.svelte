@@ -12,11 +12,13 @@
 		showsStaleWarning,
 		type QueueBoardState
 	} from '$lib/admin/queueBoard';
+	import { localDayKey } from '$lib/admin/queueSource';
 	import { listFacilities, listQueueTickets, updateQueueTicketStatus } from '$lib/api/endpoints/admin';
 	import { isEmptyScope } from '$lib/admin/readState';
 	import { runAdminMutation } from '$lib/admin/adminMutation';
 	import AdminMutationFeedback from '$lib/admin/AdminMutationFeedback.svelte';
 	import { QUEUE_STATUS_LABEL } from '$lib/domain/status';
+	import { formatDate } from '$lib/domain/format';
 	import { RADIUS } from '$lib/design/tokens';
 	import Icon from '$lib/ui/Icon.svelte';
 	import { AlertTriangle } from 'lucide-svelte';
@@ -35,8 +37,20 @@
 	 * administrator changes a grant, which is rare, and the ticket rows carry
 	 * their own facility references — polling a second list every thirty seconds
 	 * would add a request per board for data that is already in hand.
+	 *
+	 * Service-day scope (T-3B4-04 / `design/service-day-queue-policy.md`): the
+	 * board defaults to TODAY by omitting `date`, so the server's WIB default
+	 * applies. Selecting a past date sends it explicitly and re-reads that day's
+	 * history. Future dates are rejected by `max` on the control, so the scope is
+	 * always today-or-earlier.
 	 */
-	const board = createQueueBoard({ read: (signal) => listQueueTickets(signal) });
+	const todayKey = localDayKey(new Date()) ?? '';
+	let serviceDate = todayKey;
+
+	const board = createQueueBoard({
+		read: (signal) =>
+			listQueueTickets({ signal, date: serviceDate === todayKey ? undefined : serviceDate })
+	});
 
 	let state: QueueBoardState = board.state;
 	let facilities: AdminFacility[] = [];
@@ -103,6 +117,24 @@
 	$: stale = showsStaleWarning(state);
 
 	/**
+	 * The service-day scope as two derived facts: whether we are on live today,
+	 * and what the heading should read. Today keeps the verbatim "Antrean";
+	 * a historical date names the day so an operator can tell it apart from live
+	 * work without changing anything else on the board.
+	 */
+	$: isTodayScope = serviceDate === todayKey;
+	$: serviceDayTitle = isTodayScope ? 'Antrean' : `Antrean — ${formatDate(serviceDate)}`;
+
+	/** Refetches the board for the newly selected service day. */
+	function onServiceDayChange(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		// An emptied input means "back to live work": reset to today so the
+		// request omits `date` and the server's WIB default applies again.
+		serviceDate = input.value || todayKey;
+		void board.refresh();
+	}
+
+	/**
 	 * T-3B5-01: the transition handler.
 	 *
 	 * Each piece of state below is scoped to ONE ticket, not to the board. Three
@@ -164,7 +196,7 @@
 
 <div class="sigap-admin-page">
 	<AdminPageHeader
-		title="Antrean"
+		title={serviceDayTitle}
 		subtitle="Pantau antrean dalam lingkup akses Anda. Pembaruan otomatis sekitar 30 detik, dijeda saat tab tidak aktif."
 	>
 		<svelte:fragment slot="aside">
@@ -180,6 +212,36 @@
 			/>
 		</svelte:fragment>
 	</AdminPageHeader>
+
+	<!--
+		Service-day scope. This is a SERVER selection, not a client-side filter:
+		changing it re-reads the queue for the chosen day, so it lives apart from
+		the toolbar (whose filters only narrow data already loaded for this day).
+		`max` forbids future dates — the board is today-or-history, never tomorrow.
+	-->
+	<div class="sigap-admin-service-day">
+		<label class="sigap-admin-service-day__label" for="queue-service-day">
+			Hari layanan
+		</label>
+		<div class="sigap-admin-service-day__field">
+			<input
+				id="queue-service-day"
+				class="sigap-admin-service-day__input"
+				style:border-radius={RADIUS.control}
+				type="date"
+				value={serviceDate}
+				max={todayKey}
+				on:input={onServiceDayChange}
+			/>
+			<span class="sigap-admin-service-day__hint" aria-live="polite">
+				{#if isTodayScope}
+					Hari ini
+				{:else}
+					Riwayat
+				{/if}
+			</span>
+		</div>
+	</div>
 
 	<AdminToolbar
 		note="Daftar antrean sudah dibatasi fasilitas dalam lingkup akses Anda. Filter di bawah hanya mempersempit tampilan data yang sudah dimuat."
@@ -304,6 +366,49 @@
 	.sigap-admin-search__input:focus-visible {
 		outline: 2px solid var(--sigap-primary);
 		outline-offset: 2px;
+	}
+
+	/*
+		The service-day scope selector. The same column layout as `.sigap-admin-search`
+		so the label + control read as one unit, kept apart from the toolbar below.
+	*/
+	.sigap-admin-service-day {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sigap-space-1);
+		margin-bottom: var(--sigap-space-3);
+	}
+
+	.sigap-admin-service-day__label {
+		font-size: var(--sigap-type-caption);
+		font-weight: 500;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-admin-service-day__field {
+		display: flex;
+		align-items: center;
+		gap: var(--sigap-space-3);
+	}
+
+	.sigap-admin-service-day__input {
+		height: var(--sigap-control-admin-compact);
+		padding: 0 var(--sigap-space-3);
+		border: 1px solid var(--sigap-border);
+		background-color: var(--sigap-surface);
+		color: var(--sigap-foreground);
+		font: inherit;
+		font-size: var(--sigap-type-label);
+	}
+
+	.sigap-admin-service-day__input:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
+	}
+
+	.sigap-admin-service-day__hint {
+		font-size: var(--sigap-type-label);
+		color: var(--sigap-muted);
 	}
 
 	/*
