@@ -37,6 +37,8 @@
 	export let tickets: readonly AdminQueueTicket[] = [];
 	export let facilities: readonly AdminFacility[] = [];
 	export let onTransition: (ticketId: string, status: QueueStatus) => void = () => {};
+	/** History scope: no transition buttons are offered beyond the today view. */
+	export let readOnly: boolean = false;
 	/** Ticket id whose transition is in flight, or ''. */
 	export let pendingTicketId: string = '';
 	/** The status that transition is moving to, for the in-flight row's label. */
@@ -200,6 +202,7 @@
 			olderLabel={band.olderLabel}
 			{facilityIndex}
 			{onTransition}
+			{readOnly}
 			{pendingTicketId}
 			{pendingStatus}
 			{errorTicketId}

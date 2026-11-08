@@ -12,7 +12,7 @@
 		showsStaleWarning,
 		type QueueBoardState
 	} from '$lib/admin/queueBoard';
-	import { localDayKey } from '$lib/admin/queueSource';
+	import { serviceDayKey } from '$lib/admin/queueSource';
 	import { listFacilities, listQueueTickets, updateQueueTicketStatus } from '$lib/api/endpoints/admin';
 	import { isEmptyScope } from '$lib/admin/readState';
 	import { runAdminMutation } from '$lib/admin/adminMutation';
@@ -44,7 +44,7 @@
 	 * history. Future dates are rejected by `max` on the control, so the scope is
 	 * always today-or-earlier.
 	 */
-	const todayKey = localDayKey(new Date()) ?? '';
+	const todayKey = serviceDayKey(new Date()) ?? '';
 	let serviceDate = todayKey;
 
 	const board = createQueueBoard({
@@ -318,6 +318,7 @@
 				tickets={filtered}
 				{facilities}
 				onTransition={handleTransition}
+				readOnly={!isTodayScope}
 				{pendingTicketId}
 				{pendingStatus}
 				{errorTicketId}

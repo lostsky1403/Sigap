@@ -94,7 +94,7 @@ export function scopeLabel(facilities: readonly AdminFacility[]): string {
 export function headlineMetrics(input: RingkasanInput): DerivedMetric[] {
 	return [
 		{
-			label: 'Antrean aktif',
+			label: 'Antrean aktif hari ini',
 			value: activeQueueCount(input.queues),
 			source: 'Daftar antrean',
 			detail: 'Menunggu, dipanggil, dan sedang dilayani',

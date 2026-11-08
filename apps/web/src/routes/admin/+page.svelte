@@ -183,7 +183,7 @@
 			the numbers that actually matter.
 		-->
 		<section class="sigap-ringkasan-section" aria-labelledby="ringkasan-attention">
-			<h2 class="sigap-ringkasan-section__title" id="ringkasan-attention">Perlu perhatian</h2>
+			<h2 class="sigap-ringkasan-section__title" id="ringkasan-attention">Perlu perhatian hari ini (WIB)</h2>
 			{#if attention.length === 0}
 				<p class="sigap-ringkasan-section__empty">
 					Tidak ada hal yang perlu perhatian dari data yang dimuat.

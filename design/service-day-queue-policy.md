@@ -97,7 +97,7 @@ actor's read set is restricted, the facility predicate is appended as an extra
 
 ---
 
-## 4. Historical queue access — PROPOSED (read-only)
+## 4. Historical queue access — IMPLEMENTED (read-only UI)
 
 An **explicit past date** (`?date=YYYY-MM-DD` for a date earlier than today)
 answers the same endpoint with that day's tickets. The policy constraint:
@@ -109,8 +109,13 @@ answers the same endpoint with that day's tickets. The policy constraint:
   `waiting`/`called`/`in_service` is **visible under its own day** rather than
   silently hidden.
 
-The UI wiring that would let an operator *pick* a past date is a separate task;
-the backend contract it will build on is what this document pins.
+The UI wiring **ships**: the admin queue board has a "Hari layanan" date
+selector (`apps/web/src/routes/admin/queues/+page.svelte`) defaulting to today
+WIB and capped at today (`max`), so a past date re-reads that day's history. In
+a non-today scope the board is **read-only**: `readOnly` is threaded through
+`QueueBoard` → `QueueBand` and empties each row's transition set, so no
+`PATCH` action button is offered for a historical row. The backend contract this
+builds on is the additive `?date` parameter pinned above.
 
 ---
 
@@ -141,9 +146,11 @@ four behaviours are possible. Two are ruled out, two are left to a product owner
 - Whether an unresolved prior-day ticket may still be **acted on** (called /
   served) from a historical view, or whether terminal resolution on a stale day
   requires an explicit operator override. The API currently permits a status
-  transition by ticket id regardless of the ticket's day; deciding whether to
-  gate that on "same service day" is a product/policy call, **not** something this
-  change invents.
+  transition by ticket id regardless of the ticket's day. **The shipped UI takes
+  the safe default**: historical (non-today) views are read-only, so no action
+  is offered until the owner decides whether to re-enable a same-day/override
+  action. Choosing the safe default here is exactly what "do not silently decide
+  policy" requires — the UI refuses rather than invents.
 
 ---
 
@@ -162,6 +169,14 @@ all-time backlog as if it were today's activity.
 - `attentionItems` derives a "Perlu perhatian" waiting count from the same
   today-scoped list.
 
+**Scope is now visible.** The overview headline metric reads "Antrean aktif hari
+ini" and the attention section is titled "Perlu perhatian hari ini (WIB)", so an
+operator is not misled into reading a today-only figure as an all-time one. A
+prior-day ticket still `waiting`/`called`/`in_service` is therefore **not
+counted** on Ringkasan; it is visible only by selecting its own day on the board
+(§4). This is a deliberate consequence of day-scoping, not a hidden record —
+the day boundary is stated on-screen.
+
 The frontend computation is unchanged; the correction is entirely in the shared
 backend default, which is the point of defining the service day in one place.
 
@@ -177,3 +192,43 @@ backend default, which is the point of defining the service day in one place.
   updated, closed, or carried by this feature.
 - **Rollback** is a revert of `admin.go` plus `admin_facility_scope_test.go`;
   nothing persisted depends on the change.
+
+---
+
+## 8. Number-allocation boundary — OPEN DIVERGENCE (documented, not fixed)
+
+**Scope boundary:** this change scopes the *read* path (board list + Ringkasan)
+to a WIB service day. It does **not** yet change the *write* path that mints
+`queue_number` or enforces `DAILY_QUEUE_LIMIT`. Those stay on a UTC day. The two
+boundaries therefore differ, and the consequence is real.
+
+**What is UTC today:**
+
+- Rust queue engine keys `daily_queue_counters` and enforces
+  `DAILY_QUEUE_LIMIT = 300` with `chrono::Utc::now()` (`queue.rs`), i.e. the
+  counter and cap day is **UTC**.
+- Go fallback allocation stamps/resets with `registered_at::date = CURRENT_DATE`
+  (`admin.go`, `booking.go`). The database session `TimeZone` is `UTC`
+  (confirmed `SHOW timezone`), so this is also **UTC**.
+- The one-active-booking-per-day guard (`uq_active_booking_per_patient_day`)
+  backs on `appointment_day(timestamptz) = ($1::date)` (`0007_checkin_constraints.sql`),
+  which is session-timezone-dependent despite being declared `IMMUTABLE`.
+
+**Consequence (00:00–07:00 WIB):** UTC midnight is 07:00 WIB, i.e. mid-service-day.
+A WIB board can therefore carry **two number series in one local day** (the
+sequence resets at 07:00 WIB), and the 300 cap is enforced per UTC day (≈ twice
+per WIB day). This is **not** a silent data rewrite — it is a genuine boundary
+mismatch between the day used to *read* a board and the day used to *mint*
+numbers — and it predates this change.
+
+**Proposed fix (single authority) — PROPOSED, not implemented:** compute the
+service date once, in Go, against `Asia/Jakarta`, and pass that value to (a) the
+number allocator, (b) `ListQueueTickets`, and (c) the booking-per-day guard —
+redefining `appointment_day` as a genuinely immutable `($1 AT TIME ZONE
+'Asia/Jakarta')::date` with a reindex, or pinning the DB session `TimeZone`.
+
+**Do NOT silently change the allocator/guard now.** It changes when the 300 cap
+resets and how the one-booking-per-day invariant is bounded — an operational
+policy decision with outage consequences. It is recorded here and in the
+implementation backlog as a dependency-ordered item, not bundled into the
+read-scope change.

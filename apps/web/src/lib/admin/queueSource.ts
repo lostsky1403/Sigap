@@ -70,21 +70,24 @@ export function latestQueueChange(tickets: readonly AdminQueueTicket[]): string 
 }
 
 /**
- * A local calendar day key, e.g. "2026-10-23".
+ * The facility-local service-day key, e.g. "2026-11-08", in Asia/Jakarta (WIB).
  *
- * Built from LOCAL date parts, never from `toISOString()`. The board is read by
- * a clerk in their own timezone and the backend stamps UTC, so a visit
- * completed at 00.30 WIB is 17.30 UTC on the previous day: slicing a UTC string
- * would file it under yesterday and drop it out of today's band. Returns null
- * for anything that is not a real instant, so a caller can distinguish "not
- * today" from "no usable stamp".
+ * `design/service-day-queue-policy.md` makes WIB the single timezone authority
+ * for the board, the server's `date` filter default, and this client's "today"
+ * boundary. The browser may run in WITA/WIT (or with a mis-set clock), so local
+ * `getFullYear()`/date parts would slice a boundary different from the server
+ * and mislabel "today" near midnight. Formatting in the fixed zone keeps the
+ * client's "today" equal to the server's WIB default. Returns null for anything
+ * that is not a real instant.
  */
-export function localDayKey(value: string | number | Date): string | null {
+const SERVICE_DAY_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+	timeZone: 'Asia/Jakarta'
+});
+
+export function serviceDayKey(value: string | number | Date): string | null {
 	const date = value instanceof Date ? value : new Date(value);
 	if (Number.isNaN(date.getTime())) return null;
-	const month = `${date.getMonth() + 1}`.padStart(2, '0');
-	const day = `${date.getDate()}`.padStart(2, '0');
-	return `${date.getFullYear()}-${month}-${day}`;
+	return SERVICE_DAY_FORMATTER.format(date);
 }
 
 /**
@@ -148,12 +151,12 @@ export function partitionQueueDay(
 	band: QueueDayBand,
 	now: Date = new Date()
 ): QueueDayPartition {
-	const todayKey = localDayKey(now);
+	const todayKey = serviceDayKey(now);
 	const partition: QueueDayPartition = { live: [], older: [], todayCount: 0, unknownCount: 0 };
 
 	for (const ticket of tickets) {
 		const stamp = queueBandStamp(ticket, band);
-		const dayKey = typeof stamp === 'string' && stamp !== '' ? localDayKey(stamp) : null;
+		const dayKey = typeof stamp === 'string' && stamp !== '' ? serviceDayKey(stamp) : null;
 
 		if (todayKey !== null && dayKey === todayKey) {
 			partition.live.push(ticket);

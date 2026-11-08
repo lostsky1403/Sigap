@@ -33,6 +33,8 @@
 	export let olderLabel: string = '';
 	export let facilityIndex: ReadonlyMap<string, AdminFacility> = new Map();
 	export let onTransition: (ticketId: string, status: QueueStatus) => void = () => {};
+	/** History scope: suppress the state-machine action buttons for older rows. */
+	export let readOnly: boolean = false;
 	export let pendingTicketId: string = '';
 	export let pendingStatus: QueueStatus | '' = '';
 	export let errorTicketId: string = '';
@@ -87,7 +89,7 @@
 						registeredAt={ticket.registered_at}
 						calledAt={ticket.called_at}
 						completedAt={ticket.completed_at}
-						transitions={allowedQueueTransitions(ticket.status)}
+						transitions={readOnly ? [] : allowedQueueTransitions(ticket.status)}
 						{onTransition}
 						pendingStatus={pendingTicketId === ticket.id ? pendingStatus : ''}
 						errorMessage={errorTicketId === ticket.id ? errorMessage : ''}
@@ -116,7 +118,7 @@
 							registeredAt={ticket.registered_at}
 							calledAt={ticket.called_at}
 							completedAt={ticket.completed_at}
-							transitions={allowedQueueTransitions(ticket.status)}
+							transitions={readOnly ? [] : allowedQueueTransitions(ticket.status)}
 							{onTransition}
 							pendingStatus={pendingTicketId === ticket.id ? pendingStatus : ''}
 							errorMessage={errorTicketId === ticket.id ? errorMessage : ''}
