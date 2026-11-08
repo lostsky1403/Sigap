@@ -245,7 +245,7 @@ func main() {
 	// Admin handler: queries facilities. Available only when DB is reachable.
 	var adminH *handler.AdminHandler
 	if dbPool != nil {
-		adminH = handler.NewAdminHandler(dbPool).WithAudit(auditSvc).WithFacilityScopeResolver(auth.NewDBFacilityScope(dbPool))
+		adminH = handler.NewAdminHandler(dbPool).WithAudit(auditSvc).WithFacilityScopeResolver(auth.NewDBFacilityScope(dbPool)).WithQueueService(svc)
 		slog.Info("admin handler enabled")
 	}
 

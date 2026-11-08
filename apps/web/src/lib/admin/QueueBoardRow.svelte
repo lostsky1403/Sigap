@@ -46,6 +46,20 @@
 	 * hide which rule was actually broken.
 	 */
 	export let errorMessage: string = '';
+
+	/**
+	 * Which of the three timestamp columns is THIS row's relevant stamp.
+	 *
+	 * A queue row carries three stamps — Terdaftar, Dipanggil, Selesai — but a
+	 * clerk reading a card only cares about one: where the ticket IS in its life.
+	 * The mapping mirrors the board's own band membership (Menunggu → Terdaftar,
+	 * Dipanggil → Dipanggil, Selesai → Selesai) so the card's single timestamp
+	 * always agrees with the band heading above it.
+	 */
+	$: isWaitingStamp = status === 'waiting';
+	$: isCalledStamp = status === 'called' || status === 'in_service';
+	$: isFinishedStamp =
+		status === 'completed' || status === 'cancelled' || status === 'skipped';
 </script>
 
 <!--
@@ -66,10 +80,28 @@
 			icon={QUEUE_STATUS_ICON[status]}
 		/>
 	</td>
-	<td class="sigap-queue-row__facility">{facilityName}</td>
-	<td class="sigap-queue-row__time sigap-table-col-secondary">{formatDateTime(registeredAt)}</td>
-	<td class="sigap-queue-row__time sigap-table-col-secondary">{formatDateTime(calledAt)}</td>
-	<td class="sigap-queue-row__time sigap-table-col-secondary">{formatDateTime(completedAt)}</td>
+	<td class="sigap-queue-row__facility" data-label="Fasilitas">{facilityName}</td>
+	<td
+		class="sigap-queue-row__time sigap-table-col-secondary"
+		class:sigap-queue-row__time--relevant={isWaitingStamp}
+		data-label="Terdaftar"
+	>
+		{formatDateTime(registeredAt)}
+	</td>
+	<td
+		class="sigap-queue-row__time sigap-table-col-secondary"
+		class:sigap-queue-row__time--relevant={isCalledStamp}
+		data-label="Dipanggil"
+	>
+		{formatDateTime(calledAt)}
+	</td>
+	<td
+		class="sigap-queue-row__time sigap-table-col-secondary"
+		class:sigap-queue-row__time--relevant={isFinishedStamp}
+		data-label="Selesai"
+	>
+		{formatDateTime(completedAt)}
+	</td>
 	<!--
 		`sigap-table-col-pinned` is applied HERE, not in DataTable, because the
 		cell belongs to this component: the table renders the header and this row
@@ -210,5 +242,177 @@
 	*/
 	.sigap-queue-row__actions :global(.sigap-button) {
 		margin-right: var(--sigap-space-2);
+	}
+
+	/*
+		MOBILE (≤767px): the row reflows into a stacked card.
+
+		The desktop presentation pins Aksi to the right edge and lets the board
+		scroll horizontally under it, which works down to 1280px. At 390/360 the
+		pinned column cannot compress the row's `nowrap` action buttons without
+		pushing them past the right edge — the same WCAG 2.4.11 failure the
+		AppointmentRow card documents. So the queue row gets the same treatment.
+
+		The number is what a clerk reads out to call a patient, and it is NOT
+		unique across days or facilities, so it must stay WHOLE and loudest. It
+		sits at the top of the card full-size with the status badge beside it; the
+		facility and the one timestamp relevant to the row's current state read as
+		labelled lines below; the actions stack full-width last.
+
+		The `<tr>`/`<td>` structure is preserved in the DOM — only the paint
+		changes — so `data-ticket-id` and every `tr`-scoped e2e locator keeps
+		matching. The table/tbody/thead reflow that makes a `<tr>` free to become
+		a block card lives in QueueBoard (scoped to `.sigap-queue-board`); here we
+		only restyle this component's own cells.
+
+		OBJECT-SPECIFICITY NOTE. The shared `DataTable` and QueueBand row-density
+		rules target `.sigap-data-table tbody td` through `:global`, which is
+		LOOSER than a scoped rule here but sits in QueueBand as a three-class
+		`.sigap-queue-band :global(.sigap-data-table tbody td)` override (0,3,2).
+		A plain `.sigap-queue-row__X` here compiles to `.sigap-queue-row__X.svelte`
+		(0,2,0) and would LOSE on `height`. So every cell rule below is written as
+		a `.sigap-queue-row .sigap-queue-row__X` descendant, which compiles to four
+		classes (0,4,0) and wins the 36px row override deterministically.
+	*/
+	@media (max-width: 767px) {
+		/*
+			A `<tr>` becomes a flex card. `align-items: center` lines the badge up
+			with the number; full-width lines use `flex-basis: 100%` to own a row.
+		*/
+		.sigap-queue-row {
+			display: flex;
+			flex-wrap: wrap;
+			align-items: center;
+			column-gap: var(--sigap-space-2);
+			row-gap: var(--sigap-space-1);
+			padding: var(--sigap-space-3);
+			background-color: var(--sigap-surface);
+			border-bottom: 1px solid var(--sigap-border-subtle);
+		}
+
+		.sigap-queue-row__outcome {
+			display: block;
+		}
+
+		/*
+			Drop the shared 36px/40px `td` geometry. The card owns its own padding;
+			each field is a line, not a column cell. (See the specificity note above
+			for why these are descendant selectors.)
+		*/
+		.sigap-queue-row .sigap-queue-row__number,
+		.sigap-queue-row .sigap-queue-row__status,
+		.sigap-queue-row .sigap-queue-row__facility,
+		.sigap-queue-row .sigap-queue-row__time,
+		.sigap-queue-row .sigap-queue-row__actions {
+			height: auto;
+			padding: 0;
+			border-bottom: 0;
+			width: auto;
+		}
+
+		/*
+			The queue number as the card title: full-size, full-strength, never
+			ellipsized. `min-width: max-content` guarantees a long facility prefix
+			or a crowded row can never squeeze the number below its text width —
+			it stays whole, at the cost of the badge wrapping to the next line
+			before the number would.
+		*/
+		.sigap-queue-row .sigap-queue-row__number {
+			flex: 1 1 auto;
+			min-width: max-content;
+			font-size: var(--sigap-type-page-title);
+			font-weight: 700;
+		}
+
+		.sigap-queue-row .sigap-queue-row__status {
+			flex: 0 0 auto;
+		}
+
+		/*
+			The facility is a labelled, full-width line. `flex-basis: 100%` is what
+			starts a new row after the number/badge pair.
+		*/
+		.sigap-queue-row .sigap-queue-row__facility {
+			flex: 1 1 100%;
+			padding: var(--sigap-space-1) 0;
+		}
+
+		/*
+			All three timestamp columns are secondary and hidden below 1280px by
+			DataTable; the card shows ONLY the one relevant to the row's current
+			state. The `display: none` here is a descendant (0,4,0) and therefore
+			wins DataTable's global `.sigap-table-col-secondary` hide too; the
+			`--relevant` rule below is one class heavier (0,5,0) and re-shows it,
+			so the relevant stamp is visible regardless of bundle order.
+		*/
+		.sigap-queue-row .sigap-queue-row__time {
+			display: none;
+		}
+
+		.sigap-queue-row .sigap-queue-row__time.sigap-queue-row__time--relevant {
+			display: block;
+			flex: 1 1 100%;
+			padding: var(--sigap-space-1) 0;
+		}
+
+		/*
+			The frozen 11px uppercase field-label treatment, read from each cell's
+			`data-label` so the column heading and the card field stay in one place
+			(exactly the AppointmentRow pattern). The number and status carry no
+			label: the number is the card title and the badge names its own state.
+		*/
+		.sigap-queue-row .sigap-queue-row__facility::before,
+		.sigap-queue-row .sigap-queue-row__time--relevant::before {
+			content: attr(data-label);
+			display: block;
+			margin-bottom: var(--sigap-space-1);
+			font-size: var(--sigap-type-micro);
+			font-weight: 600;
+			letter-spacing: 0.06em;
+			text-transform: uppercase;
+			color: var(--sigap-muted);
+		}
+
+		/*
+			Actions lose the right-edge pin and stack full-width. Naming the pinned
+			class too outranks DataTable's `td.sigap-table-col-pinned` sticky rule,
+			which would otherwise keep the buttons glued off-screen.
+		*/
+		.sigap-queue-row .sigap-queue-row__actions.sigap-table-col-pinned {
+			position: static;
+			flex: 1 1 100%;
+			margin-top: var(--sigap-space-2);
+			padding: 0;
+			white-space: normal;
+			border-left: 0;
+			background-color: transparent;
+			display: flex;
+			flex-direction: column;
+			align-items: stretch;
+			gap: var(--sigap-space-2);
+		}
+
+		.sigap-queue-row .sigap-queue-row__actions.sigap-table-col-pinned :global(.sigap-button) {
+			width: 100%;
+			margin-right: 0;
+			/*
+				The same collapse the appointments card hit: in a flex column whose
+				height is still the table's definite row band, a button defaults to
+				flex-shrink and collapses to its 16px line-height. Without the floor
+				the three stacked queue actions render as slivers at 390/360.
+			*/
+			flex: none;
+			min-height: var(--sigap-control-admin-compact);
+		}
+
+		/*
+			The outcome line keeps its leading accent but drops the table-row
+			geometry so it sits flush under its card.
+		*/
+		.sigap-queue-row__outcome .sigap-queue-row__outcome-cell {
+			display: block;
+			width: auto;
+			height: auto;
+		}
 	}
 </style>

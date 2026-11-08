@@ -16,7 +16,9 @@
 	import {
 		GENERIC_UNAVAILABLE,
 		normalizeLookupCode,
-		validateLookupCode
+		validateLookupCode,
+		visitGuidance,
+		visitProgressFrom
 	} from '$lib/citizen/citizenFlow';
 
 	/**
@@ -72,6 +74,23 @@
 	let cancelOpen = false;
 	let cancelling = false;
 	let cancelError = '';
+
+	/**
+	 * The "what happens next" aside is now state-aware, unlike the old static
+	 * line that told an in_service citizen to keep waiting to be called. The
+	 * guidance needs the raw `queue_status` in ADDITION to `visitProgressFrom`'s
+	 * collapsed step: the progress indicator shows one "Dilayani" for both
+	 * `called` and `in_service`, but the next action differs (go to the counter
+	 * now vs. stay and be served). Empty unless a visit resolved, so the aside
+	 * keeps its original explainer before a successful lookup.
+	 */
+	$: guidance = state === 'found' && status
+		? visitGuidance(
+				visitProgressFrom(status.checkin_status, status.queue_status),
+				status.queue_status,
+				status.queue_formatted_number ?? ''
+			)
+		: '';
 
 	/**
 	 * Prefills the field when another screen hands the code over in `?code=`.
@@ -436,8 +455,12 @@
 				Apa yang terjadi berikutnya
 			</h2>
 			<p class="sigap-status__aside-body">
-				Tunggu nomor antrean Anda dipanggil. Nomor akan muncul di layar tunggu fasilitas.
-				Pastikan Anda berada di ruang tunggu.
+				{#if guidance}
+					{guidance}
+				{:else}
+					Tunggu nomor antrean Anda dipanggil. Nomor akan muncul di layar tunggu fasilitas.
+					Pastikan Anda berada di ruang tunggu.
+				{/if}
 			</p>
 		</aside>
 	</div>

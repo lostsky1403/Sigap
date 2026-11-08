@@ -444,6 +444,49 @@ export function visitOutcomeLabel(progress: VisitProgress): string {
 	return '';
 }
 
+/**
+ * The single "what happens next" line for a visit's current state.
+ *
+ * `visitProgressFrom` deliberately collapses `called` (your number is on the
+ * board NOW) and `in_service` (you are already at the counter) into the one
+ * `Dilayani` step, because the progress indicator has to show the SAME label
+ * the backend computed. The next action is NOT the same for the two: `called`
+ * means "go to the counter", `in_service` means "stay, you are being seen".
+ * Guidance therefore re-reads the raw `queueStatus` to split them, without
+ * touching the pinned label or the mapper.
+ *
+ * `queueNumber` is optional: a scheduled appointment checked in but not yet
+ * handed a ticket has no number to tell someone to watch for.
+ */
+export function visitGuidance(
+	progress: VisitProgress,
+	queueStatus?: string,
+	queueNumber?: string
+): string {
+	if (progress.kind === 'cancelled') return 'Janji temu Anda telah dibatalkan.';
+	if (progress.kind === 'no-show') {
+		return 'Anda tercatat tidak hadir. Hubungi fasilitas untuk informasi lebih lanjut.';
+	}
+	if (progress.kind === 'unknown') {
+		return 'Hubungi fasilitas untuk informasi status kunjungan Anda.';
+	}
+
+	switch (progress.step) {
+		case 'check-in':
+			return 'Saat tiba di fasilitas, lakukan check-in menggunakan kode check-in Anda.';
+		case 'antre':
+			return queueNumber
+				? `Nomor antrean Anda ${queueNumber}. Tunggu sampai dipanggil — nomor akan muncul di layar tunggu fasilitas.`
+				: 'Anda sudah masuk antrean. Tunggu sampai dipanggil — nomor Anda akan muncul di layar tunggu fasilitas.';
+		case 'dilayani':
+			return queueStatus === 'called'
+				? 'Nomor antrean Anda sedang dipanggil. Segera menuju loket layanan.'
+				: 'Anda sedang dilayani. Kunjungan Anda sedang berlangsung.';
+		case 'selesai':
+			return 'Kunjungan Anda telah selesai.';
+	}
+}
+
 /* ------------------------------------------------------------------ *
  * Deep links
  * ------------------------------------------------------------------ */

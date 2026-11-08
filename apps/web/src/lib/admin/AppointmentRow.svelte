@@ -244,6 +244,16 @@
 		.sigap-appointment-row__actions.sigap-table-col-pinned {
 			position: static;
 			width: auto;
+			/*
+				`height: auto` is the actual fix for the crushed buttons. A table
+				cell keeps the admin row's 40px band even after `display: flex`,
+				so the flex-column has a definite 40px height; the three buttons
+				— each defaulting to `flex: 0 1 auto` — then shrink to their
+				`min-height: auto` floor (14px line-height + 2px border = 16px).
+				Letting the cell size to its content removes the constraint the
+				buttons were shrinking against.
+			*/
+			height: auto;
 			margin-top: var(--sigap-space-2);
 			padding: 0;
 			white-space: normal;
@@ -258,6 +268,14 @@
 		.sigap-appointment-row__actions.sigap-table-col-pinned :global(.sigap-button) {
 			width: 100%;
 			margin-right: 0;
+			/*
+				Belt-and-suspenders floor against the collapse above: never shrink
+				along the column's main axis, and never fall below the button's
+				own admin-compact density height even if line-height were the only
+				thing sizing it.
+			*/
+			flex: none;
+			min-height: var(--sigap-control-admin-compact);
 		}
 
 		/*

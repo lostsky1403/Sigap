@@ -231,4 +231,29 @@
 		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
+
+	/*
+		MOBILE (≤767px): stop the table scaffold from imposing table-row-group
+		geometry, so QueueBoardRow's cards can lay out as blocks.
+
+		The reflow is scoped to `.sigap-queue-board` (this board only) rather
+		than written as a bare `:global(.sigap-data-table)`, which would hide
+		every admin table's header on a phone. The card layout itself lives in
+		QueueBoardRow; this is only the structural unlock: the `<table>` and
+		`<tbody>` become block boxes and the desktop column header is hidden,
+		because each card carries its own field labels.
+	*/
+	@media (max-width: 767px) {
+		.sigap-queue-board :global(.sigap-data-table) {
+			display: block;
+		}
+
+		.sigap-queue-board :global(.sigap-data-table tbody) {
+			display: block;
+		}
+
+		.sigap-queue-board :global(.sigap-data-table thead) {
+			display: none;
+		}
+	}
 </style>
