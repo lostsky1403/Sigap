@@ -261,7 +261,7 @@ test.describe('A. booking', () => {
 		await expect(page.locator('.sigap-booking-summary')).toBeVisible();
 		await expect(page.locator('.sigap-booking-summary')).toContainText(chosen!.name);
 
-		await page.getByRole('button', { name: /Daftar Janji Temu/ }).click();
+		await page.getByRole('button', { name: /Konfirmasi janji temu/ }).click();
 
 		// The real backend accepted it. The success panel carries the code,
 		// so its appearance is the proof — there is no fixture to satisfy.
@@ -302,7 +302,7 @@ test.describe('A. booking', () => {
 		await page.locator('#sigap-booking-appointment_time').fill(futureLocalDateTime());
 		await page.locator('#sigap-booking-patient_display_name').fill('Dewi Lestari');
 		await page.locator('#sigap-booking-patient_phone').fill(uniquePhone());
-		await page.getByRole('button', { name: /Daftar Janji Temu/ }).click();
+		await page.getByRole('button', { name: /Konfirmasi janji temu/ }).click();
 
 		const codeEl = page.locator('[data-testid="booking-checkin-code"]');
 		await expect(codeEl).toBeVisible(SETTLE);
@@ -402,7 +402,7 @@ test.describe('B. check-in', () => {
 		await page.locator('#sigap-booking-appointment_time').fill(futureLocalDateTime());
 		await page.locator('#sigap-booking-patient_display_name').fill('Andi Pratama');
 		await page.locator('#sigap-booking-patient_phone').fill(uniquePhone());
-		await page.getByRole('button', { name: /Daftar Janji Temu/ }).click();
+		await page.getByRole('button', { name: /Konfirmasi janji temu/ }).click();
 		await expect(page.locator('[data-testid="booking-checkin-code"]')).toBeVisible(SETTLE);
 
 		const href = (await page.locator('.sigap-booking__cta').getAttribute('href')) ?? '';

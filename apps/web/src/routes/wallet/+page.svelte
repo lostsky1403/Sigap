@@ -31,33 +31,17 @@
 <div class="sigap-page sigap-wallet">
 	<PageHeader
 		title="Riwayat kunjungan"
-		description="Riwayat kunjungan Anda akan tampil di sini setelah fitur ini tersedia. Saat ini kami belum bisa menampilkan daftar kunjungan sebelumnya."
+		description="Riwayat kunjungan Anda di fasilitas kesehatan."
 	/>
 
-	<div class="sigap-wallet__notice" role="status">
-		<p class="sigap-wallet__notice-text">
-			Kami belum bisa menampilkan riwayat kunjungan. Simpan nomor antrean dan kode check-in Anda;
-			status kunjungan yang sedang berjalan tetap bisa dilihat kapan saja.
+	<div class="sigap-wallet__unavailable" role="status">
+		<h2 class="sigap-wallet__title">Riwayat kunjungan belum tersedia</h2>
+		<p class="sigap-wallet__body">
+			Fitur ini akan menampilkan riwayat kunjungan Anda nanti. Untuk sekarang, simpan
+			nomor antrean dan kode check-in Anda — status kunjungan yang sedang berjalan tetap
+			bisa Anda lihat kapan saja.
 		</p>
-	</div>
-
-	<div class="sigap-wallet__panel">
-		<h2 class="sigap-wallet__panel-title">Riwayat kunjungan belum tersedia</h2>
-		<p class="sigap-wallet__panel-body">
-			Belum ada riwayat yang bisa ditampilkan. Kami sedang menyiapkannya.
-		</p>
-
-		<ul class="sigap-wallet__facts">
-			<li>Status kunjungan yang sedang berjalan tetap bisa Anda lihat kapan saja.</li>
-			<li>Simpan nomor antrean dan kode check-in Anda sampai fitur riwayat tersedia.</li>
-		</ul>
-
-		<div class="sigap-wallet__actions">
-			<a class="sigap-wallet__action sigap-wallet__action--primary" href="/patient/status">
-				Buka status kunjungan
-			</a>
-			<a class="sigap-wallet__action" href="/">Kembali ke beranda</a>
-		</div>
+		<a class="sigap-wallet__link" href="/patient/status">Buka status kunjungan</a>
 	</div>
 </div>
 
@@ -69,26 +53,12 @@
 	 */
 	/*
 		Layout comes from `.sigap-page`. The Jejak Kunjungan frame runs across
-		the full content column, so the page is not capped; the notice and the
-		panel below keep their own reading measures.
+		the full content column; the single unavailable block below keeps a
+		bounded reading measure.
 	*/
 
-	.sigap-wallet__notice {
-		padding: var(--sigap-space-4);
-		background-color: var(--sigap-warning-tint);
-		border: 1px solid var(--sigap-warning);
-		border-radius: var(--sigap-radius-panel);
-	}
-
-	.sigap-wallet__notice-text {
-		margin: 0;
-		font-size: 13px;
-		font-weight: 600;
-		line-height: 1.5;
-		color: var(--sigap-foreground);
-	}
-
-	.sigap-wallet__panel {
+	.sigap-wallet__unavailable {
+		max-width: 560px;
 		padding: var(--sigap-space-6) var(--sigap-space-5);
 		background-color: var(--sigap-surface);
 		border: 1px solid var(--sigap-border-subtle);
@@ -96,78 +66,42 @@
 		text-align: center;
 	}
 
-	.sigap-wallet__panel-title {
+	.sigap-wallet__title {
 		margin: 0;
-		font-size: 16px;
+		font-size: var(--sigap-type-subtitle);
 		font-weight: 600;
 		line-height: 1.4;
 		color: var(--sigap-foreground);
 	}
 
-	.sigap-wallet__panel-body {
+	.sigap-wallet__body {
 		margin: var(--sigap-space-2) 0 0;
-		font-size: 13px;
+		font-size: var(--sigap-type-body);
 		line-height: 1.5;
 		color: var(--sigap-muted);
 	}
 
-	.sigap-wallet__facts {
-		margin: var(--sigap-space-4) 0 0;
-		padding: var(--sigap-space-3) var(--sigap-space-4);
-		list-style: none;
-		text-align: left;
-		background-color: var(--sigap-surface-sunken);
-		border-radius: var(--sigap-radius-control);
-	}
-
-	.sigap-wallet__facts li {
-		font-size: 12px;
-		line-height: 1.5;
-		color: var(--sigap-muted);
-	}
-
-	.sigap-wallet__facts li + li {
-		margin-top: var(--sigap-space-2);
-	}
-
-	.sigap-wallet__actions {
-		display: flex;
-		flex-wrap: wrap;
-		justify-content: center;
-		gap: var(--sigap-space-3);
-		margin-top: var(--sigap-space-5);
-	}
-
-	.sigap-wallet__action {
+	.sigap-wallet__link {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
 		min-height: var(--sigap-control-citizen);
 		padding: 0 var(--sigap-space-4);
-		font-size: 13px;
+		margin-top: var(--sigap-space-5);
+		font-size: var(--sigap-type-label);
 		font-weight: 600;
 		text-decoration: none;
-		color: var(--sigap-foreground);
-		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		color: var(--sigap-on-primary);
+		background-color: var(--sigap-primary);
+		border: 1px solid var(--sigap-primary);
 		border-radius: var(--sigap-radius-control);
 	}
 
-	.sigap-wallet__action--primary {
-		color: var(--sigap-on-primary);
-		background-color: var(--sigap-primary);
-		border-color: var(--sigap-primary);
-	}
-
-	.sigap-wallet__action:hover {
-		background-color: var(--sigap-surface-sunken);
-	}
-
-	.sigap-wallet__action--primary:hover {
+	.sigap-wallet__link:hover {
 		background-color: var(--sigap-primary-hover);
 	}
 
-	.sigap-wallet__action:focus-visible {
+	.sigap-wallet__link:focus-visible {
 		outline: 2px solid var(--sigap-primary);
 		outline-offset: 2px;
 	}

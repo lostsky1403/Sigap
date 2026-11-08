@@ -154,6 +154,9 @@ async function fillValidBooking() {
 beforeEach(() => {
 	document.body.innerHTML = '';
 	window.history.replaceState({}, '', '/appointments/new');
+	// The booking page persists a draft to sessionStorage; a previous test's
+	// selections must not leak into the next render.
+	window.sessionStorage.clear();
 });
 
 afterEach(() => {
@@ -499,7 +502,12 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		// Click from an EMPTY form. The primary action is always enabled and
+		// reads "Lanjutkan" before a facility/service are chosen, but pressing it
+		// still validates locally and names the missing selection — it is not a
+		// dead button, and it must not fire a request for a form it already knows
+		// is incomplete.
+		await fireEvent.click(screen.getByRole('button', { name: /Lanjutkan/ }));
 		await waitFor(() => expect(document.body.textContent).toContain('wajib diisi'));
 
 		// Nothing was sent: a form that validates locally must not spend a
@@ -514,7 +522,7 @@ describe('/appointments/new', () => {
 		await fillValidBooking();
 
 		await fireEvent.input(phoneField(), { target: { value: '123' } });
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(document.body.textContent).toContain('10-15 digit angka'));
 		expect(calls.some((c) => c.method === 'POST')).toBe(false);
@@ -529,7 +537,7 @@ describe('/appointments/new', () => {
 		await fireEvent.input(timeField(), {
 			target: { value: '2000-01-01T10:00' }
 		});
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(document.body.textContent).toContain('masa depan'));
 		expect(calls.some((c) => c.method === 'POST')).toBe(false);
@@ -542,7 +550,7 @@ describe('/appointments/new', () => {
 		await fillValidBooking();
 
 		await fireEvent.input(nameField(), { target: { value: '' } });
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => {
 			const name = nameField() as HTMLInputElement;
@@ -578,7 +586,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true));
 		const post = calls.find((c) => c.method === 'POST')!;
@@ -625,7 +633,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(document.body.textContent).toContain('Janji temu berhasil'));
 		// The code the citizen has to write down.
@@ -665,7 +673,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(document.body.textContent).toContain('Fasilitas tidak ditemukan.'));
 		// Announced, not just coloured.
@@ -688,7 +696,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(document.body.textContent).toContain('Slot jadwal sudah penuh.'));
 	});
@@ -710,7 +718,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(document.body.textContent).toContain('batas pemesanan per hari'));
 	});
@@ -726,7 +734,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(document.body.textContent).toContain(GENERIC_UNAVAILABLE));
 		// A 5xx must not leak the raw server string: "Gagal menyimpan janji
@@ -756,7 +764,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 		await tick();
 		await new Promise((resolve) => setTimeout(resolve, 40));
 
@@ -764,7 +772,7 @@ describe('/appointments/new', () => {
 		// someone for navigating away is the whole thing this avoids.
 		expect(document.querySelector('[role="alert"]')).toBeNull();
 		expect(facilityField()).toBeTruthy();
-		expect(screen.getByRole('button', { name: /Daftar Janji Temu/ })).toBeTruthy();
+		expect(screen.getByRole('button', { name: /Konfirmasi janji temu/ })).toBeTruthy();
 	});
 
 	it('preselects a facility from ?facility_id= and ignores an unknown one', async () => {
@@ -820,7 +828,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(screen.getByRole('button', { name: /Salin kode/ })).toBeTruthy());
 

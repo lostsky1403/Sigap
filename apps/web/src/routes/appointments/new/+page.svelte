@@ -80,6 +80,86 @@
 	let copyHint = '';
 	let copied = false;
 
+	/* ---------------- draft persistence ---------------- */
+
+	/*
+		The selections are kept in sessionStorage so a refresh or a trip back
+		through history does not strand a half-finished booking. Session-scoped
+		on purpose: it is cleared when the tab closes and it never outlives the
+		browser session that produced it.
+
+		Persistence is best-effort. Storage can be unavailable (private mode,
+		quota, a disabled API), and the form must still work when it is — every
+		access is guarded, and a failure means "start fresh", never an error.
+	*/
+	const DRAFT_KEY = 'sigap:booking:draft';
+
+	function readDraft(): {
+		facilityId: string;
+		serviceUnitId: string;
+		appointmentTime: string;
+		patientName: string;
+		patientPhone: string;
+		notes: string;
+	} | null {
+		if (typeof window === 'undefined') return null;
+		try {
+			const raw = window.sessionStorage.getItem(DRAFT_KEY);
+			if (!raw) return null;
+			const parsed: unknown = JSON.parse(raw);
+			if (!parsed || typeof parsed !== 'object') return null;
+			const draft = parsed as Record<string, unknown>;
+			return {
+				facilityId: typeof draft.facilityId === 'string' ? draft.facilityId : '',
+				serviceUnitId: typeof draft.serviceUnitId === 'string' ? draft.serviceUnitId : '',
+				appointmentTime: typeof draft.appointmentTime === 'string' ? draft.appointmentTime : '',
+				patientName: typeof draft.patientName === 'string' ? draft.patientName : '',
+				patientPhone: typeof draft.patientPhone === 'string' ? draft.patientPhone : '',
+				notes: typeof draft.notes === 'string' ? draft.notes : ''
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	function writeDraft() {
+		if (typeof window === 'undefined') return;
+		try {
+			window.sessionStorage.setItem(
+				DRAFT_KEY,
+				JSON.stringify({
+					facilityId,
+					serviceUnitId,
+					appointmentTime,
+					patientName,
+					patientPhone,
+					notes
+				})
+			);
+		} catch {
+			/* storage unavailable — persistence is best-effort */
+		}
+	}
+
+	function clearDraft() {
+		if (typeof window === 'undefined') return;
+		try {
+			window.sessionStorage.removeItem(DRAFT_KEY);
+		} catch {
+			/* ignore */
+		}
+	}
+
+	/*
+		The first reactive flush runs before `onMount` restores the saved draft,
+		so an unguarded write there would clobber sessionStorage with an empty
+		form before it can be read back. The write is gated until the restore
+		decision has been made (`draftHydrated` is set at the end of `onMount`).
+	*/
+	let draftHydrated = false;
+
+	$: if (draftHydrated) writeDraft();
+
 	/* ---------------- derived ---------------- */
 
 	$: selectedFacility = facilities.find((f) => f.id === facilityId) ?? null;
@@ -142,6 +222,18 @@
 		serviceUnitId && unitsForFacility.some((u) => u.id === serviceUnitId) ? serviceUnitId : '';
 
 	$: step = (!facilityId ? 1 : !validServiceUnitId ? 2 : 3) as Step;
+
+	/*
+		The primary control reflects the step rather than a constant. Until a
+		facility and a service are chosen there is nothing to confirm, so the
+		button reads "Lanjutkan"; pressing it still validates and reports which
+		selection is missing (the step advances by selection, but the button is
+		never disabled — a disabled control would be a dead button and would
+		silence the early validation that names the missing field). On the last
+		step it becomes the real action: "Konfirmasi janji temu".
+	*/
+	$: bookingReady = step === 3;
+	$: submitLabel = bookingReady ? 'Konfirmasi janji temu' : 'Lanjutkan';
 
 	// The store exposes a getter function, not a value. Calling it keeps the
 	// prop a plain boolean, which is all ErrorState is allowed to know about.
@@ -372,6 +464,9 @@
 		if (outcome.ok) {
 			result = outcome.data;
 			submitting = false;
+			// The booking is complete; a stale draft must not resurrect it on a
+			// later visit to this page.
+			clearDraft();
 			/*
 				Move focus to the confirmation. Otherwise a screen reader or
 				keyboard user is left focused on a submit button that no longer
@@ -481,6 +576,7 @@
 		*/
 		const params = new URLSearchParams(window.location.search);
 		const preselected = params.get('facility_id') ?? '';
+		const draft = readDraft();
 		void loadFacilities().then(() => {
 			/*
 				Applied after the catalog arrives, and only if the id is real. A
@@ -490,8 +586,22 @@
 				with what the citizen sees.
 			*/
 			if (preselected && facilities.some((f) => f.id === preselected)) {
+				// A fresh catalog choice is a new intent; it wins over a stale
+				// draft from an earlier half-finished booking.
 				facilityId = preselected;
+				clearDraft();
+			} else if (draft) {
+				// A refresh, or a trip back through history, restores the
+				// half-finished booking instead of starting over.
+				facilityId = draft.facilityId;
+				serviceUnitId = draft.serviceUnitId;
+				appointmentTime = draft.appointmentTime;
+				patientName = draft.patientName;
+				patientPhone = draft.patientPhone;
+				notes = draft.notes;
 			}
+			// From here on, changes are the citizen's own and may be persisted.
+			draftHydrated = true;
 		});
 	});
 </script>
@@ -831,19 +941,37 @@
 
 				<div class="sigap-booking__submit">
 					<Button type="submit" disabled={submitting}>
-						{submitting ? 'Menyimpan...' : 'Daftar Janji Temu'}
+						{submitting ? 'Menyimpan...' : submitLabel}
 					</Button>
 				</div>
 			</form>
 
 			<div class="sigap-booking__aside">
-				<BookingSummary
-					facility={selectedFacility}
-					serviceUnit={selectedServiceUnit}
-					{appointmentTime}
-					{patientName}
-					{patientPhone}
-				/>
+				{#if bookingReady}
+					<BookingSummary
+						facility={selectedFacility}
+						serviceUnit={selectedServiceUnit}
+						{appointmentTime}
+						{patientName}
+						{patientPhone}
+					/>
+				{:else}
+					<!--
+						During the first two steps there is nothing to summarise, so
+						a full receipt of four "not chosen" rows would be a large
+						empty card. A single progress note says the same thing with
+						none of the noise, and the real summary takes its place as
+						soon as a facility and a service exist. The confirmation
+						keeps its own summary as the receipt; this applies to the
+						form only.
+					-->
+					<div class="sigap-booking__aside-note" role="status">
+						<p class="sigap-booking__aside-note-text">
+							Ringkasan janji temu akan tampil di sini setelah Anda memilih fasilitas
+							dan layanan.
+						</p>
+					</div>
+				{/if}
 			</div>
 		</div>
 	{/if}
@@ -1022,6 +1150,26 @@
 
 	.sigap-booking__failure-text {
 		margin: 0;
+	}
+
+	/*
+		The early-step stand-in for the summary. It is a note, not a receipt, so
+		it keeps the measure and outline of a caption block rather than
+		repeating the summary's full hairline card. Sunken ground reads as
+		"nothing chosen yet" without implying anything is wrong.
+	*/
+	.sigap-booking__aside-note {
+		padding: var(--sigap-space-3) var(--sigap-space-4);
+		background-color: var(--sigap-surface-sunken);
+		border: 1px solid var(--sigap-border-subtle);
+		border-radius: var(--sigap-radius-panel);
+	}
+
+	.sigap-booking__aside-note-text {
+		margin: 0;
+		font-size: var(--sigap-type-caption);
+		line-height: 1.5;
+		color: var(--sigap-muted);
 	}
 
 	.sigap-booking__submit {

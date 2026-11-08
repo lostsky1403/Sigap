@@ -186,15 +186,15 @@
 	{:else}
 		<section class="sigap-checkin__panel" style:border-radius={RADIUS.panel}>
 			<!--
-				The three identifiers, distinguished before the citizen reaches
-				the fields. A booking produces two things — the appointment id
-				and the check-in code — and check-in produces a third, the queue
-				number. Naming all three up front, with their sources, stops a
-				citizen from pasting a six-character code into the id field, or
-				looking for a queue number before there is one.
+				The three identifiers are collapsed behind a disclosure so they
+				are still reachable but no longer a wall of prose before the two
+				fields the citizen actually needs. The inline field helpers still
+				say where each value comes from; this expands the full picture —
+				including the queue number, which is produced after check-in and
+				is never typed on this page — for anyone who wants it.
 			-->
-			<div class="sigap-checkin__explainer">
-				<h2 class="sigap-checkin__explainer-title">Tiga pengenal yang perlu Anda pahami</h2>
+			<details class="sigap-checkin__explainer">
+				<summary class="sigap-checkin__explainer-title">Di mana saya menemukan ini?</summary>
 				<dl class="sigap-checkin__explainer-list">
 					<div class="sigap-checkin__explainer-item">
 						<dt class="sigap-checkin__explainer-term">ID janji temu</dt>
@@ -218,7 +218,7 @@
 						</dd>
 					</div>
 				</dl>
-			</div>
+			</details>
 
 			{#if failure}
 				<!--
@@ -333,9 +333,8 @@
 	}
 
 	/*
-		The identifier explainer: a sunken inset that sits above the form, so
-		the three identifiers are named before the citizen reaches the two
-		fields that need the first two of them. Decorative outline on the
+		The identifier explainer: a sunken inset collapsed behind a `<summary>`
+		so it sits available but not front-and-centre. Decorative outline on the
 		inset; the terms carry the emphasis.
 	*/
 	.sigap-checkin__explainer {
@@ -344,6 +343,15 @@
 		background-color: var(--sigap-surface-sunken);
 		border: 1px solid var(--sigap-border-subtle);
 		border-radius: var(--sigap-radius-control);
+	}
+
+	.sigap-checkin__explainer summary {
+		cursor: pointer;
+	}
+
+	.sigap-checkin__explainer summary:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
 	}
 
 	.sigap-checkin__explainer-title {

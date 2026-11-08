@@ -58,7 +58,7 @@ async function book(page: Page) {
 	await page.locator('input[type="text"]').first().fill('Uji Status Warga');
 	await page.locator('input[type="tel"]').first().fill('0817' + Date.now().toString().slice(-8));
 
-	await page.getByRole('button', { name: 'Daftar Janji Temu' }).click();
+	await page.getByRole('button', { name: 'Konfirmasi janji temu' }).click();
 	await page.waitForSelector('[data-testid="booking-checkin-code"]', SETTLE);
 
 	return (await page.locator('[data-testid="booking-checkin-code"]').innerText()).trim();
