@@ -84,13 +84,29 @@
 	 * now vs. stay and be served). Empty unless a visit resolved, so the aside
 	 * keeps its original explainer before a successful lookup.
 	 */
-	$: guidance = state === 'found' && status
-		? visitGuidance(
+	$: guidance = (() => {
+		if (state === 'found' && status) {
+			return visitGuidance(
 				visitProgressFrom(status.checkin_status, status.queue_status),
 				status.queue_status,
 				status.queue_formatted_number ?? ''
-			)
-		: '';
+			);
+		}
+		// The aside is "what happens next": every terminal result still has a
+		// next step, and that step is NOT "wait to be called". A cancelled or
+		// not-found citizen reading "tunggu nomor antrean Anda dipanggil" is
+		// exactly the contradiction this page previously shipped for in_service.
+		switch (state) {
+			case 'cancelled':
+				return 'Janji temu Anda telah dibatalkan. Anda dapat membuat janji temu baru.';
+			case 'not-found':
+				return 'Periksa kembali kode check-in Anda — terdiri dari enam karakter huruf dan angka.';
+			case 'error':
+				return 'Layanan sedang bermasalah. Coba lagi sebentar lagi.';
+			default:
+				return ''; // idle / loading
+		}
+	})();
 
 	/**
 	 * Prefills the field when another screen hands the code over in `?code=`.
@@ -458,8 +474,7 @@
 				{#if guidance}
 					{guidance}
 				{:else}
-					Tunggu nomor antrean Anda dipanggil. Nomor akan muncul di layar tunggu fasilitas.
-					Pastikan Anda berada di ruang tunggu.
+					Masukkan kode check-in Anda untuk melihat status kunjungan.
 				{/if}
 			</p>
 		</aside>

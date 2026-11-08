@@ -37,9 +37,10 @@
 	<div class="sigap-wallet__unavailable" role="status">
 		<h2 class="sigap-wallet__title">Riwayat kunjungan belum tersedia</h2>
 		<p class="sigap-wallet__body">
-			Fitur ini akan menampilkan riwayat kunjungan Anda nanti. Untuk sekarang, simpan
-			nomor antrean dan kode check-in Anda — status kunjungan yang sedang berjalan tetap
-			bisa Anda lihat kapan saja.
+			Fitur ini akan menampilkan riwayat kunjungan Anda nanti. Untuk kunjungan yang sedang
+			berjalan, simpan <strong>kode check-in</strong> Anda — kode itulah yang membuka
+			halaman status. <strong>Nomor antrean</strong> hanya menunjukkan posisi Anda di
+			layar tunggu fasilitas, bukan kunci untuk memeriksa status.
 		</p>
 		<a class="sigap-wallet__link" href="/patient/status">Buka status kunjungan</a>
 	</div>

@@ -60,12 +60,21 @@ cannot list their own appointments, because there is no identity to list them ag
 | N1 | **Retrieve more of my appointment without an account** | `checkin_code` is a 6-char unguessable token (32^6 ≈ 1.07e9); the status lookup already resolves by code and, as of v2.3, returns `service_unit_name` | Bounded: the status response still deliberately withholds `appointment_time` (PHI-adjacent correlation) — do NOT re-add it; any retrieval stays code-only and non-enumerating | Medium | **S** — additive fields only, rate-limited |
 | N2 | **Cancel my appointment — IMPLEMENTED (v2.3)** | `POST /api/v1/appointments/cancel` ships: scheduled-only, idempotent, audited, shared 30/min limiter, guarded transition | n/a | Shipped | — |
 | N3 | **Reschedule my appointment** | `appointments.appointment_time` is mutable; the admin path already updates it | A citizen route keyed by code | High — today a citizen must phone the facility | **M** — needs slot validation against `practitioner_schedules`, and the same rule the admin editor enforces |
-| N4 | **Staff check-in that issues a queue number** | `PATCH /api/v1/admin/appointments/{id}/status` sets `checked_in` but **never creates a queue ticket** (`admin.go:2536`) | Mint a ticket on the admin path, as the public check-in does | **Critical operational gap** — a clerk who checks someone in at the desk strands the appointment at `checked_in` with no number | **M** — must reuse the engine call and the same compensating rollback |
+| N4 | **Staff check-in that issues a queue number — IMPLEMENTED (v2.3)** | `PATCH /api/v1/admin/appointments/{id}/status` to `checked_in` now mints and atomically attaches a queue ticket through the queue service, guarded by `queue_ticket_id IS NULL` + optimistic `AND status=$current`, rolling back to `scheduled` on failure; covered by a concurrency test | n/a | Shipped | — |
 | N5 | **Read the audit trail** | `audit_events` exists and every admin action writes to it (`audit/service.go:97`) | A `GET /api/v1/admin/audit` scoped by facility; `audit.read` is granted to `super_admin` only | High for administrators; accountability for a civic system | **M** — plus a **data fix**: admin rows never set `Event.FacilityID` (`admin.go:733-742`), so facility filtering cannot work on existing rows |
 | N6 | **Facility queue capacity as a setting** | `DAILY_QUEUE_LIMIT = 300` is a Rust constant (`queue.rs:10,113`) | A per-facility cap column + enforcement | Medium — one busy clinic and one quiet one cannot share a constant | **M** — schema change, engine change, migration |
 | N7 | **Notification template management** | `notification_templates` table exists with `channel` CHECK (dev/sms/whatsapp/email) | No create/update route (`router.go:74-76`) | Medium | **M** — needs the template lifecycle and validation |
 | N8 | **Server-side queue filtering by facility** | The handler's doc comment claims it (`admin.go:763-765`) but parses no query | Query parsing + scope-aware filter | Medium — the UI filters locally, which breaks past a page of rows | **S** |
-| N9 | **Service-unit creation from the admin UI** | `POST /api/v1/admin/service-units` exists (`admin.go:1294`) | The client posts to `/api/v1/admin/facilities/{id}/service-units`, which is **not registered** (`admin.ts:178`) | Medium — the catalogue is half-administrable | **S** — point the client at the real path |
+| N9 | **Service-unit creation from the admin UI — IMPLEMENTED** | `createServiceUnit` posts to the registered `/api/v1/admin/service-units` with `facility_id` in the body | n/a | Shipped | — |
+
+**Walk-in status retrieval — PROPOSED, not implemented.** A walk-in ticket has no
+check-in code, so a walk-in citizen cannot retrieve their visit status today, and
+lookup by `formatted_number` would re-introduce the enumeration vector that was
+deliberately removed. Proposal: at walk-in issuance, mint an opaque, unguessable
+token (crypto-random, stored beside the ticket, NEVER derived from the number),
+accept it on the same code-only, rate-limited `/patient/status` path, and expire
+it at end of service day. Must NOT expose patient name/phone through that path.
+Deferred until the privacy design is written down; do not silently add it.
 
 ### FUTURE — needs a product and security decision first
 

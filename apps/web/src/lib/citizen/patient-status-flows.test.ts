@@ -4,6 +4,7 @@ import Status from '../../routes/patient/status/+page.svelte';
 import {
 	visitProgressFrom,
 	visitOutcomeLabel,
+	visitGuidance,
 	VISIT_PROGRESS_LABELS,
 	VISIT_PROGRESS_ORDER
 } from './citizenFlow';
@@ -107,6 +108,63 @@ describe('visit progress reproduces mapCheckinStatus', () => {
 			'Dilayani',
 			'Selesai'
 		]);
+	});
+});
+
+describe('visitGuidance distinguishes the state arms', () => {
+	/**
+	 * The owner-reported defect: a ticket in `in_service` was shown "Dilayani"
+	 * alongside "wait to be called" — a contradiction. The guidance is the fix,
+	 * and it must never collapse `called` and `in_service` into one line, nor
+	 * interpolate a number that is not there.
+	 */
+	it('gives called and in-service different instructions', () => {
+		const called = visitGuidance(
+			visitProgressFrom('in_queue', 'called'),
+			'called',
+			'PHB-0004'
+		);
+		const served = visitGuidance(
+			visitProgressFrom('in_queue', 'in_service'),
+			'in_service',
+			'PHB-0004'
+		);
+		expect(called).toContain('dipanggil');
+		expect(called).not.toContain('sedang dilayani');
+		expect(served).toContain('sedang dilayani');
+		expect(called).not.toBe(served);
+	});
+
+	it('interpolates the queue number in the waiting arm, and omits it when absent', () => {
+		expect(visitGuidance(visitProgressFrom('in_queue', 'waiting'), 'waiting', 'PHB-0004')).toContain(
+			'PHB-0004'
+		);
+		expect(
+			visitGuidance(visitProgressFrom('in_queue', 'waiting'), 'waiting', undefined)
+		).not.toContain('PHB-0004');
+	});
+
+	it.each([
+		['cancelled', 'dibatalkan'],
+		['no_show', 'tidak hadir'],
+		['unknown', 'Hubungi fasilitas']
+	])('%s returns its own terminal line', (_name, phrase) => {
+		// Build the terminal progress directly; visitProgressFrom only handles
+		// cancelled via checkin_status, so the other two are asserted on the
+		// guidance surface itself.
+		if (_name === 'cancelled') {
+			expect(visitGuidance({ kind: 'cancelled' })).toContain(phrase);
+		} else if (_name === 'no_show') {
+			expect(visitGuidance({ kind: 'no-show' })).toContain(phrase);
+		} else {
+			expect(visitGuidance({ kind: 'unknown', raw: 'x' })).toContain(phrase);
+		}
+	});
+
+	it('tells a not-yet-checked-in appointment to check in', () => {
+		expect(visitGuidance(visitProgressFrom('not_checked_in'), undefined, undefined)).toContain(
+			'check-in'
+		);
 	});
 });
 
