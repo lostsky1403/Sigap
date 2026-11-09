@@ -111,10 +111,10 @@ describe('isActiveDestination', () => {
 });
 
 describe('AdminSidebar', () => {
-	it('renders exactly six navigation links', () => {
+	it('renders exactly seven navigation links', () => {
 		render(AdminSidebar, { path: '/admin' });
 		const nav = screen.getByRole('navigation', { name: 'Menu operasi' });
-		expect(within(nav).getAllByRole('link')).toHaveLength(6);
+		expect(within(nav).getAllByRole('link')).toHaveLength(7);
 	});
 
 	it('marks exactly one destination as the current page', () => {

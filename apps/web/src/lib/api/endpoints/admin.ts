@@ -108,6 +108,67 @@ export function deactivateFacility(
 	);
 }
 
+/* ----------------------------- organizations ---------------------------- */
+
+/**
+ * A tenant directory row from `GET /api/v1/admin/organizations`.
+ *
+ * The list carries ONLY the organizations inside the caller's resolved
+ * organization scope (`ListOrganizations` narrows to `OrganizationScope`), so
+ * what the client receives is already the authorized view — never a directory
+ * the client may trim or expand. A caller without `organization.read` receives
+ * `HTTP 200 + []`, deliberately the same shape as "an org-scoped actor with no
+ * orgs", so the empty directory is rendered as a plain empty state rather than
+ * as a distinct refusal: existence across organizations is not leaked.
+ */
+export interface AdminOrganization {
+	id: string;
+	name: string;
+	region: string;
+	is_active: boolean;
+	/** `omitempty` on the wire; absent when the column is NULL. */
+	created_at?: string;
+	updated_at?: string;
+}
+
+export function listOrganizations(
+	signal?: AbortSignal
+): Promise<ApiResult<AdminOrganization[]>> {
+	return apiFetchList<AdminOrganization>('/api/v1/admin/organizations', { signal });
+}
+
+/**
+ * The tenant-aware operational stats aggregate for one organization, from
+ * `GET /api/v1/admin/organizations/{id}`.
+ *
+ * Every count is an integer aggregate bounded by the facilities where the actor
+ * holds `facility.read` — never a patient row, a medical record, or PII. A
+ * forged or sibling organization id, or a caller without `organization.read`,
+ * is answered 404 (not 403): the org's existence is never disclosed across
+ * scopes, so a 404 here must be shown as "not found / not authorized" rather
+ * than as a transient failure the client could retry.
+ */
+export interface AdminOrganizationOverview {
+	id: string;
+	name: string;
+	region: string;
+	is_active: boolean;
+	facility_count: number;
+	service_unit_count: number;
+	active_queue_count: number;
+	appointment_count: number;
+}
+
+export function getOrganizationOverview(
+	id: string,
+	signal?: AbortSignal
+): Promise<ApiResult<AdminOrganizationOverview>> {
+	return apiFetch<AdminOrganizationOverview>(
+		`/api/v1/admin/organizations/${encodeURIComponent(id)}`,
+		{ signal }
+	);
+}
+
 /* -------------------------------- queues -------------------------------- */
 
 export interface ListQueueTicketsOptions {

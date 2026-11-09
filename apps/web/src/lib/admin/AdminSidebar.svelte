@@ -1,7 +1,15 @@
 <script lang="ts">
 	import { ADMIN_DESTINATIONS, ADMIN_GROUPS, isActiveDestination } from './navigation';
 	import { RADIUS } from '$lib/design/tokens';
-	import { LayoutDashboard, ListOrdered, CalendarCheck, CalendarClock, Building2, Bell } from 'lucide-svelte';
+	import {
+		LayoutDashboard,
+		ListOrdered,
+		CalendarCheck,
+		CalendarClock,
+		Building2,
+		Bell,
+		Landmark
+	} from 'lucide-svelte';
 	import Icon from '$lib/ui/Icon.svelte';
 	import type { ComponentType } from 'svelte';
 
@@ -76,6 +84,33 @@
 							</a>
 						</li>
 					{/each}
+					{#if group === 'Konfigurasi'}
+						<!--
+							The seventh destination, the organization directory, is hand-
+							authored rather than appended to ADMIN_DESTINATIONS because the
+							latter is a frozen six-entry contract with its own tests.
+
+							"Role-aware" here is the backend's job, not this entry's: the
+							link is always present, and whether the directory shows one org,
+							every org, or none is decided by `ListOrganizations` from the
+							caller's organization scope. There is deliberately NO client-side
+							role switch, because the client does not know any role — hiding or
+							relabelling this entry from a role guess would be exactly the
+							client-side authorization inference the shell forbids.
+						-->
+						<li class="sigap-admin-sidebar__item">
+							<a
+								class="sigap-admin-sidebar__link"
+								style:border-radius={RADIUS.control}
+								href="/admin/organizations"
+								aria-label="Organisasi"
+								aria-current={isActiveDestination(path, '/admin/organizations') ? 'page' : undefined}
+							>
+								<Icon icon={Landmark} size={16} />
+								<span class="sigap-admin-sidebar__label">Organisasi</span>
+							</a>
+						</li>
+					{/if}
 				</ul>
 			</div>
 		{/each}
