@@ -777,6 +777,18 @@ type queueTicketResponse struct {
 // timezone column is the additive way to localise the day boundary per facility.
 var serviceDayWIB = time.FixedZone("WIB", 7*60*60)
 
+// serviceDayRange returns the half-open WIB service-day window [start, end)
+// containing the given instant. It is the write-path analogue of resolveServiceDay
+// (which resolves a date string): the allocator passes time.Now() so a freshly
+// minted queue_number is counted against the WIB calendar day, matching the read
+// path and closing the UTC-vs-WIB allocation divergence. No session-tz-dependent
+// SQL cast is involved; the bounds are computed in Go and passed as parameters.
+func serviceDayRange(instant time.Time) (start, end time.Time) {
+	wib := instant.In(serviceDayWIB)
+	start = time.Date(wib.Year(), wib.Month(), wib.Day(), 0, 0, 0, 0, serviceDayWIB)
+	return start, start.AddDate(0, 0, 1)
+}
+
 // resolveServiceDay turns the optional `date` query value into the WIB calendar
 // day it names and its half-open [start, end) instant bounds. An empty value is
 // replaced by TODAY in WIB — the live-board default that also scopes the admin
@@ -2843,6 +2855,7 @@ func (h *AdminHandler) verifyAdminQueueTicket(ctx context.Context, ticketID stri
 // SIGAP_ENGINE_FALLBACK=dev path, where the in-memory FakeQueueService answers
 // without touching any database, so the API must persist the ticket.
 func (h *AdminHandler) recordAdminQueueTicket(ctx context.Context, ticketID, facilityID, patientName, patientPhone, formattedNumber string) error {
+	dayStart, dayEnd := serviceDayRange(time.Now())
 	_, err := h.pool.Exec(ctx,
 		`WITH p AS (
 		    INSERT INTO patients (id, full_name, phone, date_of_birth)
@@ -2853,11 +2866,11 @@ func (h *AdminHandler) recordAdminQueueTicket(ctx context.Context, ticketID, fac
 		INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status)
 		SELECT $4::uuid, $5::uuid, p.id,
 		       (SELECT COALESCE(MAX(qt.queue_number), 0) + 1 FROM queue_tickets qt
-		         WHERE qt.facility_id = $5::uuid AND qt.registered_at::date = CURRENT_DATE),
+		         WHERE qt.facility_id = $5::uuid AND qt.registered_at >= $7 AND qt.registered_at < $8),
 		       $6, 'waiting'
 		FROM p
 		ON CONFLICT (id) DO NOTHING`,
-		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber)
+		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber, dayStart, dayEnd)
 	return err
 }
 

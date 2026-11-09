@@ -985,6 +985,7 @@ func (h *BookingHandler) verifyQueueTicketVisible(ctx context.Context, ticketID 
 // NOT used to paper over a real engine that committed elsewhere — that case is
 // reported by verifyQueueTicketVisible.
 func (h *BookingHandler) recordQueueTicket(ctx context.Context, ticketID, facilityID, patientName, patientPhone, formattedNumber string) error {
+	dayStart, dayEnd := serviceDayRange(time.Now())
 	_, err := h.pool.Exec(ctx,
 		`WITH p AS (
 		    INSERT INTO patients (id, full_name, phone, date_of_birth)
@@ -995,11 +996,11 @@ func (h *BookingHandler) recordQueueTicket(ctx context.Context, ticketID, facili
 		INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status)
 		SELECT $4::uuid, $5::uuid, p.id,
 		       (SELECT COALESCE(MAX(qt.queue_number), 0) + 1 FROM queue_tickets qt
-		         WHERE qt.facility_id = $5::uuid AND qt.registered_at::date = CURRENT_DATE),
+		         WHERE qt.facility_id = $5::uuid AND qt.registered_at >= $7 AND qt.registered_at < $8),
 		       $6, 'waiting'
 		FROM p
 		ON CONFLICT (id) DO NOTHING`,
-		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber)
+		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber, dayStart, dayEnd)
 	return err
 }
 
