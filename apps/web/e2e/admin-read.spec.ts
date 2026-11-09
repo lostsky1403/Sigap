@@ -34,7 +34,8 @@ const DESTINATIONS = [
 	{ href: '/admin/appointments', label: 'Janji Temu' },
 	{ href: '/admin/schedules', label: 'Jadwal' },
 	{ href: '/admin/facilities', label: 'Fasilitas' },
-	{ href: '/admin/notifications', label: 'Notifikasi' }
+	{ href: '/admin/notifications', label: 'Notifikasi' },
+	{ href: '/admin/organizations', label: 'Organisasi' }
 ] as const;
 
 /** Any UUID. Used to prove a machine identifier never reaches the UI. */
@@ -138,8 +139,8 @@ test.describe('the admin shell', () => {
 		test(`${destination.href} is reachable and marks itself current`, async ({ page }) => {
 			await gotoAdmin(page, destination.href);
 
-			// All six destinations exist, with their frozen labels.
-			await expect(adminNav(page).getByRole('link')).toHaveCount(6);
+			// All seven destinations exist, with their frozen labels.
+			await expect(adminNav(page).getByRole('link')).toHaveCount(7);
 			await expect(
 				adminNav(page).getByRole('link', { name: destination.label })
 			).toBeVisible();

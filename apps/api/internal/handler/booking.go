@@ -659,7 +659,7 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 			// No engine issued this ticket, so this process mints the id and
 			// stores the row itself.
 			res.TicketID = uuid.New().String()
-			if err := h.recordQueueTicket(ctx, res.TicketID, facilityID, patientName, patientPhone, res.FormattedNumber); err != nil {
+			if err := h.recordQueueTicket(ctx, time.Now(), res.TicketID, facilityID, patientName, patientPhone, res.FormattedNumber); err != nil {
 				slog.Error("fallback ticket insert failed",
 					"appointment_id", id, "queue_ticket_id", res.TicketID, "err", err.Error())
 				if _, rbErr := h.rollbackCheckIn(ctx, id); rbErr != nil {
@@ -984,8 +984,8 @@ func (h *BookingHandler) verifyQueueTicketVisible(ctx context.Context, ticketID 
 // API must persist the ticket or the appointment would reference nothing. It is
 // NOT used to paper over a real engine that committed elsewhere — that case is
 // reported by verifyQueueTicketVisible.
-func (h *BookingHandler) recordQueueTicket(ctx context.Context, ticketID, facilityID, patientName, patientPhone, formattedNumber string) error {
-	dayStart, dayEnd := serviceDayRange(time.Now())
+func (h *BookingHandler) recordQueueTicket(ctx context.Context, now time.Time, ticketID, facilityID, patientName, patientPhone, formattedNumber string) error {
+	dayStart, dayEnd := serviceDayRange(now)
 	_, err := h.pool.Exec(ctx,
 		`WITH p AS (
 		    INSERT INTO patients (id, full_name, phone, date_of_birth)
@@ -993,14 +993,14 @@ func (h *BookingHandler) recordQueueTicket(ctx context.Context, ticketID, facili
 		    ON CONFLICT (phone) DO UPDATE SET full_name = EXCLUDED.full_name
 		    RETURNING id
 		)
-		INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status)
+		INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status, registered_at)
 		SELECT $4::uuid, $5::uuid, p.id,
 		       (SELECT COALESCE(MAX(qt.queue_number), 0) + 1 FROM queue_tickets qt
 		         WHERE qt.facility_id = $5::uuid AND qt.registered_at >= $7 AND qt.registered_at < $8),
-		       $6, 'waiting'
+		       $6, 'waiting', $9
 		FROM p
 		ON CONFLICT (id) DO NOTHING`,
-		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber, dayStart, dayEnd)
+		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber, dayStart, dayEnd, now)
 	return err
 }
 

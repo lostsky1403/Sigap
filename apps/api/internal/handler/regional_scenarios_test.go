@@ -34,38 +34,6 @@ import (
 // seed helpers from org_tenancy_test.go.
 // ---------------------------------------------------------------------------
 
-// mintWibQueueTicket inserts a waiting queue_ticket the way the production
-// allocator does (recordQueueTicket / recordAdminQueueTicket): queue_number is
-// COALESCE(MAX(queue_number), 0) + 1 within the facility's WIB service-day
-// window. The only difference is the instant is caller-chosen instead of
-// time.Now(), so the WIB-midnight boundary is deterministic. It returns the new
-// ticket id.
-func mintWibQueueTicket(t *testing.T, ctx context.Context, pool *pgxpool.Pool, facilityID string, at time.Time, formattedNumber string) string {
-	t.Helper()
-	dayStart, dayEnd := serviceDayRange(at)
-
-	patientID := uuid.NewString()
-	phone := "08555" + strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
-	if _, err := pool.Exec(ctx,
-		`INSERT INTO patients (id, full_name, phone, gender, date_of_birth)
-		 VALUES ($1, 'WIB Boundary Patient', $2, 'L', '1990-01-01')
-		 ON CONFLICT (id) DO NOTHING`, patientID, phone); err != nil {
-		t.Fatalf("seed patient: %v", err)
-	}
-
-	ticketID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
-		`INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status, registered_at)
-		 SELECT $1::uuid, $2::uuid, $3::uuid,
-		        (SELECT COALESCE(MAX(qt.queue_number), 0) + 1 FROM queue_tickets qt
-		          WHERE qt.facility_id = $2::uuid AND qt.registered_at >= $4 AND qt.registered_at < $5),
-		        $6, 'waiting', $7`,
-		ticketID, facilityID, patientID, dayStart, dayEnd, formattedNumber, at); err != nil {
-		t.Fatalf("mint queue ticket: %v", err)
-	}
-	return ticketID
-}
-
 // queueNumbersWithin returns the queue_numbers at a facility within the WIB
 // service day containing `at`, ascending. It is the allocator-side assertion:
 // the same half-open window the write path uses to assign numbers.
@@ -220,30 +188,36 @@ func TestRegionalScenarios_CitizenCrossOrgDiscoveryAndBooking(t *testing.T) {
 // (a) is independent across facilities, (b) resets at WIB midnight, and (c) is
 // consistent with what ListQueueTickets returns for each facility and date.
 func TestRegionalScenarios_MultiFacilityWibMidnightQueueSequence(t *testing.T) {
-	pool, cleanup := newScopeTestPool(t)
+	pool, cleanup, _, _, facA, _, facB := orgTenancyFixture(t)
 	defer cleanup()
 	ctx := context.Background()
 
-	orgA := uuid.NewString()
-	orgB := uuid.NewString()
-	facA := uuid.NewString()
-	facB := uuid.NewString()
-
-	seedOrganization(ctx, pool, orgA, "Midnight Org A (synthetic)", "Jawa Barat")
-	seedOrganization(ctx, pool, orgB, "Midnight Org B (synthetic)", "DKI Jakarta")
-	seedOrgFacility(ctx, pool, facA, "Midnight Facility A", orgA)
-	seedOrgFacility(ctx, pool, facB, "Midnight Facility B", orgB)
+	// The allocator under test is the REAL check-in fallback path, not a
+	// re-implementation of its SQL. Injecting `now` keeps the WIB boundary
+	// deterministic while exercising the exact INSERT production runs.
+	alloc := NewAdminHandler(pool)
 
 	// Fixed WIB instants at the sharp service-day boundary.
-	nov8Morning := time.Date(2026, 11, 8, 8, 0, 0, 0, serviceDayWIB)     // facA seq 1 (same WIB day as the last second)
-	nov8LastSec := time.Date(2026, 11, 8, 23, 59, 59, 0, serviceDayWIB) // last second of 2026-11-08 WIB
-	nov9First := time.Date(2026, 11, 9, 0, 0, 0, 0, serviceDayWIB)      // first instant of 2026-11-09 WIB
+	nov8LastSec := time.Date(2026, 11, 8, 23, 59, 59, 0, serviceDayWIB) // 2026-11-08T23:59:59+07:00
+	nov9First := time.Date(2026, 11, 9, 0, 0, 0, 0, serviceDayWIB)      // 2026-11-09T00:00:00+07:00
 
-	mintWibQueueTicket(t, ctx, pool, facA, nov8Morning, "MFA-0001")
-	mintWibQueueTicket(t, ctx, pool, facA, nov8LastSec, "MFA-0002") // still 2026-11-08 => seq 2
-	mintWibQueueTicket(t, ctx, pool, facA, nov9First, "MFA-0003")   // new WIB day => counter resets to 1
-	mintWibQueueTicket(t, ctx, pool, facB, nov8LastSec, "MFB-0001") // independent counter (NOT 3)
-	mintWibQueueTicket(t, ctx, pool, facB, nov9First, "MFB-0002")   // independent reset
+	mint := func(facilityID string, at time.Time, formattedNumber string) string {
+		t.Helper()
+		ticketID := uuid.NewString()
+		phone := "0811" + strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
+		if err := alloc.recordAdminQueueTicket(ctx, at, ticketID, facilityID, "WIB Boundary Patient", phone, formattedNumber); err != nil {
+			t.Fatalf("recordAdminQueueTicket(%s @ %s): %v", facilityID, at.Format(time.RFC3339), err)
+		}
+		return ticketID
+	}
+
+	// facA: two tickets within Nov 8 WIB => [1,2]; one on Nov 9 => reset [1].
+	boundaryTicketID := mint(facA, nov8LastSec, "MFA-0001")
+	mint(facA, nov8LastSec, "MFA-0002") // still 2026-11-08 => seq 2
+	mint(facA, nov9First, "MFA-0003")   // new WIB day => counter resets to 1
+	// facB: independent counter (NOT 3) and its own midnight reset.
+	mint(facB, nov8LastSec, "MFB-0001")
+	mint(facB, nov9First, "MFB-0002")
 
 	assertInts := func(got []int, want ...int) {
 		t.Helper()
@@ -277,15 +251,36 @@ func TestRegionalScenarios_MultiFacilityWibMidnightQueueSequence(t *testing.T) {
 	h := scopedHandler(pool)
 
 	globalActor := dbScopedActor(t, pool, globalAdmin)
-	gotNov8 := queueNumbersByFacility(listQueueFor(t, h, globalActor, "?date=2026-11-08"))
+	nov8Rows := listQueueFor(t, h, globalActor, "?date=2026-11-08")
+	nov9Rows := listQueueFor(t, h, globalActor, "?date=2026-11-09")
+
+	gotNov8 := queueNumbersByFacility(nov8Rows)
 	wantNov8 := map[string][]int{facA: {1, 2}, facB: {1}}
 	if !reflect.DeepEqual(gotNov8, wantNov8) {
 		t.Fatalf("global list date=2026-11-08: got %v want %v", gotNov8, wantNov8)
 	}
-	gotNov9 := queueNumbersByFacility(listQueueFor(t, h, globalActor, "?date=2026-11-09"))
+	gotNov9 := queueNumbersByFacility(nov9Rows)
 	wantNov9 := map[string][]int{facA: {1}, facB: {1}}
 	if !reflect.DeepEqual(gotNov9, wantNov9) {
 		t.Fatalf("global list date=2026-11-09: got %v want %v", gotNov9, wantNov9)
+	}
+
+	// Boundary agreement: the allocator's service day and the listing's date
+	// scope must be the SAME WIB day. A ticket minted at 23:59:59 WIB Nov 8 is
+	// a Nov-8 ticket — returned by ?date=2026-11-08 and NOT by ?date=2026-11-09.
+	hasID := func(rows []listedQueueTicket, id string) bool {
+		for _, r := range rows {
+			if r.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasID(nov8Rows, boundaryTicketID) {
+		t.Fatalf("boundary ticket %s (23:59:59 WIB Nov 8) missing from ?date=2026-11-08", boundaryTicketID)
+	}
+	if hasID(nov9Rows, boundaryTicketID) {
+		t.Fatalf("boundary ticket %s (23:59:59 WIB Nov 8) must NOT appear under ?date=2026-11-09", boundaryTicketID)
 	}
 
 	// Per-facility listing consistency: an operator scoped to facA reads only

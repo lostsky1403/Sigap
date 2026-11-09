@@ -2745,7 +2745,7 @@ func (h *AdminHandler) UpdateAppointmentStatus(w http.ResponseWriter, r *http.Re
 				// No engine issued this ticket, so this process mints the id and
 				// stores the row itself (mirrors booking's recordQueueTicket).
 				genRes.TicketID = uuid.New().String()
-				if err := h.recordAdminQueueTicket(ctx, genRes.TicketID, apptFacility, patientName, patientPhone, genRes.FormattedNumber); err != nil {
+				if err := h.recordAdminQueueTicket(ctx, time.Now(), genRes.TicketID, apptFacility, patientName, patientPhone, genRes.FormattedNumber); err != nil {
 					slog.Error("admin fallback ticket insert failed",
 						"appointment_id", id, "queue_ticket_id", genRes.TicketID, "err", err.Error())
 					if _, rbErr := h.rollbackAdminCheckIn(ctx, id); rbErr != nil {
@@ -2869,8 +2869,8 @@ func (h *AdminHandler) verifyAdminQueueTicket(ctx context.Context, ticketID stri
 // Mirrors booking's recordQueueTicket: it exists for exactly one caller — the
 // SIGAP_ENGINE_FALLBACK=dev path, where the in-memory FakeQueueService answers
 // without touching any database, so the API must persist the ticket.
-func (h *AdminHandler) recordAdminQueueTicket(ctx context.Context, ticketID, facilityID, patientName, patientPhone, formattedNumber string) error {
-	dayStart, dayEnd := serviceDayRange(time.Now())
+func (h *AdminHandler) recordAdminQueueTicket(ctx context.Context, now time.Time, ticketID, facilityID, patientName, patientPhone, formattedNumber string) error {
+	dayStart, dayEnd := serviceDayRange(now)
 	_, err := h.pool.Exec(ctx,
 		`WITH p AS (
 		    INSERT INTO patients (id, full_name, phone, date_of_birth)
@@ -2878,14 +2878,14 @@ func (h *AdminHandler) recordAdminQueueTicket(ctx context.Context, ticketID, fac
 		    ON CONFLICT (phone) DO UPDATE SET full_name = EXCLUDED.full_name
 		    RETURNING id
 		)
-		INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status)
+		INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status, registered_at)
 		SELECT $4::uuid, $5::uuid, p.id,
 		       (SELECT COALESCE(MAX(qt.queue_number), 0) + 1 FROM queue_tickets qt
 		         WHERE qt.facility_id = $5::uuid AND qt.registered_at >= $7 AND qt.registered_at < $8),
-		       $6, 'waiting'
+		       $6, 'waiting', $9
 		FROM p
 		ON CONFLICT (id) DO NOTHING`,
-		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber, dayStart, dayEnd)
+		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber, dayStart, dayEnd, now)
 	return err
 }
 
