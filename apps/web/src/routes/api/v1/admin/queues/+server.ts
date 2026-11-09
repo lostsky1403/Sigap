@@ -20,6 +20,11 @@ async function proxy(request: Request, path: string, event: RequestEvent, method
 	});
 }
 
+// The queue board's service-day scope rides on `?date=YYYY-MM-DD` (WIB). The
+// query string MUST be forwarded: without it the API silently applies its today
+// default and a historical date renders the wrong (all-today) rows — the same
+// no-op the notifications and patient-status proxies explicitly avoid.
 export const GET: RequestHandler = async (event) => {
-	return proxy(event.request, '/api/v1/admin/queues', event);
+	const query = new URL(event.request.url).search;
+	return proxy(event.request, `/api/v1/admin/queues${query}`, event);
 };
