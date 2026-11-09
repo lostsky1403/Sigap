@@ -125,6 +125,19 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM role_ids r JOIN perm_ids p ON true
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
+-- super_admin: full system access. Add the two new organization permissions so
+-- the system administrator can view and manage the org directory (the preview
+-- actor typically runs as the global super admin).
+WITH role_ids AS (
+  SELECT id FROM roles WHERE name = 'super_admin'
+),
+perm_ids AS (
+  SELECT id, key FROM permissions WHERE key IN ('organization.read', 'organization.manage')
+)
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM role_ids r JOIN perm_ids p ON true
+ON CONFLICT (role_id, permission_id) DO NOTHING;
+
 -- ============================================================
 -- Synthetic app users (identity only; authorization comes from roles below)
 -- ============================================================

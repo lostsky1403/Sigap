@@ -75,6 +75,8 @@ var Registry = []Route{
 	{Method: http.MethodGet, Path: "/api/v1/admin/notifications", RequiredPolicy: "notification.read"},
 	{Method: http.MethodGet, Path: "/api/v1/admin/notifications/", Prefix: true, RequiredPolicy: "notification.read"},
 	{Method: http.MethodPost, Path: "/api/v1/admin/notifications/", Prefix: true, RequiredPolicy: "notification.manage"},
+	{Method: http.MethodGet, Path: "/api/v1/admin/organizations", RequiredPolicy: "organization.read"},
+	{Method: http.MethodGet, Path: "/api/v1/admin/organizations/", Prefix: true, RequiredPolicy: "organization.read"},
 }
 
 // IsAllowListed reports whether a path bypasses authorization.
