@@ -126,3 +126,20 @@ Four gaps that matter more than the feature count suggests:
 | Whether citizens get accounts (F1) | Sets the shape of everything else in the citizen column |
 | Which notification provider (F4) | Procurement + data-processing agreement |
 | Whether a screenshot of a visit pass is acceptable at a counter (F2) | Security policy |
+
+---
+
+## 6. Regional multi-facility pilot (feat/sigap-regional-pilot) — status
+
+**RUNNING CODE (backend-enforced, not decorative):**
+- `organizations` table + `facilities.organization_id` + `user_roles.organization_id` (migration 0013).
+- Facility/org/region scope resolution folding into the existing `AuthorizeFacilityMutation/Read` shape; deny-by-default; handlers never trust client `facility_id`/`organization_id`.
+- Roles `organization_admin` (org-scoped) + `regional_admin` (stats read-only) reusing the existing roles/permissions model; system admin = `super_admin`.
+- `GET /api/v1/admin/organizations` + `/{id}` (scoped directory + operational overview); forged/sibling org id → 404.
+- Frontend `/admin/organizations` directory + overview, backend-authorized.
+- WIB service-day end-to-end (allocator + cap + guard + listing).
+- Synthetic seed: 2 orgs, 4 facilities, distinct admins/operators (labelled [synthetic]).
+
+**Verified:** `go test ./...` (7 cross-tenant isolation tests + scenarios A/F + 10 WIB boundary tests, with DB); `cargo test --lib`; `vitest`; `svelte-check`. Live: super-admin sees 2 orgs, org-admin sees 1, forged org → 404.
+
+**DESIGN-ONLY (not running):** SATUSEHAT/FHIR integration, patient identity/consent ledger, blockchain options B/C, cross-region discovery beyond one region. See `regional-architecture-rfc.md`, `satusehat-interoperability-plan.md`, `regional-interop-contracts.md`, `migration-ledger-reconciliation.md`.
