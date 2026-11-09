@@ -41,8 +41,8 @@ The Go backend already ships an append-only, content-hash-chained audit log (`ap
 - **Append-only insert** into PostgreSQL; events are never updated or deleted by the audit path.
 - **SHA-256 hash chain:** each event's `event_hash` is `SHA-256(canonical payload + previous_hash)`, so tampering with any earlier row breaks all subsequent hashes.
 - **Privacy controls already applied:**
-  - IP addresses and user-agents are stored **hashed**, not raw.
-  - Metadata is **sanitized** against a forbid-list (`nik`, `ktp`, `nama`, `name`, `alamat`, `address`, `phone`, `telepon`, `email`, `patient`, `pasien`) — matching keys are replaced with `[REDACTED]`.
+  - IP addresses and user-agents are stored as **unsalted SHA-256 hashes**, not raw (see §8 for the low-entropy caveat).
+  - Metadata is **sanitized** against a forbid-list (`patient`, `pasien`, `phone`, `telepon`, `nik`, `ktp`, `name`, `nama`, `address`, `alamat`, `email`) — matching keys are replaced with `[REDACTED]`. Matching is **shallow**: only top-level metadata keys are checked; nested objects are preserved as-is and their inner PII keys are *not* recursively scrubbed (test-verified limitation).
 - **Best-effort semantics:** audit writes do not block the request's critical path; failures are logged, not returned to the caller.
 
 **Known gaps `[IMPLEMENTED]` (accurate as of this writing):**
@@ -55,17 +55,17 @@ The Go backend already ships an append-only, content-hash-chained audit log (`ap
 
 ## 3. The three options
 
-### Option A — Append-only, digitally-signed / hash-chained tamper-evident audit log
+### Option A — Append-only audit log (signed / hash-chained)
 
-`[IMPLEMENTED]` (hash chain) — the signature-vs-hash-chain choice is `[PROPOSED]`.
+`[IMPLEMENTED]` (hash chain) — per-event digital signatures are `[PROPOSED]` and are **not present in the current code**.
 
-Append-only audit rows, each carrying a hash (and/or a signature) binding it to the previous row. Verification requires the ability to read all rows and recompute the chain.
+Append-only audit rows, each carrying a hash binding it to the previous row (live) and, optionally, a per-event signature (proposed). Verification requires reading all rows and recomputing the chain; today that verification is only meaningful to a party that can read the database.
 
-### Option B — WORM storage + periodic cryptographic commitments
+### Option B — Signed events + WORM storage + periodic cryptographic commitments
 
 `[PROPOSED]`
 
-Same append-only audit stream, but (a) written to Write-Once-Read-Many storage and (b) the chain root is **periodically published/anchored** outside the operator's writable scope (e.g. published to a public immutable medium, a third-party notarization service, or a trusted timestamp authority). This gives tamper-*evidence that survives the operator*, without the cost of a multi-party peer network.
+The same append-only audit stream, with three upgrades: (a) each event additionally carries a digital signature (event signing), (b) writes land on Write-Once-Read-Many storage, and (c) the chain root is **periodically published/anchored** outside the operator's writable scope (e.g. published to a public immutable medium, a third-party notarization service, or a trusted timestamp authority). This yields tamper-*evidence that survives the operator*, without standing up a multi-party peer network.
 
 ### Option C — Permissioned multi-organization distributed ledger
 
@@ -77,20 +77,20 @@ A permissioned ledger (e.g. a consortium chain) where several independent organi
 
 ## 4. Decision matrix
 
-| Dimension | A — hash-chained log | B — WORM + commitments | C — permissioned ledger |
+Threat model in one line: **A** addresses accidental loss, low-skill tampering, and routine misconduct (detectable by anyone who can read the DB); **B** adds tamper-evidence that survives a malicious/compromised operator; **C** additionally covers collusion among multiple operators — a concern that only exists if several mutually-distrusting organizations share the record.
+
+| Dimension | A — append-only audit log (hash chain live; signing proposed) | B — signed events + WORM + commitments | C — permissioned multi-org DLT |
 |---|---|---|---|
-| **Threat model addressed** | Accidental loss; low-skill tampering; routine misconduct detectability | A + malicious/compromised operator (tampering is detectable by outsiders) | A + malicious operator + collusion among multiple operators |
-| **Trust assumptions** | Trust the platform operator's DB admin | Trust the WORM write path + the anchoring party (however minimal) | Trust a *majority* of independent node operators |
-| **Who runs independent nodes** | No independent nodes | Anchoring party only (minimal) | Multiple independent organizations |
-| **Operational complexity** | Low — already in production | Medium — WORM write path + anchor cadence + key/cert lifecycle | High — consortium governance, node ops, consensus, upgrading |
-| **Availability** | High — inherits PostgreSQL | High, slightly reduced by WORM/anchoring dependencies | Lower — depends on sufficient independent nodes staying online |
-| **Privacy** | Neutral — controlled by log policies | Neutral — commitments are hashes only | **Worse** — broadest replication across third parties |
-| **Data correction / deletion** | Easy — DB-native (`UPDATE`/`DELETE` under controlled operator process) | Harder — WORM resists edit by design; corrections need compensating records | **Very hard** — ledger immutability + replication make erasure practically adversarial |
-| **Retention** | Fully operator-controlled (DB retention/archival jobs) | Operator-controlled but pinned to WORM media | Governed by consortium, hard to change mid-flight |
-| **Cost** | Lowest — existing infra | Medium — WORM storage + notarization/anchoring fees | Highest — node infra, ops staff, ongoing governance |
-| **Legal compliance** | Straightforward — aligns with data-subject rights (erasure/rectification) | Workable, but erasure interacts with WORM | **Tension** — immutability directly conflicts with erasure/rectification obligations |
-| **Incident response** | Easy — revoke/rotate DB creds, rebuild from backups | Moderate — revoke anchor/notarization creds, rekey; WORM media managed | Hard — credential rotation and remediation span consortium governance |
-| **Audit verification** | Operator-side recompute; no third-party proof | **Stronger** — external party can verify published roots | Strongest, but only if multi-party dispute is real |
+| **Trust requirements** | Trust the single operator's DB admin. Tampering is detectable by anyone who can read the DB, but the evidence does *not* survive a malicious operator who rewrites rows and recomputes the chain. | Trust the operator for writes plus a *minimal* anchoring party (TSA / notary / public medium) for the anchor. Survives a malicious operator for anchored portions. | Trust a *majority* of independent node operators (m-of-n). Survives a malicious or colluding minority. |
+| **Independent governance** | None — single operator; no shared governance exists or is needed. | Minimal — a one-way contract with an anchoring/notarization service; no peer governance. | Full consortium governance — membership, voting, policy, join/leave. This governance is itself the main cost, and it only buys anything if several mutually-distrusting orgs share the record. |
+| **Privacy** | Controlled by log policies; data stays inside the operator's own DB. (Precision: sanitization is shallow — see §2.) | Anchors are high-entropy batch roots only; no record payload leaves the operator. | **Worst** — events replicate to every independent node, widening exposure across third parties and conflicting with the §7 on-chain prohibition. |
+| **Scalability** | Inherits PostgreSQL; scales with the DB; audit volume is bounded by facility throughput. | Bounded by WORM write throughput and anchor cadence; still single-writer and generally adequate. | **Worst** — every independent node must order and replicate every event, so throughput is bounded by consensus and degrades as more nodes join. |
+| **Operational cost** | Lowest — already in production on existing infrastructure. | Medium — WORM media + notarization/anchoring fees + anchor operations. | Highest — node infrastructure, ops staff, and ongoing consortium governance. |
+| **Key management** | Minimal — the hash chain needs no keys; if per-event signatures are added (proposed), one operator signing key + rotation. | Moderate — operator signing key + anchoring/notarization credentials + verifier/TSA keys; cadenced rotation matters. | High — per-node identity keys, consensus/PKI keys, TLS, and key custody across organizations; rotation spans the consortium. |
+| **Data correction** | Easy — DB-native row correction under a controlled operator process; the chain is recomputed past the correction point. | Harder — WORM resists in-place edits; corrections need compensating records rather than rewrites. | **Very hard** — immutability plus replication makes correcting a mistaken row practically adversarial across nodes. |
+| **Retention / deletion obligations** | Fully operator-controlled retention/archival; erasure straightforward and aligned with data-subject rights. | Operator-controlled but pinned to WORM media; deletion interacts with immutable media. | **Tension** — retention is consortium-governed and hard to change mid-flight; immutability conflicts with erasure/rectification obligations. |
+| **Incident handling** | Rotate/revoke DB credentials, restore from backups; single-operator blast radius. | Revoke anchor/notarization credentials and rekey; manage WORM media; still single-operator coordination. | Credential rotation and remediation span consortium governance; multi-org coordination is slow. |
+| **Independent verification** | Operator-side recompute only — no third-party proof. An auditor with full DB read access can recompute the chain; there is no operator-independent commitment. | **Stronger** — an external party can verify published roots against WORM/anchored commitments without trusting the operator. | Strongest — but only resolves the multi-party dispute problem; it buys nothing for a single-operator service. |
 
 ---
 
@@ -106,7 +106,7 @@ Justification:
 4. **Cost and incident response scale badly toward C** with no commensurate assurance gain for this profile.
 5. **Hardening A closes its real gap more cheaply than migrating to B/C** (see §6): close the concurrency race in the hash chain and add periodic root publication *only if* independent operator-surviving evidence is ever required.
 
-The default is the simpler auditable solution because blockchain adds value only when it replaces *trust between parties*. Here there is one party.
+The default is the simpler auditable solution because blockchain adds value only when it replaces *trust between parties*. Here there is one party. We therefore recommend Option B — and only Option B — *if and only if* a demonstrable operator-independent or multi-organization trust problem is cited (§6); absent that, the already-live Option A log is the sufficient, proportionate default, and no node of any kind needs to be deployed.
 
 ---
 

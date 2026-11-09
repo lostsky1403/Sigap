@@ -1,10 +1,35 @@
 # Regional Architecture RFC — Tenancy, Facility Scope, and Org Boundaries for SIGAP v2
 
-> Status: **Design document**. Every section is explicitly tagged
-> **IMPLEMENTED**, **PROPOSED**, or **POLICY-DECISION-REQUIRED**. PROPOSED and
-> POLICY-DECISION-REQUIRED content does not exist in the codebase or database
-> today. Nothing here is a promise to ship; all proposed schema, roles, and
-> permissions are directional until an owner approves them.
+> Status: **Design document**. Every section is explicitly tagged with one of
+> **IMPLEMENTED**, **DESIGN-ONLY**, **PROPOSED**, or **POLICY-DECISION-REQUIRED**:
+> - **IMPLEMENTED** — runs today, backed by real schema (`0001`–`0011`) and Go
+>   symbols; verified against the codebase.
+> - **DESIGN-ONLY** — exists in this document only: no table, column, migration,
+>   or Go symbol backs it.
+> - **PROPOSED** — a concrete, directional proposal (named tables/columns/roles)
+>   that does **not** exist today; awaits owner approval.
+> - **POLICY-DECISION-REQUIRED** — blocked on an owner decision; no shape until
+>   decided.
+>
+> **One-line split:** **RUNNING (enforced today)** = facility-scoped RBAC only —
+> `super_admin` (global *only* via `user_roles.facility_id IS NULL`),
+> `facility_admin`/`operator`/`viewer` scoped per facility, and the provenance-
+> aware `AuthorizeFacilityMutation` / `AuthorizeFacilityRead` gates (§1).
+> **DESIGN-ONLY** = the region → organization → facility hierarchy, the
+> `organizations`/`regions` tables, the `regional_sysadmin` role, org-scoped
+> grants, tenant-aware audit columns, and per-facility queue/check-in policy (§2)
+> — **none** of which exists in `0001`–`0011` or `seed/rbac.sql`.
+>
+> Topic coverage (each tagged): regional administrators **DESIGN-ONLY**;
+> healthcare organizations **DESIGN-ONLY** (no `organizations` table exists
+> today); hospitals/`rumah_sakit` + puskesmas as facility types **IMPLEMENTED**
+> (a distinct `klinik` type is **PROPOSED**); service units **IMPLEMENTED**;
+> facility staff vs citizens **IMPLEMENTED**; facility-specific service policies
+> **PROPOSED**; tenant-aware data access **IMPLEMENTED** for the facility axis /
+> **DESIGN-ONLY** for the org+region axis; facility + organization onboarding
+> **IMPLEMENTED** for facility / **DESIGN-ONLY** for organization; region-wide
+> facility discovery **IMPLEMENTED** (public catalog) / **DESIGN-ONLY** (region
+> grouping).
 
 The evidence below is drawn from the real source: `packages/db/migrations/*.sql`
 (0001–0011), `packages/db/seed/rbac.sql`, `apps/api/internal/{identity,auth,audit,handler}`,
@@ -23,7 +48,11 @@ region. The authoritative table is `facilities` (migration `0001_init.sql`):
 - `facilities(id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, total_beds, available_beds, last_updated, is_active, short_code, created_at, updated_at)`
 - `type` is the enum `facility_type ('rumah_sakit', 'puskesmas')`. This is the
   *only* classification above a facility, and it is a type label — not an
-  organizational boundary.
+  organizational boundary. There is **no distinct `klinik` / "clinic" enum
+  value**: clinics today are represented only as the `puskesmas` tier (the Go
+  write gate `admin.go` `validFacilityTypes` is exactly
+  `{"rumah_sakit","puskesmas"}`). Adding `klinik` (or `klinik_pratama`) as a
+  third value is **PROPOSED** and is not part of the current schema.
 
 Everything hangs off `facilities.id`:
 
@@ -54,8 +83,9 @@ There is **no `organizations` table anywhere** in `packages/db/migrations/`
 `user_roles`, `role_permissions`, `audit_events`, `service_units`,
 `practitioners`, `practitioner_schedules`, `appointments`,
 `notification_templates`, `notification_outbox`,
-`notification_delivery_attempts`, plus ALTER-only migrations 0008, 0009, 0010,
-0011). There is no `regions`, no `hospitals` vs `puskesmas` split table, and no
+`notification_delivery_attempts`, plus ALTER-only migrations 0007, 0008, 0009,
+0010, 0011 — i.e. every migration 0007–0011 is alter-only, not just 0008–0011).
+There is no `regions`, no `hospitals` vs `puskesmas` split table, and no
 `org_id` / `region_id` column on any of the tables above.
 
 The consequence is a real boundary gap: an operator "at the District Health Office"
@@ -190,8 +220,11 @@ Region  ──► Healthcare Organization ──► Facility ──► Service U
 - **Healthcare organization** — a grouping of one or more facilities (e.g. a
   hospital group, a puskesmas network, a district clinic cooperative). New
   `organizations` entity.
-- **Hospital / Puskesmas** — today's `facilities` rows, re-labeled as members of
-  an organization. Type remains `facility_type`.
+- **Hospital / Community health center (clinic) / Puskesmas** — today's
+  `facilities` rows, re-labeled as members of an organization. Type remains
+  `facility_type`. Only **two** values exist today: `rumah_sakit` (hospital) and
+  `puskesmas` (community health center / clinic). A separately-typed
+  `klinik`/`clinic` tier is **PROPOSED** (§1.1) and is not yet an enum value.
 - **Service unit** — today's `service_units` rows (poli/clinic), already a child
   of `facilities`.
 - **Staff/operator** — today's `operator` / `facility_admin` / `viewer` roles,

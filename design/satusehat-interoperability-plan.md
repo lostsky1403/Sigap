@@ -23,7 +23,7 @@ Kemenkes launch announcement. No claim in the support matrix is assumed; each is
 | S2 | Playbook — Introduction ("Apa itu SATUSEHAT"; HIE; single identifier / IHS number) | https://satusehat.kemkes.go.id/platform/docs/id/playbook/introduction/ |
 | S3 | FHIR — overview (FHIR R4, resources, prerequisites vs interoperability framework) | https://satusehat.kemkes.go.id/platform/docs/id/fhir/ |
 | S4 | FHIR — Prerequisites / Onboarding (auth → Organization → Location → Practitioner IHS → Patient IHS) | https://satusehat.kemkes.go.id/platform/docs/id/fhir/prerequisites/ |
-| S5 | FHIR — Interoperability resource list (canonical list of 55 supported FHIR resources) | https://satusehat.kemkes.go.id/platform/docs/id/fhir/resources/ |
+| S5 | FHIR — Interoperability resource list (canonical list; **54 resources observed** at verification — the page does not state a count) | https://satusehat.kemkes.go.id/platform/docs/id/fhir/resources/ |
 | S6 | Panduan Interoperabilitas — use-case modules (Modul Pelayanan + Modul Penerapan) | https://satusehat.kemkes.go.id/platform/docs/id/interoperability/ |
 | S7 | ReST API — Autentikasi (OAuth 2.0 `client_credentials`; sandbox/production token endpoints) | https://satusehat.kemkes.go.id/platform/docs/id/api-catalogue/authentication/ |
 | S8 | FHIR — Patient resource (IHS number, MPI, NIK identifier system, sandbox dummy patients) | https://satusehat.kemkes.go.id/platform/docs/id/fhir/resources/patient/ |
@@ -92,6 +92,39 @@ bound the integration surface; they are **not** in SIGAP's Phase-8 target set.
 per-use-case (S8); timestamps are transmitted **UTC+00** (WIB − 7, WITA − 8, WIT − 9); transmitted dates must be
 **≥ 2014-06-03** (S8). The patient IHS number uses identifier system `https://fhir.kemkes.go.id/id/patient-ihs-number`,
 with NIK under `https://fhir.kemkes.go.id/id/nik` (S8).
+
+---
+
+## 3.1 Capability coverage — SUPPORTED vs PROPOSED vs NOT-AVAILABLE
+
+This subsection maps the interoperability-plan concerns to a three-fold status so the boundary between
+what SATUSEHAT *provides today* and what SIGAP *would still have to build* is explicit and auditable.
+**SUPPORTED** means the capability is documented in the public SATUSEHAT portal and cited (S#); it says
+nothing about whether SIGAP has wired it up. **PROPOSED** means SIGAP-side work designed here but not built.
+**NOT-AVAILABLE** means no documented SATUSEHAT FHIR resource / API exists for it, so it must not be designed
+against as a platform capability.
+
+| # | Concern | Status | Basis / citation | SIGAP detail |
+|---|---|---|---|---|
+| C1 | HL7 FHIR data model + HTTPS REST API | **SUPPORTED** (cited) | S1 (integration overview), S3 (FHIR R4, REST) | §2, §7 |
+| C2 | Patient identity mapping (IHS ↔ local id) | **SUPPORTED** platform resolve (cited S4/S8); SIGAP correlation table **PROPOSED** | S4 (onboarding), S8 (`patient-ihs-number`, `nik`, MPI) | §4 |
+| C3 | Facility identity mapping (Organization / Location) | **SUPPORTED** (cited S4) | S4 onboarding prerequisites | §5 |
+| C4 | Encounter references (subject / serviceProvider / participant / location) | **SUPPORTED** (cited S5) | S5 `Encounter` + onboarding resources | §5 |
+| C5 | Medication / allergy (where authorized) | **SUPPORTED** (cited S5) | S5 `Medication`, `MedicationStatement`, `MedicationRequest`, `AllergyIntolerance` | §3, §6 (authorization-gated) |
+| C6 | Clinical provenance (FHIR `Provenance`) | **NOT-AVAILABLE** — no `Provenance` in catalogue; SIGAP versioned sync bookkeeping **PROPOSED** | S5 (absence) | §9 |
+| C7 | Consent + access control | FHIR `Consent` **NOT-AVAILABLE**; access control **SUPPORTED at platform layer** (cited S9); SIGAP-side gate **PROPOSED** | S9 (6-digit code + emergency path) | §6 |
+| C8 | Patient-visible access history | **NOT-AVAILABLE** to SIGAP (no `AuditEvent`); platform-surfaced to patient via SATUSEHAT Mobile (cited S9); SIGAP-side event capture **PROPOSED** | S9, S5 (absence) | §6, §11 |
+| C9 | Data minimization | **PROPOSED** (SIGAP design; minimal-payload pattern **cited** S8) | S8 (reference by IHS, per-use-case mandatory fields) | §12 |
+| C10 | Audit logging | SATUSEHAT `AuditEvent` **NOT-AVAILABLE**; SIGAP `audit_events` **PROPOSED** (extend to interop events) | S5 (absence), I1/I4 | §11 |
+| C11 | Error recovery / reconciliation | **PROPOSED** (SIGAP outbox + idempotency + retry policy) | — | §10 |
+
+**Reading the table.** Every clinical-data capability (C2–C5) that SIGAP would push or pull is a
+platform capability that is **SUPPORTED in the docs**, but each one's *SIGAP-side* realization is
+**PROPOSED** (no IHS/NIK column, no encounter table, no clinical tables exist — I4). The three honesty-critical
+capabilities are the ones the platform does **not** expose as FHIR resources — `Provenance` (C6), `Consent`
+(C7), and `AuditEvent` (C8/C10) — so SIGAP must (a) keep its own audit/provenance bookkeeping, (b) treat
+patient authorization as a SATUSEHAT-Mobile access check rather than a resource it authors, and (c) not
+design a patient-visible access history that SIGAP serves directly, since that trail is owed by the platform layer.
 
 ---
 

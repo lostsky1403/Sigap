@@ -195,40 +195,43 @@ backend default, which is the point of defining the service day in one place.
 
 ---
 
-## 8. Number-allocation boundary — OPEN DIVERGENCE (documented, not fixed)
+## 8. Number-allocation boundary — RESOLVED (allocation + cap + guard + listing share WIB)
 
-**Scope boundary:** this change scopes the *read* path (board list + Ringkasan)
-to a WIB service day. It does **not** yet change the *write* path that mints
-`queue_number` or enforces `DAILY_QUEUE_LIMIT`. Those stay on a UTC day. The two
-boundaries therefore differ, and the consequence is real.
+**Status: IMPLEMENTED.** The UTC-vs-WIB allocation divergence is now closed. The
+service day is defined once per language as the `Asia/Jakarta` (WIB, UTC+7, no DST)
+calendar day containing the instant, and the *write* path now uses the same day as
+the *read* path. No stored instant is shifted: `registered_at` and `appointment_time`
+remain the actual UTC `timestamptz` values.
 
-**What is UTC today:**
+**The three expressions (the single authority, per language):**
 
-- Rust queue engine keys `daily_queue_counters` and enforces
-  `DAILY_QUEUE_LIMIT = 300` with `chrono::Utc::now()` (`queue.rs`), i.e. the
-  counter and cap day is **UTC**.
-- Go fallback allocation stamps/resets with `registered_at::date = CURRENT_DATE`
-  (`admin.go`, `booking.go`). The database session `TimeZone` is `UTC`
-  (confirmed `SHOW timezone`), so this is also **UTC**.
-- The one-active-booking-per-day guard (`uq_active_booking_per_patient_day`)
-  backs on `appointment_day(timestamptz) = ($1::date)` (`0007_checkin_constraints.sql`),
-  which is session-timezone-dependent despite being declared `IMMUTABLE`.
+- **Rust** (`apps/queue-engine/src/engine/queue.rs`): the counter key and
+  `DAILY_QUEUE_LIMIT` day is computed from a fixed offset —
+  `chrono::FixedOffset::east_opt(7*3600)` — via `chrono::Utc::now()
+  .with_timezone(&offset).date_naive()`. No new dependency; `FixedOffset` is already
+  in `chrono`. `visit_time` (stored as `registered_at`) stays `chrono::Utc::now()` —
+  the unmodified UTC instant.
+- **Go fallback allocator** (`apps/api/internal/handler/admin.go` `recordAdminQueueTicket`,
+  `booking.go` `recordQueueTicket`): the UTC-sensitive `registered_at::date = CURRENT_DATE`
+  subquery is gone. It is replaced by `serviceDayRange(time.Now())`, which computes the
+  WIB `[start, end)` bounds in Go (`time.Now().In(serviceDayWIB)`, floor to midnight, `+1
+  day`) and passes them as bound parameters — exactly the same shape `ListQueueTickets`
+  reads via `resolveServiceDay`. No session-tz-dependent SQL cast remains in the allocator.
+- **SQL guard** (`packages/db/migrations/0012_service_day_wib.sql`, additive — does not edit
+  `0007`): `appointment_day(timestamptz)` is redefined as
+  `(($1 AT TIME ZONE 'UTC') + INTERVAL '7 hours')::date`. The `AT TIME ZONE 'UTC'` makes the
+  cast session-timezone-independent, so the function is *genuinely* immutable. The
+  `uq_active_booking_per_patient_day` unique index is then recreated on the new expression.
 
-**Consequence (00:00–07:00 WIB):** UTC midnight is 07:00 WIB, i.e. mid-service-day.
-A WIB board can therefore carry **two number series in one local day** (the
-sequence resets at 07:00 WIB), and the 300 cap is enforced per UTC day (≈ twice
-per WIB day). This is **not** a silent data rewrite — it is a genuine boundary
-mismatch between the day used to *read* a board and the day used to *mint*
-numbers — and it predates this change.
+**Consequence closed.** Because allocation, the 300 cap, the one-booking-per-day guard, and
+the board listing all key on the WIB calendar day, no facility can carry two number series in
+one WIB day (there is no 07:00-WIB counter reset), and the cap is enforced once per WIB day.
+Reached boundary tests prove UTC midnight (07:00 WIB) no longer shifts the service day, and
+WIB midnight remains the only boundary.
 
-**Proposed fix (single authority) — PROPOSED, not implemented:** compute the
-service date once, in Go, against `Asia/Jakarta`, and pass that value to (a) the
-number allocator, (b) `ListQueueTickets`, and (c) the booking-per-day guard —
-redefining `appointment_day` as a genuinely immutable `($1 AT TIME ZONE
-'Asia/Jakarta')::date` with a reindex, or pinning the DB session `TimeZone`.
-
-**Do NOT silently change the allocator/guard now.** It changes when the 300 cap
-resets and how the one-booking-per-day invariant is bounded — an operational
-policy decision with outage consequences. It is recorded here and in the
-implementation backlog as a dependency-ordered item, not bundled into the
-read-scope change.
+**Safety — additive and collision-guarded.** `0012` first SELECTs for active
+`(facility_id, patient_phone, WIB-day)` groups with `count(*) > 1` under the new expression.
+If any exist, the migration raises a NOTICE and **changes nothing** (function and index left
+as-is) rather than performing a destructive rewrite; an operator must resolve those rows by
+hand first. No historical `registered_at`/`appointment_time` is rewritten. Rollback is a revert
+of the migration file and the two handler changes.

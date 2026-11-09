@@ -19,6 +19,26 @@ Legend used throughout:
 
 ---
 
+## 0. DESIGN-ONLY vs RUNNING
+
+This document deliberately interleaves *live enforcement evidence* with *design reasoning*, and the two
+are never conflated:
+
+- **RUNNING (live in this branch)** — only properties tagged **IMPLEMENTED** and backed by a cited
+  file / endpoint / migration are actually enforced today. Everything else is **not** running.
+- **DESIGN-ONLY** — every property tagged **PROPOSED** or **POLICY-DECISION-REQUIRED** is a *designed,
+  not built* control. It reasons about how the system must behave, and is **not** a claim that the
+  behavior exists.
+
+Net, as of this branch: the **check-in / booking / queue surface** and the **staff/admin session +
+facility-scoped RBAC** are RUNNING; everything about **verified patient identity (§4.1), SATUSEHAT
+identity/KYC (§4.2), patient↔facility relationships (§4.4), consent ledger (§4.5), care-relationship
+gating (§4.6), break-glass review (§4.8), and patient-visible access logs (§4.10)** is DESIGN-ONLY.
+The 6-character check-in code remains, and in the implemented system is only, a **visit bearer token**
+(§1); it is never a medical identity and never a path to any DESIGN-ONLY record-bearing surface.
+
+---
+
 ## 1. Invariant (authoritative, read first)
 
 > **The 6-character check-in code is a TEMPORARY VISIT bearer token. It proves

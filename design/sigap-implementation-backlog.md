@@ -206,6 +206,11 @@ question (carry-over).
 - `[IMPLEMENTED]` WIB single-zone default and additive `?date=` param already resolve
   `[start, start+24h)` in `admin.go`; Ringkasan, board and overview share one "today". Service-day
   doc §1–§3, §7.
+- `[IMPLEMENTED]` Number-allocation / cap / guard unification onto the WIB day (closes the
+  UTC-vs-WIB divergence): Rust `service_day_wib` (`daily_queue_counters` key +
+  `DAILY_QUEUE_LIMIT`), Go `serviceDayRange(time.Now())` fallback allocator range, and additive
+  `0012_service_day_wib.sql` redefining `appointment_day` to a genuinely immutable WIB day with a
+  collision-guarded reindex. No historical instant rewritten. Service-day doc §8.
 - `[PROPOSED]` Historical queue UI: operator picks a past date (`?date=YYYY-MM-DD`); read-only,
   no status filter, stable ordering/scope unchanged. Service-day doc §4.
 - `[POLICY-DECISION-REQUIRED]` Whether an unresolved prior-day ticket may still be acted on
