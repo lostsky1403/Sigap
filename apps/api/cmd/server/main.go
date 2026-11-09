@@ -110,6 +110,8 @@ func registerAdminRoutes(mux *http.ServeMux, adminH *handler.AdminHandler) {
 	mux.HandleFunc("/api/v1/admin/schedules/", enableCORS(adminH.SchedulesRouter))
 	mux.HandleFunc("/api/v1/admin/appointments", enableCORS(adminH.AppointmentsRouter))
 	mux.HandleFunc("/api/v1/admin/appointments/", enableCORS(adminH.AppointmentsRouter))
+	mux.HandleFunc("/api/v1/admin/organizations", enableCORS(adminH.OrganizationsRouter))
+	mux.HandleFunc("/api/v1/admin/organizations/", enableCORS(adminH.OrganizationsRouter))
 	slog.Info("admin routes registered", "paths", []string{
 		"/api/v1/admin/facilities",
 		"/api/v1/admin/facilities/",
@@ -121,6 +123,8 @@ func registerAdminRoutes(mux *http.ServeMux, adminH *handler.AdminHandler) {
 		"/api/v1/admin/schedules/",
 		"/api/v1/admin/appointments",
 		"/api/v1/admin/appointments/",
+		"/api/v1/admin/organizations",
+		"/api/v1/admin/organizations/",
 	})
 }
 

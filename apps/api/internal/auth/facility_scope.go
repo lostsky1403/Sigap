@@ -32,17 +32,68 @@ func NewDBFacilityScope(pool *pgxpool.Pool) FacilityScope {
 	return &dbFacilityScope{pool: pool}
 }
 
+// facilityScopeQuery resolves the facility set an actor may reach. It is the
+// single source of truth for the facility axis and now folds the org and
+// region axes into the SAME shape so downstream Authorization code needs no
+// special cases:
+//
+//   - a facility-scoped assignment yields its facility (unchanged);
+//   - an org-scoped assignment (organization_id NOT NULL, facility_id NULL)
+//     yields every facility of that organization;
+//   - an unscoped regional_admin assignment (facility_id NULL, org NULL) yields
+//     every facility as an EXPLICIT id — deliberately NOT the unrestricted flag,
+//     so super_admin remains the only role that can satisfy scope.Unrestricted
+//     (the gates behind CreateFacility/DeactivateFacility). regional_admin is
+//     operational-stats-only by construction (its seeded permissions carry no
+//     .manage keys), so explicit ids never widen its capabilities beyond what
+//     its grants already deny.
+//   - an unscoped super_admin assignment sets the unrestricted flag (unchanged).
+//
+// A zero-scope assignment (facility_id NULL, org NULL, role not super_admin or
+// regional_admin) contributes no rows at all, exactly as before.
 const facilityScopeQuery = `
-SELECT DISTINCT ur.facility_id,
-       (ur.facility_id IS NULL AND r.name = 'super_admin') AS global_super_admin
-FROM user_roles ur
-JOIN app_users u ON u.id = ur.user_id
-JOIN roles r ON r.id = ur.role_id
-WHERE u.id = $1
-  AND u.status = 'active'
-  AND u.deleted_at IS NULL
-  AND ur.status = 'active'
-  AND ur.deleted_at IS NULL`
+WITH active_assignments AS (
+  SELECT ur.facility_id, ur.organization_id, r.name
+  FROM user_roles ur
+  JOIN app_users u ON u.id = ur.user_id
+  JOIN roles r ON r.id = ur.role_id
+  WHERE u.id = $1
+    AND u.status = 'active'
+    AND u.deleted_at IS NULL
+    AND ur.status = 'active'
+    AND ur.deleted_at IS NULL
+)
+SELECT DISTINCT facility_id, unrestricted
+FROM (
+  SELECT a.facility_id AS facility_id, false AS unrestricted
+  FROM active_assignments a
+  WHERE a.facility_id IS NOT NULL
+
+  UNION ALL
+
+  SELECT f.id AS facility_id, false AS unrestricted
+  FROM active_assignments a
+  JOIN facilities f ON f.organization_id = a.organization_id
+  WHERE a.organization_id IS NOT NULL
+    AND a.facility_id IS NULL
+
+  UNION ALL
+
+  SELECT f.id AS facility_id, false AS unrestricted
+  FROM active_assignments a
+  CROSS JOIN facilities f
+  WHERE a.facility_id IS NULL
+    AND a.organization_id IS NULL
+    AND a.name = 'regional_admin'
+
+  UNION ALL
+
+  SELECT NULL::uuid AS facility_id, true AS unrestricted
+  FROM active_assignments a
+  WHERE a.facility_id IS NULL
+    AND a.organization_id IS NULL
+    AND a.name = 'super_admin'
+) scope_rows`
 
 // FacilityMutationDecision is the outcome of authorizing a facility-scoped
 // mutation. It requires BOTH an in-scope facility AND permission-at-facility

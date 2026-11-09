@@ -28,6 +28,7 @@ type AdminHandler struct {
 	audit         *audit.Service
 	scopeResolver auth.FacilityScope
 	grantResolver auth.FacilityGrantResolver
+	orgScope      auth.OrganizationScope
 	queueSvc      service.QueueService
 }
 
@@ -60,7 +61,21 @@ func (h *AdminHandler) WithFacilityScopeResolver(r auth.FacilityScope) *AdminHan
 	// immediately instead of a stale authentication-time snapshot.
 	if _, ok := r.(auth.DBFacilityScopeMarker); ok {
 		h.grantResolver = auth.NewDBFacilityGrantResolver(h.pool)
+		// The org axis is as live as the facility axis; wire it from the same
+		// DB-backed marker so production (NewDBFacilityScope) gets org scope
+		// without a second wiring step in main.go.
+		if h.orgScope == nil {
+			h.orgScope = auth.NewDBOrganizationScope(h.pool)
+		}
 	}
+	return h
+}
+
+// WithOrganizationScopeResolver attaches the organization scope resolver used
+// by the org directory/overview handlers. When nil, non-dev org reads fail
+// closed.
+func (h *AdminHandler) WithOrganizationScopeResolver(r auth.OrganizationScope) *AdminHandler {
+	h.orgScope = r
 	return h
 }
 
