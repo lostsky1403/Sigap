@@ -66,6 +66,7 @@
 param(
     [switch]$Stop,
     [switch]$SkipEngine,
+    [switch]$Jwt,
     [string]$AdminActor = 'local-global-super-admin',
     [switch]$NoAdminActor
 )
@@ -257,14 +258,17 @@ $apiEnv = @{
     SIGAP_API_PORT       = "$ApiPort"
     SIGAP_ENGINE_ADDR    = "127.0.0.1:$EnginePort"
     SIGAP_ENV            = 'local'
-    SIGAP_AUTH_MODE      = 'dev'
-    SIGAP_DEV_IDENTITY   = 'true'
+    SIGAP_AUTH_MODE      = if ($Jwt) { 'jwt' } else { 'dev' }
+    SIGAP_AUTH_ISSUER    = "http://127.0.0.1:54321/auth/v1"
+    SIGAP_AUTH_AUDIENCE  = "authenticated"
+    SIGAP_AUTH_JWKS_URL  = "http://127.0.0.1:54321/auth/v1/.well-known/jwks.json"
+    SIGAP_DEV_IDENTITY   = if ($Jwt) { '' } else { 'true' }
     # The local RBAC test-identity selector. Without this the API ignores
     # X-Sigap-Local-Test-Subject entirely and every admin read answers 403,
     # because the web tier's proxyHeaders() has no other way to name an actor.
     # It is inert unless SIGAP_ENV=local, and config.GuardDevCapabilities
     # refuses to let the process start if this flag is set anywhere else.
-    SIGAP_LOCAL_RBAC_TEST_IDENTITY = 'true'
+    SIGAP_LOCAL_RBAC_TEST_IDENTITY = if ($Jwt) { '' } else { 'true' }
     SIGAP_ENGINE_FALLBACK = 'dev'
     SIGAP_WEB_ORIGIN     = "http://127.0.0.1:$WebPort"
     SIGAP_API_INTERNAL   = "http://127.0.0.1:$ApiPort"
