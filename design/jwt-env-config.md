@@ -39,7 +39,6 @@ PUBLIC_SUPABASE_ANON_KEY=<anon key from `supabase status`>
 ## Honest state
 - REAL_SUPABASE_AUTH=PASS (provisioned + running + accounts + live JWKS validation).
 - JWT_VALIDATION=PASS (live ES256 → JWKS → actor → account, 200 on the owned endpoint).
-- The earlier HS256 bridge (`SIGAP_AUTH_JWT_SECRET`) is **dormant and not used here** —
-  the local Supabase issues ES256, not HS256; the bridge remains a local-only,
-  mutually-exclusive, tested alternative and does not interfere.
+- The HS256 shared-secret bridge was reverted (dead — local Supabase issues ES256; the
+  unchanged JWKS-only provider is the single verification path).
 - Synthetic dev accounts only; email confirmation is NOT real-world medical identity.
