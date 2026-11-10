@@ -141,12 +141,16 @@ function Stop-OurProcess {
 function Start-DetachedService {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
-        [string]$AdminActorArg = ''
+        [string]$AdminActorArg = '',
+        [bool]$JwtArg = $false
     )
     $runner = Join-Path $PSScriptRoot 'Run-V22Service.ps1'
     $argLine = "-NoProfile -ExecutionPolicy Bypass -File `"$runner`" -Service $Name"
     if ($AdminActorArg -ne '') {
         $argLine += " -AdminActor `"$AdminActorArg`""
+    }
+    if ($JwtArg) {
+        $argLine += " -Jwt"
     }
     $pwshPath = (Get-Process -Id $PID).Path
     $cmd = "`"$pwshPath`" $argLine"
@@ -279,7 +283,7 @@ $apiEnv = @{
 # The service runner reads DATABASE_URL from .env in its own process, so the
 # credential never appears on a command line.
 Write-Host "  [..] starting API on $ApiPort" -ForegroundColor Yellow
-Start-DetachedService -Name 'api' | Out-Null
+Start-DetachedService -Name 'api' -JwtArg $Jwt | Out-Null
 
 $deadline = (Get-Date).AddSeconds(30)
 while (-not (Test-Port -Port $ApiPort) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 400 }

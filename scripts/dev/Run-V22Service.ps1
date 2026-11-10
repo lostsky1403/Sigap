@@ -32,7 +32,8 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('api', 'web', 'engine')]
     [string]$Service,
-    [string]$AdminActor = ''
+    [string]$AdminActor = '',
+    [switch]$Jwt
 )
 
 Set-StrictMode -Version Latest
@@ -72,9 +73,12 @@ switch ($Service) {
         $env:SIGAP_API_PORT = "$ApiPort"
         $env:SIGAP_ENGINE_ADDR = '127.0.0.1:50051'
         $env:SIGAP_ENV = 'local'
-        $env:SIGAP_AUTH_MODE = 'dev'
-        $env:SIGAP_DEV_IDENTITY = 'true'
-        $env:SIGAP_LOCAL_RBAC_TEST_IDENTITY = 'true'
+        $env:SIGAP_AUTH_MODE = if ($Jwt) { 'jwt' } else { 'dev' }
+        $env:SIGAP_AUTH_ISSUER = "http://127.0.0.1:54321/auth/v1"
+        $env:SIGAP_AUTH_AUDIENCE = "authenticated"
+        $env:SIGAP_AUTH_JWKS_URL = "http://127.0.0.1:54321/auth/v1/.well-known/jwks.json"
+        $env:SIGAP_DEV_IDENTITY = if ($Jwt) { '' } else { 'true' }
+        $env:SIGAP_LOCAL_RBAC_TEST_IDENTITY = if ($Jwt) { '' } else { 'true' }
         $env:SIGAP_ENGINE_FALLBACK = 'dev'
         $env:SIGAP_WEB_ORIGIN = "http://127.0.0.1:$WebPort"
         $env:SIGAP_API_INTERNAL = "http://127.0.0.1:$ApiPort"
