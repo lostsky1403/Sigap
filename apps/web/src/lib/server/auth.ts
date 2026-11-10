@@ -10,43 +10,7 @@
  *   const headers = { 'Content-Type': 'application/json', ...proxyHeaders() };
  */
 
-import type { Cookies, RequestEvent } from '@sveltejs/kit';
-
-/**
- * Copy Better Auth's Set-Cookie headers into SvelteKit cookies, preserving the
- * security flags (HttpOnly, SameSite, Max-Age, Secure, Path) so the session
- * cookie is not silently de-hardened when sign-in/sign-out is driven from a
- * server action instead of Better Auth's own `/api/auth/*` route.
- */
-export function applySetCookie(headers: Headers | null | undefined, cookies: Cookies): void {
-	if (!headers) return;
-	const setCookies =
-		typeof headers.getSetCookie === 'function'
-			? headers.getSetCookie()
-			: ([headers.get('set-cookie')].filter(Boolean) as string[]);
-	for (const raw of setCookies) {
-		const parts = raw.split(';').map((s) => s.trim());
-		const first = parts.shift();
-		if (!first) continue;
-		const eq = first.indexOf('=');
-		if (eq < 0) continue;
-		const name = first.slice(0, eq).trim();
-		const value = first.slice(eq + 1).trim();
-		const opts: Parameters<Cookies['set']>[2] = { path: '/' };
-		for (const p of parts) {
-			const l = p.toLowerCase();
-			if (l === 'httponly') opts.httpOnly = true;
-			else if (l === 'secure') opts.secure = true;
-			else if (l.startsWith('samesite='))
-				opts.sameSite = p.slice('samesite='.length).toLowerCase() as 'lax' | 'strict' | 'none';
-			else if (l.startsWith('max-age=')) {
-				const m = parseInt(p.slice('max-age='.length), 10);
-				if (!Number.isNaN(m)) opts.maxAge = m;
-			} else if (l.startsWith('path=')) opts.path = p.slice('path='.length);
-		}
-		cookies.set(name, value, opts);
-	}
-}
+import type { RequestEvent } from '@sveltejs/kit';
 
 /**
  * Returns headers to attach to upstream API requests from a browser session.

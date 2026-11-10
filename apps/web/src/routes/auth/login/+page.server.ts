@@ -1,7 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { auth, betterAuthConfigured } from '$lib/server/auth.better';
-import { applySetCookie } from '$lib/server/auth';
 import { allowLogin } from '$lib/server/rate-limit';
 
 /**
@@ -16,7 +15,7 @@ export const load: PageServerLoad = () => ({
 
 export const actions: Actions = {
 	async default(event) {
-		const { request, cookies, locals } = event;
+		const { request, locals } = event;
 		if (!locals.auth) {
 			return fail(503, { message: 'Autentikasi belum dikonfigurasi.' });
 		}
@@ -30,16 +29,12 @@ export const actions: Actions = {
 			return fail(400, { message: 'Email dan kata sandi wajib diisi.' });
 		}
 
-		try {
-			const { headers } = await auth.api.signInEmail({
-				body: { email, password },
-				returnHeaders: true
-			});
-			// Persist Better Auth's session cookie (HttpOnly/SameSite preserved)
-			// so hooks.server.ts can resolve it on the next request and forward
-			// the bearer JWT to the Go API.
-			applySetCookie(headers, cookies);
-} catch (err) {
+try {
+			// The sveltekitCookies plugin routes the session cookie through
+			// SvelteKit's cookies API, so signInEmail sets it correctly (no manual
+			// Set-Cookie handling).
+			await auth.api.signInEmail({ body: { email, password } });
+		} catch (err) {
 			// Distinguish a genuine credential rejection (401) from an auth-store
 			// outage: telling someone their password is wrong while the service is
 			// down is the exact misdiagnosis this action must avoid.

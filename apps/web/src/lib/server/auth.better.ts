@@ -19,6 +19,8 @@
 
 import { betterAuth } from "better-auth";
 import { jwt } from "better-auth/plugins";
+import { sveltekitCookies } from "better-auth/svelte-kit";
+import { getRequestEvent } from "$app/server";
 import { PostgresDialect } from "kysely";
 import { databaseConfigured, getPool } from "./db";
 
@@ -48,6 +50,10 @@ export const auth = betterAuth({
 		storage: "memory"
 	},
 	plugins: [
+		// Route Better Auth's session cookie through SvelteKit's `cookies` API
+		// (via getRequestEvent), so sign-in/sign-up/sign-out set/clear the cookie
+		// correctly with no hand-parsing and no double URL-encoding.
+		sveltekitCookies(getRequestEvent),
 		jwt({
 			jwks: {
 				keyPairConfig: { alg: "ES256" },
