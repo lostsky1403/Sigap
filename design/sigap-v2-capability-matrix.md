@@ -160,3 +160,12 @@ Four gaps that matter more than the feature count suggests:
 - **Consent evaluator — IMPLEMENTED.** subject/actor/scope/purpose/category/expiration/revocation/audit inputs, deny-by-default + synthetic tests.
 - **Auth — IMPLEMENTED (local Supabase Auth).** `npx supabase start` (Auth :54321, Studio :54323); two synthetic patient accounts mapped to `app_users.subject`; ES256/JWKS validated by the unchanged Go `JWTProvider`. `Start-V22Preview.ps1 -Jwt` runs the API in real jwt mode (synthetic selectors off). Verified live: anon 401, patient-a JWT 200 on the owned hub; a live booking across two org facilities under the real session yields "Janji Saya" = 2 for patient A (0 for B), own-cancel 200, cross-patient cancel 403. Email confirmation is NOT real-world medical identity; "verified login" of a real person remains out of scope.
 - **SATUSEHAT — NOT_CONNECTED** (contract boundary only).
+
+### Self-hosted auth (Better Auth) — this milestone
+
+- **BETTER_AUTH_RUNNING=PASS.** `better-auth@1.7.20` (email/password, ES256/JWKS jwt plugin, isolated `auth` schema on the same Postgres). Live: `GET /api/auth/jwks` → ES256/P-256; sign-up + sign-in 200.
+- **GO_JWT_JWKS_INTEGRATION=PASS.** Zero Go source change: the existing JWKS provider validates Better Auth's ES256 tokens (issuer `http://127.0.0.1:5173`, JWKS `/api/auth/jwks`). Live full chain: sign-in → `getToken` → Bearer → Go `/patient/appointments` **200** (subject → `app_users.subject` → `PatientAccountID`).
+- **Web session authority swapped.** `hooks.server.ts` (svelteKitHandler + getSession + mint the JWT), `app.d.ts`/`Locals` (named `AuthSession`), `authHeaders()` (forwards `locals.jwt`, not the opaque session token), `+layout.server.ts`, and login/register/logout server actions (`auth.api.signInEmail/signUpEmail/signOut` + `applySetCookie`).
+- **Identity mapping.** `identity-mapping.md` + `backfill-auth-subjects.mjs` (13 synthetic accounts, explicit by `app_users.id`, never email auto-link; rollback = restore subjects + re-point Go env).
+- **SUPABASE_DECOUPLING=PARTIAL.** Web session authority fully decoupled; `$lib/supabase/*` + `@supabase/*` deps retained as the §8 rollback reference (not an authority). `PUBLIC_SUPABASE_*` removed from the web tier env.
+- **NOT done (Wave 2):** admin sign-in through the SAME Better Auth system (dev/test selector still serves admin in local), the multi-step browser journey + screenshots, e2e spec re-wording away from "Supabase", and visual QA.
