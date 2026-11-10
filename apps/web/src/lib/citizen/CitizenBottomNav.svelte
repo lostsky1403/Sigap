@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { CITIZEN_DESTINATIONS, isActiveDestination } from './navigation';
 	import { RADIUS } from '$lib/design/tokens';
-	import { Home, MapPin, ClipboardCheck, Activity } from 'lucide-svelte';
+	import { Home, MapPin, ClipboardCheck, Activity, CalendarDays } from 'lucide-svelte';
 	import Icon from '$lib/ui/Icon.svelte';
 	import type { ComponentType } from 'svelte';
 
@@ -39,7 +39,8 @@
 		Home,
 		MapPin,
 		ClipboardCheck,
-		Activity
+		Activity,
+		CalendarDays
 	};
 </script>
 

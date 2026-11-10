@@ -53,10 +53,6 @@
 	let error: ApiError | null = null;
 
 	async function load(): Promise<void> {
-		if (!hasSession) {
-			view = 'unauthorized';
-			return;
-		}
 		view = 'loading';
 		error = null;
 		const result = await listMyAppointments();
@@ -65,9 +61,16 @@
 			view = 'ready';
 		} else {
 			error = result.error;
-			// A 401 from the backend while a session is present means the token
-			// was rejected — a finished session, not a missing one.
-			view = result.error.kind === 'unauthorized' ? 'expired' : 'failure';
+			// The SERVER is authoritative: an unauthenticated request 401s here the
+			// same as a missing session. `hasSession` (from server layout data) only
+			// distinguishes an expired real session from a missing one; the fetch is
+			// never skipped client-side, so the dev citizen actor (forwarded by the
+			// proxy) still reaches the account list rather than a decorative gate.
+			if (result.error.kind === 'unauthorized') {
+				view = hasSession ? 'expired' : 'unauthorized';
+			} else {
+				view = 'failure';
+			}
 		}
 	}
 

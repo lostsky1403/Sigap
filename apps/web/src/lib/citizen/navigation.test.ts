@@ -42,13 +42,14 @@ const layoutSource = readFileSync(join(webRoot, 'src', 'routes', '+layout.svelte
 const appCssSource = readFileSync(join(webRoot, 'src', 'app.css'), 'utf8');
 
 describe('citizen navigation contract', () => {
-	it('declares exactly four destinations', () => {
-		expect(CITIZEN_DESTINATIONS).toHaveLength(4);
+	it('declares exactly five destinations', () => {
+		expect(CITIZEN_DESTINATIONS).toHaveLength(5);
 		expect(CITIZEN_DESTINATIONS.map((d) => d.label)).toEqual([
 			'Beranda',
 			'Faskes',
 			'Check-In',
-			'Status'
+			'Status',
+			'Janji Saya'
 		]);
 	});
 
@@ -58,7 +59,8 @@ describe('citizen navigation contract', () => {
 			Beranda: '/',
 			Faskes: '/faskes',
 			'Check-In': '/appointments/check-in',
-			Status: '/patient/status'
+			Status: '/patient/status',
+			'Janji Saya': '/patient/appointments'
 		});
 	});
 
@@ -107,12 +109,12 @@ describe('citizen shell: mobile at 390px', () => {
 		document.body.innerHTML = '';
 	});
 
-	it('renders the bottom navigation with exactly four links', async () => {
+	it('renders the bottom navigation with exactly five links', async () => {
 		render(CitizenBottomNav, { path: '/' });
 		await tick();
 		const nav = screen.getByRole('navigation', { name: 'Navigasi bawah' });
 		const links = nav.querySelectorAll('a');
-		expect(links).toHaveLength(4);
+		expect(links).toHaveLength(5);
 	});
 
 	it('marks exactly one tab as the current page', async () => {
@@ -200,20 +202,21 @@ describe('citizen shell: desktop at 1440px', () => {
 		document.body.innerHTML = '';
 	});
 
-	it('renders a one-line desktop navigation with the four destinations', async () => {
+	it('renders a one-line desktop navigation with the five destinations', async () => {
 		render(CitizenDesktopNav, { path: '/' });
 		await tick();
 		const nav = screen.getByRole('navigation', { name: 'Navigasi utama' });
 		const links = Array.from(nav.querySelectorAll('a'));
-		// Exactly the four destinations. The booking CTA is chrome and lives in
-		// the masthead's action cluster, not in this landmark — so "four
+		// Exactly the five destinations. The booking CTA is chrome and lives in
+		// the masthead's action cluster, not in this landmark — so "five
 		// destinations" is true of the rendered nav, not only of the array.
-		expect(links).toHaveLength(4);
+		expect(links).toHaveLength(5);
 		expect(links.map((a) => a.getAttribute('href'))).toEqual([
 			'/',
 			'/faskes',
 			'/appointments/check-in',
-			'/patient/status'
+			'/patient/status',
+			'/patient/appointments'
 		]);
 	});
 

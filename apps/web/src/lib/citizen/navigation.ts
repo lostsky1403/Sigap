@@ -50,7 +50,8 @@ export const CITIZEN_DESTINATIONS: readonly CitizenDestination[] = [
 		ariaLabel: 'Check-In Janji Temu',
 		icon: 'ClipboardCheck'
 	},
-	{ label: 'Status', href: '/patient/status', ariaLabel: 'Status kunjungan', icon: 'Activity' }
+	{ label: 'Status', href: '/patient/status', ariaLabel: 'Status kunjungan', icon: 'Activity' },
+	{ label: 'Janji Saya', href: '/patient/appointments', ariaLabel: 'Janji saya', icon: 'CalendarDays' }
 ] as const;
 
 /**

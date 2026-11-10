@@ -151,3 +151,12 @@ Four gaps that matter more than the feature count suggests:
 - **SATUSEHAT sandbox — NOT_CONNECTED.** `satusehat-sandbox-readiness.md`: PoC prerequisites BLOCKED on partner registration/OAuth creds/fasyankes DFO.
 - **Regional visual QA — OPEN.** 16 screenshots (1440/768/390/360 × organizations/detail/overview/queues) + geometry (no page overflow, no undersized targets); vision inspection not performed.
 - **E2E — RUN.** `admin-org-isolation.spec.ts` 4/4; `admin-read.spec.ts` 27 passed / 2 dev-data-failed (empty-today board → no "Menunggu" band; not a regression). Per-actor scoping (org-A/B/regional) proven via Go tenant tests + direct API, not browser-switchable.
+
+### Patient Continuity V0 (this milestone)
+
+- **Patient account ownership — IMPLEMENTED.** `0014_patient_account.sql` (`appointments.patient_account_id` nullable; anonymous stays NULL); booking INSERT writes the owner; cancel re-checks ownership (`owned → 403` unless matching account; `NULL` keeps code-only). `identity.Actor.PatientAccountID()` fail-closed; synthetic citizen `local-patient-p1` (c307).
+- **"Janji Saya" hub — IMPLEMENTED.** `GET /api/v1/patient/appointments` (account-keyed, code never scopes it) + `/patient/appointments` page (6 states + owned-cancel) + citizen-nav entry.
+- **Cross-facility + isolation — TESTED.** `cross_facility_test.go` scenarios A–G + negatives (guessed id → 404, forged account/org → 404, non-owner cancel → 403). Real handler + DB, not seeded ownership.
+- **Consent evaluator — IMPLEMENTED.** subject/actor/scope/purpose/category/expiration/revocation/audit inputs, deny-by-default + synthetic tests.
+- **Auth — BLOCKED.** Synthesis only (`SIGAP_AUTH_MODE=dev`); no Supabase JWT/OIDC env → `supabase-auth-verdict.md` lists the provisioning items. Ownership model is real; "verified login" is not claimed.
+- **SATUSEHAT — NOT_CONNECTED** (contract boundary only).

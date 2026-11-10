@@ -832,6 +832,7 @@ func (h *BookingHandler) CancelAppointment(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusNotFound, "Kode tidak ditemukan.")
 			return
 		}
+		slog.Error("cancel resolve failed", "err", err.Error())
 		writeError(w, http.StatusInternalServerError, "Gagal memproses pembatalan.")
 		return
 	}
