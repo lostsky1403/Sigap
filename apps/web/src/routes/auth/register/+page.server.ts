@@ -1,6 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { auth } from '$lib/server/auth.better';
+import { allowRegister } from '$lib/server/rate-limit';
 
 /** See the note in auth/login/+page.server.ts: announce this before typing. */
 export const load: PageServerLoad = ({ locals }) => ({
@@ -8,9 +9,13 @@ export const load: PageServerLoad = ({ locals }) => ({
 });
 
 export const actions: Actions = {
-	async default({ request, locals }) {
+	async default(event) {
+		const { request, locals } = event;
 		if (!locals.auth) {
 			return fail(503, { message: 'Autentikasi belum dikonfigurasi.' });
+		}
+		if (!allowRegister(event.getClientAddress())) {
+			return fail(429, { message: 'Terlalu banyak percobaan. Coba lagi nanti.' });
 		}
 		const data = await request.formData();
 		const email = String(data.get('email') ?? '').trim();

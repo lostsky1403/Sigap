@@ -2,6 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { auth, betterAuthConfigured } from '$lib/server/auth.better';
 import { applySetCookie } from '$lib/server/auth';
+import { allowLogin } from '$lib/server/rate-limit';
 
 /**
  * Tells the page, before the citizen types anything, whether signing in can
@@ -14,9 +15,13 @@ export const load: PageServerLoad = () => ({
 });
 
 export const actions: Actions = {
-	async default({ request, cookies, locals }) {
+	async default(event) {
+		const { request, cookies, locals } = event;
 		if (!locals.auth) {
 			return fail(503, { message: 'Autentikasi belum dikonfigurasi.' });
+		}
+		if (!allowLogin(event.getClientAddress())) {
+			return fail(429, { message: 'Terlalu banyak percobaan. Coba lagi nanti.' });
 		}
 		const data = await request.formData();
 		const email = String(data.get('email') ?? '').trim();

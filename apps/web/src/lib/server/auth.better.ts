@@ -41,6 +41,12 @@ export const auth = betterAuth({
 	emailAndPassword: {
 		enabled: true,
 	},
+	rateLimit: {
+		enabled: true,
+		window: 60,
+		max: 20,
+		storage: "memory"
+	},
 	plugins: [
 		jwt({
 			jwks: {
