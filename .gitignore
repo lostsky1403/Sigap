@@ -47,3 +47,6 @@ apps/api/bin/
 # Playwright artifacts
 apps/web/test-results/
 apps/web/playwright-report/
+
+# local Supabase stack (keys + config + cached CLI)
+supabase/
