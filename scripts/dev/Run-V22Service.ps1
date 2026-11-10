@@ -93,6 +93,10 @@ switch ($Service) {
         $env:SIGAP_AUTH_MODE = 'dev'
         $env:SIGAP_DEV_IDENTITY = 'true'
         $env:SIGAP_ENV = 'local'
+        # Supabase client vars (read from .env) so the citizen auth surface is
+        # enabled when a local Supabase stack is running.
+        $env:PUBLIC_SUPABASE_URL = $envValues['PUBLIC_SUPABASE_URL']
+        $env:PUBLIC_SUPABASE_ANON_KEY = $envValues['PUBLIC_SUPABASE_ANON_KEY']
         if (-not [string]::IsNullOrWhiteSpace($AdminActor)) {
             $env:SIGAP_LOCAL_E2E_ACTOR = $AdminActor
         }
