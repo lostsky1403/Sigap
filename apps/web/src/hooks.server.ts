@@ -8,13 +8,23 @@ import { svelteKitHandler } from 'better-auth/svelte-kit';
 export const handle: Handle = async ({ event, resolve }) => {
 	// Resolve the Better Auth session from the request cookie. When Better Auth
 	// is unconfigured (no Postgres connection string for its `auth` schema) the
-	// instance cannot answer the session query, so there is no session to attach
-	// and every proxy falls back to an empty `Authorization` header.
-	const session = betterAuthConfigured()
-		? await auth.api.getSession({ headers: event.request.headers })
-		: null;
+	// instance cannot answer the session query. Crucially, a session-store
+	// outage (auth schema unreachable) must DEGRADE to signed-out, not 500 every
+	// route — the public facility catalog and citizen status page must survive
+	// an auth-store hiccup. So the resolve is guarded: on failure we log once and
+	// leave the session null, which downstream means unauthenticated (safe 401),
+	// never a whole-site 500.
+	let session: Awaited<ReturnType<typeof auth.api.getSession>> | null = null;
+	if (betterAuthConfigured()) {
+		try {
+			session = await auth.api.getSession({ headers: event.request.headers });
+		} catch (err) {
+			console.warn('[sigap] auth session resolve failed; degrading to signed-out', err);
+			session = null;
+		}
+	}
 
-	event.locals.auth = auth;
+	event.locals.auth = betterAuthConfigured() ? auth : null;
 	event.locals.session = session;
 	event.locals.jwt = null;
 
