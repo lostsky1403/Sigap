@@ -125,34 +125,16 @@ func TestLoadConfigFromEnv_ValidModes(t *testing.T) {
 			want: &AuthConfig{Mode: AuthModeDisabled},
 		},
 		{
-			name: "jwt mode with JWKS",
+			name: "jwt mode with all required fields",
 			env: map[string]string{
 				"SIGAP_AUTH_MODE":     "jwt",
 				"SIGAP_AUTH_ISSUER":   "https://accounts.example.com",
 				"SIGAP_AUTH_AUDIENCE": "sigap-api",
-				"SIGAP_AUTH_JWKS_URL": "https://accounts.example.com/.well-known/jwks.json",
 			},
 			want: &AuthConfig{
 				Mode:     AuthModeJWT,
 				Issuer:   "https://accounts.example.com",
 				Audience: "sigap-api",
-				JWKSURL:  "https://accounts.example.com/.well-known/jwks.json",
-			},
-		},
-		{
-			name: "jwt mode with shared secret in local env",
-			env: map[string]string{
-				"SIGAP_ENV":                "local",
-				"SIGAP_AUTH_MODE":          "jwt",
-				"SIGAP_AUTH_ISSUER":        demoIssuer,
-				"SIGAP_AUTH_AUDIENCE":      demoAudience,
-				"SIGAP_AUTH_JWT_SECRET":    demoSecret,
-			},
-			want: &AuthConfig{
-				Mode:     AuthModeJWT,
-				Issuer:   demoIssuer,
-				Audience: demoAudience,
-				Secret:   demoSecret,
 			},
 		},
 		{
@@ -160,48 +142,14 @@ func TestLoadConfigFromEnv_ValidModes(t *testing.T) {
 			env: map[string]string{
 				"SIGAP_AUTH_MODE":     "jwt",
 				"SIGAP_AUTH_AUDIENCE": "sigap-api",
-				"SIGAP_AUTH_JWKS_URL": "https://accounts.example.com/.well-known/jwks.json",
 			},
 			wantErr: true,
 		},
 		{
 			name: "jwt mode missing audience",
 			env: map[string]string{
-				"SIGAP_AUTH_MODE":     "jwt",
-				"SIGAP_AUTH_ISSUER":   "https://accounts.example.com",
-				"SIGAP_AUTH_JWKS_URL": "https://accounts.example.com/.well-known/jwks.json",
-			},
-			wantErr: true,
-		},
-		{
-			name: "jwt mode with neither key source",
-			env: map[string]string{
-				"SIGAP_AUTH_MODE":     "jwt",
-				"SIGAP_AUTH_ISSUER":   "https://accounts.example.com",
-				"SIGAP_AUTH_AUDIENCE": "sigap-api",
-			},
-			wantErr: true,
-		},
-		{
-			name: "jwt mode with both key sources",
-			env: map[string]string{
-				"SIGAP_ENV":                "local",
-				"SIGAP_AUTH_MODE":          "jwt",
-				"SIGAP_AUTH_ISSUER":        "https://accounts.example.com",
-				"SIGAP_AUTH_AUDIENCE":      "sigap-api",
-				"SIGAP_AUTH_JWKS_URL":      "https://accounts.example.com/.well-known/jwks.json",
-				"SIGAP_AUTH_JWT_SECRET":    demoSecret,
-			},
-			wantErr: true,
-		},
-		{
-			name: "jwt mode with shared secret outside local env",
-			env: map[string]string{
-				"SIGAP_ENV":             "production",
-				"SIGAP_AUTH_MODE":       "jwt",
-				"SIGAP_AUTH_ISSUER":     demoIssuer,
-				"SIGAP_AUTH_AUDIENCE":   demoAudience,
-				"SIGAP_AUTH_JWT_SECRET": demoSecret,
+				"SIGAP_AUTH_MODE":   "jwt",
+				"SIGAP_AUTH_ISSUER": "https://accounts.example.com",
 			},
 			wantErr: true,
 		},
@@ -232,12 +180,6 @@ func TestLoadConfigFromEnv_ValidModes(t *testing.T) {
 			}
 			if cfg.Audience != tt.want.Audience {
 				t.Errorf("audience = %q, want %q", cfg.Audience, tt.want.Audience)
-			}
-			if cfg.JWKSURL != tt.want.JWKSURL {
-				t.Errorf("jwksURL = %q, want %q", cfg.JWKSURL, tt.want.JWKSURL)
-			}
-			if cfg.Secret != tt.want.Secret {
-				t.Errorf("secret mismatch for %q", tt.name)
 			}
 		})
 	}

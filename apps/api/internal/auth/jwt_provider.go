@@ -257,7 +257,7 @@ func (p *JWTProvider) Authenticate(r *http.Request) (identity.Actor, error) {
 	tokenStr := strings.TrimPrefix(h, prefix)
 
 	token, err := jwt.ParseWithClaims(tokenStr, &sigapClaims{}, p.keyFunc,
-		jwt.WithValidMethods(p.allowedAlgs()),
+		jwt.WithValidMethods(validJWTAlgs()),
 		jwt.WithIssuer(p.cfg.Issuer),
 		jwt.WithAudience(p.cfg.Audience),
 	)
@@ -316,23 +316,12 @@ func (p *JWTProvider) Authenticate(r *http.Request) (identity.Actor, error) {
 	}, nil
 }
 
-// keyFunc returns the verification key for the token's signing algorithm.
-// When a shared secret is configured (SIGAP_AUTH_JWT_SECRET) it returns only
-// the HMAC byte-string secret (HS* family) and never consults JWKS. Otherwise
-// it selects the public key from the JWKS cache by the header's kid, rejecting
-// tokens with no kid when JWKS is configured. alg=none is always rejected.
+// keyFunc selects the verification key from the JWKS cache based on the token
+// header's kid. Rejects tokens with no kid when JWKS is configured.
 func (p *JWTProvider) keyFunc(token *jwt.Token) (any, error) {
 	alg := token.Header["alg"]
 	if alg == "none" || alg == "" {
 		return nil, errors.New("alg=none is not allowed")
-	}
-
-	// Shared-secret path: the same byte-string secret signs and verifies.
-	// Selected only when a secret is configured; Validate() guarantees the
-	// secret and JWKS sources are mutually exclusive, so this never coexists
-	// with a JWKS-backed public key.
-	if p.cfg.Secret != "" {
-		return []byte(p.cfg.Secret), nil
 	}
 
 	kid, _ := token.Header["kid"].(string)
@@ -345,14 +334,8 @@ func (p *JWTProvider) keyFunc(token *jwt.Token) (any, error) {
 	return p.jwks.get(kid)
 }
 
-// allowedAlgs returns the allowed signing algorithms for the configured key
-// source. The HS* family is allowed only when a shared secret is configured;
-// the RS*/ES* family is allowed only when a JWKS endpoint is configured. The
-// two sets are never mixed (algorithm-confusion defense).
-func (p *JWTProvider) allowedAlgs() []string {
-	if p.cfg.Secret != "" {
-		return []string{"HS256", "HS384", "HS512"}
-	}
+// validJWTAlgs returns the allowed signing algorithm identifiers.
+func validJWTAlgs() []string {
 	return []string{
 		"RS256", "RS384", "RS512",
 		"ES256", "ES384", "ES512",
