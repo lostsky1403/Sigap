@@ -47,7 +47,13 @@
 	title="Masuk"
 	description="Masuk untuk memantau status kunjungan, janji temu, atau mengelola fasilitas."
 >
-	<AuthForms mode="login" {message} {registered} authConfigured={data?.authConfigured} />
+	<AuthForms
+		mode="login"
+		{message}
+		{registered}
+		authConfigured={data?.authConfigured}
+		redirectTo={$page.url.searchParams.get('redirectTo')}
+	/>
 
 	<div slot="footer">
 		Belum punya akun?

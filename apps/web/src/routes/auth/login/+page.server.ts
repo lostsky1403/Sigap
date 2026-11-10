@@ -25,6 +25,11 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const email = String(data.get('email') ?? '').trim();
 		const password = String(data.get('password') ?? '');
+		// Same-origin return-to path only: a value that starts with `/` but not
+		// `//` (absolute/protocol-relative URLs are rejected so an attacker cannot
+		// bounce a user to an external origin).
+		const rawTo = String(data.get('redirectTo') ?? '').trim();
+		const redirectTo = rawTo.startsWith('/') && !rawTo.startsWith('//') ? rawTo : '/';
 		if (!email || !password) {
 			return fail(400, { message: 'Email dan kata sandi wajib diisi.' });
 		}
@@ -47,6 +52,6 @@ try {
 			}
 			return fail(503, { message: 'Layanan sedang bermasalah. Silakan coba lagi.' });
 		}
-		redirect(303, '/');
+		redirect(303, redirectTo);
 	}
 };

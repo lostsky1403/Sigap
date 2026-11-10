@@ -36,6 +36,9 @@
 
 	export let mode: AuthMode = 'login';
 
+	/** Same-origin path to return to after a successful sign-in. */
+	export let redirectTo: string | null = null;
+
 	/**
 	 * The action's own outcome.
 	 *
@@ -159,6 +162,9 @@
 	{/if}
 
 	<form method="POST" class="sigap-auth__form" data-testid="auth-form">
+		{#if redirectTo}
+			<input type="hidden" name="redirectTo" value={redirectTo} />
+		{/if}
 		<Field
 			id="sigap-auth-email"
 			label="Email"
