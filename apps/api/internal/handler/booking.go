@@ -191,16 +191,25 @@ func (h *BookingHandler) BookAppointment(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Claim the appointment for the authenticated citizen account when one is
+	// present; anonymous (unauthenticated) booking leaves patient_account_id NULL
+	// and stays on the code-only model — no booking is forced into auth.
+	actorAccountID := identity.ActorFromContext(ctx).PatientAccountID()
+	var patientAccountID *string
+	if actorAccountID != "" {
+		patientAccountID = &actorAccountID
+	}
+
 	// Insert appointment
 	var id string
 	err = h.pool.QueryRow(ctx,
 		`INSERT INTO appointments
 		 (facility_id, service_unit_id, practitioner_schedule_id, patient_display_name,
-		  patient_phone, appointment_time, status, checkin_code, notes, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', $7, $8, NOW(), NOW())
+		  patient_phone, appointment_time, status, checkin_code, notes, patient_account_id, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', $7, $8, $9, NOW(), NOW())
 		 RETURNING id`,
 		req.FacilityID, req.ServiceUnitID, strPtr(req.PractitionerScheduleID),
-		req.PatientDisplayName, phone, aptTime, code, strPtr(req.Notes)).Scan(&id)
+		req.PatientDisplayName, phone, aptTime, code, strPtr(req.Notes), patientAccountID).Scan(&id)
 	if err != nil {
 		slog.Error("booking insert failed",
 			"facility_id", req.FacilityID,
@@ -794,20 +803,21 @@ func (h *BookingHandler) CancelAppointment(w http.ResponseWriter, r *http.Reques
 	defer cancel()
 
 	// Exact match first, folded as a fallback — the same two-query strategy as
-	// the status lookup. SELECTing id/facility_id/status only; no patient data.
+	// the status lookup. SELECTing id/facility_id/status and the owner account
+	// id only; no patient data.
 	const resolveSQL = `
-		SELECT a.id, a.facility_id, a.status
+		SELECT a.id, a.facility_id, a.status, a.patient_account_id
 		FROM appointments a
 		WHERE %s`
 
-	id, facilityID, status, err := h.resolveByCheckinCode(
+	id, facilityID, status, ownerAccountID, err := h.resolveByCheckinCode(
 		ctx, fmt.Sprintf(resolveSQL, `upper(a.checkin_code) = upper($1)`), code)
 	if err == errAmbiguousCode {
 		writeError(w, http.StatusNotFound, "Kode tidak ditemukan.")
 		return
 	}
 	if err == pgx.ErrNoRows {
-		id, facilityID, status, err = h.resolveByCheckinCode(
+		id, facilityID, status, ownerAccountID, err = h.resolveByCheckinCode(
 			ctx,
 			fmt.Sprintf(resolveSQL, `translate(upper(a.checkin_code), '01', 'OI') = translate(upper($1), '01', 'OI') LIMIT 2`),
 			code,
@@ -823,6 +833,20 @@ func (h *BookingHandler) CancelAppointment(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "Gagal memproses pembatalan.")
+		return
+	}
+
+	// Server-side ownership re-check on cancel.
+	//
+	// An appointment claimed by a citizen account (patient_account_id NOT NULL)
+	// may only be cancelled BY that account. Anonymous bookings (NULL) keep the
+	// code-only model — holding the check-in code is still sufficient — and are
+	// deliberately NOT forced into authentication. This is what stops a signed-in
+	// citizen (or anyone holding a leaked code) from cancelling a DIFFERENT
+	// citizen's owned appointment.
+	actorAccountID := identity.ActorFromContext(r.Context()).PatientAccountID()
+	if ownerAccountID != nil && (actorAccountID == "" || actorAccountID != *ownerAccountID) {
+		writeError(w, http.StatusForbidden, "Anda tidak berhak membatalkan janji temu ini.")
 		return
 	}
 
@@ -878,12 +902,13 @@ func (h *BookingHandler) CancelAppointment(w http.ResponseWriter, r *http.Reques
 }
 
 // resolveByCheckinCode runs one lookup and returns the resolved appointment's
-// id, facility id and current status, following lookupBy's ambiguity contract
-// (more than one canonical row → errAmbiguousCode).
-func (h *BookingHandler) resolveByCheckinCode(ctx context.Context, query, code string) (id, facilityID, status string, err error) {
+// id, facility id, current status, and owner account id (NULL for anonymous
+// bookings), following lookupBy's ambiguity contract (more than one canonical
+// row → errAmbiguousCode).
+func (h *BookingHandler) resolveByCheckinCode(ctx context.Context, query, code string) (id, facilityID, status string, ownerAccountID *string, err error) {
 	rows, err := h.pool.Query(ctx, query, code)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", nil, err
 	}
 	defer rows.Close()
 
@@ -891,19 +916,19 @@ func (h *BookingHandler) resolveByCheckinCode(ctx context.Context, query, code s
 	for rows.Next() {
 		matched++
 		if matched > 1 {
-			return "", "", "", errAmbiguousCode
+			return "", "", "", nil, errAmbiguousCode
 		}
-		if err := rows.Scan(&id, &facilityID, &status); err != nil {
-			return "", "", "", err
+		if err := rows.Scan(&id, &facilityID, &status, &ownerAccountID); err != nil {
+			return "", "", "", nil, err
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return "", "", "", err
+		return "", "", "", nil, err
 	}
 	if matched == 0 {
-		return "", "", "", pgx.ErrNoRows
+		return "", "", "", nil, pgx.ErrNoRows
 	}
-	return id, facilityID, status, nil
+	return id, facilityID, status, ownerAccountID, nil
 }
 
 // PublicAppointmentsRouter dispatches public appointment endpoints.

@@ -6,6 +6,12 @@
 > auditable, non-destructive recovery procedure. Nothing here has been run against the
 > live `sigap` database. No `schema_migrations` row has been written. The ledger has NOT
 > been mutated (and MUST NOT be mutated until the owner approves this plan).
+>
+> **R3 (2026-11-10):** the reconciliation ledger has been extended through
+> `0014_patient_account.sql` (disk) with the verified live span at **`0001–0013`** —
+> live is byte-identical to a fresh tracked-runner build through 0013, and `0014` is a
+> pending migration (file present, objects absent from live). This plan's verified
+> backfill span is therefore `0001–0013`; `0014` is conditional (§2.4).
 
 ---
 
@@ -15,41 +21,44 @@ Every mutating step below (§2 backfill, §4 rollback) is gated on **owner sign-
 
 - [ ] Owner confirms the live inventory/checksum facts derived in this doc and in the
       reconciliation ledger.
-- [ ] Owner confirms the **branch divergence gate** (§0.1) — whether `0001–0012` only or
-      `0001–0013` is the baseline to record.
+- [ ] Owner confirms the **branch divergence gate** (§0.1) — whether `0001–0013` only or
+      `0001–0014` is the baseline to record.
 - [ ] Owner records the approval (who, when, ticket reference) in the ledger's change
       note **after** execution, never before.
 
 Until that happens this is a **design proposal**, and the correct state of the live
-ledger remains "empty `schema_migrations` (12-tracked-installed schema, ledger-gap)".
+ledger remains "empty `schema_migrations` (13-tracked-installed schema, ledger-gap)".
+
 
 ### 0.1 Branch divergence gate (must be resolved before the ledger write)
 
 The reconciliation ledger (`migration-ledger-reconciliation.md`) is scoped to
-**`0001–0012`** — 12 migration files, live schema proven byte-identical to a fresh
-`migrate.Run` DB, ledger empty. That is the **VERIFIED** baseline.
+**`0001–0013`** (VERIFIED, R3) — 13 migration files, live schema proven byte-identical to
+a fresh tracked-runner build through 0013, ledger empty. That is the **VERIFIED**
+baseline.
 
 This feature branch (`feat/sigap-regional-pilot`) additionally contains:
 
 | version | file | status relative to the reconciliation |
 |---------|------|------------------------------------------|
-| 13 | `0013_organizations.sql` | **NOT part of the verified reconciliation** — added in `a6c26b4`; live was never re-diffed against it |
+| 14 | `0014_patient_account.sql` | **NOT part of the verified reconciliation** — pending; live was never re-diffed against it (objects absent) |
 
-`0013_organizations.sql` creates `organizations` and adds
-`facilities.organization_id` + `user_roles.organization_id` + indexes, and is
-forward-only over `0001–0012`. Its checksum is recorded in §2.5 for completeness, but its
-`(13, checksum)` row is a **PROPOSED extension, not a verified reconciliation result**:
+`0014_patient_account.sql` adds one nullable FK column `appointments.patient_account_id`
+(`REFERENCES app_users(id) ON DELETE SET NULL`), the index
+`idx_appointments_patient_account_id`, and a column comment; it is forward-only over
+`0001–0013`. Its checksum is recorded in §2.5 for completeness, but its `(14, checksum)`
+row is a **PROPOSED extension, not a verified reconciliation result**:
 
-- If the live `organizations` table does **not** exist (expected, this is a pilot branch),
-  `0013` is a **pending** migration. Backfilling row 13 must NOT happen until §1's diff has
-  (a) confirmed live still equals the `0001–0012` schema and (b) confirmed `0013` is either
-  already present in live or deliberately out of the baseline.
-- If the owner wants a **12-row baseline** (matches the ledger verbatim), backfill §2
-  applies to versions `1–12` only, and `0013` remains a normal pending migration that a
+- The live `appointments.patient_account_id` does **not** exist (verified R3), so
+  `0014` is a **pending** migration. Backfilling row 14 must NOT happen until §1's diff
+  has (a) confirmed live still equals the `0001–0013` schema and (b) confirmed `0014` is
+  either already present in live or deliberately out of the baseline.
+- If the owner wants a **13-row baseline** (matches the ledger verbatim), backfill §2
+  applies to versions `1–13` only, and `0014` remains a normal pending migration that a
   later approved `migrate.Run` will apply under its own transaction.
 
 The classification "differences = `none`" inherited from the prior `READY` result applies
-to the **verified `0001–0012` span only**. No classification is asserted for `0013` here.
+to the **verified `0001–0013` span only**. No classification is asserted for `0014` here.
 
 ---
 
@@ -80,13 +89,19 @@ psql "postgres://<user>@127.0.0.1:5433/postgres" -c "CREATE DATABASE sigap_recon
 
 # 2. Run the tracked migration chain over it (not psql -f over 0001).
 DATABASE_URL="$SCRATCH_DBURL" go run ./apps/api/cmd/ci-migrate
-#   expect: "Applied 12 migrations" (or 13 if the owner chose to include 0013 in the diff span)
+#   expect: "Applied 14 migrations" (all files on disk incl. 0014) — the runner applies
+#   every pending version; the *live* span is then established by the §1.3 diff.
 ```
 
 The runner creates `schema_migrations`, applies each migration inside its own transaction,
 and records `(version, checksum)` rows — so the scratch DB's **application** schema is the
 reference. (The scratch ledger will be populated; that is expected and is deliberately
 excluded from the app-object diff in §1.4.)
+
+For an exact live-span comparison, ALSO build a `scratch13` DB: run the same chain, then
+strip the 0014 objects (`DROP INDEX idx_appointments_patient_account_id; ALTER TABLE
+appointments DROP COLUMN patient_account_id;`) so the pure `0001–0013` runner schema can
+be diffed byte-for-byte against live (R3 used this shape).
 
 ### 1.2 Record each migration file's real SHA-256 (byte-for-byte)
 
@@ -99,25 +114,29 @@ sha256sum 0001_init.sql 0002_medical_records.sql 0003_identity_rbac.sql \
  0004_audit_events.sql 0005_appointments.sql 0006_notifications.sql \
  0007_checkin_constraints.sql 0008_identity_subject.sql 0009_user_roles_lifecycle.sql \
  0010_demo_notes_column.sql 0011_notification_outbox_phone_constraints.sql \
- 0012_service_day_wib.sql 0013_organizations.sql
+ 0012_service_day_wib.sql 0013_organizations.sql 0014_patient_account.sql
 ```
 
-Acceptance: the 12 `0001–0012` values MUST equal the table in §2.5 (and the ledger).
-Any mismatch HALTS the plan — a file changed under our feet invalidates the "no drift"
-conclusion and requires a fresh reconciliation before any ledger write.
+Acceptance: the 13 `0001–0013` values MUST equal the table in §2.5 (and the ledger),
+and `0014` must re-hash to its recorded value. Any mismatch HALTS the plan — a file
+changed under our feet invalidates the "no drift" conclusion and requires a fresh
+reconciliation before any ledger write.
 
 ### 1.3 Diff scratch (runner-built) vs live
 
-Use both independent methods from the reconciliation (they independently agreed):
+Use both independent methods from the reconciliation (they independently agreed). Diff
+**live against `scratch13`** (the pure `0001–0013` runner schema) for the byte-identity
+proof; diff live against the full scratch (14) only to confirm the delta is exactly the
+0014 additions:
 
 ```sh
-# A. pg_dump structural diff
+# A. pg_dump structural diff (live vs scratch13)
 pg_dump --schema-only --no-owner --no-privileges --no-comments --schema=public \
-  "$SCRATCH_DBURL" > scratch.sql
+  "$SCRATCH13_DBURL" > scratch13.sql
 LIVE_DBURL="postgres://<user>@127.0.0.1:5433/sigap?sslmode=disable"
 pg_dump --schema-only --no-owner --no-privileges --no-comments --schema=public \
   "$LIVE_DBURL" > live.sql
-diff <(grep -v '\\restrict' <(grep -v '\\unrestrict' scratch.sql)) \
+diff <(grep -v '\\restrict' <(grep -v '\\unrestrict' scratch13.sql)) \
      <(grep -v '\\restrict' <(grep -v '\\unrestrict' live.sql))
 ```
 
@@ -127,26 +146,33 @@ Both dumps MUST be byte-identical after stripping pg_dump 18's per-database
 ```text
 # B. Structured catalog diff (objects, not restrict tokens)
 -- compare relname / attname / typedef / default / constraintdef / indexdef /
--- enum labels / function def for live vs scratch; MUST return zero rows.
+-- enum labels / function def for live vs scratch13; MUST return zero rows.
 ```
+
+Expected result (R3): **zero differences**. A diff against the full 14-chain scratch must
+show exactly the 0014 objects (column `patient_account_id`, index
+`idx_appointments_patient_account_id`, FK `appointments_patient_account_id_fkey`) and
+nothing else.
 
 ### 1.4 Expected inventory (acceptance whenever §1 is re-run)
 
-Scoped to `public`, application schema (the 18 tracked tables; `schema_migrations` is the
-19th and is deliberately excluded from the app-object diff because its row-set is the
-subject of §2, not a schema object):
+Scoped to `public`, application schema (the 19 tracked tables through 0013;
+`schema_migrations` is the 20th and is deliberately excluded from the app-object diff
+because its row-set is the subject of §2, not a schema object):
 
-| Object | Expected count (live, per reconciliation) |
+| Object | Expected count (live, per reconciliation R3) |
 |--------|--------------------------------------------|
-| application tables | 18 |
-| indexes | 58 |
-| constraints | 71 |
+| application tables | 19 (incl. `organizations`) |
+| indexes | 63 |
+| constraints | 75 |
 | functions | 1 → `appointment_day(timestamptz) RETURNS date IMMUTABLE PARALLEL SAFE` |
 | `notification_outbox` CHECK constraints | 10 |
 | `appointment_day` body | WIB immutable: `SELECT (($1 AT TIME ZONE 'UTC') + INTERVAL '7 hours')::date` |
 
-If `0013` is in the diff span, subtract/expand by its objects consistently on both sides
-(never diff a 13-side against a 12-side). A mismatch in **any** row HALTS the plan.
+If `0014` is in the diff span, expand by its objects consistently on both sides (column
+`patient_account_id` + index `idx_appointments_patient_account_id` + FK
+`appointments_patient_account_id_fkey`; never diff a 14-side against a 13-side). A
+mismatch in **any** row HALTS the plan.
 
 ### 1.5 Seed files are out of scope (unchanged from the ledger)
 
@@ -204,29 +230,30 @@ INSERT INTO schema_migrations (version, checksum) VALUES
  (9,  decode('b7b5d0a043ba4499d6bd5a3f80c94d2c8de956c05d8a806e7b83c331642055f6','hex')),
  (10, decode('154a433dc6d2e9938d791e694de08118b44352ace0dce7bbe698226a3ac9c881','hex')),
  (11, decode('3568a910fed6a4e73baedeed093924cf8850597dd4bc7c0884fe1c740373d0b2','hex')),
- (12, decode('618154620aa57c9b044b2a19423ff24358ec050bd1a8d7a220076e7646157663','hex'))
+ (12, decode('618154620aa57c9b044b2a19423ff24358ec050bd1a8d7a220076e7646157663','hex')),
+ (13, decode('6bf14b56079e4a252bc366e57977b1b3daed5399dbd68c34371479a660c4d5b1','hex'))
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
 
 -- immediately assert the count:
-SELECT count(*) FROM schema_migrations;  -- MUST equal 12 (the VERIFIED span)
+SELECT count(*) FROM schema_migrations;  -- MUST equal 13 (the VERIFIED span)
 ```
 
-### 2.4 `0013` row — conditional, owner-decided (NOT part of the verified span)
+### 2.4 `0014` row — conditional, owner-decided (NOT part of the verified span)
 
-Do NOT insert row 13 until §0.1 is resolved and §1 has diffed the `0013` span. If approved
-(e.g. live already carries `organizations`), append the row **inside the same transaction**
-as 2.3 with this single additional value:
+Do NOT insert row 14 until §0.1 is resolved and §1 has diffed the `0014` span. If approved
+(e.g. live already carries `appointments.patient_account_id`), append the row **inside the
+same transaction** as 2.3 with this single additional value:
 
 ```sql
- (13, decode('6bf14b56079e4a252bc366e57977b1b3daed5399dbd68c34371479a660c4d5b1','hex')),
+ (14, decode('001e7784b420649732970f963df2f24eca388b0e5d64cc83fd505ed925e21624','hex')),
 ```
 
-If the owner elects a **12-row baseline**, omit row 13 entirely and leave `0013` pending
+If the owner elects a **13-row baseline**, omit row 14 entirely and leave `0014` pending
 for a later approved `migrate.Run`.
 
-### 2.5 Real file-byte SHA-256 registry (re-derived in §1.2; matches the ledger for 1–12)
+### 2.5 Real file-byte SHA-256 registry (re-derived in §1.2; matches the ledger for 1–13)
 
 | version | file | SHA-256 (hex) | span |
 |---------|------|----------------|------|
@@ -242,7 +269,8 @@ for a later approved `migrate.Run`.
 | 10 | `0010_demo_notes_column.sql` | `154a433dc6d2e9938d791e694de08118b44352ace0dce7bbe698226a3ac9c881` | verified |
 | 11 | `0011_notification_outbox_phone_constraints.sql` | `3568a910fed6a4e73baedeed093924cf8850597dd4bc7c0884fe1c740373d0b2` | verified |
 | 12 | `0012_service_day_wib.sql` | `618154620aa57c9b044b2a19423ff24358ec050bd1a8d7a220076e7646157663` | verified |
-| 13 | `0013_organizations.sql` | `6bf14b56079e4a252bc366e57977b1b3daed5399dbd68c34371479a660c4d5b1` | pending/proposed |
+| 13 | `0013_organizations.sql` | `6bf14b56079e4a252bc366e57977b1b3daed5399dbd68c34371479a660c4d5b1` | verified (R3 live-diffed) |
+| 14 | `0014_patient_account.sql` | `001e7784b420649732970f963df2f24eca388b0e5d64cc83fd505ed925e21624` | pending/proposed |
 
 ### 2.6 Post-backfill no-op verification
 
@@ -254,10 +282,10 @@ DATABASE_URL="$LIVE_DBURL" go run ./apps/api/cmd/ci-migrate
 #   expect: "all migrations up to date", "Applied 0 migrations"
 ```
 
-`migrate.Status` over the same span must report `applied = 12`, `pending = 0` (plus
-`0013`/`pending = 1` if a 12-row baseline was chosen). Any non-zero apply or any DDL log
-line HALTS — treat as "ledger write did not make the runner idempotent" and do not widen
-the ledger.
+`migrate.Status` over the same span must report `applied = 13`, `pending = 1`
+(`0014`). (If a 14-row baseline was approved and 0014 is applied, expect `applied = 14`,
+`pending = 0`.) Any non-zero apply or any DDL log line HALTS — treat as "ledger write did
+not make the runner idempotent" and do not widen the ledger.
 
 ---
 
@@ -304,7 +332,7 @@ plan is inserting rows with `ON CONFLICT DO NOTHING`. Rolling back the baseline 
 ```sql
 -- Only with owner approval, and only if the schema is still otherwise unchanged.
 BEGIN;
-DELETE FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7,8,9,10,11,12);  -- and 13 if it was backfilled
+DELETE FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7,8,9,10,11,12,13);  -- and 14 if it was backfilled
 -- assert nothing else was touched:
 SELECT count(*) FROM schema_migrations;  -- MUST return 0 (or only pre-existing rows)
 COMMIT;
@@ -331,9 +359,9 @@ covered by a fresh owner approval.
 |------|---------|---------------|-------|
 | Owner approves plan + span decision | §0 | no | PROPOSED |
 | Build scratch via tracked runner | §1.1 | no (scratch only) | PROPOSED |
-| Re-hash each `NNNN_*.sql` file | §1.2 | no | PROPOSED (values re-derived & match ledger for 1–12) |
+| Re-hash each `NNNN_*.sql` file | §1.2 | no | PROPOSED (values re-derived & match ledger for 1–13; 14 recorded pending) |
 | Diff scratch vs live (2 methods) | §1.3/1.4 | no | PROPOSED |
-| Backfill `schema_migrations` 1–12 (and 13 if approved) | §2.3/2.4 | **yes — ledger only** | PROPOSED, gated |
+| Backfill `schema_migrations` 1–13 (and 14 if approved) | §2.3/2.4 | **yes — ledger only** | PROPOSED, gated |
 | Verify `migrate.Run` no-op / `migrate.Status` | §2.6 | no | PROPOSED, gated |
 | Rollback (if needed) | §4 | **yes — ledger only** | PROPOSED, gated |
 | Scratch + artifact cleanup | §1.6 | no (scratch/artifacts only) | PROPOSED |
@@ -342,11 +370,11 @@ covered by a fresh owner approval.
 
 ## 6. Classification of differences (inherited from the prior READY result)
 
-- **Differences between live and a fresh tracked-runner schema (0001–0012 span):**
+- **Differences between live and a fresh tracked-runner schema (0001–0013 span):**
   **`none`** — zero catalog differences and a byte-identical pg_dump (after stripping the
   per-database `\restrict`/`\unrestrict` session tokens). This is inherited unchanged from
-  the reconciliation ledger's `READY` finding.
+  the reconciliation ledger's `READY` finding and re-proven in R3.
 - The **only** divergence on-disk is the **empty `schema_migrations` ledger** (a tracking
   gap), which §2 closes by recording — not re-executing — the already-installed schema.
-- `0013_organizations.sql` is **not classified** by this baseline; it is a pending branch
-  migration whose span must be re-diffed before any row 13 is recorded (§0.1, §2.4).
+- `0014_patient_account.sql` is **not classified** by this baseline; it is a pending branch
+  migration whose span must be re-diffed before any row 14 is recorded (§0.1, §2.4).

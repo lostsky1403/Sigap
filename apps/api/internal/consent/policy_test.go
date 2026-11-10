@@ -9,9 +9,13 @@ import (
 // paralleling the interop contracts' ".pilotsari.example" placeholders; they
 // are never real patients, real NIKs, or real facilities.
 const (
-	fixturePatientID = "p-synthetic-0001"
-	fixtureFacilityA = "F-1" // RSUD Pilotsari (fictional)
-	fixtureFacilityB = "F-2" // Puskesmas Pilotsari Kota (fictional)
+	fixturePatientID     = "p-synthetic-0001"
+	fixtureActorA        = "actor-synthetic-0001" // dr. Sari (fictional)
+	fixtureActorB        = "actor-synthetic-0002" // dr. Bayu (fictional)
+	fixtureFacilityA     = "F-1"                  // RSUD Pilotsari (fictional)
+	fixtureFacilityB     = "F-2"                  // Puskesmas Pilotsari Kota (fictional)
+	fixtureOrganizationA = "O-1"                  // Dinas Kesehatan Kab. Pilotsari (fictional)
+	fixtureOrganizationB = "O-2"                  // Yayasan Sehat Nusantara (fictional)
 )
 
 // validWindow returns a validity window covering the test "now".
@@ -24,8 +28,14 @@ func validWindow() Validity {
 
 func validGrant() Grant {
 	return Grant{
-		Purpose:  PurposeTreatment,
-		Scope:    Scope{PatientID: fixturePatientID, FacilityID: fixtureFacilityA},
+		ActorID:        fixtureActorA,
+		Purpose:        PurposeTreatment,
+		ResourceCategory: ResourceClinicalRecord,
+		Scope: Scope{
+			PatientID:     fixturePatientID,
+			FacilityID:    fixtureFacilityA,
+			OrganizationID: fixtureOrganizationA,
+		},
 		Validity: validWindow(),
 	}
 }
@@ -39,9 +49,12 @@ func atNow() time.Time {
 // validRequest is the normal read request that validGrant should authorize.
 func validRequest() Request {
 	return Request{
-		ReadPurpose: PurposeTreatment,
-		FacilityID:  fixtureFacilityA,
-		PatientID:   fixturePatientID,
+		ActorID:         fixtureActorA,
+		ReadPurpose:     PurposeTreatment,
+		ResourceCategory: ResourceClinicalRecord,
+		FacilityID:      fixtureFacilityA,
+		OrganizationID:  fixtureOrganizationA,
+		PatientID:       fixturePatientID,
 	}
 }
 
@@ -54,11 +67,66 @@ func TestEvaluate(t *testing.T) {
 		want Decision
 	}{
 		{
-			name: "valid consume grant is allowed",
+			name: "valid treatment grant is allowed",
 			req:  validRequest(),
 			g:    validGrant(),
 			at:   atNow(),
 			want: Decision{Allowed: true, Reason: ReasonAllowed},
+		},
+		{
+			name: "wrong actor is denied",
+			req: func() Request {
+				req := validRequest()
+				req.ActorID = fixtureActorB
+				return req
+			}(),
+			g:    validGrant(),
+			at:   atNow(),
+			want: Decision{Allowed: false, Reason: ReasonActorNotAuthorized},
+		},
+		{
+			name: "out-of-scope facility is denied",
+			req: func() Request {
+				req := validRequest()
+				req.FacilityID = fixtureFacilityB
+				return req
+			}(),
+			g:    validGrant(),
+			at:   atNow(),
+			want: Decision{Allowed: false, Reason: ReasonFacilityNotInScope},
+		},
+		{
+			name: "out-of-scope organization is denied",
+			req: func() Request {
+				req := validRequest()
+				req.OrganizationID = fixtureOrganizationB
+				return req
+			}(),
+			g:    validGrant(),
+			at:   atNow(),
+			want: Decision{Allowed: false, Reason: ReasonOrganizationNotInScope},
+		},
+		{
+			name: "uncategorized resource is denied",
+			req: func() Request {
+				req := validRequest()
+				req.ResourceCategory = ""
+				return req
+			}(),
+			g:    validGrant(),
+			at:   atNow(),
+			want: Decision{Allowed: false, Reason: ReasonResourceNotPermitted},
+		},
+		{
+			name: "unpermitted resource category is denied",
+			req: func() Request {
+				req := validRequest()
+				req.ResourceCategory = ResourceMedicationHistory
+				return req
+			}(),
+			g:    validGrant(),
+			at:   atNow(),
+			want: Decision{Allowed: false, Reason: ReasonResourceNotPermitted},
 		},
 		{
 			name: "expired grant is denied",
@@ -83,21 +151,36 @@ func TestEvaluate(t *testing.T) {
 		},
 		{
 			name: "out-of-scope purpose is denied",
-			req:  Request{ReadPurpose: PurposeResearch, FacilityID: fixtureFacilityA, PatientID: fixturePatientID},
+			req: func() Request {
+				req := validRequest()
+				req.ReadPurpose = PurposeResearch
+				return req
+			}(),
 			g:    validGrant(),
 			at:   atNow(),
 			want: Decision{Allowed: false, Reason: ReasonPurposeNotConsented},
 		},
 		{
-			name: "wrong facility is denied",
-			req:  Request{ReadPurpose: PurposeTreatment, FacilityID: fixtureFacilityB, PatientID: fixturePatientID},
+			name: "wrong patient is denied",
+			req: func() Request {
+				req := validRequest()
+				req.PatientID = "p-synthetic-9999"
+				return req
+			}(),
 			g:    validGrant(),
 			at:   atNow(),
-			want: Decision{Allowed: false, Reason: ReasonFacilityNotInScope},
+			want: Decision{Allowed: false, Reason: ReasonPatientMismatch},
 		},
 		{
 			name: "emergency granted when policy permits break-glass",
-			req:  Request{ReadPurpose: PurposeEmergency, FacilityID: fixtureFacilityB, PatientID: fixturePatientID, Emergency: true},
+			req: func() Request {
+				req := validRequest()
+				req.Emergency = true
+				req.FacilityID = fixtureFacilityB
+				req.OrganizationID = fixtureOrganizationB
+				req.ReadPurpose = PurposeEmergency
+				return req
+			}(),
 			g: func() Grant {
 				g := validGrant()
 				g.Emergency = EmergencyPolicy{Allowed: true, RequireReview: true}
@@ -108,14 +191,47 @@ func TestEvaluate(t *testing.T) {
 		},
 		{
 			name: "emergency denied when policy does not permit break-glass",
-			req:  Request{ReadPurpose: PurposeEmergency, FacilityID: fixtureFacilityB, PatientID: fixturePatientID, Emergency: true},
+			req: func() Request {
+				req := validRequest()
+				req.Emergency = true
+				req.FacilityID = fixtureFacilityB
+				req.OrganizationID = fixtureOrganizationB
+				req.ReadPurpose = PurposeEmergency
+				return req
+			}(),
 			g:    validGrant(), // EmergencyPolicy zero value => Allowed == false
 			at:   atNow(),
 			want: Decision{Allowed: false, Reason: ReasonEmergencyNotPermitted},
 		},
 		{
+			name: "emergency denied when actor not named on grant",
+			req: func() Request {
+				req := validRequest()
+				req.ActorID = fixtureActorB
+				req.Emergency = true
+				req.FacilityID = fixtureFacilityB
+				req.OrganizationID = fixtureOrganizationB
+				req.ReadPurpose = PurposeEmergency
+				return req
+			}(),
+			g: func() Grant {
+				g := validGrant()
+				g.Emergency = EmergencyPolicy{Allowed: true, RequireReview: true}
+				return g
+			}(),
+			at:   atNow(),
+			want: Decision{Allowed: false, Reason: ReasonActorNotAuthorized},
+		},
+		{
 			name: "emergency denied when grant is revoked even with policy",
-			req:  Request{ReadPurpose: PurposeEmergency, FacilityID: fixtureFacilityB, PatientID: fixturePatientID, Emergency: true},
+			req: func() Request {
+				req := validRequest()
+				req.Emergency = true
+				req.FacilityID = fixtureFacilityB
+				req.OrganizationID = fixtureOrganizationB
+				req.ReadPurpose = PurposeEmergency
+				return req
+			}(),
 			g: func() Grant {
 				g := validGrant()
 				g.Emergency = EmergencyPolicy{Allowed: true, RequireReview: true}
@@ -130,11 +246,64 @@ func TestEvaluate(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Evaluate(tc.req, tc.g, tc.at)
-			if got != tc.want {
-				t.Fatalf("Evaluate() = %+v, want %+v", got, tc.want)
+			if got.Allowed != tc.want.Allowed || got.Reason != tc.want.Reason {
+				t.Fatalf("Evaluate() = {Allowed %v, Reason %q}, want {Allowed %v, Reason %q}",
+					got.Allowed, got.Reason, tc.want.Allowed, tc.want.Reason)
 			}
 		})
 	}
+}
+
+// TestEvaluateAudited verifies that every decision — allow or deny — carries a
+// complete AuditEvent: the request (actor, subject, facility, organization,
+// purpose, resource category), the evaluation instant, and the outcome.
+func TestEvaluateAudited(t *testing.T) {
+	t.Run("allow records full audit", func(t *testing.T) {
+		got := Evaluate(validRequest(), validGrant(), atNow())
+		if !got.Allowed {
+			t.Fatalf("expected allow, got %+v", got)
+		}
+		want := AuditEvent{
+			At:              atNow(),
+			ActorID:         fixtureActorA,
+			SubjectID:       fixturePatientID,
+			FacilityID:      fixtureFacilityA,
+			OrganizationID:  fixtureOrganizationA,
+			Purpose:         PurposeTreatment,
+			ResourceCategory: ResourceClinicalRecord,
+			Allowed:         true,
+			Reason:          ReasonAllowed,
+		}
+		if got.Audit != want {
+			t.Fatalf("audit = %+v, want %+v", got.Audit, want)
+		}
+	})
+
+	t.Run("deny records full audit", func(t *testing.T) {
+		req := validRequest()
+		req.ActorID = fixtureActorB
+		got := Evaluate(req, validGrant(), atNow())
+		if got.Allowed {
+			t.Fatalf("expected deny, got %+v", got)
+		}
+		if got.Audit.ActorID != fixtureActorB {
+			t.Fatalf("audit actor = %q, want %q", got.Audit.ActorID, fixtureActorB)
+		}
+		if got.Audit.Allowed {
+			t.Fatalf("audit Allowed = true for a denial")
+		}
+		if got.Audit.Reason != ReasonActorNotAuthorized {
+			t.Fatalf("audit reason = %q, want %q", got.Audit.Reason, ReasonActorNotAuthorized)
+		}
+		if got.Audit.SubjectID != fixturePatientID || got.Audit.FacilityID != fixtureFacilityA ||
+			got.Audit.OrganizationID != fixtureOrganizationA || got.Audit.Purpose != PurposeTreatment ||
+			got.Audit.ResourceCategory != ResourceClinicalRecord {
+			t.Fatalf("denial audit lost request context: %+v", got.Audit)
+		}
+		if got.Audit.At != atNow() {
+			t.Fatalf("audit At = %v, want %v", got.Audit.At, atNow())
+		}
+	})
 }
 
 // TestEvaluateDenyByDefault guards the fail-closed invariant: a zero Grant and

@@ -149,6 +149,29 @@ export interface PatientStatus {
 }
 
 /* ------------------------------------------------------------------ *
+ * Patient portal (authenticated, account-scoped)
+ * ------------------------------------------------------------------ */
+
+/**
+ * One appointment in the signed-in citizen's own list.
+ *
+ * Scoped server-side to the authenticated account: the client sends no
+ * identifier and no check-in code, and the rows returned are exactly the ones
+ * the account owns. `appointment_time` is the one timing field this surface
+ * does expose — it is the citizen's own visit, not a correlation target — so
+ * it stays RFC3339 text on the wire, as Go marshals it.
+ */
+export interface MyAppointment {
+	id: string;
+	checkin_code: string;
+	facility_name: string;
+	/** Omitted by the backend when the LEFT JOIN found no service unit. */
+	service_unit_name?: string;
+	appointment_status: AppointmentStatus;
+	appointment_time: string;
+}
+
+/* ------------------------------------------------------------------ *
  * Booking and check-in (unauthenticated)
  * ------------------------------------------------------------------ */
 

@@ -1,0 +1,1 @@
+AUTHENTICATED_PATIENT_OWNERSHIP = BLOCKED — no Supabase Auth env configured (PUBLIC_SUPABASE_URL/ANON_KEY and SIGAP_AUTH_ISSUER/AUDIENCE are commented placeholders; SIGAP_AUTH_MODE=dev); external provisioning required before any verified-login claim.

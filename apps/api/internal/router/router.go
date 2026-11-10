@@ -38,6 +38,7 @@ var Registry = []Route{
 	{Method: http.MethodGet, Path: "/api/v1/public/facilities"},
 	{Method: http.MethodGet, Path: "/api/v1/public/service-units"},
 	{Method: http.MethodGet, Path: "/api/v1/patient/status"},
+	{Method: http.MethodGet, Path: "/api/v1/patient/appointments"},
 	{Method: http.MethodGet, Path: "/api/v1/admin/facilities", RequiredPolicy: "facility.read"},
 	{Method: http.MethodGet, Path: "/api/v1/admin/facilities/", Prefix: true, RequiredPolicy: "facility.read"},
 	{Method: http.MethodPost, Path: "/api/v1/admin/facilities", RequiredPolicy: "facility.manage"},

@@ -131,14 +131,16 @@ ledger that *stores* them is DESIGN-ONLY (no table, column, or migration), so
 | Field | Meaning | In `consent` | Status |
 |---|---|---|---|
 | **Patient** | record subject (synthetic local id) | `Scope.PatientID` | DESIGN-ONLY (no verified identity yet) |
-| **Authorized clinician** | who may act on the grant | *upstream* `identity.Actor` + `auth.AuthorizeFacilityRead` | RUNNING (staff RBAC, facility-scoped) |
+| **Authorized actor** | the single professional allowed to act on the grant (synthetic local id) | `Grant.ActorID` ↔ `Request.ActorID` | DESIGN-ONLY (consent-level binding; still requires the upstream professional-authorization gate) |
 | **Authorized facility** | where the grant applies | `Scope.FacilityID` | DESIGN-ONLY (no `patient_facility` row) |
+| **Authorized organization** | the organization under which the grant applies | `Scope.OrganizationID` | DESIGN-ONLY |
 | **Purpose** | the consented use | `Purpose` / `Request.ReadPurpose` | DESIGN-ONLY (no ledger yet) |
-| **Scope** | subject + facility bounds | `Scope` | DESIGN-ONLY |
+| **Resource category** | which class of record content the grant permits (e.g. `clinical_record`, `medication_history`, `billing`) | `Grant.ResourceCategory` ↔ `Request.ResourceCategory` | DESIGN-ONLY (empty = uncategorized = denies) |
+| **Scope** | subject + facility + organization bounds | `Scope` | DESIGN-ONLY |
 | **Validity period** | active window | `Validity.{NotBefore,NotAfter}` | DESIGN-ONLY |
 | **Revocation** | withdrawn? when? | `Revocation` | DESIGN-ONLY |
 | **Emergency policy** | may break-glass? mandatory review? | `EmergencyPolicy` | DESIGN-ONLY |
-| **Audit event** | immutably records who read what | `audit_events` | RUNNING (append-only hash chain) |
+| **Audit event** | immutably records who read what | `Decision.Audit` (`AuditEvent`) → `audit_events` | RUNNING (append-only hash chain); consent decisions populate it (see §4) |
 | **Patient-visible history** | the patient sees their own access log | *future* read path off `audit_events` | DESIGN-ONLY |
 
 > **The clinician axis is the one RUNNING piece of the consent contract.** Staff
@@ -159,26 +161,37 @@ deny-by-default.
 
 **Decision inputs** (what `Evaluate(req, grant, at)` considers, in order):
 
-1. **Subject/purpose presence** — an empty `grant.Purpose` or an empty
-   `grant.Scope.PatientID` is not a grant; it denies immediately, so a
-   zero/corrupt record can never authorize.
+1. **Subject/purpose/resource presence** — an empty `grant.Purpose`, an empty
+   `grant.Scope.PatientID`, or an empty `grant.ResourceCategory` is not a
+   grant; it denies immediately, so a zero/corrupt record can never authorize.
 2. **Revocation** — a revoked grant denies even under emergency access.
 3. **Validity** — before `NotBefore` denies (not yet active); after `NotAfter`
    denies (expired).
-4. **Emergency** — if `req.Emergency`, break-glass is governed by
+4. **Actor binding** — `req.ActorID` must equal `grant.ActorID`; otherwise
+   deny (`actor not authorized`). This is the *consent-level* actor check, in
+   addition to — never instead of — the upstream professional-authorization
+   gate (`identity.Actor` + `auth.AuthorizeFacilityRead`). Consent therefore
+   never bypasses professional authorization.
+5. **Emergency** — if `req.Emergency`, break-glass is governed by
    `EmergencyPolicy`:
    - `Allowed == false` → deny (`emergency access not permitted by policy`);
-   - `Allowed == true` and the grant is non-revoked and in-window → allow,
-     relaxing the purpose/facility/subject checks a normal read requires (the
-     mandatory-review flag rides to the audit path).
-5. **Normal access** — requires exact match on purpose, facility, and subject;
-   any mismatch denies with a specific reason.
+   - `Allowed == true`, a non-revoked, in-window grant, and a matching
+     resource category → allow, relaxing the purpose/facility/organization/
+     subject checks a normal read requires (the actor binding above still
+     applies, and the mandatory-review flag rides to the audit path).
+6. **Normal access** — requires exact match on resource category, purpose,
+   facility, organization, and subject; any mismatch denies with a specific
+   reason.
 
-**Output** — a `Decision{Allowed bool, Reason string}` whose `Reason` is one of
-the stable constants (`allowed`, `revoked`, `expired`, `grant not yet active`,
-`purpose not consented`, `facility not in scope`, `patient mismatch`,
-`emergency access not permitted by policy`) so audit logs can record a
-structured, comparable reason.
+**Output** — a `Decision{Allowed bool, Reason string, Audit AuditEvent}` whose
+`Reason` is one of the stable constants (`allowed`, `actor not authorized`,
+`revoked`, `expired`, `grant not yet active`, `resource category not
+permitted`, `purpose not consented`, `facility not in scope`, `organization
+not in scope`, `patient mismatch`, `emergency access not permitted by policy`)
+so audit logs can record a structured, comparable reason. Every decision —
+allow or deny — carries the full `AuditEvent` (request as stated: actor,
+subject, facility, organization, purpose, resource category; evaluation
+instant; outcome), so denials are audited exactly like allows.
 
 Because it takes a `Grant` parameter and never resolves storage, the evaluator
 itself stores **no NIK**, performs **no search**, and exposes **no mapping**. It
@@ -192,11 +205,14 @@ is a pure function over synthetic identifiers.
   (`previous_hash` / `event_hash`); authz denials already carry a structured
   reason to it. (`packages/db/migrations/0004_audit_events.sql`,
   `apps/api/internal/audit/`, `apps/api/internal/identity/authz.go`.)
-- **DESIGN-ONLY (PROPOSED).** Emitting a *consent* decision into the audit
-  stream — record the `Request`, the matching `Grant`, and the evaluator's
-  `Reason` — is designed, not wired. Same for break-glass: every emergency allow
-  must produce an audit event flagged for mandatory review
-  (threat model §4.8 "break-glass review").
+- **RUNNING (evaluator).** `Evaluate` already returns a full `AuditEvent`
+  with every decision — allow or deny — capturing the request as stated
+  (actor, subject, facility, organization, purpose, resource category), the
+  evaluation instant, and the outcome (see §3).
+- **DESIGN-ONLY (PROPOSED).** Emitting that *consent* `AuditEvent` into the
+  `audit_events` stream — per the `Grant` evaluated — is designed, not wired.
+  Same for break-glass: every emergency allow must produce an audit event
+  flagged for mandatory review (threat model §4.8 "break-glass review").
 - **DESIGN-ONLY (PROPOSED).** A patient-visible access history is a *read path
   over the existing audit stream scoped to that patient's own records*
   (threat model §4.10). It is not a new store; it is a filtered, patient-scoped

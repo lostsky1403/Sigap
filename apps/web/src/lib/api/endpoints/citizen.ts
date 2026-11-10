@@ -10,12 +10,12 @@ import type { PublicServiceUnit } from '../types/api';
  * scopes these by the session's identity, and the client adds no identifier of
  * its own.
  *
- * There is deliberately no `myAppointments()` here. A previous version called
- * `/api/v1/patient/appointments`, which is not registered in the Go route table
- * and has no SvelteKit proxy — it was answered by the deny-by-default
- * middleware, so it could only ever fail. Listing a citizen's appointments
- * needs an identity to scope them to, and that is a product decision (see
- * design/sigap-v2-capability-matrix.md, F1), not a client helper.
+ * There is deliberately no `myAppointments()` here. The account-scoped list
+ * lives in patient.ts as `listMyAppointments()`: it is identity-keyed (the
+ * session, not a check-in code) and backed by `/api/v1/patient/appointments`,
+ * which is now registered in the Go route table and proxied through
+ * routes/api/v1/patient/appointments. This module stays code-keyed — each call
+ * below proves possession of a code the citizen already holds.
  */
 
 /** Service units available for booking, optionally narrowed to one facility. */

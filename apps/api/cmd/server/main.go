@@ -408,7 +408,13 @@ func main() {
 		// Patient portal: public status lookup (no auth required)
 		patientH := handler.NewPatientHandler(dbPool, patientRL)
 		mux.HandleFunc("/api/v1/patient/status", enableCORS(patientH.PatientStatusLookup))
-		slog.Info("patient portal routes registered", "paths", []string{"/api/v1/patient/status"})
+		// Patient portal: the signed-in citizen's own appointments. Authenticated
+		// by account (identity.Actor.PatientAccountID), NOT by check-in code.
+		mux.HandleFunc("/api/v1/patient/appointments", enableCORS(patientH.ListMyAppointments))
+		slog.Info("patient portal routes registered", "paths", []string{
+			"/api/v1/patient/status",
+			"/api/v1/patient/appointments",
+		})
 
 		// Notification outbox admin routes. Always require dev identity
 		// (the same X-Sigap-Dev-User-ID pattern as other admin routes).

@@ -1,7 +1,8 @@
 -- packages/db/seed/regional_tenancy.sql
 -- [synthetic] Regional tenancy seed: two fictional healthcare organizations,
 -- four fictional facilities, two service units per facility, and the role /
--- permission / assignment rows needed to exercise org- and region-scoped RBAC.
+-- permission / assignment rows needed to exercise org- and region-scoped RBAC,
+-- plus one CITIZEN app_user (internal patient identity; no staff role).
 --
 -- SYNTHETIC ONLY. Every name, facility, organization, region, and user below
 -- is fictional. No real patient data, no real PII, no real NIK/phone. Phone
@@ -148,7 +149,8 @@ VALUES
     ('00000000-0000-0000-0000-00000000c303'::uuid, 'regional-admin@sigap.local', 'Regional Admin (synthetic)', 'active', 'local-regional-admin', NULL),
     ('00000000-0000-0000-0000-00000000c304'::uuid, 'facility-admin-a1@sigap.local', 'Facility Admin A1 (synthetic)', 'active', 'local-facility-admin-a1', NULL),
     ('00000000-0000-0000-0000-00000000c305'::uuid, 'operator-a1@sigap.local', 'Operator A1 (synthetic)', 'active', 'local-operator-a1', NULL),
-    ('00000000-0000-0000-0000-00000000c306'::uuid, 'operator-b1@sigap.local', 'Operator B1 (synthetic)', 'active', 'local-operator-b1', NULL)
+    ('00000000-0000-0000-0000-00000000c306'::uuid, 'operator-b1@sigap.local', 'Operator B1 (synthetic)', 'active', 'local-operator-b1', NULL),
+    ('00000000-0000-0000-0000-00000000c307'::uuid, 'patient-p1@sigap.local', 'Citizen Patient P1 (synthetic)', 'active', 'local-patient-p1', NULL)
 ON CONFLICT (id) DO UPDATE SET
     email = EXCLUDED.email,
     display_name = EXCLUDED.display_name,
@@ -234,6 +236,22 @@ BEGIN
     -- No medical_record.read permission may exist at all.
     IF EXISTS (SELECT 1 FROM permissions WHERE key = 'medical_record.read') THEN
         RAISE EXCEPTION 'regional_tenancy seed verification failed: medical_record.read must not exist';
+    END IF;
+END $$;
+
+-- Self-verification: the citizen app_user must carry NO active staff role
+-- assignment, so identity.Actor.PatientAccountID() resolves it as the owner
+-- of patient appointments (fail-closed for every staff actor).
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM user_roles ur
+        WHERE ur.user_id = '00000000-0000-0000-0000-00000000c307'::uuid
+          AND ur.status = 'active'
+          AND ur.deleted_at IS NULL
+    ) THEN
+        RAISE EXCEPTION 'regional_tenancy seed verification failed: citizen patient must hold no staff role assignment';
     END IF;
 END $$;
 

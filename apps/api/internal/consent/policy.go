@@ -38,15 +38,33 @@ const (
 	PurposeMarketing Purpose = "marketing"
 )
 
-// Scope bounds a grant to a record subject and, when FacilityID is set, to a
-// single facility. Empty fields mean "not scoped on that axis"; the evaluator
-// fails closed for an unpopulated scope rather than widening access.
+// ResourceCategory identifies a class of protected record content that a grant
+// may permit. The zero value is not a category, so an uncategorized grant or
+// request fails closed rather than widening access.
+type ResourceCategory string
+
+const (
+	// ResourceClinicalRecord is the patient's clinical encounter record.
+	ResourceClinicalRecord ResourceCategory = "clinical_record"
+	// ResourceMedicationHistory is the patient's medication history.
+	ResourceMedicationHistory ResourceCategory = "medication_history"
+	// ResourceBilling is administrative/billing record content.
+	ResourceBilling ResourceCategory = "billing"
+)
+
+// Scope bounds a grant to a record subject and, when FacilityID and/or
+// OrganizationID are set, to a single facility and/or organization. Empty
+// fields mean "not scoped on that axis"; the evaluator fails closed for an
+// unpopulated scope rather than widening access.
 type Scope struct {
 	// PatientID selects the record subject. Synthetic local identifier only;
 	// this is never a NIK and never an identity mapping.
 	PatientID string
 	// FacilityID limits the grant to one facility. Empty = not facility-scoped.
 	FacilityID string
+	// OrganizationID limits the grant to one organization. Empty = not
+	// organization-scoped.
+	OrganizationID string
 }
 
 // Validity is the time window during which a grant is active. The zero value
@@ -78,10 +96,20 @@ type EmergencyPolicy struct {
 
 // Grant is one fully-resolved consent record the evaluator reasons over. It is
 // the in-memory projection of the DESIGN-ONLY purpose-bound consent ledger
-// (threat model §4.5): fields map to patient id, purpose, granted at
-// (NotBefore), validity (NotAfter), revocation, and evidence/emergency policy.
+// (threat model §4.5): fields map to patient id, authorized actor, purpose,
+// permitted resource category, granted at (NotBefore), validity (NotAfter),
+// revocation, and evidence/emergency policy.
 type Grant struct {
-	Purpose    Purpose
+	// ActorID names the single professional actor allowed to act on this
+	// grant. Synthetic local identifier only. This is a consent-level binding
+	// *in addition to* the separate upstream professional-authorization gate
+	// (identity.Actor + auth.AuthorizeFacilityRead); it never replaces it.
+	ActorID string
+	// Purpose is the consented purpose of use.
+	Purpose Purpose
+	// ResourceCategory is the class of record content this grant permits.
+	// Empty = uncategorized = denies.
+	ResourceCategory ResourceCategory
 	Scope      Scope
 	Validity   Validity
 	Revocation Revocation
@@ -90,14 +118,22 @@ type Grant struct {
 
 // Request is a single access decision asking "may this actor use this record
 // for this purpose, from this facility, right now?". It contains no identity
-// credential beyond the synthetic local PatientID/FacilityID; the actor
-// (clinician) authorization is a separate, upstream gate (identity.Actor +
-// auth.AuthorizeFacilityRead), not this evaluator's concern.
+// credential beyond the synthetic local identifiers; professional
+// authorization (identity.Actor + auth.AuthorizeFacilityRead) remains a
+// separate, upstream gate that this evaluator never replaces — the actor
+// binding here is a second, consent-level check.
 type Request struct {
+	// ActorID is the professional requesting access.
+	ActorID string
 	// ReadPurpose is the purpose the actor is requesting to use.
 	ReadPurpose Purpose
+	// ResourceCategory is the class of record content being requested. Empty =
+	// uncategorized = denies.
+	ResourceCategory ResourceCategory
 	// FacilityID is the facility the actor is operating from.
 	FacilityID string
+	// OrganizationID is the organization the actor is operating under.
+	OrganizationID string
 	// PatientID is the record subject being read.
 	PatientID string
 	// Emergency reports whether the actor is invoking break-glass access.
@@ -106,82 +142,162 @@ type Request struct {
 
 // Decision is the outcome of an access check. Allowed is never true unless the
 // evaluator positively reaches an allow step; every early return is a denial,
-// so the zero value is deny-with-empty-reason.
+// so the zero value is deny-with-empty-reason. Audit is always populated (even
+// for denials) so every decision is immediately auditable.
 type Decision struct {
 	Allowed bool
 	Reason  string
+	Audit   AuditEvent
+}
+
+// AuditEvent is the structured, immutable record of one access decision. It
+// captures what was requested (actor, subject, facility, organization, purpose,
+// resource category), when, and what was decided. Evaluate always returns one,
+// so denials are audited exactly like allows.
+type AuditEvent struct {
+	// At is the evaluation instant (the `at` argument).
+	At time.Time
+	// ActorID is the requesting actor as stated in the request.
+	ActorID string
+	// SubjectID is the record subject the request targeted.
+	SubjectID string
+	// FacilityID is the facility the request came from.
+	FacilityID string
+	// OrganizationID is the organization the request came from.
+	OrganizationID string
+	// Purpose is the requested purpose.
+	Purpose Purpose
+	// ResourceCategory is the requested record category.
+	ResourceCategory ResourceCategory
+	// Allowed mirrors Decision.Allowed.
+	Allowed bool
+	// Reason is the stable reason constant.
+	Reason string
 }
 
 // Denial reason constants. They are stable strings so callers and audit logs
 // can record a structured, comparable reason rather than a prose message.
 const (
-	ReasonAllowed               = "allowed"
-	ReasonRevoked               = "revoked"
-	ReasonExpired               = "expired"
-	ReasonNotYetActive          = "grant not yet active"
-	ReasonPurposeNotConsented   = "purpose not consented"
-	ReasonFacilityNotInScope    = "facility not in scope"
-	ReasonPatientMismatch       = "patient mismatch"
-	ReasonEmergencyNotPermitted = "emergency access not permitted by policy"
+	ReasonAllowed                = "allowed"
+	ReasonActorNotAuthorized     = "actor not authorized"
+	ReasonRevoked                = "revoked"
+	ReasonExpired                = "expired"
+	ReasonNotYetActive           = "grant not yet active"
+	ReasonResourceNotPermitted   = "resource category not permitted"
+	ReasonPurposeNotConsented    = "purpose not consented"
+	ReasonFacilityNotInScope     = "facility not in scope"
+	ReasonOrganizationNotInScope = "organization not in scope"
+	ReasonPatientMismatch        = "patient mismatch"
+	ReasonEmergencyNotPermitted  = "emergency access not permitted by policy"
 )
 
 // Evaluate decides whether req is authorized by grant at time at.
 //
 // Ordering is deliberate and stable so the first failing condition is the
 // reason returned. Revocation is checked first, then validity, then the
-// modality-specific rules:
+// identity/scope and modality-specific rules:
 //
+//   - The actor must be the one named on the grant. This is a consent-level
+//     binding in addition to — never instead of — the upstream professional
+//     authorization gate (identity.Actor + auth.AuthorizeFacilityRead).
 //   - Emergency access (req.Emergency == true) is governed by policy: it is
 //     denied unless grant.Emergency.Allowed, remains denied when the grant is
 //     revoked or outside its validity window, and — when allowed — relaxes the
-//     purpose/facility/patient scope checks that a normal read enforces while
-//     still requiring a non-revoked, in-window grant. This is what makes
-//     emergency access "subject to policy" rather than an unconditional
-//     backdoor.
-//   - Normal access requires the purpose, facility, and patient scope to
-//     match exactly.
+//     purpose/facility/organization/patient scope checks that a normal read
+//     enforces while still requiring a non-revoked, in-window grant. The
+//     actor and resource-category checks still apply, so break-glass cannot
+//     bypass who is named on the grant or what category of record it covers.
+//     This is what makes emergency access "subject to policy" rather than an
+//     unconditional backdoor.
+//   - Normal access requires the purpose, resource category, facility,
+//     organization, and patient scope to match exactly.
 //
 // Every denial is fail-closed: an empty scope, a zero validity, or a
 // non-matching field returns a specific denial reason, never silence.
+//
+// The returned Decision always carries an AuditEvent capturing the request,
+// the evaluation instant, and the outcome, so both allows and denials are
+// auditable without extra plumbing.
 func Evaluate(req Request, grant Grant, at time.Time) Decision {
-	// A grant with no purpose or no subject is not a grant at all. These guards
-	// come first so an empty/corrupt record can never authorize, even when both
-	// sides are zero-valued and later equality checks would trivially match.
+	audit := AuditEvent{
+		At:              at,
+		ActorID:         req.ActorID,
+		SubjectID:       req.PatientID,
+		FacilityID:      req.FacilityID,
+		OrganizationID:  req.OrganizationID,
+		Purpose:         req.ReadPurpose,
+		ResourceCategory: req.ResourceCategory,
+	}
+	deny := func(reason string) Decision {
+		audit.Allowed = false
+		audit.Reason = reason
+		return Decision{Allowed: false, Reason: reason, Audit: audit}
+	}
+
+	// A grant with no purpose, no subject, or no resource category is not a
+	// grant at all. These guards come first so an empty/corrupt record can
+	// never authorize, even when both sides are zero-valued and later equality
+	// checks would trivially match.
 	if grant.Purpose == "" {
-		return Decision{Allowed: false, Reason: ReasonPurposeNotConsented}
+		return deny(ReasonPurposeNotConsented)
 	}
 	if grant.Scope.PatientID == "" {
-		return Decision{Allowed: false, Reason: ReasonPatientMismatch}
+		return deny(ReasonPatientMismatch)
+	}
+	if grant.ResourceCategory == "" {
+		return deny(ReasonResourceNotPermitted)
 	}
 	if grant.Revocation.Revoked {
-		return Decision{Allowed: false, Reason: ReasonRevoked}
+		return deny(ReasonRevoked)
 	}
 	if at.Before(grant.Validity.NotBefore) {
-		return Decision{Allowed: false, Reason: ReasonNotYetActive}
+		return deny(ReasonNotYetActive)
 	}
 	if !grant.Validity.NotAfter.IsZero() && at.After(grant.Validity.NotAfter) {
-		return Decision{Allowed: false, Reason: ReasonExpired}
+		return deny(ReasonExpired)
+	}
+
+	// The consent-level actor binding: only the professional named on the
+	// grant may act on it. Professional authorization is a separate upstream
+	// gate and is never bypassed by this check.
+	if req.ActorID != grant.ActorID {
+		return deny(ReasonActorNotAuthorized)
 	}
 
 	if req.Emergency {
 		if !grant.Emergency.Allowed {
-			return Decision{Allowed: false, Reason: ReasonEmergencyNotPermitted}
+			return deny(ReasonEmergencyNotPermitted)
 		}
-		// Break-glass is permitted by policy and the underlying grant is
-		// non-revoked and in-window. Purpose/facility/patient scope is relaxed
-		// here because emergency access is antithetical to pre-planned scoping,
-		// but the mandatory-review flag rides along for the audit path.
-		return Decision{Allowed: true, Reason: ReasonAllowed}
+		// The resource-category binding still applies under break-glass: the
+		// grant covers specific categories, and emergency access may not
+		// widen them. Purpose/facility/organization/patient scope is relaxed
+		// because emergency access is antithetical to pre-planned scoping,
+		// but the actor check above has already passed and the mandatory-
+		// review flag rides along for the audit path.
+		if req.ResourceCategory != grant.ResourceCategory {
+			return deny(ReasonResourceNotPermitted)
+		}
+		audit.Allowed = true
+		audit.Reason = ReasonAllowed
+		return Decision{Allowed: true, Reason: ReasonAllowed, Audit: audit}
 	}
 
+	if req.ResourceCategory != grant.ResourceCategory {
+		return deny(ReasonResourceNotPermitted)
+	}
 	if req.ReadPurpose != grant.Purpose {
-		return Decision{Allowed: false, Reason: ReasonPurposeNotConsented}
+		return deny(ReasonPurposeNotConsented)
 	}
 	if req.FacilityID != grant.Scope.FacilityID {
-		return Decision{Allowed: false, Reason: ReasonFacilityNotInScope}
+		return deny(ReasonFacilityNotInScope)
+	}
+	if req.OrganizationID != grant.Scope.OrganizationID {
+		return deny(ReasonOrganizationNotInScope)
 	}
 	if req.PatientID != grant.Scope.PatientID {
-		return Decision{Allowed: false, Reason: ReasonPatientMismatch}
+		return deny(ReasonPatientMismatch)
 	}
-	return Decision{Allowed: true, Reason: ReasonAllowed}
+	audit.Allowed = true
+	audit.Reason = ReasonAllowed
+	return Decision{Allowed: true, Reason: ReasonAllowed, Audit: audit}
 }
