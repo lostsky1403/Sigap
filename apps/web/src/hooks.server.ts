@@ -1,6 +1,6 @@
 import type { Handle } from '@sveltejs/kit';
 import { building } from '$app/environment';
-import { auth, betterAuthConfigured } from '$lib/server/auth.better';
+import { auth, betterAuthConfigured, type AuthSession } from '$lib/server/auth.better';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
 
 // Security headers applied to every response from the SvelteKit web server.
@@ -14,7 +14,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// an auth-store hiccup. So the resolve is guarded: on failure we log once and
 	// leave the session null, which downstream means unauthenticated (safe 401),
 	// never a whole-site 500.
-	let session: Awaited<ReturnType<typeof auth.api.getSession>> | null = null;
+	let session: AuthSession | null = null;
 	if (betterAuthConfigured()) {
 		try {
 			session = await auth.api.getSession({ headers: event.request.headers });

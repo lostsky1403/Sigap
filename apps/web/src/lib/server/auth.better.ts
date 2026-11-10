@@ -34,6 +34,12 @@ export function betterAuthConfigured(): boolean {
 }
 
 export const auth = betterAuth({
+	// BETTER_AUTH_SECRET is required. It is set by the runtime (Run-V22Service.ps1
+	// reads .env before serving); `vite build` evaluates this module during SSR
+	// prerender with no env, so a clearly-marked build placeholder avoids Better
+	// Auth's default-secret error. The placeholder is never used to sign real
+	// sessions — the server always supplies the real secret at runtime.
+	secret: process.env.BETTER_AUTH_SECRET ?? "sigap-build-only-placeholder-secret",
 	baseURL: process.env.BETTER_AUTH_URL || "http://127.0.0.1:5173",
 	database: {
 		dialect: new PostgresDialect({ pool: getPool()! }),

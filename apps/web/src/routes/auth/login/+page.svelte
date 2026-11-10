@@ -45,7 +45,7 @@
 
 <AuthPanel
 	title="Masuk"
-	description="Masuk untuk mengelola fasilitas dan antrean."
+	description="Masuk untuk memantau status kunjungan, janji temu, atau mengelola fasilitas."
 >
 	<AuthForms mode="login" {message} {registered} authConfigured={data?.authConfigured} />
 
