@@ -74,9 +74,9 @@ switch ($Service) {
         $env:SIGAP_ENGINE_ADDR = '127.0.0.1:50051'
         $env:SIGAP_ENV = 'local'
         $env:SIGAP_AUTH_MODE = if ($Jwt) { 'jwt' } else { 'dev' }
-        $env:SIGAP_AUTH_ISSUER = "http://127.0.0.1:54321/auth/v1"
+        $env:SIGAP_AUTH_ISSUER = "http://127.0.0.1:5173"
         $env:SIGAP_AUTH_AUDIENCE = "authenticated"
-        $env:SIGAP_AUTH_JWKS_URL = "http://127.0.0.1:54321/auth/v1/.well-known/jwks.json"
+        $env:SIGAP_AUTH_JWKS_URL = "http://127.0.0.1:5173/api/auth/jwks"
         $env:SIGAP_DEV_IDENTITY = if ($Jwt) { '' } else { 'true' }
         $env:SIGAP_LOCAL_RBAC_TEST_IDENTITY = if ($Jwt) { '' } else { 'true' }
         $env:SIGAP_ENGINE_FALLBACK = 'dev'
@@ -93,10 +93,11 @@ switch ($Service) {
         $env:SIGAP_AUTH_MODE = 'dev'
         $env:SIGAP_DEV_IDENTITY = 'true'
         $env:SIGAP_ENV = 'local'
-        # Supabase client vars (read from .env) so the citizen auth surface is
-        # enabled when a local Supabase stack is running.
-        $env:PUBLIC_SUPABASE_URL = $envValues['PUBLIC_SUPABASE_URL']
-        $env:PUBLIC_SUPABASE_ANON_KEY = $envValues['PUBLIC_SUPABASE_ANON_KEY']
+        # Self-hosted Better Auth (replaces Supabase): the web tier needs the
+        # DB URL (for the pg pool) and the secret to construct the auth instance.
+        $env:SIGAP_DATABASE_URL = $dbUrl
+        $env:BETTER_AUTH_SECRET = $envValues['BETTER_AUTH_SECRET']
+        $env:BETTER_AUTH_URL = if ($envValues['BETTER_AUTH_URL']) { $envValues['BETTER_AUTH_URL'] } else { "http://127.0.0.1:$WebPort" }
         if (-not [string]::IsNullOrWhiteSpace($AdminActor)) {
             $env:SIGAP_LOCAL_E2E_ACTOR = $AdminActor
         }

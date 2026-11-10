@@ -10,34 +10,60 @@
  *   const headers = { 'Content-Type': 'application/json', ...proxyHeaders() };
  */
 
-import type { RequestEvent } from '@sveltejs/kit';
+import type { Cookies, RequestEvent } from '@sveltejs/kit';
 
 /**
- * Minimal view of a Supabase session used by server-side proxies.
- * Mirrors the subset of `@supabase/supabase-js` `Session` we forward.
+ * Copy Better Auth's Set-Cookie headers into SvelteKit cookies, preserving the
+ * security flags (HttpOnly, SameSite, Max-Age, Secure, Path) so the session
+ * cookie is not silently de-hardened when sign-in/sign-out is driven from a
+ * server action instead of Better Auth's own `/api/auth/*` route.
  */
-export interface AuthSessionLike {
-	access_token?: string;
-	user_id?: string;
-	user?: { id?: string; email?: string };
-}
-
-/** True when the public Supabase configuration is present at runtime. */
-export function supabaseConfigured(): boolean {
-	return Boolean(process.env.PUBLIC_SUPABASE_URL && process.env.PUBLIC_SUPABASE_ANON_KEY);
+export function applySetCookie(headers: Headers | null | undefined, cookies: Cookies): void {
+	if (!headers) return;
+	const setCookies =
+		typeof headers.getSetCookie === 'function'
+			? headers.getSetCookie()
+			: ([headers.get('set-cookie')].filter(Boolean) as string[]);
+	for (const raw of setCookies) {
+		const parts = raw.split(';').map((s) => s.trim());
+		const first = parts.shift();
+		if (!first) continue;
+		const eq = first.indexOf('=');
+		if (eq < 0) continue;
+		const name = first.slice(0, eq).trim();
+		const value = first.slice(eq + 1).trim();
+		const opts: Parameters<Cookies['set']>[2] = { path: '/' };
+		for (const p of parts) {
+			const l = p.toLowerCase();
+			if (l === 'httponly') opts.httpOnly = true;
+			else if (l === 'secure') opts.secure = true;
+			else if (l.startsWith('samesite='))
+				opts.sameSite = p.slice('samesite='.length).toLowerCase() as 'lax' | 'strict' | 'none';
+			else if (l.startsWith('max-age=')) {
+				const m = parseInt(p.slice('max-age='.length), 10);
+				if (!Number.isNaN(m)) opts.maxAge = m;
+			} else if (l.startsWith('path=')) opts.path = p.slice('path='.length);
+		}
+		cookies.set(name, value, opts);
+	}
 }
 
 /**
  * Returns headers to attach to upstream API requests from a browser session.
  *
- * When the request carries a valid Supabase session (cookie-based, refreshed
- * in hooks.server.ts), forwards `Authorization: Bearer <access_token>` so the
- * Go API validates the JWT and resolves permissions server-side (DB RBAC).
- * Never trusts token permission claims; the API resolves roles from the DB.
- * Returns empty headers when there is no session or Supabase is unconfigured.
+ * When the request carries a valid Better Auth session (cookie-based, resolved
+ * in hooks.server.ts), forwards `Authorization: Bearer <token>` so the Go API
+ * validates the JWT and resolves permissions server-side (DB RBAC). Never
+ * trusts token permission claims; the API resolves roles from the DB. Returns
+ * empty headers when there is no session.
  */
 export function authHeaders(event: RequestEvent): Record<string, string> {
-	const token = event.locals.session?.access_token;
+	// The Go API expects the ES256 JWT (minted once in hooks.server.ts via
+	// auth.api.getToken and stored on locals.jwt). The session object carries
+	// only Better Auth's opaque session_token — forwarding that would parse-fail
+	// on the API side and 401 every authenticated proxy while the UI looks
+	// signed-in. Forward the JWT specifically.
+	const token = event.locals.jwt;
 	if (!token) {
 		return {};
 	}

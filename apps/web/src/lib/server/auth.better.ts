@@ -54,3 +54,9 @@ export const auth = betterAuth({
 		}),
 	],
 });
+
+/**
+ * The session envelope `locals.session` carries, named here so consumers import
+ * it rather than re-deriving `Awaited<ReturnType<...>>`.
+ */
+export type AuthSession = Awaited<ReturnType<typeof auth.api.getSession>>;
