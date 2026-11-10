@@ -1,12 +1,27 @@
 // Auth form action regression tests — boots the production adapter-node build
-// against a local mock Supabase Auth API and exercises the real form actions
-// (login/register/logout) so a missing default action fails here, not in prod.
+// and exercises the REAL Better Auth (self-hosted `auth` schema) contract, with
+// NO Supabase mock. Two boots drive the two environments that matter:
+//
+//   1. UNCONFIGURED — no BETTER_AUTH_SECRET and no Postgres URL. Asserts the
+//      degraded "auth not configured" wiring: login/register pages render
+//      authConfigured=false (the 'Layanan akun belum diaktifkan' notice), the
+//      login action fails 503 (service unavailable, not a whole-site 500), and
+//      logout still 303s.
+//   2. DB-WIRED PLACEHOLDER — BETTER_AUTH_SECRET set and SIGAP_DATABASE_URL
+//      pointed at a closed localhost port so `locals.auth` is truthy WITHOUT a
+//      live Postgres. Asserts the form-validation short-circuit: empty /
+//      too-short / mismatched credentials return 400 before any DB query.
+//
+// The successful sign-in cookie (`better-auth.session_token`) is intentionally
+// NOT asserted here: producing it requires a live Postgres reachable at
+// SIGAP_DATABASE_URL with the `auth` schema migrated. See the summary note /
+// scripts/verify-better-auth-journey.mjs for the live-DB journey.
+//
 // Usage: node tests/auth-actions.test.js  (builds first if build/ is absent)
 
 import assert from 'node:assert';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,86 +50,55 @@ const freePort = () =>
 		srv.on('error', reject);
 	});
 
-const userPayload = {
-	id: 'test-user-id',
-	aud: 'authenticated',
-	role: 'authenticated',
-	email: 'test@example.com',
-	email_confirmed_at: '2026-01-01T00:00:00Z',
-	phone: '',
-	confirmed_at: '2026-01-01T00:00:00Z',
-	last_sign_in_at: '2026-01-01T00:00:00Z',
-	app_metadata: { provider: 'email', providers: ['email'] },
-	user_metadata: {},
-	identities: [],
-	created_at: '2026-01-01T00:00:00Z',
-	updated_at: '2026-01-01T00:00:00Z'
+// Build a child env with every auth-affecting var scrubbed, then the caller's
+// overrides applied. This guarantees the UNCONFIGURED boot is genuinely absent
+// of a DB/secret even if the parent process exported one.
+const cleanEnv = (overrides) => {
+	const env = { ...process.env };
+	delete env.SIGAP_DATABASE_URL;
+	delete env.DATABASE_URL;
+	delete env.BETTER_AUTH_SECRET;
+	delete env.BETTER_AUTH_URL;
+	delete env.PUBLIC_SUPABASE_URL;
+	delete env.PUBLIC_SUPABASE_ANON_KEY;
+	return { ...env, ...overrides };
 };
 
-const sessionPayload = {
-	access_token: 'test-access-token',
-	token_type: 'bearer',
-	expires_in: 3600,
-	expires_at: 4102444800,
-	refresh_token: 'test-refresh-token',
-	user: userPayload
-};
-
-const state = { tokenMode: 'ok' };
-
-const mockSupabase = (req, res) => {
-	let body = '';
-	req.on('data', (chunk) => (body += chunk));
-	req.on('end', () => {
-		const url = new URL(req.url, 'http://127.0.0.1');
-		const send = (status, payload) => {
-			res.writeHead(status, { 'content-type': 'application/json' });
-			res.end(payload === undefined ? '' : JSON.stringify(payload));
-		};
-		if (req.method === 'POST' && url.pathname === '/auth/v1/token') {
-			if (state.tokenMode === 'fail') {
-				send(400, { error: 'invalid_grant', error_description: 'Invalid credentials' });
-			} else {
-				send(200, sessionPayload);
-			}
-			return;
-		}
-		if (req.method === 'POST' && url.pathname === '/auth/v1/signup') {
-			send(200, sessionPayload);
-			return;
-		}
-		if (req.method === 'POST' && url.pathname === '/auth/v1/logout') {
-			send(204);
-			return;
-		}
-		send(404, { error: 'not found' });
+// Spawn the built server on a fresh port and block until /auth/login answers.
+const startApp = async (overrides) => {
+	const port = await freePort();
+	const webUrl = `http://127.0.0.1:${port}`;
+	const child = spawn(process.execPath, [buildEntry], {
+		cwd: root,
+		env: cleanEnv({
+			PORT: String(port),
+			HOST: '127.0.0.1',
+			ORIGIN: webUrl,
+			...overrides
+		}),
+		stdio: ['ignore', 'ignore', 'inherit']
 	});
+	for (let i = 0; i < 60; i++) {
+		try {
+			const r = await fetch(webUrl + '/auth/login');
+			if (r.status === 200) return { child, webUrl };
+		} catch {
+			// not up yet
+		}
+		await new Promise((r) => setTimeout(r, 500));
+	}
+	child.kill();
+	throw new Error('web server did not become ready: ' + webUrl);
 };
 
-const [mockPort, webPort] = [await freePort(), await freePort()];
-const mockUrl = `http://127.0.0.1:${mockPort}`;
-const webUrl = `http://127.0.0.1:${webPort}`;
+const stopApp = async (child) => {
+	if (child && !child.killed) {
+		child.kill();
+		await new Promise((r) => child.once('exit', r));
+	}
+};
 
-const mock = http.createServer(mockSupabase);
-await new Promise((resolve, reject) => {
-	mock.listen(mockPort, '127.0.0.1', resolve);
-	mock.on('error', reject);
-});
-
-const child = spawn(process.execPath, [buildEntry], {
-	cwd: root,
-	env: {
-		...process.env,
-		PORT: String(webPort),
-		HOST: '127.0.0.1',
-		ORIGIN: webUrl,
-		PUBLIC_SUPABASE_URL: mockUrl,
-		PUBLIC_SUPABASE_ANON_KEY: 'test-anon-key'
-	},
-	stdio: ['ignore', 'ignore', 'inherit']
-});
-
-const post = (route, fields, cookies) =>
+const post = (webUrl, route, fields, cookies) =>
 	fetch(webUrl + route, {
 		method: 'POST',
 		headers: {
@@ -141,81 +125,108 @@ const check = (name, ok, actual) => {
 };
 
 try {
-	let ready = false;
-	for (let i = 0; i < 60; i++) {
-		try {
-			const r = await fetch(webUrl + '/auth/login');
-			if (r.status === 200) {
-				ready = true;
-				break;
-			}
-		} catch {
-			// not up yet
+	// ---- Phase 1: UNCONFIGURED (no Better Auth secret, no Postgres) ----
+	{
+		console.log('Phase 1: auth unconfigured (no BETTER_AUTH_SECRET / no DB)');
+		const { child, webUrl } = await startApp({});
+
+		for (const p of ['/auth/login', '/auth/register']) {
+			const r = await fetch(webUrl + p);
+			const body = await r.text();
+			check(`GET ${p} -> 200`, r.status === 200, r.status);
+			check(
+				`GET ${p} renders authConfigured=false (unavailable notice)`,
+				body.includes('data-testid="auth-unavailable"'),
+				body.slice(0, 80)
+			);
+			check(
+				`GET ${p} shows the "akun belum diaktifkan" copy (authConfigured===false path)`,
+				body.includes('Layanan akun belum diaktifkan'),
+				body.slice(0, 80)
+			);
 		}
-		await new Promise((r) => setTimeout(r, 500));
+
+		// The login action with a store absent must fail 503 (service
+		// unavailable), never a 500 or an errant 404 (missing action).
+		let r = await post(webUrl, '/auth/login', { email: 'a@b.c', password: 'whatever' });
+		check('POST /auth/login unconfigured -> 503', r.status === 503, r.status);
+
+		// Logout is store-independent: it must still 303 and land on /.
+		r = await post(webUrl, '/auth/logout', {});
+		check('POST /auth/logout -> 303', r.status === 303, r.status);
+		check('logout redirects to /', r.headers.get('location') === '/', r.headers.get('location'));
+
+		await stopApp(child);
 	}
-	assert(ready, 'web server should become ready');
 
-	for (const p of ['/auth/login', '/auth/register']) {
-		const r = await fetch(webUrl + p);
-		check(`GET ${p} -> 200`, r.status === 200, r.status);
+	// ---- Phase 2: DB-WIRED placeholder (validation short-circuit, no live DB) --
+	{
+		console.log('Phase 2: DB-wired placeholder (validation short-circuits; no live DB)');
+		const { child, webUrl } = await startApp({
+			BETTER_AUTH_SECRET: 'test-secret-not-used-to-sign-real-sessions',
+			// Closed localhost port: `databaseConfigured()` is true so the action
+			// body runs, but no real Postgres is reachable — the 400 assertions
+			// below must return before any DB query would be issued.
+			SIGAP_DATABASE_URL: 'postgres://sigap:test@127.0.0.1:59999/sigap'
+		});
+
+		// Auth is now "configured" (locals.auth truthy), so the page should NOT
+		// render the unavailable notice.
+		let r = await fetch(webUrl + '/auth/login');
+		let body = await r.text();
+		check(
+			'GET /auth/login with DB-wired placeholder does NOT render unavailable notice',
+			!body.includes('data-testid="auth-unavailable"'),
+			body.slice(0, 80)
+		);
+
+		// Empty email/password: the action validates before signInEmail, so this
+		// must 400 with no DB touch.
+		r = await post(webUrl, '/auth/login', { email: '', password: '' });
+		body = await r.text();
+		check('POST /auth/login empty fields -> 400', r.status === 400, r.status);
+		check('login missing-fields message present', body.includes('wajib diisi'), body.slice(0, 80));
+
+		// Register validation ladder — none of these should reach signUpEmail.
+		r = await post(webUrl, '/auth/register', { email: '', password: '', confirm: '' });
+		body = await r.text();
+		check('POST /auth/register empty fields -> 400', r.status === 400, r.status);
+		check('register missing-fields message present', body.includes('wajib diisi'), body.slice(0, 80));
+
+		r = await post(webUrl, '/auth/register', {
+			email: 'new@example.com',
+			password: 'short',
+			confirm: 'short'
+		});
+		body = await r.text();
+		check('POST /auth/register short password -> 400', r.status === 400, r.status);
+		check('register min-length message present', body.includes('minimal 8 karakter'), body.slice(0, 80));
+
+		r = await post(webUrl, '/auth/register', {
+			email: 'new@example.com',
+			password: 'valid-password',
+			confirm: 'different-password'
+		});
+		body = await r.text();
+		check('POST /auth/register password mismatch -> 400', r.status === 400, r.status);
+		check('register mismatch message present', body.includes('tidak sama'), body.slice(0, 80));
+
+		// Logout still 303s (signOut on a sessionless request is swallowed; the
+		// redirect is unconditional).
+		r = await post(webUrl, '/auth/logout', {});
+		check('POST /auth/logout (DB-wired) -> 303', r.status === 303, r.status);
+
+		await stopApp(child);
 	}
-
-	state.tokenMode = 'ok';
-	let r = await post('/auth/login', { email: '', password: '' });
-	let body = await r.text();
-	check('POST /auth/login missing fields -> 400 (action reached, not 404)', r.status === 400, r.status);
-	check('missing-fields message present', body.includes('wajib diisi'), body.slice(0, 80));
-
-	state.tokenMode = 'fail';
-	r = await post('/auth/login', { email: 'test@example.com', password: 'wrong-password' });
-	body = await r.text();
-	check('POST /auth/login bad credentials -> 401 (not 404)', r.status === 401, r.status);
-	check('auth error message present', body.includes('Email atau kata sandi salah.'), body.slice(0, 80));
-
-	state.tokenMode = 'ok';
-	r = await post('/auth/login', { email: 'test@example.com', password: 'correct-password' });
-	check('POST /auth/login success -> 303 redirect', r.status === 303, r.status);
-	check('login redirects to /', r.headers.get('location') === '/', r.headers.get('location'));
-	const setCookies = typeof r.headers.getSetCookie === 'function' ? r.headers.getSetCookie() : [];
-	const authCookie = setCookies.find((c) => c.split(';')[0].includes('-auth-token'));
-	check('Supabase session cookie set on login', Boolean(authCookie), setCookies.length);
-	const cookieHeader = setCookies.map((c) => c.split(';')[0]).join('; ');
-
-	r = await post('/auth/register', {
-		email: 'new@example.com',
-		password: 'valid-password',
-		confirm: 'valid-password'
-	});
-	check('POST /auth/register -> 303 (action reachable, not 404)', r.status === 303, r.status);
-	check(
-		'register redirects to /auth/login?registered=1',
-		r.headers.get('location') === '/auth/login?registered=1',
-		r.headers.get('location')
-	);
-
-	r = await post('/auth/register', {
-		email: 'new@example.com',
-		password: 'valid-password',
-		confirm: 'different-password'
-	});
-	check('POST /auth/register password mismatch -> 400 (action body ran)', r.status === 400, r.status);
-
-	r = await post('/auth/logout', {}, cookieHeader);
-	check('POST /auth/logout -> 303 (action reachable, not 404)', r.status === 303, r.status);
-	check('logout redirects to /', r.headers.get('location') === '/', r.headers.get('location'));
 
 	if (failed === 0) {
-		console.log('✅ Auth form action regression tests passed');
+		console.log('✅ Auth form action regression tests passed (Better Auth contract)');
 	} else {
 		console.log(`❌ ${failed} auth action check(s) failed`);
 	}
 } catch (err) {
 	failed++;
 	console.error('❌ Auth action test failure:', err.message);
-} finally {
-	child.kill();
-	mock.close();
 }
 
 process.exit(failed === 0 ? 0 : 1);
