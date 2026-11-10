@@ -41,6 +41,17 @@ const SETTLE = { timeout: 15_000 };
 /** Any UUID. Used to prove a machine identifier never reaches the UI. */
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
+/**
+ * The populated-directory assertions (two orgs + per-org overview) only hold
+ * for actors whose `organization.read` scope covers BOTH seeded orgs: the
+ * super admin (the dev-preview default) and the regional admin. Under the
+ * isolated per-actor matrix, org-A/org-B/zero-scope actors legitimately see a
+ * shorter/empty directory, so those two cases skip for them.
+ */
+const ACTOR = (process.env.SIGAP_E2E_ACTOR ?? '').trim();
+const DIRECTORY_POPULATED =
+	ACTOR === '' || ACTOR === 'local-global-super-admin' || ACTOR === 'local-regional-admin';
+
 /** The four scoped aggregate labels on the per-organization overview. */
 const COUNT_LABELS = ['Fasilitas', 'Unit layanan', 'Antrean aktif', 'Janji temu'] as const;
 
@@ -87,6 +98,7 @@ test.describe('admin organization isolation', () => {
 	test.use({ viewport: DESKTOP });
 
 	test('the directory renders the two seeded organizations, nothing else', async ({ page }) => {
+		test.skip(!DIRECTORY_POPULATED, 'populated directory: super/regional admin only');
 		await gotoAdmin(page, '/admin/organizations');
 
 		// The frozen h1. This is the page's own heading, not a string lifted from
@@ -124,6 +136,7 @@ test.describe('admin organization isolation', () => {
 	test('every row deep-links to a scoped overview with the four count labels', async ({
 		page
 	}) => {
+		test.skip(!DIRECTORY_POPULATED, 'populated overview deep-links: super/regional admin only');
 		const orgs = await fetchScopedOrgs(page);
 
 		for (const org of orgs) {
