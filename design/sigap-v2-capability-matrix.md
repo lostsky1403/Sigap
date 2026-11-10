@@ -143,3 +143,11 @@ Four gaps that matter more than the feature count suggests:
 **Verified:** `go test ./...` (7 cross-tenant isolation tests + scenarios A/F + 10 WIB boundary tests, with DB); `cargo test --lib`; `vitest`; `svelte-check`. Live: super-admin sees 2 orgs, org-admin sees 1, forged org → 404.
 
 **DESIGN-ONLY (not running):** SATUSEHAT/FHIR integration, patient identity/consent ledger, blockchain options B/C, cross-region discovery beyond one region. See `regional-architecture-rfc.md`, `satusehat-interoperability-plan.md`, `regional-interop-contracts.md`, `migration-ledger-reconciliation.md`.
+
+### Acceptance hardening (this milestone)
+
+- **Patient identity foundation — IMPLEMENTED (design + code).** `internal/consent` deny-by-default evaluator (`Evaluate(request, grant, at)` → revocation > validity > emergency > exact-match). Four identity layers separated in `patient-identity-consent.md` (auth / verified-patient / facility-local record / future SATUSEHAT); no NIK stored, no public identity endpoint.
+- **Migration baseline — VERIFIED / PROPOSED.** `migration-baseline-recovery-plan.md`: checksum backfill procedure, duplicate-CREATE-TYPE gate, ledger-only rollback; owner-gated (not executed).
+- **SATUSEHAT sandbox — NOT_CONNECTED.** `satusehat-sandbox-readiness.md`: PoC prerequisites BLOCKED on partner registration/OAuth creds/fasyankes DFO.
+- **Regional visual QA — OPEN.** 16 screenshots (1440/768/390/360 × organizations/detail/overview/queues) + geometry (no page overflow, no undersized targets); vision inspection not performed.
+- **E2E — RUN.** `admin-org-isolation.spec.ts` 4/4; `admin-read.spec.ts` 27 passed / 2 dev-data-failed (empty-today board → no "Menunggu" band; not a regression). Per-actor scoping (org-A/B/regional) proven via Go tenant tests + direct API, not browser-switchable.
