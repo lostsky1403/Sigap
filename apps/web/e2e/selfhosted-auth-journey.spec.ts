@@ -334,7 +334,9 @@ test.describe('self-hosted auth journey (real Better Auth sessions)', () => {
 			'exactly one card still reads Terjadwal'
 		).toHaveLength(1);
 		expect(snapshotAfter.filter((card) => card.status === CANCELLED)).toHaveLength(1);
-		expect(cardByFacility(page, chosenFacility).locator('.sigap-badge')).toHaveText(CANCELLED);
+		await expect(cardByFacility(page, chosenFacility).locator('.sigap-badge')).toHaveText(
+			CANCELLED
+		);
 
 		// Hand the live appointment to the isolation case, which tries to cancel it
 		// as a different citizen.
