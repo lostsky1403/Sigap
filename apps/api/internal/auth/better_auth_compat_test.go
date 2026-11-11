@@ -216,3 +216,115 @@ func TestJWTProvider_BetterAuthES256_Negative(t *testing.T) {
 		assertFailClosed(t, s)
 	})
 }
+
+// TestJWTProvider_BetterAuthJWKSRotation pins the rotated-key contract from the
+// verifier side (design/auth-gap-matrix-v2.md, item 4):
+//
+//   - a NEW kid that appears in the JWKS is picked up immediately — the cache
+//     has no negative caching (an unknown kid forces a refresh), so the
+//     verifier does not wait out the 15-min TTL for a rotation;
+//   - a retiring key whose kid is re-minted with new material is refused as
+//     soon as the cache has refreshed onto the new material, bounding the
+//     acceptance window of the old key by the 15-minute cache TTL.
+func TestJWTProvider_BetterAuthJWKSRotation(t *testing.T) {
+	oldKey := testECKey(t)
+	newKey := testECKey(t)
+
+	jwksSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The JWKS answers with only the CURRENT (new) key once the flag is set —
+		// the operator-managed state after a rotation.
+		keys := []map[string]any{testECJWK(t, &newKey.PublicKey, betterAuthKid)}
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": keys})
+	}))
+	defer jwksSrv.Close()
+
+	p := NewJWTProvider(AuthConfig{
+		Mode:     AuthModeJWT,
+		Issuer:   betterAuthIssuer,
+		Audience: betterAuthAudience,
+		JWKSURL:  jwksSrv.URL,
+	})
+
+	// 1. A token signed with the OLD key material (same kid) must be refused:
+	// the provider's first lookup is an unknown-kid miss, so it refreshes
+	// immediately and installs the NEW key before the old one is ever cached.
+	oldToken := signES256Token(t, betterAuthClaims(), oldKey, betterAuthKid)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+oldToken)
+
+	actor, err := p.Authenticate(req)
+	if err != nil {
+		t.Fatalf("authenticate(old material): %v", err)
+	}
+	if !actor.IsZero() {
+		t.Fatalf("old key material accepted after rotation; actor = %+v", actor)
+	}
+
+	// 2. The NEW key material (same kid) is accepted immediately.
+	newToken := signES256Token(t, betterAuthClaims(), newKey, betterAuthKid)
+	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req2.Header.Set("Authorization", "Bearer "+newToken)
+
+	actor2, err := p.Authenticate(req2)
+	if err != nil {
+		t.Fatalf("authenticate(new material): %v", err)
+	}
+	if actor2.IsZero() {
+		t.Fatal("new key material was not accepted after rotation")
+	}
+	if actor2.UserID != betterAuthSub {
+		t.Errorf("subject = %q, want %q", actor2.UserID, betterAuthSub)
+	}
+
+	// 3. The cache TTL constant is the contract the immediate-refresh path is
+	// measured against: retired keys are served for at most this bound.
+	if p.jwks == nil || p.jwks.ttl != 15*time.Minute {
+		t.Fatalf("jwks cache ttl = %v, want 15m (the retired-key acceptance bound)", p.jwks.ttl)
+	}
+}
+
+// testECJWK builds the JWKS entry for a public key, in the exact shape the
+// better-auth /api/auth/jwks endpoint emits.
+func testECJWK(t *testing.T, pub *ecdsa.PublicKey, kid string) map[string]any {
+	t.Helper()
+	return map[string]any{
+		"kty": "EC",
+		"kid": kid,
+		"use": "sig",
+		"alg": "ES256",
+		"crv": "P-256",
+		"x":   base64.RawURLEncoding.EncodeToString(pub.X.Bytes()),
+		"y":   base64.RawURLEncoding.EncodeToString(pub.Y.Bytes()),
+	}
+}
+
+// TestJWTProvider_BetterAuthES256_Expired pins the "exp is enforced with zero
+// leeway" half of the short-lived-JWT policy: a token in the past fails even
+// one second after exp, and no jwt.WithLeeway is used anywhere in the provider's
+// verification path.
+func TestJWTProvider_BetterAuthES256_Expired(t *testing.T) {
+	key := testECKey(t)
+	jwksSrv := testECJWKSServer(t, &key.PublicKey, betterAuthKid)
+	defer jwksSrv.Close()
+
+	p := NewJWTProvider(AuthConfig{
+		Mode:     AuthModeJWT,
+		Issuer:   betterAuthIssuer,
+		Audience: betterAuthAudience,
+		JWKSURL:  jwksSrv.URL,
+	})
+
+	c := betterAuthClaims()
+	c.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-time.Second))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+signES256Token(t, c, key, betterAuthKid))
+
+	actor, err := p.Authenticate(req)
+	if err != nil {
+		t.Fatalf("authenticate(expired): %v", err)
+	}
+	if !actor.IsZero() {
+		t.Fatalf("expired token accepted; actor = %+v", actor)
+	}
+}

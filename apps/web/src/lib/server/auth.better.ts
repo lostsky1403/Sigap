@@ -328,6 +328,16 @@ export const auth = betterAuth({
 		jwt({
 			jwks: {
 				keyPairConfig: { alg: "ES256" },
+				// Explicit rotation so the ES256 signing key cannot live forever:
+				// 30 days (2592000 s). After this interval better-auth 1.7.20
+				// stops signing with the key, and the JWKS display keeps serving it
+				// for the default 30-day grace period so in-flight tokens still
+				// verify. The Go verifier's JWKS cache
+				// (apps/api/internal/auth/jwt_provider.go) holds a fetched key for
+				// at most 15 minutes, so a deliberately retired key is accepted for
+				// ≤15 min after the JWKS drops it — the bound documented in
+				// design/auth-gap-matrix-v2.md item 4.
+				rotationInterval: 60 * 60 * 24 * 30,
 			},
 			jwt: {
 				// `iss` / `aud` are read by the Go JWT trust boundary, which verifies
