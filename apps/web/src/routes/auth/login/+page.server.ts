@@ -25,11 +25,13 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const email = String(data.get('email') ?? '').trim();
 		const password = String(data.get('password') ?? '');
-		// Same-origin return-to path only: a value that starts with `/` but not
-		// `//` (absolute/protocol-relative URLs are rejected so an attacker cannot
-		// bounce a user to an external origin).
+		// Same-origin return-to path only: must start with `/`, must not start with
+		// `//` (protocol-relative), and must not contain a backslash — browsers
+		// normalise `/\evil.com` to `//evil.com`, so a backslash is an off-site
+		// bounce (CWE-601) that the two checks above do not catch.
 		const rawTo = String(data.get('redirectTo') ?? '').trim();
-		const redirectTo = rawTo.startsWith('/') && !rawTo.startsWith('//') ? rawTo : '/';
+		const redirectTo =
+			rawTo.startsWith('/') && !rawTo.startsWith('//') && !rawTo.includes('\\') ? rawTo : '/';
 		if (!email || !password) {
 			return fail(400, { message: 'Email dan kata sandi wajib diisi.' });
 		}
