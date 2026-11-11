@@ -165,11 +165,17 @@ being allowed in local.
 ## 6. Residual risk
 
 **F1 — the loopback guard does not cover the local test selector.** (medium,
-narrow)
+narrow) — **FIXED**
 `GuardDevNetworkBinding` (`envguard.go:111-142`) tests `SIGAP_DEV_IDENTITY`,
 `SIGAP_AUTH_MODE` and `SIGAP_ENGINE_FALLBACK`. It does not test
 `SIGAP_LOCAL_RBAC_TEST_IDENTITY`. Pinned by
 `TestImpersonationLoopbackGuardRequiresLoopbackForDevCapabilities`.
+
+**CLOSED:** `SIGAP_LOCAL_RBAC_TEST_IDENTITY=true` is now part of `devActive` in
+`GuardDevNetworkBinding`, so a local process with the selector armed and
+`SIGAP_API_HOST=0.0.0.0` is refused at boot; the pinning test now asserts
+`wantErr: true` for that case. The historical text below records the exposure as
+measured before the fix.
 
 Consequence: a process with `SIGAP_ENV=local` and
 `SIGAP_LOCAL_RBAC_TEST_IDENTITY=true` binding `SIGAP_API_HOST=0.0.0.0` starts

@@ -859,14 +859,12 @@ func TestImpersonationLoopbackGuardRequiresLoopbackForDevCapabilities(t *testing
 			wantErr: true,
 		},
 		{
-			// Documents the gap above: the local RBAC test selector is not in
-			// the loopback guard's list, so this configuration is accepted
-			// today. It must not be read as "this is fine" — it is the
-			// behaviour that was measured.
-			name:    "local + local RBAC test identity + all interfaces (NOT covered by the guard today)",
+			// F1 FIXED: the local RBAC test selector is now part of the loopback
+			// guard, so publishing it on all interfaces is refused at boot.
+			name:    "local + local RBAC test identity + all interfaces (REJECTED)",
 			flags:   map[string]string{localRBACIdentityEnv: "true"},
 			host:    "0.0.0.0",
-			wantErr: false,
+			wantErr: true,
 		},
 	}
 
