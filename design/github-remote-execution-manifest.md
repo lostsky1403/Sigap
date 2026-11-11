@@ -105,6 +105,14 @@ Remote inventory: **125 `ls-remote` lines = 120 refs** (23 branches + 93 `refs/p
 ## 10. Exact operations proposed (after authorization)
 
 ```
+# 0. BACKUP LAST MILE (mandatory): re-capture the local snapshot at the tip you are
+#    about to push, then re-run the drill. Doc-only commits land after the previous
+#    capture, so this step is not optional:
+git bundle create %USERPROFILE%\sigap-attribution-backup\sigap-local-all-final.bundle --all
+git bundle verify %USERPROFILE%\sigap-attribution-backup\sigap-local-all-final.bundle
+#    then repeat the §7 drill (clone from the bundle, fsck, compare refs) and APPEND
+#    its new sha256 to SHA256SUMS.txt.
+
 # 1. STOP: confirm each remote tip still equals the §3 "expected old tip"; abort on ANY difference.
 git ls-remote origin refs/heads/... refs/tags/...
 
