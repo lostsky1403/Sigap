@@ -45,11 +45,20 @@ try {
 			// Distinguish a genuine credential rejection (401) from an auth-store
 			// outage: telling someone their password is wrong while the service is
 			// down is the exact misdiagnosis this action must avoid.
-			let status: unknown;
-			if (err && typeof err === 'object' && 'status' in err) {
-				status = err.status;
+			//
+			// better-call's APIError carries the HTTP status NAME in `status`
+			// ("UNAUTHORIZED") and the numeric code in `statusCode`; comparing
+			// `status` to 401 never matched, so a wrong password was reported as an
+			// outage. Accept either shape.
+			let credentialRejection = false;
+			if (err && typeof err === 'object') {
+				if ('statusCode' in err && err.statusCode === 401) {
+					credentialRejection = true;
+				} else if ('status' in err && (err.status === 401 || err.status === 'UNAUTHORIZED')) {
+					credentialRejection = true;
+				}
 			}
-			if (status === 401) {
+			if (credentialRejection) {
 				return fail(401, { message: 'Email atau kata sandi salah.' });
 			}
 			return fail(503, { message: 'Layanan sedang bermasalah. Silakan coba lagi.' });
