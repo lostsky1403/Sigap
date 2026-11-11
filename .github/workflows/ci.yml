@@ -140,7 +140,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # fetch-depth: 0 is REQUIRED. The migration-inventory guard diffs
-      # `origin/main..HEAD` and `6d7f940..HEAD`. At the default fetch-depth of 1
+      # `origin/main..HEAD` and `d7705f09..HEAD`. At the default fetch-depth of 1
       # on a pull_request event, actions/checkout resolves the PR merge ref and
       # never creates refs/remotes/origin/main, so the guard's base ref is absent
       # and it fails — red on every PR while passing locally. The guard now names

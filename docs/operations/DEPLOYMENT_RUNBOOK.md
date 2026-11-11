@@ -38,7 +38,7 @@ collapsed into one:
 |---|---|---|
 | **A** | The redesign adds **exactly one** migration, `0011_notification_outbox_phone_constraints.sql`, and edits **no** historical migration. | `git diff --name-only origin/main..HEAD -- packages/db/migrations` → exactly `packages/db/migrations/0011_notification_outbox_phone_constraints.sql`. |
 | **B** | The release's migration directory therefore **differs from current `origin/main`** by that one added file. | `git diff --stat origin/main..HEAD -- packages/db/migrations` → `0011_notification_outbox_phone_constraints.sql \| N ++++`, **non-empty by design**. |
-| **C** | The diff against the **historical anchor `6d7f940` is NON-EMPTY**. | `git diff --stat 6d7f940..HEAD -- packages/db/migrations` → `0006_notifications.sql \| 4 ++--` plus `0011_notification_outbox_phone_constraints.sql`. `origin/main` commit `9d4e68e` **hardened** an already-shipped migration (added a formatted-phone predicate to two `notification_outbox` CHECK constraints). It reached this branch through the `origin/main` merge (`6c0ac82`), **not** through redesign work. |
+| **C** | The diff against the **historical anchor `d7705f09` is NON-EMPTY**. | `git diff --stat d7705f09..HEAD -- packages/db/migrations` → `0006_notifications.sql \| 4 ++--` plus `0011_notification_outbox_phone_constraints.sql`. `origin/main` commit `9d4e68e` **hardened** an already-shipped migration (added a formatted-phone predicate to two `notification_outbox` CHECK constraints). It reached this branch through the `origin/main` merge (`6c0ac82`), **not** through redesign work. |
 | **D** | **Production DB constraints DO NOT match the hardened source migration.** | **CONFIRMED** by the 2026-10-09 inspection (§12): classification `OLDER_WEAKER_CONSTRAINTS`. Production applied `0006` before `9d4e68e` and keeps the weak predicate. |
 | **E** | The migrator is **version-only**: it does **not** reapply a modified, already-applied migration. | `apps/api/internal/migrate/migrate.go` selects pending work by version number and never re-reads the stored checksum; production `SIGAP_AUTO_MIGRATE` is empty. |
 | **F** | Production DB schema compatibility is **`OLDER_WEAKER_CONSTRAINTS`**, remediated forward by `0011` (§12). | The inspection result, and `scripts/ops/test-migration-0011.sh`. |
@@ -50,7 +50,7 @@ Consequences that follow directly:
   whether that migration has been *applied* to the database (**D**/**F**).
 - **Do not edit `0006` again.** It is shipped. The correction is the **new, forward-only**
   migration `0011` (§12).
-- A **non-empty** `6d7f940..HEAD` diff (**C**) is *expected and classified*: an inherited
+- A **non-empty** `d7705f09..HEAD` diff (**C**) is *expected and classified*: an inherited
   upstream security hardening plus the redesign's own `0011`. Record it; do not abort on it,
   and do not "fix" it by reverting the hardening.
 - **`0011` is a database change, so a rollback is no longer purely image-based.** Rolling the
@@ -344,24 +344,24 @@ security fixes.**
 These hashes are retained to explain how the branch was built. They are **not** deployable
 rollback targets for production.
 
-**Anchor:** `6d7f940` — *"deploy: make production origin env-driven and route Sigap through
+**Anchor:** `d7705f09` — *"deploy: make production origin env-driven and route Sigap through
 the shared edge (#83)"*. It is the **merge-base with `origin/main`** and an **ancestor** of
 it, but it is now **5 commits behind** it:
 
 ```
-git merge-base --is-ancestor 6d7f940 origin/main    # exit 0  — 6d7f940 IS an ancestor
-git rev-list --count 6d7f940..origin/main           # 5
-git merge-base --is-ancestor 87f218e 6d7f940        # exit 1  — the security fixes are NOT in it
+git merge-base --is-ancestor d7705f09 origin/main    # exit 0  — d7705f09 IS an ancestor
+git rev-list --count d7705f09..origin/main           # 5
+git merge-base --is-ancestor 87f218e d7705f09        # exit 1  — the security fixes are NOT in it
 ```
 
-So the operative fact is **not** that `6d7f940` is unrelated to `origin/main` — it is that
+So the operative fact is **not** that `d7705f09` is unrelated to `origin/main` — it is that
 the five commits above it (`920e967`, `6f567f8`, `9d4e68e`, `96c2570`, `87f218e`) are
 **descendants** of it. Checking it out therefore **loses those five commits**, four of which
 are security fixes. That is why it is not a production rollback target.
 
 | Phase | Phase end commit | What changed | Historical pointer (commit BEFORE the phase) | Expected behaviour if that pointer were deployed | DB restore? |
 |---|---|---|---|---|---|
-| 3B0 | `6c80ba5` (GATE 1 record) | backend authorization (facility-scoped read/mutation provenance), proxy repairs, local seed identities | `6d7f940` | previous API **and** web images; P0 privilege-escalation path reopens — **prefer a forward fix** | **No** |
+| 3B0 | `6c80ba5` (GATE 1 record) | backend authorization (facility-scoped read/mutation provenance), proxy repairs, local seed identities | `d7705f09` | previous API **and** web images; P0 privilege-escalation path reopens — **prefer a forward fix** | **No** |
 | 3B0.2 | `16268de` | read-authorization closure (docs + follow-up fixes) | `6c80ba5` | as 3B0 | **No** |
 | 3B1 | `5b25e2c` | shared UI primitives + test tooling; additive, **web-only** | `16268de` | previous web image; no user-visible change | **No** |
 | 3B2 | `80e285d` | citizen shell, Beranda, `/faskes` catalog, facility-type filter (`apps/api` touched → rebuild api **and** web) | `5b25e2c` | api **and** web images; `/faskes` disappears; Beranda reverts to the demo dashboard | **No** |
@@ -394,7 +394,7 @@ the resulting rollback-compatibility question, which is **BLOCKING and UNKNOWN**
 ```
 git diff --name-only origin/main..HEAD -- packages/db/migrations  # 0011_...sql  (one added file)
 git diff --stat origin/main..HEAD     -- packages/db/migrations  # non-empty by design (§1 B)
-git diff --stat 6d7f940..HEAD         -- packages/db/migrations  # 0006 (4 ++--) + 0011
+git diff --stat d7705f09..HEAD         -- packages/db/migrations  # 0006 (4 ++--) + 0011
 ```
 
 Neither diff proves anything about the **deployed database** — that is §12. The inspection has
@@ -425,7 +425,7 @@ that is a regression in the fix and must be corrected **forward**.
 | `SIGAP_DEPLOY_DIR` | operator-selected compose directory | unset / not a compose repo |
 
 If **any** value is unavailable: **ABORT before `build`/`up`.** The historical anchor
-`6d7f940` is **not** the current production version and is **not** a valid rollback target
+`d7705f09` is **not** the current production version and is **not** a valid rollback target
 (§6a/§6b).
 
 > **Identity contract.** A running image's revision is **never** inferred from the host Git
@@ -1130,7 +1130,7 @@ Neither option is authorized or executed. Both remain blocked on the **rollback 
 - the migration inventory differs from the declared release set: `git diff --name-only
   origin/main..HEAD -- packages/db/migrations` must be **exactly**
   `packages/db/migrations/0011_notification_outbox_phone_constraints.sql` (§1 **A**). Any
-  *other* added or edited migration aborts. **A non-empty `6d7f940..HEAD` migration diff does
+  *other* added or edited migration aborts. **A non-empty `d7705f09..HEAD` migration diff does
   NOT abort** — it is the expected inherited upstream hardening (§1 **C**) plus `0011`. The
   abort is for a migration outside the declared inventory;
 - the DB schema inspection has not run, or classified `UNKNOWN` / `UNEXPECTED_DRIFT` (§12);
@@ -1528,7 +1528,7 @@ the release source.
 reapply it, so the edit would be inert.
 
 **Do not infer the class from the repository diff.** A non-empty
-`git diff 6d7f940..HEAD -- packages/db/migrations` (§1 **C**) says only what the *source*
+`git diff d7705f09..HEAD -- packages/db/migrations` (§1 **C**) says only what the *source*
 contains, not what the *database* has.
 
 ### 12b. Prepared remediation — `0011_notification_outbox_phone_constraints.sql`

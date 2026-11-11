@@ -2,7 +2,7 @@
 # test-guard-shallow-clone.sh — negative tests for the CI ops-guards checkout.
 #
 # The defect this pins: `scripts/ops/test-production-deploy-guards.sh` diffs
-# `origin/main..HEAD` and `6d7f940..HEAD`. At actions/checkout's default
+# `origin/main..HEAD` and `d7705f09..HEAD`. At actions/checkout's default
 # fetch-depth of 1 on a `pull_request` event, refs/remotes/origin/main is never
 # created, so `git diff origin/main..HEAD` writes to stderr (discarded) and
 # prints nothing. The guard then failed with a MISLEADING

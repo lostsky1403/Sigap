@@ -178,7 +178,7 @@ CL=docs/operations/RELEASE_CHECKLIST.md
 
 # 11. A NON-EMPTY historical migration diff must NOT be treated as a blocker, and the
 #     release migration inventory must be EXACT.
-#     Negative control: the old runbook claimed "migration diff empty" for 6d7f940..HEAD
+#     Negative control: the old runbook claimed "migration diff empty" for d7705f09..HEAD
 #     (it is NOT empty). It also claimed origin/main..HEAD was empty; that stopped being
 #     true when the redesign shipped its own 0011, so the guard now pins the EXACT set
 #     instead of asserting emptiness — a stronger check, since an unexpected extra
@@ -191,7 +191,7 @@ EXPECTED_MIGRATION_DIFF="packages/db/migrations/0011_notification_outbox_phone_c
 # then writes to stderr (discarded) and prints nothing, so the guard used to fail
 # with a misleading "diff is EMPTY" on every PR. Both refs are therefore verified
 # first, and the message names the fix.
-for ref in origin/main 6d7f940; do
+for ref in origin/main d7705f09; do
   if ! git rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1; then
     bad "base ref '$ref' is not available in this checkout — the migration inventory cannot be verified"
     printf '  fix: fetch full history (actions/checkout with fetch-depth: 0), or fetch the ref explicitly\n'
@@ -208,7 +208,7 @@ if [ "${missing_base_ref:-0}" -eq 0 ]; then
     printf '  on the default branch (HEAD == origin/main); no release migration inventory to verify\n'
     ok
   else
-    hist=$(git diff --stat 6d7f940..HEAD -- packages/db/migrations)
+    hist=$(git diff --stat d7705f09..HEAD -- packages/db/migrations)
     maindiff=$(git diff --name-only origin/main..HEAD -- packages/db/migrations)
     if [ -z "$maindiff" ]; then
       bad "origin/main..HEAD migration diff is EMPTY — expected the redesign's 0011 migration"
@@ -216,11 +216,11 @@ if [ "${missing_base_ref:-0}" -eq 0 ]; then
       bad "release migration inventory differs from the declared set"
       printf '  got : %s\n  want: %s\n' "$(printf '%s' "$maindiff" | tr '\n' ' ')" "$EXPECTED_MIGRATION_DIFF"
     elif [ -z "$hist" ]; then
-      bad "6d7f940..HEAD migration diff is empty — expected the inherited 0006 hardening plus 0011"
-    elif grep -q "6d7f940..HEAD" "$RB" && grep -qi "non-empty by design" "$RB"; then
+      bad "d7705f09..HEAD migration diff is empty — expected the inherited 0006 hardening plus 0011"
+    elif grep -q "d7705f09..HEAD" "$RB" && grep -qi "non-empty by design" "$RB"; then
       ok
     else
-      bad "runbook does not document the non-empty 6d7f940..HEAD diff as expected/classified"
+      bad "runbook does not document the non-empty d7705f09..HEAD diff as expected/classified"
     fi
   fi
 fi
@@ -331,7 +331,7 @@ else
   ok
 fi
 
-# 19. The §6b anchor must not claim 6d7f940 is NOT an ancestor of origin/main (it is).
+# 19. The §6b anchor must not claim d7705f09 is NOT an ancestor of origin/main (it is).
 if grep -q 'not an ancestor of' "$RB"; then
   bad "runbook still claims a commit is 'not an ancestor' (verify with git merge-base --is-ancestor)"
 else
