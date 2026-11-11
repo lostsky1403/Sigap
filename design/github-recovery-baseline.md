@@ -383,7 +383,7 @@ Live API check (`api-tags-live.json`): all four present with the same peeled com
 | 80 | 2026-09-08T05:40:55Z | `6d8ee63b47c7` | `072b1b1a082a` | fix(api): connect idle gRPC conn in readyz probe instead of flapping 503 |
 | 81 | 2026-09-08T06:21:25Z | `1e0cfdba9388` | `fb5204a712e0` | fix(deploy): bind prod backend ports to loopback only |
 | 82 | 2026-09-08T17:19:54Z | `ba2cb4cb67e9` | `919c8a797b01` | fix(web): wire auth forms to default actions so POST reaches handlers not 404 |
-| 83 | 2026-09-12T08:25:24Z | `6d7f940b10be` | `739032986635` | deploy: env-driven production origin + shared edge routing |
+| 83 | 2026-09-12T08:25:24Z | `6d7f940b10be` | `d7705f09acd6cedfd6417bed7a13da83e6a4bb6f` | deploy: env-driven production origin + shared edge routing |
 | 84 | 2026-10-12T02:45:27Z | `d7404374734a` | `d7404374734a` | ci: validate SIGAP-88 isolated QA on GitHub-hosted runners |
 | 85 | 2026-10-13T05:04:59Z | `3ba17b5f1243` | `73955d694ec7` | ci(ops): make the R2 validation gate reachable, and stop three tests passing vacuously |
 | 86 | 2026-10-13T04:31:03Z | `5864945b93f1` | `092b1ed86486` | fix(ci): remediate the two pre-existing CI failures — a silently-skipping guard test and 13 govulncheck findings |
@@ -616,3 +616,4 @@ Not covered by this baseline: GitHub-side server objects/reflogs (not observable
 * Restore drill: bare + clone runs 13:42–13:44; outputs in `evidence/drill-bare-refs.txt` and this document.
 * API: `api-pulls-stateall-live.json`, `api-tags-live.json`, `api-commit-verification.json` (+ live re-samples), `api-ratelimit-live.json` (50/60 remaining at end of run).
 
+**CORRECTION (applied during the approved execution):** row 83 previously recorded `739032986635`, taken from the LOCAL-universe rehearsal (main `87f218ef`). The REMOTE rewrite maps `6d7f940b10be -> d7705f09acd6cedfd6417bed7a13da83e6a4bb6f`; that value is now referenced by `scripts/ops/test-production-deploy-guards.sh`, `test-guard-shallow-clone.sh`, `docs/operations/DEPLOYMENT_RUNBOOK.md`, `RELEASE_CHECKLIST.md` and the `ci.yml` comment, pushed to main as `a5c0e34`. Using the local value would have left ops-guards red on a fresh checkout.
