@@ -169,3 +169,19 @@ Four gaps that matter more than the feature count suggests:
 - **Identity mapping.** `identity-mapping.md` + `backfill-auth-subjects.mjs` (13 synthetic accounts, explicit by `app_users.id`, never email auto-link; rollback = restore subjects + re-point Go env).
 - **SUPABASE_DECOUPLING=PARTIAL.** Web session authority fully decoupled; `$lib/supabase/*` + `@supabase/*` deps retained as the §8 rollback reference (not an authority). `PUBLIC_SUPABASE_*` removed from the web tier env.
 - **NOT done (Wave 2):** admin sign-in through the SAME Better Auth system (dev/test selector still serves admin in local), the multi-step browser journey + screenshots, e2e spec re-wording away from "Supabase", and visual QA.
+
+### Auth hardening + GitHub attribution (this milestone)
+
+**Auth (running code):**
+- **Production-build unblocker FIXED.** Better Auth's OTel loader (`@better-auth/core/dist/instrumentation/api.mjs`) dynamically imports `@opentelemetry/api`; the package was absent, so the bundler resolved the specifier to an unrelated 4-line chunk and **every `/api/auth/*` endpoint 500'd in the built app** (dev worked). `@opentelemetry/api@^1.9.0` added as a dependency; the built app now serves sign-up/sign-in/session/JWT.
+- **`sveltekitCookies` moved LAST** in the plugin array (Better Auth's required order for cookie interception) — caught by the new session-lifecycle contract test.
+- **Session lifecycle — IMPLEMENTED.** Explicit `session:{expiresIn 7d, updateAge 1d, freshAge 1h}` + `user.changePassword`; `design/session-lifecycle-policy.md` states the token-lifetime + authorization-freshness policy (a revoked session is not a revoked JWT; the JWT TTL is the max revocation delay; DB RBAC re-resolves every request).
+- **IMPERSONATION PRODUCTION-BLOCKED — PASS + F1 FIXED.** 19 negative tests (`envguard_test.go`, `impersonation_negative_test.go`) prove every selector is inert outside `SIGAP_ENV=local`, forged `X-Sigap-*` headers grant nothing, and token permission claims are ignored. F1 (the loopback guard not covering `SIGAP_LOCAL_RBAC_TEST_IDENTITY`) is closed in `envguard.go`.
+- **SUPABASE_RUNTIME_DECOUPLING=COMPLETE.** 49/49 touchpoints re-classified: **zero** runtime Supabase dependency; only 5 rollback-only legacy adapter files + unused deps remain.
+- **DEPLOYMENT_READINESS=NOT_READY** (1 READY / 9 GAP): top gaps = `BETTER_AUTH_SECRET` not wired into compose/.env.example, Better Auth sign-in/out not reaching the Go audit table, `trustedOrigins` unset, no JWKS `rotationInterval`, no least-privilege DB role.
+
+**GitHub attribution (read-only audit + prevention):**
+- **ROOT CAUSE (verified):** the visible Contributors **graph** shows 4 entries — `lostsky1403` (334), `codebuff-team` (11), `traeagent` (11), `claude` (6) — because `Co-authored-by:` trailers whose e-mails map to real GitHub accounts are attributed *on top of* the author. The repo side-panel `/contributors` still shows only `lostsky1403`.
+- **32 trailer commits** are ancestors of public `main`; stripping them is a **message-only history rewrite** that would mint new SHAs for **296 of 342 main commits** (45 branch refs, 16 PRs). **No remote history was touched.** `.mailmap`, collaborator removal and branch renames cannot change the graph.
+- **PREVENTION=IMPLEMENTED + VERIFIED.** `.githooks/commit-msg` (strips known AI trailers, preserves human co-authors — verified end-to-end), `scripts/check-attribution.mjs` (exit 1 on AI / 0 clean — verified on real commits `030447b5` and `a22313f5`), a CI `Commit Attribution Check` job (new commits only), `AGENTS.md`, and `docs/operations/git-attribution.md`.
+- **CONTRIBUTOR_DISPLAY_CLEANED=NO** (the 3 historical graph entries remain until an owner-approved rewrite). **OWNER_APPROVAL_REQUIRED=YES** (Option 2 only).
