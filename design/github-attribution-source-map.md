@@ -413,7 +413,7 @@ Model: the graph counts **non-merge commits on the default branch**; a commit wh
 
 ## 3. The exact commits and trailer lines (all 32)
 
-32 commits carry a trailer line (line-anchored, case-insensitive `^[ ]*co-authored-by:`). All 32 are ancestors of public `main` @ `b96c5174`. Data: `origin-main-commits-live-2026-11-11.tsv` + `attribution-32-by-identity.json` + `api-commit-verification.json` (per-commit GitHub verification payloads).
+32 commits carry a trailer line (line-anchored, case-insensitive `^[ ]*co-authored-by:`). All 32 are ancestors of public `main` @ `b96c5174`. Data: `origin-main-records-2026-11-11.txt` (the NUL-delimited extraction; 342 records) + `origin-main-commits-live-2026-11-11.tsv` + `attribution-32-by-identity.json` + `api-commit-verification.json` (per-commit GitHub verification payloads).
 
 ### 3.1 `codebuff-team` — 11 commits — trailer line (verbatim per commit): `Co-authored-by: Codebuff <noreply@codebuff.com>`
 
@@ -512,8 +512,8 @@ curl -s https://api.github.com/repos/lostsky1403/Sigap/contributors?anon=1&per_p
 curl -s https://api.github.com/repos/lostsky1403/Sigap/stats/contributors                 # 4 entries
 curl -s https://github.com/lostsky1403/Sigap/graphs/contributors-data                       # 4 entries (page payload)
 # trailer census on the frozen tip
-git -C F:/sigap-design-v2 log origin/main --format='%H %ad %s' --date=short --grep='' \
-  | head   # full variant in evidence/origin-main-commits-live-2026-11-11.tsv
+git -C F:/sigap-design-v2 log origin/main --format='RECORD%x00%H%x00%s%x00%ae%x00%ce%x00%G?%x00%(trailers:key=Co-authored-by,valueonly)' \
+  > evidence/origin-main-records-2026-11-11.txt   # 342 records; 32 carry a trailer
 # per-commit verification
 curl -s https://api.github.com/repos/lostsky1403/Sigap/commits/<sha>   # .commit.verification.verified
 ```
@@ -565,6 +565,7 @@ curl -s https://api.github.com/repos/lostsky1403/Sigap/commits/<sha>   # .commit
 | `mirror-refs-live-2026-11-11.txt` | 7580 B |
 | `origin-main-commits-live-2026-11-11.tsv` | 63661 B |
 | `origin-main-dates.txt` | 17784 B |
+| `origin-main-records-2026-11-11.txt` | 66055 B |
 | `prs-inventory-2026-11-11.tsv` | 10268 B |
 | `refs-live-2026-11-11.txt` | 7943 B |
 | `refs-local-foreachref-2026-11-11.txt` | 4482 B |

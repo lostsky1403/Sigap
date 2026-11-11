@@ -87,7 +87,7 @@ Remote inventory: **125 `ls-remote` lines = 120 refs** (23 branches + 93 `refs/p
 
 ## 8. Development work is preserved (confirmed)
 
-**107 unpublished commits** exist across 4 local feature branches + a stash. In the rehearsal each was rebased onto the rewritten ancestry **with its file tree byte-preserved**:
+**107 DISTINCT unpublished commits** exist across 4 local feature branches + a stash (the branches overlap — 104 + 72 + 49 + 18 + 2 = 245 branch-commits, deduplicated to 107 distinct). In the rehearsal each was rebased onto the rewritten ancestry **with its file tree byte-preserved**:
 
 | branch | old tip | new tip | unpublished | rebase |
 |---|---|---|---|---|
@@ -113,9 +113,12 @@ git ls-remote origin refs/heads/... refs/tags/...
 git push --force-with-lease=refs/heads/main:b96c5174ff1cd8e05012e7c27f82ba5a258b3bf3 origin <rewritten-main>:refs/heads/main
 #    ... one such command per branch in §3, each pinned to its expected old tip.
 
-# 3. Tags: delete-and-recreate only the 3 moving tags (annotated objects recreated by the rewrite):
-git push origin :refs/tags/demo-handoff-green-2026-07-10   # etc.
-git push origin <new-tag-object>:refs/tags/demo-handoff-green-2026-07-10
+# 3. Tags: replace only the 3 moving annotated tags — one force-with-lease each,
+#    pinned to the OLD tag OBJECT sha (no delete-then-create window):
+git push --force-with-lease=refs/tags/demo-handoff-green-2026-07-10:62754ed8 origin 0a94a3f3:refs/tags/demo-handoff-green-2026-07-10
+git push --force-with-lease=refs/tags/frontend-demo-green-2026-07-10:001057de origin 090819c4:refs/tags/frontend-demo-green-2026-07-10
+git push --force-with-lease=refs/tags/local-demo-green-2026-07-09:fc0df5c8 origin c147729f:refs/tags/local-demo-green-2026-07-09
+#    (v1.0.0-beta is untouched — it keeps its tag object and target.)
 
 # 4. NEVER: git push --force --mirror ; NEVER touch refs/pull/* ; NEVER delete a branch.
 ```
