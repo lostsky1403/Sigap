@@ -27,7 +27,7 @@ Two different GitHub endpoints disagree, and the difference is the whole story:
 
 ## 2. Root cause (one sentence)
 
-The AI identities are visible because **`Co-authored-by:` trailers whose e-mail addresses map to real GitHub accounts** are attributed as contributor-graph entries; the 31 affected commits are ancestors of public `main`, and **31 of them are the sole reason those three accounts appear.**
+The AI identities are visible because **`Co-authored-by:` trailers whose e-mail addresses map to real GitHub accounts** are attributed as contributor-graph entries; **32 trailer commits** (28 with a trailer that resolves to a real account, 4 inert) are ancestors of public `main`, and those 28 are the sole reason the three accounts appear.
 
 No other mechanism is involved: commit **authors** are all `lostsky1403 <…@users.noreply.github.com>`; there is no collaborator/bot account, no PR-author attribution, and no `.mailmap`. The trailers come from the AI **tools** (Trae, Codebuff, Claude Code) that generated the commit messages — the local and global git identity are already correct (`lostsky1403`), and there is no commit template, hook, or agent-config rule that adds them.
 
@@ -39,7 +39,7 @@ No other mechanism is involved: commit **authors** are all `lostsky1403 <…@use
 | `.mailmap` | no | **no** — GitHub does not consult `.mailmap`; it is a client-side `git shortlog` feature | useless here |
 | Remove a collaborator / block an account | no | **no** | useless here |
 | Rename a branch | no | **no** | useless here |
-| Rewrite the 31 commit **messages** (strip only the trailer lines) | **yes** (new SHAs) | **yes** — after GitHub recomputes the stats | the only method that can |
+| Rewrite the 32 commit **messages** (strip only the trailer lines) | **yes** (new SHAs) | **yes** — after GitHub recomputes the stats | the only method that can |
 
 ## 4. Options
 
@@ -51,8 +51,8 @@ No other mechanism is involved: commit **authors** are all `lostsky1403 <…@use
 - **Owner approval:** none required.
 
 ### OPTION 2 — TARGETED HISTORICAL CORRECTION (message rewrite)
-- Rewrite **only the `Co-authored-by:` trailer lines** in the 31 affected commit messages. Author, committer, dates and file trees are preserved byte-for-byte.
-- **Blast radius (measured):** the 31 trailer commits **plus every descendant** receive new SHAs. `origin/main` @ `b96c5174` is an ancestor of the local branch, which is **84 commits ahead**; so a rewrite mints new SHAs for ~115 commits and requires a **force-push of `main`**.
+- Rewrite **only the `Co-authored-by:` trailer lines** in the 32 affected commit messages. Author, committer, dates and file trees are preserved byte-for-byte.
+- **Blast radius (MEASURED in `github-attribution-rewrite-rehearsal.md`, not estimated):** a message-only strip in a mirror clone rewrote **438 of 484 reachable commits** (46 keep their SHA); exactly **32 messages were altered** and the other 406 changed only because an ancestor did. On the public branch, `origin/main` @ `b96c5174` (342 commits) becomes `dbadcd3d` — **296 changed / 46 preserved**. Across the 52 recorded refs: **22/22 local branches and 3/4 tags move** (only `refs/tags/v1.0.0-beta` keeps its SHA) and **all 93 `refs/pull/*` PR refs reference changed SHAs**. Trees are byte-identical for **484/484** mapped pairs, with 0 author/committer/date mismatches. A **force-push of `main`** is required, and in-repo `refs/backup/*` are clobbered by filter-repo — the recovery manifest (mirror clone + bundle + 52-SHA refs list) must live **outside** the repository.
 - **Visible outcome:** once GitHub recomputes the contributors stats, the three accounts should drop from the graph. **Not instantaneous** — GitHub caches contributor stats; expect a delay (minutes to ~24 h) and verify via `/stats/contributors`.
 - **Risks:** published-history rewrite; every cloned/forked repo diverges; open PRs against old SHAs need retargeting; CI/deploy refs pinned to old SHAs break; signed commits lose their signature; a naive `git pull` can reintroduce the old objects.
 - **Owner approval:** **REQUIRED**, explicitly, before any remote operation.
