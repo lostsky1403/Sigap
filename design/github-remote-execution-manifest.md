@@ -81,9 +81,8 @@ Remote inventory: **125 `ls-remote` lines = 120 refs** (23 branches + 93 `refs/p
 ## 7. Backup + restoration verification
 
 - Location (durable, outside both checkouts, user-profile ACL): **`%USERPROFILE%\sigap-attribution-backup\`**
-  `sigap-mirror.git` (120/120 refs identical to live), `sigap-local-all.bundle` (19,961,112 B), `refs-manifest-2026-11-11.txt`, `SHA256SUMS.txt`, `evidence\` (52 captures).
-- **Verified:** `sha256sum -c SHA256SUMS.txt` → 55/55 OK; mirror `git fsck --full` exit 0; **restore drill re-run at the durable path → 52/52 refs SHA-identical, fsck exit 0 — PASS**.
-- Bundle sha256 `eff7eaf5a523df80cbd2f2db4081000eaa0dd156b3da1ddb0ab8218a478274d9`; mirror pack sha256 `fb46b1fb465c7ab3b6ade7a85974f644fb2379cc8bbc126da0363b25d3f5826e`.
+  `sigap-mirror.git` (REMOTE snapshot, 120/120 refs identical to live), `sigap-local-all-final.bundle` (**LOCAL snapshot refreshed at the final tip `e2a9aa6`**, 20,059,737 B, sha256 `cfee369502c087b9281ed4266c17c6703658a76ca23ec27e98433d06c7476c4c`) plus the earlier `sigap-local-all.bundle` (`a5423ec`, 19,961,112 B) kept as a second copy, `refs-manifest-2026-11-11.txt`, `SHA256SUMS.txt`, `evidence\` (52 captures).
+- **Verified:** `sha256sum -c SHA256SUMS.txt` → all OK; mirror `git fsck --full` exit 0; **restore drill from the REFRESHED bundle → 52/52 refs, fsck exit 0, HEAD = `e2a9aa6d5f251607b98e9117fa3cf793e41ea4a9` (the current tip) — PASS**. The remote has not moved, so the mirror needed no refresh.
 
 ## 8. Development work is preserved (confirmed)
 
