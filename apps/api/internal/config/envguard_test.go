@@ -481,6 +481,66 @@ func TestGuardTLS(t *testing.T) {
 		})
 	}
 }
+// TestGuardTLS_CaseInsensitiveConfirmedAndUntrustedSpellings pins the
+// fail-closed boundary of GuardTLS: "true"/"TRUE"/"True" confirm TLS
+// termination (EqualFold), while every other spelling — including
+// whitespace-padded or numeric — is REFUSED, so a deployment that typo'd the
+// flag cannot silently bind plain HTTP.
+func TestGuardTLS_CaseInsensitiveConfirmedAndUntrustedSpellings(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{name: "true confirms", value: "true", wantErr: false},
+		{name: "TRUE confirms (EqualFold)", value: "TRUE", wantErr: false},
+		{name: "True confirms", value: "True", wantErr: false},
+		{name: "unset refuses", value: "", wantErr: true},
+		{name: "false refuses", value: "false", wantErr: true},
+		{name: "whitespace-padded refuses (fail-closed)", value: " true ", wantErr: true},
+		{name: "1 refuses (boolean flags are exact)", value: "1", wantErr: true},
+		{name: "yes refuses", value: "yes", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SIGAP_ENV", "production")
+			t.Setenv("SIGAP_TLS_TERMINATED", tt.value)
+			err := GuardTLS()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("GuardTLS() with SIGAP_TLS_TERMINATED=%q error = %v, wantErr %v", tt.value, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestGuardDevCapabilities_AuthEnvelopeIsNotYetGuarded documents the prod-config
+// GAP (design/auth-gap-matrix-v2.md, item 10) from the Go side: the auth env
+// variables the web tier reads (BETTER_AUTH_SECRET, BETTER_AUTH_URL,
+// SIGAP_AUTH_ISSUER, SIGAP_AUTH_AUDIENCE) are NOT registered dev/prod guards,
+// so GuardDevCapabilities / GuardTLS deliberately say nothing about them. This
+// is a tripwire, not a permission: if a future guard ever starts refusing one of
+// these, this test fails and the matrix + preflight script must be updated in
+// the same change (mirrors the existing web-side-e2e-actor tripwire).
+func TestGuardDevCapabilities_AuthEnvelopeIsNotYetGuarded(t *testing.T) {
+	var vars = []string{
+		"BETTER_AUTH_SECRET",
+		"BETTER_AUTH_URL",
+		"SIGAP_AUTH_ISSUER",
+		"SIGAP_AUTH_AUDIENCE",
+	}
+	for _, env := range []string{"production", "staging", "local"} {
+		for _, v := range vars {
+			t.Run(env+"/"+v, func(t *testing.T) {
+				clearGuardedEnv(t)
+				t.Setenv("SIGAP_ENV", env)
+				t.Setenv(v, "assertion-probe-value")
+				if err := GuardDevCapabilities(); err != nil {
+					t.Errorf("GuardDevCapabilities() = %v with SIGAP_ENV=%q and %s set; the Go boot guard does not read auth/web variables, so if it now refuses this one, update this test and the gap matrix (design/auth-gap-matrix-v2.md item 10)", err, env, v)
+				}
+			})
+		}
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Per-flag refusal matrix
