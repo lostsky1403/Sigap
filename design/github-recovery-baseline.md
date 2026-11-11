@@ -12,6 +12,8 @@
 | item | value |
 |---|---|
 | Remote ref lines (`git ls-remote origin`) | **125** = HEAD + **120 refs** (23 branches + 93 `refs/pull/*` + 4 tags) + 4 peeled-tag lines |
+
+**Arithmetic reconciled:** 125 lines - 1 `HEAD` - 4 peeled `^{}` lines = the **120 refs**. Nothing is unaccounted, and the mirror holds exactly those 120 (0 missing, 0 extra, 0 SHA mismatch).
 | Mirror (`git clone --mirror`, 13:10) | **120 refs, identical to live** (0 missing, 0 extra, 0 SHA mismatch); `git fsck --full` exit 0; HEAD = `refs/heads/main` @ `b96c5174` |
 | Mirror size / pack SHA-256 | dir **2,812,734 B**; pack `pack-60b7646838d365ab6739733d505ccb42a60d95bb.pack` **2,654,156 B**, sha256 `fb46b1fb465c7ab3b6ade7a85974f644fb2379cc8bbc126da0363b25d3f5826e` |
 | Bundle (`git bundle create --all`, 13:10) | **19,961,112 B**, sha256 `eff7eaf5a523df80cbd2f2db4081000eaa0dd156b3da1ddb0ab8218a478274d9`; 54 advertised entries = **52 refs** + `HEAD` + `main-worktree/HEAD`; `git bundle verify` → **"The bundle records a complete history."** |
