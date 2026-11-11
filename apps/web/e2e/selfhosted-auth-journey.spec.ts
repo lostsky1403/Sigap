@@ -29,7 +29,12 @@ import type { AdminOrganization } from '../src/lib/api/endpoints/admin';
  * fixture appointments):
  *
  *   node apps/web/scripts/prepare-auth-e2e.mjs --apply
- *   SIGAP_E2E_BASE_URL=http://127.0.0.1:5173 npx playwright test e2e/selfhosted-auth-journey.spec.ts
+ *   SIGAP_E2E_SELFHOSTED_AUTH=1 SIGAP_E2E_BASE_URL=http://127.0.0.1:5173 \
+ *     npx playwright test e2e/selfhosted-auth-journey.spec.ts
+ *
+ * (`SIGAP_E2E_SELFHOSTED_AUTH=1` is the opt-in the describe block below checks;
+ * without it these cases skip, so the rest of the suite — which runs against a
+ * disposable, seed-only cluster — never depends on a prepared database.)
  *
  * Procedure of record: design/selfhosted-auth-e2e.md.
  *
@@ -60,32 +65,18 @@ const SETTLE = { timeout: 15_000 };
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
 /**
- * The reviewed fixtures. Same table as `scripts/prepare-auth-e2e.mjs` — the
- * script writes `app_users.subject` for these `appUserId`s and signs these
- * emails in, so the two files have to agree about which login is which actor.
- * `appUserId` is carried here only to make the report traceable to a row.
+ * The reviewed fixtures: the four logins the spec types into the form.
+ *
+ * Same table as `scripts/prepare-auth-e2e.mjs` — that script signs these emails
+ * in to prove the credentials work and writes each one's Better Auth id into the
+ * `app_users` row the reviewer paired it with, so the two files have to agree
+ * about which login is which actor.
  */
 const FIXTURE = {
-	patientA: {
-		email: 'smoke@sigap.local',
-		password: 'Smoke12345!',
-		appUserId: 'a62e05c1-43b4-4b58-a51d-6950e5ae742e'
-	},
-	patientB: {
-		email: 'smoke-b@sigap.local',
-		password: 'SmokeB12345!',
-		appUserId: '949eae99-edfd-4c5b-ab13-2a9bc7b7a482'
-	},
-	orgAdminA: {
-		email: 'org-a-admin@sigap.local',
-		password: 'Admin12345!',
-		appUserId: '00000000-0000-0000-0000-00000000c301'
-	},
-	superAdmin: {
-		email: 'global-admin@sigap.local',
-		password: 'Admin12345!',
-		appUserId: '00000000-0000-0000-0000-00000000d990'
-	}
+	patientA: { email: 'smoke@sigap.local', password: 'Smoke12345!' },
+	patientB: { email: 'smoke-b@sigap.local', password: 'SmokeB12345!' },
+	orgAdminA: { email: 'org-a-admin@sigap.local', password: 'Admin12345!' },
+	superAdmin: { email: 'global-admin@sigap.local', password: 'Admin12345!' }
 } as const;
 
 /** The two seeded organizations (`packages/db/seed/regional_tenancy.sql`). */

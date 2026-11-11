@@ -206,11 +206,11 @@ $ node scripts/prepare-auth-e2e.mjs --from-env-file --apply
 $ SIGAP_E2E_SELFHOSTED_AUTH=1 SIGAP_E2E_BASE_URL=http://127.0.0.1:5173 \
       npx playwright test e2e/selfhosted-auth-journey.spec.ts --retries=0
   Running 4 tests using 1 worker
-  ok 1  patient A: two cards, and cancelling one through the UI leaves one scheduled  (4.8s)
-  ok 2  patient B: an empty list, and A's appointment cannot be cancelled             (4.5s)
-  ok 3  org A admin: exactly one organization, and a sibling org id is refused        (4.8s)
-  ok 4  super admin: the directory holds both organizations                           (5.2s)
-  4 passed (20.3s)
+  ok 1  patient A: two cards, and cancelling one through the UI leaves one scheduled  (7.1s)
+  ok 2  patient B: an empty list, and A's appointment cannot be cancelled             (4.9s)
+  ok 3  org A admin: exactly one organization, and a sibling org id is refused        (4.4s)
+  ok 4  super admin: the directory holds both organizations                           (4.9s)
+  4 passed (22.6s)
 
 # the companion run, without the opt-in — what the rest of the suite sees
 $ SIGAP_E2E_BASE_URL=http://127.0.0.1:5173 npx playwright test \
@@ -245,6 +245,6 @@ redundant.
 | the login form is replaced by `Masuk belum tersedia di lingkungan ini.` | the web process has no `SIGAP_DATABASE_URL`/`BETTER_AUTH_SECRET` — it was not started by the preview script |
 | A's list is empty (`Belum ada janji temu`) although the DB holds two rows | `app_users.subject` for the A row does not match the Better Auth `sub` (unprepared, or the seeds rewrote the dev subject after the prep script ran) |
 | every admin page shows `Silakan masuk` while signed in | the JWT path resolved no actor: the staff `subject` is still `local-*` |
-| the cancel step finds no `Batalkan` button | the spec already ran once since the last `--apply`; re-run the prep script |
+| the A case fails with `the prepared fixture must hold exactly two scheduled appointments` | the run consumed its own fixture (the previous run's cancellation is real) — re-run the prep script; it is also the message you get when a second actor cancelled the fixture concurrently |
 | `ERR_CONNECTION_REFUSED` at `page.goto` | `SIGAP_E2E_BASE_URL` was not set to `http://127.0.0.1:5173` (the default 4173 is a different server) |
 | the first run after a fresh `vite dev` boot times out in `waitForHydration` (`data-sigap-hydrated` never becomes `true`) | Vite's dependency re-optimization: the first browser request triggers `optimized dependencies changed. reloading` (`.local-preview/web.log`) and the in-flight document never hydrates. Open `/auth/login` in a browser once after starting the preview, or simply re-run the spec — the module graph is warm from then on. Not a spec or app defect: a bare `chromium.launch()` load of the same URL hydrates in ~2 s immediately afterwards |
