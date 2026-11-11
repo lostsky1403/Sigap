@@ -135,6 +135,55 @@ jobs:
       - name: SvelteKit check
         run: pnpm --filter sigap-web run check
 
+  attribution:
+    name: Commit Attribution Check
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 because the check resolves a commit RANGE. A shallow
+      # checkout cannot see the base commit, and the check reports that as exit 2
+      # (missing prerequisite) rather than passing vacuously — see the note on
+      # exit codes below.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Scans ONLY the commits this push or pull request adds, so the AI
+      # co-author trailers already sitting in this repository's history can never
+      # fail the job. The agent tools (Trae, Codebuff, Claude Code, OMP) stamp
+      # those trailers into the message body when they create a commit;
+      # `.githooks/commit-msg` strips them locally, and this is the gate that does
+      # not depend on a developer having installed that hook.
+      # See docs/operations/git-attribution.md.
+      - name: Scan new commits for AI co-author trailers
+        run: |
+          # On pull_request, github.sha is the merge commit, so base..merge is
+          # exactly the set of commits the PR adds (and needs no access to the
+          # fork's refs). On push, github.event.before is the previous tip.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          head="${{ github.sha }}"
+          # A new branch pushes with `before` set to forty zeros, which is not a
+          # revision; scan just the pushed tip in that case.
+          case "$base" in
+            0000000000000000000000000000000000000000) base="";;
+          esac
+          if [ -n "$base" ]; then
+            node scripts/check-attribution.mjs --range "$base..$head"
+          else
+            node scripts/check-attribution.mjs --range "$head^!"
+          fi
+        # Exit 1 is the gate: an AI trailer was found. Exit 2 means the range
+        # could not be resolved, which the fetch-depth above exists to prevent —
+        # it must fail loudly, never be read as a clean skip.
+
   ops-guards:
     name: Deployment Safety Guards
     runs-on: ubuntu-latest
