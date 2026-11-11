@@ -2,7 +2,7 @@
 
 **Captured:** 2026-11-11, mirror + bundle created 13:10 +07:00; verification, drill and live re-checks 13:35–13:55 +07:00 (worktree tip re-checked at 13:51: still `a5423ec`).
 **Repository:** `https://github.com/lostsky1403/Sigap.git` (public, default `main` @ `b96c5174ff1cd8e05012e7c27f82ba5a258b3bf3`, 0 forks, 0 releases).
-**Backup location:** `%TEMP%\sigap-attribution-backup\` — `sigap-mirror.git` (remote snapshot), `sigap-local-all.bundle` (local snapshot), `refs-manifest-2026-11-11.txt`, `SHA256SUMS.txt`, `evidence\` (raw API/HTML/doc captures).
+**Backup location:** `%USERPROFILE%\sigap-attribution-backup\` — **DURABLE, outside both checkouts** (user-profile ACL; not subject to TEMP purging). Originally written to `%TEMP%\sigap-attribution-backup\`; relocated and **re-verified at the durable path**: `sha256sum -c SHA256SUMS.txt` → **55/55 OK**, mirror `git fsck --full` exit 0, and the restore drill re-run there from the bundle → **52/52 refs, fsck exit 0 — PASS**. Contents: `sigap-mirror.git` (remote snapshot, 120/120 refs identical to live), `sigap-local-all.bundle` (local snapshot, 19,961,112 B), `refs-manifest-2026-11-11.txt`, `SHA256SUMS.txt`, `evidence\` (52 raw captures).
 **Status:** mirror == live remote (0 ref drift, fsck clean); bundle self-contained (git-verified); restore drill **PASS — 52/52 refs SHA-identical**; nothing was pushed, fetched-to, or rewritten on the remote.
 
 ---
@@ -562,7 +562,7 @@ The four branch counts overlap (they share ancestors beyond the remote); the dis
 3. **GitHub keeps unreachable objects.** A force-push does not delete the old commits server-side; any clone of any age, or GitHub Support, can still reach them. Treat the old SHAs as retained until GitHub GC runs, which is not observable from here.
 4. **`refs/pull/*` retention.** 93 PR refs keep pre-squash heads fetchable; `git fetch origin refs/pull/*:refs/pull/*` into an active clone re-materialises old objects (not old `main`, but the same objects graph). Do not configure such a refspec.
 5. **Stale clones / reflogs / CI caches.** Local reflogs keep old SHAs addressable (~90 days by default); CI jobs pinned to old SHAs, deployment records, image tags and documentation links can re-deploy or re-push them. These were NOT inventoried here (out of scope) — audit them before any cutover.
-6. **The stash and `refs/trae_merge/*`.** They live in the shared repo and were snapshotted; pushing them (e.g. `git push --mirror`) would publish old-Shaped refs. Push heads/tags explicitly, never `--mirror`, after a rewrite.
+6. **The stash and `refs/trae_merge/*`.** They live in the shared repo and were snapshotted; pushing them (e.g. `git push --mirror`) would publish old-shaped refs. Push heads/tags explicitly, never `--mirror`, after a rewrite.
 7. **Divergent `main`s.** Local `main` = `87f218e` (180 commits, 162 behind `origin/main`) while `origin/main` = `b96c5174` (342 commits). A careless merge/push of the local `main` re-publishes an older line; decide which `main` is authoritative before touching the remote.
 8. **GitHub caching windows.** Contributor stats/panels are cached; the docs state up to ~24 h to refresh after history changes. Reading "still shows `claude`" minutes after a rewrite is not evidence of failure — and re-running an "undo" at that point would reintroduce the very thing that was cleaned.
 9. **New attribution, same mechanism.** Nothing prevents a future commit from carrying a resolving `Co-authored-by`; without the prevention layer (commit-msg hook + CI check + agent rule from `github-attribution-owner-decision.md` Option 1), the graph can be repopulated by any tool that injects trailers.
@@ -600,7 +600,7 @@ git -C sigap-restore.git fsck --full      # expect exit 0
 | `sigap-mirror.git/objects/pack/pack-60b7646838d365ab6739733d505ccb42a60d95bb.pack` | 2654156 B | `fb46b1fb465c7ab3b6ade7a85974f644fb2379cc8bbc126da0363b25d3f5826e` |
 | `sigap-mirror.git` (whole dir) | 2812734 B | — (pack hash above; `git fsck --full` clean) |
 | `refs-manifest-2026-11-11.txt` | 26485 B | `7c974f5dbbd2d812da7985e32c5f876ee311e6f39ec8a2814b11da6d7f1bd237` |
-| `evidence/` (all captures) | 7628326 B | per-file hashes in `SHA256SUMS.txt` |
+| `evidence/` (all captures) | 7714387 B | per-file hashes in `SHA256SUMS.txt` |
 
 Not covered by this baseline: GitHub-side server objects/reflogs (not observable); Actions caches/artifacts; deployment targets; other clones on other machines; secrets/credentials. These are named in § 10 where they intersect with reintroduction.
 
