@@ -16,8 +16,19 @@
 //   migration explicitly (see `design/better-auth-schema.md`) before first use —
 //   and RE-RUN it after this change, because the `twoFactor()` plugin adds the
 //   `auth.twoFactor` table and `auth.user.twoFactorEnabled`.
-// - No hardcoded secret: Better Auth auto-reads `BETTER_AUTH_SECRET` from the
-//   environment at construction time.
+// - No hardcoded secret, and no silent fallback either. Better Auth auto-reads
+//   `BETTER_AUTH_SECRET` from the environment; `resolveSecret()` below allows
+//   the public build placeholder ONLY where it cannot sign a real session
+//   (during `vite build`/prerender, or on a non-production launch) and THROWS
+//   otherwise. A production server that misses the env fails closed at module
+//   construction instead of signing real sessions with a public constant.
+// - `jwt.issuer`/`jwt.audience` come from `SIGAP_AUTH_ISSUER` /
+//   `SIGAP_AUTH_AUDIENCE` — the SAME names the Go JWT trust boundary reads —
+//   so an issuer mismatch is a configuration change in one place, not a code
+//   edit on one side only.
+// - Every new `auth.user` is provisioned with its own ROLELESS `app_users` row
+//   by the `databaseHooks.user.create.after` hook below; without it a new
+//   citizen's `sub` resolves to no `AppUserID` (see the hook's comment).
 // - Transactional mail (verification + password reset) goes through
 //   `./mail.ts`, which CAPTURES to `.local-preview/mail.log` for local dev.
 //   There is no SMTP transport; see `design/email-recovery-mfa.md`.
@@ -29,6 +40,7 @@ import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { jwt, twoFactor } from "better-auth/plugins";
 import { sveltekitCookies } from "better-auth/svelte-kit";
 import { getRequestEvent } from "$app/server";
+import { building } from "$app/environment";
 import { PostgresDialect } from "kysely";
 import { databaseConfigured, getPool } from "./db";
 import { sendMail } from "./mail";
@@ -42,18 +54,141 @@ export function betterAuthConfigured(): boolean {
 	return databaseConfigured();
 }
 
+/**
+ * The build-placeholder secret. It is a public constant: any deployment that
+ * reaches runtime with it signs REAL sessions and encrypts TOTP backup codes
+ * (the `twoFactor` plugin's `storeBackupCodes: "encrypted"`) with a value
+ * printed in this repository. It exists for exactly one situation — the
+ * SvelteKit build, which evaluates this module during SSR prerender with no
+ * runtime env, where `betterAuth()` would otherwise refuse to construct.
+ */
+const BUILD_ONLY_SECRET = "sigap-build-only-placeholder-secret";
+
+/**
+ * The session-signing secret, resolved fail-closed.
+ *
+ * `BETTER_AUTH_SECRET` wins whenever it is set. Otherwise the build placeholder
+ * is allowed ONLY where no real session can be signed with it:
+ *
+ *   - `building` — SvelteKit's `vite build` / prerender pass, where the module
+ *     is evaluated before any runtime env exists (this is what the placeholder
+ *     was always for); or
+ *   - a non-production launch (`NODE_ENV !== "production"`) — `vite dev`, and
+ *     scripted local probes.
+ *
+ * Any other launch — a container, `node build/index.js`, CI — that misses the
+ * env THROWS here, at module construction, before a single request is served.
+ * That is the only fail-closed point available: Better Auth reads the secret
+ * once and every later "is it the placeholder?" check would be a race against
+ * already-issued tokens.
+ */
+function resolveSecret(): string {
+	const secret = process.env.BETTER_AUTH_SECRET;
+	if (secret) return secret;
+	if (building || process.env.NODE_ENV !== "production") return BUILD_ONLY_SECRET;
+	throw new Error(
+		"BETTER_AUTH_SECRET is not set: refusing to construct Better Auth on a production server " +
+			"(NODE_ENV=production, outside the build) because it would sign real sessions and " +
+			"encrypt 2FA backup codes with the public build placeholder secret. Set " +
+			"BETTER_AUTH_SECRET in the server environment (.env, or the service unit that launches " +
+			"build/index.js) and restart."
+	);
+}
+
+/**
+ * The `app_users.display_name` for a newly registered citizen.
+ *
+ * The SIGAP registration form collects only email + password, so the name
+ * Better Auth stores is the email local-part (see `register/+page.server.ts`).
+ * Prefer the auth user's own `name`, fall back to the local-part, and never
+ * return an empty string — `display_name` is the only human label a citizen
+ * gets until they edit their profile.
+ */
+function citizenDisplayName(user: { name?: unknown; email?: unknown }): string {
+	const name = typeof user.name === "string" ? user.name.trim() : "";
+	if (name) return name;
+	const email = typeof user.email === "string" ? user.email : "";
+	const localPart = email.split("@")[0]?.trim() ?? "";
+	return localPart || email || "Pengguna SIGAP";
+}
+
 export const auth = betterAuth({
-	// BETTER_AUTH_SECRET is required. It is set by the runtime (Run-V22Service.ps1
-	// reads .env before serving); `vite build` evaluates this module during SSR
-	// prerender with no env, so a clearly-marked build placeholder avoids Better
-	// Auth's default-secret error. The placeholder is never used to sign real
-	// sessions — the server always supplies the real secret at runtime.
-	secret: process.env.BETTER_AUTH_SECRET ?? "sigap-build-only-placeholder-secret",
+	// See `resolveSecret` above: real secret, or a hard failure.
+	secret: resolveSecret(),
 	baseURL: process.env.BETTER_AUTH_URL || "http://127.0.0.1:5173",
 	database: {
 		dialect: new PostgresDialect({ pool: getPool()! }),
 		type: "postgres",
 		schemaName: "auth",
+	},
+	// -------------------------------------------------------------------------
+	// Citizen provisioning: every new `auth.user` gets its OWN SIGAP identity.
+	//
+	// `register/+page.server.ts` calls `signUpEmail`, which writes only
+	// `auth.user`. With no `app_users` row, the token's `sub` resolves to no
+	// `AppUserID` (`apps/api/internal/auth/rbac_resolver.go`: the lookup is
+	// `WHERE u.subject = $1 AND u.status = 'active' AND u.deleted_at IS NULL`),
+	// so `/patient/appointments` answers 401 and a booking would be written with
+	// `patient_account_id = NULL`. This hook closes that gap: it inserts the
+	// ROLELESS `app_users` row a citizen needs. Zero `user_roles` rows is what
+	// makes `Actor.PatientAccountID()` return the new id (grants would demote the
+	// actor to staff and return ""), so nothing is written to `user_roles` —
+	// never, here.
+	//
+	// INSERT ONLY — never a match against an existing row, by email or otherwise
+	// (`design/identity-mapping.md` §3: email is a self-asserted, transferable
+	// claim while `sub` is the token-proven identity, so an email auto-link is an
+	// account-takeover primitive). `subject` is the only join key and this is the
+	// only place it is written for a citizen.
+	//
+	// Idempotent by construction: the partial unique index
+	// `uq_app_users_subject_active` (0008) plus `ON CONFLICT DO NOTHING` means a
+	// replay for the same auth user changes nothing and can never produce a
+	// second active row for one subject.
+	databaseHooks: {
+		user: {
+			create: {
+				// Runs after the `auth.user` write (better-auth 1.7.20 queues it
+				// after-commit when a transaction is configured; this config does not
+				// set `database.transaction`, so it runs inline). A failure here
+				// propagates to the sign-up caller on purpose: an account that cannot
+				// resolve to a SIGAP identity is not a usable registration.
+				after: async (user) => {
+					const pool = getPool();
+					if (!pool) return; // no database configured, so no auth.user was created
+					const result = await pool.query(
+						`INSERT INTO app_users (subject, email, display_name, status, deleted_at)
+						 VALUES ($1, $2, $3, 'active', NULL)
+						 ON CONFLICT DO NOTHING`,
+						[user.id, user.email, citizenDisplayName(user)]
+					);
+					if (result.rowCount === 0) {
+						// Nothing inserted. Two causes only, and they are told apart
+						// by a read: (1) the row for this subject already exists —
+						// the hook replayed, `uq_app_users_subject_active` did its
+						// job, and there is nothing to say; or (2) no row for this
+						// subject exists, so the conflict was the email: another
+						// app_users row — active, disabled, or soft-deleted — already
+						// owns that address. In case (2) the account is provisioned
+						// WITHOUT a SIGAP identity rather than linked to that row; an
+						// operator resolves the address conflict by id. Logged, never
+						// thrown: the `auth.user` row is already committed, so failing
+						// here would not undo it — it would only hide the state.
+						const existing = await pool.query(
+							"SELECT 1 FROM app_users WHERE subject = $1 LIMIT 1",
+							[user.id]
+						);
+						if (existing.rowCount === 0) {
+							console.warn(
+								`[sigap auth] no app_users row created for auth user ${user.id}: ` +
+									"its email is already owned by another app_users row — an email is " +
+									"never a link between identities, so resolve that row by id"
+							);
+						}
+					}
+				}
+			}
+		}
 	},
 	// -------------------------------------------------------------------------
 	// Email + password: sign-up, email recovery, and the anti-enumeration
@@ -195,8 +330,13 @@ export const auth = betterAuth({
 				keyPairConfig: { alg: "ES256" },
 			},
 			jwt: {
-				issuer: "http://127.0.0.1:5173",
-				audience: "authenticated",
+				// `iss` / `aud` are read by the Go JWT trust boundary, which verifies
+				// them against SIGAP_AUTH_ISSUER / SIGAP_AUTH_AUDIENCE — the SAME
+				// variable names, read here, so the two sides cannot be configured
+				// independently and silently disagree (a mismatch makes every token
+				// fail verification). Defaults are the local dev values.
+				issuer: process.env.SIGAP_AUTH_ISSUER ?? "http://127.0.0.1:5173",
+				audience: process.env.SIGAP_AUTH_AUDIENCE ?? "authenticated",
 				// The access-token TTL is also the MAXIMUM authorization freshness
 				// delay for a revoked session: the Go API verifies the JWT alone, so
 				// a revoked session keeps being accepted (as `sub`) until this `exp`.
