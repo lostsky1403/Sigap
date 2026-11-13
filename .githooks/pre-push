@@ -1,0 +1,47 @@
+#!/bin/sh
+#
+# Pre-push guard: refuse to publish the pre-rewrite history.
+#
+# The 2026-11-11 attribution rewrite removed the AI co-author trailers from the
+# canonical branches. The pre-rewrite tips are preserved LOCALLY under
+# refs/archive/* (never refs/tags/*, so `git push --tags` / `--mirror` cannot
+# republish them). This hook makes that protection enforceable rather than
+# merely asserted: it refuses any push that would carry a commit from the old
+# history, and it refuses to publish the archive namespace itself.
+#
+# Env: SIGAP_ARCHIVE_REF (default refs/archive/), SIGAP_OLD_MAIN (the pre-rewrite
+# origin/main tip). Set SIGAP_ALLOW_PRE_REWRITE_PUSH=1 to override deliberately.
+
+set -eu
+
+OLD_MAIN="${SIGAP_OLD_MAIN:-b96c5174ff1cd8e05012e7c27f82ba5a258b3bf3}"
+ARCHIVE_PREFIX="${SIGAP_ARCHIVE_REF:-refs/archive/}"
+
+if [ "${SIGAP_ALLOW_PRE_REWRITE_PUSH:-0}" = "1" ]; then
+	echo "pre-push: SIGAP_ALLOW_PRE_REWRITE_PUSH=1 — skipping the archive-history guard" >&2
+	exit 0
+fi
+
+# `git push` reports one "<local ref> <local sha> <remote ref> <remote sha>" line
+# per ref being pushed.
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+	[ -n "${local_sha:-}" ] || continue
+
+	case "$local_ref" in
+	"$ARCHIVE_PREFIX"*)
+		echo "pre-push: refusing to publish the archived pre-rewrite namespace ($local_ref)." >&2
+		echo "pre-push: archive refs are for local recovery only. Use the durable backup instead." >&2
+		exit 1
+		;;
+	esac
+
+	# A ref whose tip reaches the old main tip carries the old (pre-rewrite)
+	# commits — including the AI co-author trailers — back into the repository.
+	if git merge-base --is-ancestor "$OLD_MAIN" "$local_sha" 2>/dev/null; then
+		echo "pre-push: refusing to push $local_ref — its history still reaches the pre-rewrite main tip $OLD_MAIN." >&2
+		echo "pre-push: rebase it onto the rewritten main, or push with SIGAP_ALLOW_PRE_REWRITE_PUSH=1 if that is intended." >&2
+		exit 1
+	fi
+done
+
+exit 0
