@@ -164,10 +164,10 @@ A privacy-first notification foundation for appointment/check-in communication. 
 > sufficient.
 >
 > **Neither control's deployment status is proven for production.** The second SQL predicate
-> (`[0-9][0-9\-._() ]{10,}[0-9]`) was added by `9d4e68e`, an edit to an **already-shipped**
+> (`[0-9][0-9\-._() ]{10,}[0-9]`) was added by `7a11a02`, an edit to an **already-shipped**
 > migration. The migration runner (`apps/api/internal/migrate/migrate.go`) is **version-only**
 > — it skips versions already recorded as applied and never re-reads the stored checksum — so
-> a database that applied `0006` before `9d4e68e` keeps the earlier, weaker constraint
+> a database that applied `0006` before `7a11a02` keeps the earlier, weaker constraint
 > indefinitely. The running production API image likewise has **no proven source revision**:
 > it cannot be tied to a commit, so the Go-layer control cannot be asserted as deployed from
 > the repository alone. Establishing either fact requires the read-only metadata inspection
