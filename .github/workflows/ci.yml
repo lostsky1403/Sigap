@@ -98,8 +98,40 @@ jobs:
 
       - name: Install protoc (for tonic build.rs)
         run: |
-          sudo apt-get update -qq
+          # A single-shot `apt-get update` reds this job whenever the runner image
+          # momentarily fails to resolve azure.archive.ubuntu.com (transient DNS).
+          # Retry the index refresh a bounded number of times, then fail loudly:
+          # an unresolvable archive is an infrastructure fault, not a real signal.
+          apt_update() {
+            local attempt
+            for attempt in 1 2 3; do
+              if sudo apt-get update -qq; then
+                return 0
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                echo "apt-get update failed (attempt ${attempt}/3); retrying in 10s" >&2
+                sleep 10
+              fi
+            done
+            echo "FAIL: apt-get update did not succeed after 3 attempts" >&2
+            return 1
+          }
+          # tonic's build.rs only needs a protoc new enough for prost (>= 3.12).
+          # If the image already ships one, skip the install and its network hop.
+          protoc_usable() {
+            command -v protoc >/dev/null 2>&1 || return 1
+            local ver
+            ver="$(protoc --version 2>/dev/null | awk 'NR == 1 { print $2 }')"
+            [ -n "$ver" ] || return 1
+            [ "$(printf '%s\n' "3.12.0" "$ver" | sort -V | head -n1)" = "3.12.0" ]
+          }
+          if protoc_usable; then
+            echo "protoc $(protoc --version | awk '{ print $2 }') already on PATH; skipping install"
+            exit 0
+          fi
+          apt_update
           sudo apt-get install -y protobuf-compiler
+          which protoc
 
       - name: Setup Rust
         # actions-rs is archived/unmaintained; dtolnay/rust-toolchain is the
@@ -176,7 +208,24 @@ jobs:
       # instead of a legitimate skip.
       - name: Install PostgreSQL server binaries
         run: |
-          sudo apt-get update
+          # Same bounded retry as the protoc step: a transient DNS failure while
+          # refreshing the index must not red the job, and must not be mistaken
+          # for the "missing prerequisite" exit code the suites below contract on.
+          apt_update() {
+            local attempt
+            for attempt in 1 2 3; do
+              if sudo apt-get update -qq; then
+                return 0
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                echo "apt-get update failed (attempt ${attempt}/3); retrying in 10s" >&2
+                sleep 10
+              fi
+            done
+            echo "FAIL: apt-get update did not succeed after 3 attempts" >&2
+            return 1
+          }
+          apt_update
           sudo apt-get install -y postgresql
           # initdb refuses to run as root, so the suites must run as the runner
           # user; verify the binaries are reachable from PATH or the usual dir.
