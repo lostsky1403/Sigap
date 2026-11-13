@@ -46,8 +46,11 @@ collapsed into one:
 Consequences that follow directly:
 
 - **Never claim migration status PASS from repository diff evidence alone.** A non-empty
-  `origin/main..HEAD` diff (**B**) says the *source* adds a migration; it says nothing about
-  whether that migration has been *applied* to the database (**D**/**F**).
+  `d7705f09..HEAD` migration diff (**B/C**) says the *source* differs from the pre-redesign
+  anchor; it says nothing about whether a redesign migration has been *applied* to the
+  database (**D**/**F**). `origin/main..HEAD` is now legitimately empty because the redesign
+  migration is already merged into `origin/main` (row B) — do not treat that emptiness as
+  "no migration delta".
 - **Do not edit `0006` again.** It is shipped. The correction is the **new, forward-only**
   migration `0011` (§12).
 - A **non-empty** `d7705f09..HEAD` diff (**C**) is *expected and classified*: an inherited
@@ -347,27 +350,47 @@ These hashes are retained to explain how the branch was built. They are **not** 
 rollback targets for production.
 
 **Anchor:** `d7705f09` — *"deploy: make production origin env-driven and route Sigap through
-the shared edge (#83)"*. It is the **merge-base with `origin/main`** and an **ancestor** of
-it, but it is now **5 commits behind** it:
+the shared edge (#83)"*. It is the pre-redesign **anchor** (historical fork point) and an
+**ancestor** of `origin/main`, and `d7705f09..origin/main` is non-empty (its size grows as
+`origin/main` advances):
 
 ```
 git merge-base --is-ancestor d7705f09 origin/main    # exit 0  — d7705f09 IS an ancestor
-git rev-list --count d7705f09..origin/main           # 168 (the five security fixes are the FIRST FIVE)
-git merge-base --is-ancestor 4d1669e d7705f09        # exit 1  — the security fixes are NOT in it
+# the first five commits in d7705f09..origin/main are the anchor's immediate
+# security-fix descendants (6893323 chore, 62cdeb7, 7a11a02, 495fc3a, 4d1669e
+# — four security fixes + one chore), in that order; assert each is a descendant
+# of the anchor and an ancestor of origin/main (drift-resistant, fail-loud):
+rc=0
+for sha in 6893323 62cdeb7 7a11a02 495fc3a 4d1669e; do
+  git merge-base --is-ancestor d7705f09 "$sha" \
+    || { echo "FAIL: $sha is not a descendant of the anchor d7705f09"; rc=1; }
+  git merge-base --is-ancestor "$sha" origin/main \
+    || { echo "FAIL: $sha is not contained in origin/main's history"; rc=1; }
+done
+# 4d1669e (and thus the security fixes) must NOT be in the anchor: exit 1 is the
+# expected/good state; exit 0 means the anchor wrongly contains them; any other
+# exit (e.g. 128, bad revision / shallow or pre-rewrite clone) is "cannot evaluate".
+git merge-base --is-ancestor 4d1669e d7705f09
+s=$?
+if [ "$s" -eq 0 ]; then echo "FAIL: 4d1669e must NOT be an ancestor of d7705f09"; rc=1;
+elif [ "$s" -eq 1 ]; then echo "OK: d7705f09 does not contain 4d1669e (expected)";
+else echo "FAIL: could not evaluate 4d1669e vs d7705f09 (exit $s; rewritten SHA may be unresolved — fetch full history)"; rc=1; fi
+echo "anchor-range rc=$rc"; [ "$rc" -eq 0 ]
 ```
 
 > **After the 2026-11-11 attribution rewrite** these SHAs are the REWRITTEN ones
 > (`4d1669e`, `7a11a02`, `62cdeb7`, `495fc3a`, `6893323`). They resolve only in a
 > clone that has the rewritten history — a shallow or pre-rewrite clone reports
-> `fatal: bad revision` and the check above cannot be evaluated there. Fetch the
-> rewritten history (`fetch-depth: 0`, `git fetch --unshallow`) before relying on it.
-> The range now holds **168** commits, not 5: the five security fixes are the
-> first five in it, and the rest is the history the rewrite re-parented.
+> `fatal: bad revision` and the checks above cannot be evaluated there. Fetch the
+> rewritten history (`fetch-depth: 0`, `git fetch --unshallow`) before relying on
+> them. The five security-fix commits are the **first five** in `d7705f09..origin/main`;
+> the rest of that range is history the rewrite re-parented (do not rely on a fixed
+> total count — it grows as `origin/main` advances).
 
 So the operative fact is **not** that `d7705f09` is unrelated to `origin/main` — it is that
 the five commits above it (`6893323`, `62cdeb7`, `7a11a02`, `495fc3a`, `4d1669e`) are
-**descendants** of it. Checking it out therefore **loses those five commits**, four of which
-are security fixes. That is why it is not a production rollback target.
+**descendants** of it. Checking it out therefore **loses those five commits** (four security
+fixes and one chore). That is why it is not a production rollback target.
 
 | Phase | Phase end commit | What changed | Historical pointer (commit BEFORE the phase) | Expected behaviour if that pointer were deployed | DB restore? |
 |---|---|---|---|---|---|
