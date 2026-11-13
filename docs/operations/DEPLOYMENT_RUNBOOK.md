@@ -365,7 +365,7 @@ for sha in 6893323 62cdeb7 7a11a02 495fc3a 4d1669e; do
   git merge-base --is-ancestor d7705f09 "$sha" \
     || { echo "FAIL: $sha is not a descendant of the anchor d7705f09"; rc=1; }
   git merge-base --is-ancestor "$sha" origin/main \
-    || { echo "FAIL: $sha is not contained in origin/main's history"; rc=1; }
+    || { echo "FAIL: $sha is not an ancestor of origin/main"; rc=1; }
 done
 # 4d1669e (and thus the security fixes) must NOT be in the anchor: exit 1 is the
 # expected/good state; exit 0 means the anchor wrongly contains them; any other
@@ -373,7 +373,7 @@ done
 git merge-base --is-ancestor 4d1669e d7705f09
 s=$?
 if [ "$s" -eq 0 ]; then echo "FAIL: 4d1669e must NOT be an ancestor of d7705f09"; rc=1;
-elif [ "$s" -eq 1 ]; then echo "OK: d7705f09 does not contain 4d1669e (expected)";
+elif [ "$s" -eq 1 ]; then echo "OK: 4d1669e is not an ancestor of d7705f09 (expected)";
 else echo "FAIL: could not evaluate 4d1669e vs d7705f09 (exit $s; rewritten SHA may be unresolved — fetch full history)"; rc=1; fi
 echo "anchor-range rc=$rc"; [ "$rc" -eq 0 ]
 ```

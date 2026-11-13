@@ -381,9 +381,13 @@ else
   ok
 fi
 
-# 19. The §6b anchor must not claim d7705f09 is NOT an ancestor of origin/main (it is).
-if grep -q 'not an ancestor of' "$RB"; then
-  bad "runbook still claims a commit is 'not an ancestor' (verify with git merge-base --is-ancestor)"
+# 19. §6b must not claim the anchor d7705f09 is NOT an ancestor of origin/main (it is).
+#     Scoped to §6b (like check 18 scopes §13a) and matched to that specific wrong claim,
+#     not a global phrase ban — other sections may legitimately describe non-ancestry.
+sec6b=$(sed -n '/^### 6b\./,/^### 6c\./p' "$RB")
+if printf '%s' "$sec6b" | tr '\n' ' ' \
+  | grep -qiE 'd7705f09[^.]{0,80}not (an )?ancestor[^.]{0,80}origin/main|origin/main[^.]{0,80}not (an )?ancestor[^.]{0,80}d7705f09'; then
+  bad "§6b claims d7705f09 is not an ancestor of origin/main (it is — verify with git merge-base --is-ancestor)"
 else
   ok
 fi
