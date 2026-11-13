@@ -9,7 +9,7 @@
 #
 # Variants (see docs/operations/DEPLOYMENT_RUNBOOK.md §12):
 #   A  actual release schema (migrations 0001..0010 applied in order)
-#   B  genuine older (pre-9d4e68e) weak constraints
+#   B  genuine older (pre-7a11a02) weak constraints
 #   C  fragment-spoofed constraint (`[0-9]{10,}`)                     [SEC-01]
 #   D  subject phone constraint missing
 #   E  body phone constraint missing

@@ -120,7 +120,7 @@ apply_all() { # db
   done
 }
 
-# Rewrite both phone constraints to the pre-9d4e68e WEAK form. Test-cluster only.
+# Rewrite both phone constraints to the pre-7a11a02 WEAK form. Test-cluster only.
 weaken() { # db
 px -d "$1" >/dev/null 2>&1 <<'SQL'
 ALTER TABLE notification_outbox

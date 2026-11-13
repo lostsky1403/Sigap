@@ -131,7 +131,7 @@ would otherwise slip past it:
 
 The second conjunct is what catches a **formatted** number such as
 `0812-3456-7890`, where no single run reaches 8 digits. Production was found
-carrying only the first conjunct (the pre-`9d4e68e` form); migration
+carrying only the first conjunct (the pre-`7a11a02` form); migration
 `0011_notification_outbox_phone_constraints.sql` converges both constraints onto
 the full predicate above. The Go predicate in
 `apps/api/internal/notification/masking.go` is the same expression, and the two
