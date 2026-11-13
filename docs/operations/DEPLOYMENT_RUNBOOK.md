@@ -171,7 +171,7 @@ edge / reverse proxy (Traefik labels on the web service; enabled by ENABLE_EDGE_
 | Step | Service | Action | Verify |
 |---|---|---|---|
 | 3.0 | release identity (pre-deploy) | Record the current production version identifier now: `curl -fsS https://<host>/_app/version.json` (and `docker compose images api web` digests, once host access exists). This is the no-op/deploy detector for 3.8. | Value recorded; §2.9 captured |
-| 3.1 | database / migrations | **One migration must be RUN, deliberately, by the operator — not by this cutover.** `0011_notification_outbox_phone_constraints.sql` (§12a) converges the two `notification_outbox` phone constraints onto the release predicate. Production `SIGAP_AUTO_MIGRATE` is empty, so `docker compose up` applies **no** DDL: the cutover itself changes no schema, and the migration is a separate, explicitly authorized one-off. The inherited hardening of `0006` (§1 **C**) **will not** be reapplied by the version-only migrator (§1 **E**), which is exactly why `0011` exists. | `git diff --name-only origin/main..HEAD -- packages/db/migrations` = `0011_...` only; **§12 result recorded**; `0011` applied and re-classified `MATCHES_CURRENT_SECURITY_CONSTRAINTS` |
+| 3.1 | database / migrations | **One migration must be RUN, deliberately, by the operator — not by this cutover.** `0011_notification_outbox_phone_constraints.sql` (§12a) converges the two `notification_outbox` phone constraints onto the release predicate. Production `SIGAP_AUTO_MIGRATE` is empty, so `docker compose up` applies **no** DDL: the cutover itself changes no schema, and the migration is a separate, explicitly authorized one-off. The inherited hardening of `0006` (§1 **C**) **will not** be reapplied by the version-only migrator (§1 **E**), which is exactly why `0011` exists. | `git diff --name-only d7705f09..HEAD -- packages/db/migrations` = `0006_notifications.sql` (inherited hardening) + `0011_...`; **§12 result recorded**; `0011` applied and re-classified `MATCHES_CURRENT_SECURITY_CONSTRAINTS` |
 | 3.2 | build images | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml build api web` (**`--build` is mandatory** — a bare `up -d` reuses the previously built images and deploys nothing, while still passing health checks) | build exits 0 for both services |
 | 3.3 | postgres | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d postgres` (waits on `pg-cert-init`) | `pg_isready -h 127.0.0.1 -p 5433 -U sigap -d sigap` |
 | 3.4 | queue engine | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d rust-engine` — rebuild **only** if `git diff --name-only <release-base>..RELEASE_CANDIDATE_HEAD -- apps/queue-engine` is non-empty (never in this stream). `<release-base>` is the commit the **currently deployed** images were built from — the value recorded in 3.0, not a historical design-phase pointer (§6a). | `nc -z localhost 50051` |
@@ -1130,9 +1130,11 @@ Neither option is authorized or executed. Both remain blocked on the **rollback 
 - the local identity selector is active (`SIGAP_ENV=local` + a subject);
 - `make db-seed` would **not** refuse (the demo-seed guard is bypassed);
 - the migration inventory differs from the declared release set: `git diff --name-only
-  origin/main..HEAD -- packages/db/migrations` must be **exactly**
-  `packages/db/migrations/0011_notification_outbox_phone_constraints.sql` (§1 **A**). Any
-  *other* added or edited migration aborts. **A non-empty `d7705f09..HEAD` migration diff does
+  d7705f09..HEAD -- packages/db/migrations` must be **exactly**
+  `packages/db/migrations/0006_notifications.sql packages/db/migrations/0011_notification_outbox_phone_constraints.sql` (§1 **A**) — the inherited `0006` hardening plus the added `0011`. Any
+  *other* added or edited migration aborts. (The baseline is the anchor, not `origin/main`:
+  since the 2026-11-11 attribution rewrite `0011` is already merged into `origin/main`, so
+  `origin/main..HEAD` is legitimately empty on the release branch.) **A non-empty `d7705f09..HEAD` migration diff does
   NOT abort** — it is the expected inherited upstream hardening (§1 **C**) plus `0011`. The
   abort is for a migration outside the declared inventory;
 - the DB schema inspection has not run, or classified `UNKNOWN` / `UNEXPECTED_DRIFT` (§12);
