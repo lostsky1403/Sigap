@@ -26,7 +26,7 @@ Inspection only. No files were modified during this inspection.
 | Item | Verified value |
 |---|---|
 | Current branch | `design/ui-ux-overhaul` |
-| HEAD commit | `6d7f940` deploy: make production origin env-driven and route Sigap through the shared edge (#83) |
+| HEAD commit | `d7705f0` deploy: make production origin env-driven and route Sigap through the shared edge (#83) |
 | Recent history | `ba2cb4c` fix(web): wire auth forms to default actions so POST reaches handlers not 404 (#82); `1e0cfdb` fix(deploy): bind prod backend ports to loopback only (#81) |
 | Relationship to main | 5 commits ahead of `origin/main`, 0 behind (fast-forward-able) |
 | Uncommitted changes | `M .gitignore`; `?? design/` (all design artifacts untracked) |
@@ -131,7 +131,7 @@ Also present: `.github/CODEOWNERS`, `pull_request_template.md`, `ISSUE_TEMPLATE/
 ### 1.8 Production surface
 
 `https://sigap.chaerulchalik.web.id/` is live. Production deployment is docker-compose based with an
-env-driven origin (`6d7f940`) and backend ports bound to loopback (`1e0cfdb`). Phase 3A did not touch,
+env-driven origin (`d7705f0`) and backend ports bound to loopback (`1e0cfdb`). Phase 3A did not touch,
 deploy, or reconfigure any of it.
 
 ### 1.9 Baseline verdict
@@ -1546,14 +1546,14 @@ forward, never by reverting the security fix or re-introducing empty-set-unrestr
 ### 18.5 Preserved rollback anchors
 
 > **Superseded for production.** The anchors below are **development-history pointers only**.
-> `6d7f940` is an ancestor of `origin/main` but **5 commits behind** it, and checking it out
-> **loses four security fixes** (`6f567f8`, `9d4e68e`, `96c2570`, `87f218e`). It is **NOT a
+> `d7705f0` is an ancestor of `origin/main` but **5 commits behind** it, and checking it out
+> **loses four security fixes** (`62cdeb7`, `7a11a02`, `495fc3a`, `4d1669e`). It is **NOT a
 > production rollback target**. Production rollback means restoring the **preserved running
 > image** — see `docs/operations/DEPLOYMENT_RUNBOOK.md` §6a and §7c/§7d.
 
 | Anchor | Value |
 |---|---|
-| Development-history pointer before any 3B work (**not** a production rollback target) | `6d7f940` |
+| Development-history pointer before any 3B work (**not** a production rollback target) | `d7705f0` |
 | Branch | `design/ui-ux-overhaul` |
 | Pre-existing uncommitted state | `M .gitignore`, `?? design/` (must be committed or explicitly retained before 3B0 begins) |
 | Migrations to restore | None. Migrations `0001`-`0010` remain untouched by this plan. |
