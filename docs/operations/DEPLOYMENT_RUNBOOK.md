@@ -36,8 +36,8 @@ collapsed into one:
 
 | # | Statement | How to verify |
 |---|---|---|
-| **A** | The redesign adds **exactly one** migration, `0011_notification_outbox_phone_constraints.sql`, and edits **no** historical migration. | `git diff --name-only origin/main..HEAD -- packages/db/migrations` → exactly `packages/db/migrations/0011_notification_outbox_phone_constraints.sql`. |
-| **B** | The release's migration directory therefore **differs from current `origin/main`** by that one added file. | `git diff --stat origin/main..HEAD -- packages/db/migrations` → `0011_notification_outbox_phone_constraints.sql \| N ++++`, **non-empty by design**. |
+| **A** | The redesign adds **exactly one** migration, `0011_notification_outbox_phone_constraints.sql`, and edits **no** historical migration. | `git diff --name-only d7705f09..HEAD -- packages/db/migrations` → exactly `0006_notifications.sql` (the inherited hardening) plus `packages/db/migrations/0011_notification_outbox_phone_constraints.sql`. |
+| **B** | The release's migration directory therefore **differs from the historical anchor `d7705f09`** by the inherited `0006` hardening plus the one added file. Since the historical attribution rewrite (2026-11-11) the redesign's `0011` is **already merged into `origin/main`**, so `origin/main..HEAD` on the release branch is now legitimately EMPTY — the inventory is anchored on `d7705f09`, not on `origin/main`. | `git diff --stat d7705f09..HEAD -- packages/db/migrations` → `0006_notifications.sql \| 4 ++--` plus `0011_notification_outbox_phone_constraints.sql \| N ++++`, **non-empty by design**. |
 | **C** | The diff against the **historical anchor `d7705f09` is NON-EMPTY**. | `git diff --stat d7705f09..HEAD -- packages/db/migrations` → `0006_notifications.sql \| 4 ++--` plus `0011_notification_outbox_phone_constraints.sql`. `origin/main` commit `9d4e68e` **hardened** an already-shipped migration (added a formatted-phone predicate to two `notification_outbox` CHECK constraints). It reached this branch through the `origin/main` merge (`6c0ac82`), **not** through redesign work. |
 | **D** | **Production DB constraints DO NOT match the hardened source migration.** | **CONFIRMED** by the 2026-10-09 inspection (§12): classification `OLDER_WEAKER_CONSTRAINTS`. Production applied `0006` before `9d4e68e` and keeps the weak predicate. |
 | **E** | The migrator is **version-only**: it does **not** reapply a modified, already-applied migration. | `apps/api/internal/migrate/migrate.go` selects pending work by version number and never re-reads the stored checksum; production `SIGAP_AUTO_MIGRATE` is empty. |
@@ -392,10 +392,12 @@ and **not** undone by an image rollback — the constraint lives in the database
 the resulting rollback-compatibility question, which is **BLOCKING and UNKNOWN**.
 
 ```
-git diff --name-only origin/main..HEAD -- packages/db/migrations  # 0011_...sql  (one added file)
-git diff --stat origin/main..HEAD     -- packages/db/migrations  # non-empty by design (§1 B)
-git diff --stat d7705f09..HEAD         -- packages/db/migrations  # 0006 (4 ++--) + 0011
+git diff --name-only d7705f09..HEAD -- packages/db/migrations  # 0006_notifications.sql + 0011_...sql
+git diff --stat d7705f09..HEAD         -- packages/db/migrations  # non-empty by design (§1 B)
 ```
+> Post-rewrite note: since the historical attribution rewrite (2026-11-11) the redesign's
+> `0011` is already in `origin/main`, so `origin/main..HEAD` is legitimately empty on the
+> release branch — the migration inventory is anchored on `d7705f09`, not on `origin/main`.
 
 Neither diff proves anything about the **deployed database** — that is §12. The inspection has
 since run and returned `OLDER_WEAKER_CONSTRAINTS`; the database reaches
