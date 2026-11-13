@@ -370,11 +370,18 @@ done
 # 4d1669e (and thus the security fixes) must NOT be in the anchor: exit 1 is the
 # expected/good state; exit 0 means the anchor wrongly contains them; any other
 # exit (e.g. 128, bad revision / shallow or pre-rewrite clone) is "cannot evaluate".
-git merge-base --is-ancestor 4d1669e d7705f09
-s=$?
-if [ "$s" -eq 0 ]; then echo "FAIL: 4d1669e must NOT be an ancestor of d7705f09"; rc=1;
-elif [ "$s" -eq 1 ]; then echo "OK: 4d1669e is not an ancestor of d7705f09 (expected)";
-else echo "FAIL: could not evaluate 4d1669e vs d7705f09 (exit $s; rewritten SHA may be unresolved — fetch full history)"; rc=1; fi
+# Use the if-form so a non-zero status (including the expected exit 1) does not
+# trip set -e in gate mode.
+if git merge-base --is-ancestor 4d1669e d7705f09; then
+  echo "FAIL: 4d1669e must NOT be an ancestor of d7705f09"; rc=1
+else
+  s=$?
+  if [ "$s" -eq 1 ]; then
+    echo "OK: 4d1669e is not an ancestor of d7705f09 (expected)"
+  else
+    echo "FAIL: could not evaluate 4d1669e vs d7705f09 (exit $s; rewritten SHA may be unresolved — fetch full history)"; rc=1
+  fi
+fi
 echo "anchor-range rc=$rc"; [ "$rc" -eq 0 ]
 ```
 
