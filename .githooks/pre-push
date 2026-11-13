@@ -23,9 +23,13 @@ if [ "${SIGAP_ALLOW_PRE_REWRITE_PUSH:-0}" = "1" ]; then
 fi
 
 # `git push` reports one "<local ref> <local sha> <remote ref> <remote sha>" line
-# per ref being pushed.
-while read -r _local_ref local_sha _remote_ref _remote_sha; do
-	[ -n "${local_sha:-}" ] || continue
+# per ref being pushed. A ref that matches nothing locally arrives with an empty
+# local ref/sha, so every field is read defensively.
+while read -r local_ref local_sha remote_ref remote_sha || [ -n "${local_ref:-}" ]; do
+	local_ref="${local_ref:-}"
+	local_sha="${local_sha:-}"
+
+	[ -n "$local_sha" ] || continue
 
 	case "$local_ref" in
 	"$ARCHIVE_PREFIX"*)
