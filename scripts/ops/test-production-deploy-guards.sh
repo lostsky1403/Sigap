@@ -384,9 +384,26 @@ fi
 # 19. §6b must not claim the anchor d7705f09 is NOT an ancestor of origin/main (it is).
 #     Scoped to §6b (like check 18 scopes §13a) and matched to that specific wrong claim,
 #     not a global phrase ban — other sections may legitimately describe non-ancestry.
+_check19_bad_claim() {
+  printf '%s' "$1" | tr '\n' ' ' \
+    | grep -qiE 'd7705f09[^.]{0,80}not (an )?ancestor[^.]{0,80}origin/main|origin/main[^.]{0,80}not (an )?ancestor[^.]{0,80}d7705f09'
+}
+
+# 19a. Non-vacuity: the matcher must catch the historical wrong claim (both directions,
+#      including a line-wrapped form) and must not flag a benign/true claim — otherwise
+#      check 19b is vacuous and a regex/formatting edit could silently pass it.
+if _check19_bad_claim 'd7705f09 is not an ancestor of origin/main.' \
+  && _check19_bad_claim "$(printf 'd7705f09 is not an\nancestor of origin/main.')" \
+  && _check19_bad_claim 'origin/main is not an ancestor of d7705f09.' \
+  && ! _check19_bad_claim 'd7705f09 is an ancestor of origin/main.'; then
+  ok
+else
+  bad "§6b wrong-claim matcher is vacuous (must catch the historical claim and reject the benign one)"
+fi
+
+# 19b. Actual check against §6b.
 sec6b=$(sed -n '/^### 6b\./,/^### 6c\./p' "$RB")
-if printf '%s' "$sec6b" | tr '\n' ' ' \
-  | grep -qiE 'd7705f09[^.]{0,80}not (an )?ancestor[^.]{0,80}origin/main|origin/main[^.]{0,80}not (an )?ancestor[^.]{0,80}d7705f09'; then
+if _check19_bad_claim "$sec6b"; then
   bad "§6b claims d7705f09 is not an ancestor of origin/main (it is — verify with git merge-base --is-ancestor)"
 else
   ok
