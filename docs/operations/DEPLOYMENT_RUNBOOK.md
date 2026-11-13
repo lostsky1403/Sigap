@@ -350,19 +350,32 @@ These hashes are retained to explain how the branch was built. They are **not** 
 rollback targets for production.
 
 **Anchor:** `d7705f09` — *"deploy: make production origin env-driven and route Sigap through
-the shared edge (#83)"*. It is the **merge-base with `origin/main`** and an **ancestor** of
-it, and `d7705f09..origin/main` is non-empty (its size grows as `origin/main` advances):
+the shared edge (#83)"*. It is the pre-redesign **anchor** (historical fork point) and an
+**ancestor** of `origin/main`, and `d7705f09..origin/main` is non-empty (its size grows as
+`origin/main` advances):
 
 ```
 git merge-base --is-ancestor d7705f09 origin/main    # exit 0  — d7705f09 IS an ancestor
 # the first five commits in d7705f09..origin/main are the anchor's immediate
 # security-fix descendants (6893323 chore, 62cdeb7, 7a11a02, 495fc3a, 4d1669e
 # — four security fixes + one chore), in that order; assert each is a descendant
-# of the anchor and an ancestor of origin/main (drift-resistant):
+# of the anchor and an ancestor of origin/main (drift-resistant, fail-loud):
+rc=0
 for sha in 6893323 62cdeb7 7a11a02 495fc3a 4d1669e; do
-  git merge-base --is-ancestor d7705f09 "$sha" && git merge-base --is-ancestor "$sha" origin/main
+  git merge-base --is-ancestor d7705f09 "$sha" \
+    || { echo "FAIL: $sha is not a descendant of the anchor d7705f09"; rc=1; }
+  git merge-base --is-ancestor "$sha" origin/main \
+    || { echo "FAIL: $sha is not contained in origin/main's history"; rc=1; }
 done
-git merge-base --is-ancestor 4d1669e d7705f09        # exit 1  — the security fixes are NOT in the anchor
+# 4d1669e (and thus the security fixes) must NOT be in the anchor: exit 1 is the
+# expected/good state; exit 0 means the anchor wrongly contains them; any other
+# exit (e.g. 128, bad revision / shallow or pre-rewrite clone) is "cannot evaluate".
+git merge-base --is-ancestor 4d1669e d7705f09
+s=$?
+if [ "$s" -eq 0 ]; then echo "FAIL: 4d1669e must NOT be an ancestor of d7705f09"; rc=1;
+elif [ "$s" -eq 1 ]; then echo "OK: d7705f09 does not contain 4d1669e (expected)";
+else echo "FAIL: could not evaluate 4d1669e vs d7705f09 (exit $s; rewritten SHA may be unresolved — fetch full history)"; rc=1; fi
+echo "anchor-range rc=$rc"; [ "$rc" -eq 0 ]
 ```
 
 > **After the 2026-11-11 attribution rewrite** these SHAs are the REWRITTEN ones
