@@ -98,10 +98,11 @@ git clone --quiet --depth 1 "file://$REPO" "$TMP/shallow" >/dev/null 2>&1 \
 sync_worktree "$TMP/shallow"
 
 # Make origin/main absent in this disposable negative fixture (deterministic across
-# push-to-main/default-branch and PR/merge-ref source contexts). The guard's
-# security assertion is unchanged: it must FAIL and NAME the missing ref.
+# push-to-main/default-branch and PR/merge-ref source contexts). Only the synthetic
+# REMOTE-TRACKING ref is removed; the checked-out HEAD and its local branch are
+# left intact so the fixture stays faithful. The guard's security assertion is
+# unchanged: it must FAIL and NAME the missing ref.
 git -C "$TMP/shallow" update-ref -d refs/remotes/origin/main >/dev/null 2>&1 || true
-git -C "$TMP/shallow" update-ref -d refs/heads/main >/dev/null 2>&1 || true
 
 # Guard the fixture itself: if the clone is not a git repo, or origin/main still
 # resolves, the assertions below would not test the absent-ref path at all.
