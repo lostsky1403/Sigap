@@ -85,17 +85,26 @@ sync_worktree() {
 # the suite exited 2 (MISSING PREREQUISITE), and ZERO assertions ran — a mandatory
 # safety check silently skipped on every CI run while the local run passed.
 #
-# Cloning the source's own HEAD with no --branch is both simpler and a MORE faithful
-# reproduction of the CI checkout: in CI the source HEAD *is* the merge ref, so the
-# clone is shallow (one commit) with no refs/remotes/origin/main — exactly the state
-# the guard must detect.
+# Cloning the source's own HEAD with no --branch reproduces the CI checkout shape
+# (a single shallow commit checked out, detached or on a branch) regardless of
+# whether the source is a PR merge ref or the default branch. When the source is
+# on the default branch (e.g. push-to-main), a local clone may legitimately carry
+# refs/remotes/origin/main for that branch; this negative fixture must still
+# exercise the absent-base-ref path, so it explicitly removes ONLY that synthetic
+# remote-tracking ref inside this disposable clone (never the source repo).
 echo "== building shallow clone =="
 git clone --quiet --depth 1 "file://$REPO" "$TMP/shallow" >/dev/null 2>&1 \
   || fixture_failed "shallow clone failed (is file:// transport available?)"
 sync_worktree "$TMP/shallow"
 
-# Guard the fixture itself: if the clone were NOT shallow, or it somehow carried
-# origin/main, the assertions below would not test the absent-ref path at all.
+# Make origin/main absent in this disposable negative fixture (deterministic across
+# push-to-main/default-branch and PR/merge-ref source contexts). The guard's
+# security assertion is unchanged: it must FAIL and NAME the missing ref.
+git -C "$TMP/shallow" update-ref -d refs/remotes/origin/main >/dev/null 2>&1 || true
+git -C "$TMP/shallow" update-ref -d refs/heads/main >/dev/null 2>&1 || true
+
+# Guard the fixture itself: if the clone is not a git repo, or origin/main still
+# resolves, the assertions below would not test the absent-ref path at all.
 [ -d "$TMP/shallow/.git" ] \
   || fixture_failed "the shallow clone has no .git directory"
 if git -C "$TMP/shallow" rev-parse --verify --quiet origin/main^{commit} >/dev/null 2>&1; then
