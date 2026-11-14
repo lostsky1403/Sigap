@@ -11,4 +11,27 @@
 # but Cargo still resolves sqlx-mysql into the lockfile for feature-unification purposes.
 # Risk: LOW — the vulnerable code is never executed. Future maintainers must NOT enable the
 # mysql feature on sqlx without removing this ignore.
-ignore = ["RUSTSEC-2023-0071"]
+
+# RUSTSEC-2026-0459: `libsqlite3-sys` 0.30.1 (CVE-2026-119375, sev 6.8 medium, cvss
+# CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:P/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N, 2026-10-30).
+# Affected range in lockfile: libsqlite3-sys 0.30.1 (<0.39.0 vulnerable; patched >=0.39.0).
+# Reachability/applicability (verified):
+#   - sigap-queue-engine is Postgres-only: apps/queue-engine/Cargo.toml pins
+#     sqlx = { version = "0.8", default-features = false, features =
+#     ["runtime-tokio","tls-native-tls","postgres","macros","uuid","chrono"] } (no `sqlite`/`_sqlite`).
+#     No SQLite usage in source (no sqlite/sqlx::sqlite refs). cargo tree/build do not link
+#     libsqlite3-sys or sqlx-sqlite for this configuration.
+#   - libsqlite3-sys 0.30.1 is present only as a Cargo.lock-resolved optional dependency of
+#     sqlx-sqlite 0.8.6 (req ^0.30.1) declared by sqlx 0.8.6 / sqlx-macros-core 0.8.6 metadata;
+#     cargo-audit scans Cargo.lock and flags it despite the crate not being compiled/used.
+# Blocker (no safe compatible patch in minimal scope): sqlx-sqlite 0.8.6 requires ^0.30.1, so
+# libsqlite3-sys cannot be bumped to >=0.39.0 within sqlx 0.8.x; `cargo update -p sqlx*` yields
+# no 0.8.x patch removing this constraint. Upgrading sqlx to 0.9.x is a non-minimal dependency
+# jump deferred to a separately planned migration.
+# Compensating controls: SQLite feature never enabled; default-features disabled; no SQLite code
+# paths; `cargo build`/`cargo test` pass without SQLite linkage; advisory monitored for a 0.8.x
+# compatible resolution or planned sqlx upgrade.
+# Removal condition: remove this ignore when the resolved graph no longer contains libsqlite3-sys
+# <0.39.0 (sqlx/sqlx-sqlite patched or upgraded so lock resolves >=0.39.0, or sqlite crates
+# removed from resolution).
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0459"]

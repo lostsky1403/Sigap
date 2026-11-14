@@ -310,12 +310,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit || true
+        run: cargo install cargo-audit
 
       - name: Scan Rust engine for known vulnerabilities
         run: |
           cd apps/queue-engine
-          cargo audit || true   # non-blocking for scaffold phase; switch to blocking after stabilising deps
+          cargo audit
+        # Blocking. Narrowly scoped, documented exceptions live in apps/queue-engine/.cargo/audit.toml.
+        # Any new/changed finding fails the job; remove or tighten exceptions only with evidence.
 
   security-secrets:
     name: Secret Leak Scan
