@@ -17,13 +17,13 @@
 --
 -- PURPOSE
 --   Determine whether the deployed schema carries main's STRENGTHENED 0006
---   CHECK constraints (commit 9d4e68e) or an earlier, weaker definition.
+--   CHECK constraints (commit 7a11a02) or an earlier, weaker definition.
 --
---   Why this matters: 9d4e68e EDITED an already-shipped migration file
+--   Why this matters: 7a11a02 EDITED an already-shipped migration file
 --   (packages/db/migrations/0006_notifications.sql). The migration runner
 --   (apps/api/internal/migrate/migrate.go) selects pending work by VERSION
 --   number ONLY and never re-verifies the recorded checksum, so a database
---   that applied 0006 before 9d4e68e keeps the weaker constraints forever.
+--   that applied 0006 before 7a11a02 keeps the weaker constraints forever.
 --   The API's application-layer masking (apps/api/internal/notification/masking.go)
 --   SHIPS WITH the release and, ONCE DEPLOYED, is the effective control either
 --   way; whether it is actually running in production is NOT established here.
@@ -70,11 +70,11 @@
 --
 -- EXPECTED VALUES FOR COMPARISON (release source at HEAD e8c7096)
 --   0006 sha256 (LF bytes, as committed) = 1389698344dff1f868c3ccea16f2f3c3fb6807a033699670994b03d2bf627119
---   pre-9d4e68e 0006 sha256 (LF bytes)  = d9be0f160952a0f9913638327e7bc617b24f50dc6e582e85b26e3b0e6375b51a
+--   pre-7a11a02 0006 sha256 (LF bytes)  = d9be0f160952a0f9913638327e7bc617b24f50dc6e582e85b26e3b0e6375b51a
 --
 -- 0011_notification_outbox_phone_constraints.sql converges the two phone
 -- constraints onto the release predicate on databases that applied 0006 before
--- 9d4e68e. It PRESERVES both constraint names, so the expected constraint
+-- 7a11a02. It PRESERVES both constraint names, so the expected constraint
 -- inventory below is unchanged; only the applied-version set moves to 1..11.
 --
 -- READINESS, BEFORE AND AFTER
@@ -381,7 +381,7 @@ ROLLBACK;
 --   => No action.
 --
 -- OLDER_WEAKER_CONSTRAINTS
---   Both phone constraints present and both matching the pre-9d4e68e weak form
+--   Both phone constraints present and both matching the pre-7a11a02 weak form
 --   (`<col> !~ '[0-9]{8,}'` only); everything else matches. DB-layer
 --   defence-in-depth is weaker than the release source. Application-layer
 --   masking ships with the release and, once deployed, enforces the denylist;

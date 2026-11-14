@@ -1,6 +1,6 @@
 # apps/api/Dockerfile
 # Multi-stage Go build for tiny secure image
-FROM golang:alpine AS builder
+FROM golang:1.26.11-alpine3.24 AS builder
 
 WORKDIR /app
 

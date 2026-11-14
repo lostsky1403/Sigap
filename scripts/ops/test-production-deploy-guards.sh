@@ -185,6 +185,14 @@ CL=docs/operations/RELEASE_CHECKLIST.md
 #     migration now fails rather than slipping through as "still non-empty".
 EXPECTED_MIGRATION_DIFF="packages/db/migrations/0011_notification_outbox_phone_constraints.sql"
 
+# The branch that IS the release: only on this branch does the migration
+# inventory contract apply. It is the redesign branch that carries 0011 and that
+# ci.yml triggers on besides main (design/ui-ux-overhaul), NOT
+# ops/release-readiness-hardening (which shares a commit subject but is not the
+# branch CI gates on). Override with SIGAP_RELEASE_BRANCH when the release moves.
+RELEASE_BRANCH="${SIGAP_RELEASE_BRANCH:-design/ui-ux-overhaul}"
+HEAD_REF="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')}}"
+
 # A missing base ref and an EMPTY diff are different failures and must not be
 # reported as the same thing. At actions/checkout's default fetch-depth of 1 on a
 # pull_request event, origin/main does not exist; `git diff origin/main..HEAD`
@@ -208,19 +216,61 @@ if [ "${missing_base_ref:-0}" -eq 0 ]; then
     printf '  on the default branch (HEAD == origin/main); no release migration inventory to verify\n'
     ok
   else
-    hist=$(git diff --stat d7705f09..HEAD -- packages/db/migrations)
+    # The migration inventory is a RELEASE-branch contract: on the declared
+    # release branch it asserts the migration set versus main is exactly the
+    # declared one. It is meaningless for any other kind of branch — a toolchain
+    # hotfix, a CI hardening change or a docs edit legitimately ships NO
+    # migration, and asserting "must contain 0011" for those branches produced a
+    # false red on every non-release PR (observed on
+    # fix/go-security-toolchain-1.26.11).
+    #
+    # Every other branch keeps a REAL assertion: it must not DELETE, RENAME or
+    # MODIFY any existing migration (a hotfix may add none, but must never
+    # rewrite or remove the applied history), and if it does add one it must be
+    # declared. The check is never vacuous.
     maindiff=$(git diff --name-only origin/main..HEAD -- packages/db/migrations)
-    if [ -z "$maindiff" ]; then
-      bad "origin/main..HEAD migration diff is EMPTY — expected the redesign's 0011 migration"
-    elif [ "$maindiff" != "$EXPECTED_MIGRATION_DIFF" ]; then
-      bad "release migration inventory differs from the declared set"
-      printf '  got : %s\n  want: %s\n' "$(printf '%s' "$maindiff" | tr '\n' ' ')" "$EXPECTED_MIGRATION_DIFF"
-    elif [ -z "$hist" ]; then
-      bad "d7705f09..HEAD migration diff is empty — expected the inherited 0006 hardening plus 0011"
-    elif grep -q "d7705f09..HEAD" "$RB" && grep -qi "non-empty by design" "$RB"; then
-      ok
+    destroyed=$(git diff --name-only --diff-filter=DR origin/main..HEAD -- packages/db/migrations)
+    modified=$(git diff --name-only --diff-filter=M origin/main..HEAD -- packages/db/migrations)
+    if [ "$HEAD_REF" = "$RELEASE_BRANCH" ]; then
+      # On the release branch the migration set is asserted against the DURABLE
+      # ANCHOR (d7705f09, the rewritten 'deploy: env-driven production origin'
+      # commit), not against origin/main: after the attribution rewrite the
+      # redesign's 0011 is ALREADY in main, so `origin/main..HEAD` is empty by
+      # construction and asserting the exact set against main would reject the
+      # very branch it exists to protect. The anchor is the stable pre-merge
+      # baseline that still names the expected inherited set (0006 hardening +
+      # 0011), and the runbook documents that diff as non-empty by design.
+      anchordiff=$(git diff --name-only d7705f09..HEAD -- packages/db/migrations)
+      expected_anchor_diff="packages/db/migrations/0006_notifications.sql packages/db/migrations/0011_notification_outbox_phone_constraints.sql"
+      if [ -z "$anchordiff" ]; then
+        bad "release branch carries no migration diff against the anchor d7705f09 — expected the inherited 0006 hardening plus 0011"
+      elif [ "$(printf '%s' "$anchordiff" | sort | tr '\n' ' ' | sed 's/ $//')" != "$expected_anchor_diff" ]; then
+        bad "release migration inventory differs from the declared set"
+        printf '  got : %s\n  want: %s\n' "$(printf '%s' "$anchordiff" | sort | tr '\n' ' ')" "$expected_anchor_diff"
+      else
+        hist=$(git diff --stat d7705f09..HEAD -- packages/db/migrations)
+        if [ -z "$hist" ]; then
+          bad "d7705f09..HEAD migration diff is empty — expected the inherited 0006 hardening plus 0011"
+        elif grep -q "d7705f09..HEAD" "$RB" && grep -qi "non-empty by design" "$RB"; then
+          ok
+        else
+          bad "runbook does not document the non-empty d7705f09..HEAD diff as expected/classified"
+        fi
+      fi
     else
-      bad "runbook does not document the non-empty d7705f09..HEAD diff as expected/classified"
+      if [ -n "$destroyed" ]; then
+        bad "branch removes or renames an applied migration — refusing a rewrite of migration history"
+        printf '  got : %s\n' "$(printf '%s' "$destroyed" | tr '\n' ' ')"
+      elif [ -n "$modified" ]; then
+        bad "branch modifies an already-applied migration — refusing a rewrite of migration history"
+        printf '  got : %s\n' "$(printf '%s' "$modified" | tr '\n' ' ')"
+      elif [ -n "$maindiff" ]; then
+        bad "branch adds a migration that is not part of the declared release set"
+        printf '  got : %s\n' "$(printf '%s' "$maindiff" | tr '\n' ' ')"
+      else
+        printf '  not the release branch and ships no migration change; migration history is untouched\n'
+        ok
+      fi
     fi
   fi
 fi
@@ -331,9 +381,30 @@ else
   ok
 fi
 
-# 19. The §6b anchor must not claim d7705f09 is NOT an ancestor of origin/main (it is).
-if grep -q 'not an ancestor of' "$RB"; then
-  bad "runbook still claims a commit is 'not an ancestor' (verify with git merge-base --is-ancestor)"
+# 19. §6b must not claim the anchor d7705f09 is NOT an ancestor of origin/main (it is).
+#     Scoped to §6b (like check 18 scopes §13a) and matched to that specific wrong claim,
+#     not a global phrase ban — other sections may legitimately describe non-ancestry.
+_check19_bad_claim() {
+  printf '%s' "$1" | tr '\n' ' ' \
+    | grep -qiE 'd7705f09[^.]{0,80}not (an )?ancestor[^.]{0,80}origin/main|origin/main[^.]{0,80}not (an )?ancestor[^.]{0,80}d7705f09'
+}
+
+# 19a. Non-vacuity: the matcher must catch the historical wrong claim (both directions,
+#      including a line-wrapped form) and must not flag a benign/true claim — otherwise
+#      check 19b is vacuous and a regex/formatting edit could silently pass it.
+if _check19_bad_claim 'd7705f09 is not an ancestor of origin/main.' \
+  && _check19_bad_claim "$(printf 'd7705f09 is not an\nancestor of origin/main.')" \
+  && _check19_bad_claim 'origin/main is not an ancestor of d7705f09.' \
+  && ! _check19_bad_claim 'd7705f09 is an ancestor of origin/main.'; then
+  ok
+else
+  bad "§6b wrong-claim matcher is vacuous (must catch the historical claim and reject the benign one)"
+fi
+
+# 19b. Actual check against §6b.
+sec6b=$(sed -n '/^### 6b\./,/^### 6c\./p' "$RB")
+if _check19_bad_claim "$sec6b"; then
+  bad "§6b claims d7705f09 is not an ancestor of origin/main (it is — verify with git merge-base --is-ancestor)"
 else
   ok
 fi

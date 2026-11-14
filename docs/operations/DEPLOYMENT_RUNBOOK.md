@@ -36,18 +36,21 @@ collapsed into one:
 
 | # | Statement | How to verify |
 |---|---|---|
-| **A** | The redesign adds **exactly one** migration, `0011_notification_outbox_phone_constraints.sql`, and edits **no** historical migration. | `git diff --name-only origin/main..HEAD -- packages/db/migrations` → exactly `packages/db/migrations/0011_notification_outbox_phone_constraints.sql`. |
-| **B** | The release's migration directory therefore **differs from current `origin/main`** by that one added file. | `git diff --stat origin/main..HEAD -- packages/db/migrations` → `0011_notification_outbox_phone_constraints.sql \| N ++++`, **non-empty by design**. |
-| **C** | The diff against the **historical anchor `d7705f09` is NON-EMPTY**. | `git diff --stat d7705f09..HEAD -- packages/db/migrations` → `0006_notifications.sql \| 4 ++--` plus `0011_notification_outbox_phone_constraints.sql`. `origin/main` commit `9d4e68e` **hardened** an already-shipped migration (added a formatted-phone predicate to two `notification_outbox` CHECK constraints). It reached this branch through the `origin/main` merge (`6c0ac82`), **not** through redesign work. |
-| **D** | **Production DB constraints DO NOT match the hardened source migration.** | **CONFIRMED** by the 2026-10-09 inspection (§12): classification `OLDER_WEAKER_CONSTRAINTS`. Production applied `0006` before `9d4e68e` and keeps the weak predicate. |
+| **A** | The redesign adds **exactly one** migration, `0011_notification_outbox_phone_constraints.sql`, and edits **no** historical migration. | `git diff --name-only d7705f09..HEAD -- packages/db/migrations` → exactly `0006_notifications.sql` (the inherited hardening) plus `packages/db/migrations/0011_notification_outbox_phone_constraints.sql`. |
+| **B** | The release's migration directory therefore **differs from the historical anchor `d7705f09`** by the inherited `0006` hardening plus the one added file. Since the historical attribution rewrite (2026-11-11) the redesign's `0011` is **already merged into `origin/main`**, so `origin/main..HEAD` on the release branch is now legitimately EMPTY — the inventory is anchored on `d7705f09`, not on `origin/main`. | `git diff --stat d7705f09..HEAD -- packages/db/migrations` → `0006_notifications.sql \| 4 ++--` plus `0011_notification_outbox_phone_constraints.sql \| N ++++`, **non-empty by design**. |
+| **C** | The diff against the **historical anchor `d7705f09` is NON-EMPTY**. | `git diff --stat d7705f09..HEAD -- packages/db/migrations` → `0006_notifications.sql \| 4 ++--` plus `0011_notification_outbox_phone_constraints.sql`. `origin/main` commit `7a11a02` **hardened** an already-shipped migration (added a formatted-phone predicate to two `notification_outbox` CHECK constraints). It reached this branch through the `origin/main` merge (`00fedb1`), **not** through redesign work. |
+| **D** | **Production DB constraints DO NOT match the hardened source migration.** | **CONFIRMED** by the 2026-10-09 inspection (§12): classification `OLDER_WEAKER_CONSTRAINTS`. Production applied `0006` before `7a11a02` and keeps the weak predicate. |
 | **E** | The migrator is **version-only**: it does **not** reapply a modified, already-applied migration. | `apps/api/internal/migrate/migrate.go` selects pending work by version number and never re-reads the stored checksum; production `SIGAP_AUTO_MIGRATE` is empty. |
 | **F** | Production DB schema compatibility is **`OLDER_WEAKER_CONSTRAINTS`**, remediated forward by `0011` (§12). | The inspection result, and `scripts/ops/test-migration-0011.sh`. |
 
 Consequences that follow directly:
 
 - **Never claim migration status PASS from repository diff evidence alone.** A non-empty
-  `origin/main..HEAD` diff (**B**) says the *source* adds a migration; it says nothing about
-  whether that migration has been *applied* to the database (**D**/**F**).
+  `d7705f09..HEAD` migration diff (**B/C**) says the *source* differs from the pre-redesign
+  anchor; it says nothing about whether a redesign migration has been *applied* to the
+  database (**D**/**F**). `origin/main..HEAD` is now legitimately empty because the redesign
+  migration is already merged into `origin/main` (row B) — do not treat that emptiness as
+  "no migration delta".
 - **Do not edit `0006` again.** It is shipped. The correction is the **new, forward-only**
   migration `0011` (§12).
 - A **non-empty** `d7705f09..HEAD` diff (**C**) is *expected and classified*: an inherited
@@ -171,7 +174,7 @@ edge / reverse proxy (Traefik labels on the web service; enabled by ENABLE_EDGE_
 | Step | Service | Action | Verify |
 |---|---|---|---|
 | 3.0 | release identity (pre-deploy) | Record the current production version identifier now: `curl -fsS https://<host>/_app/version.json` (and `docker compose images api web` digests, once host access exists). This is the no-op/deploy detector for 3.8. | Value recorded; §2.9 captured |
-| 3.1 | database / migrations | **One migration must be RUN, deliberately, by the operator — not by this cutover.** `0011_notification_outbox_phone_constraints.sql` (§12a) converges the two `notification_outbox` phone constraints onto the release predicate. Production `SIGAP_AUTO_MIGRATE` is empty, so `docker compose up` applies **no** DDL: the cutover itself changes no schema, and the migration is a separate, explicitly authorized one-off. The inherited hardening of `0006` (§1 **C**) **will not** be reapplied by the version-only migrator (§1 **E**), which is exactly why `0011` exists. | `git diff --name-only origin/main..HEAD -- packages/db/migrations` = `0011_...` only; **§12 result recorded**; `0011` applied and re-classified `MATCHES_CURRENT_SECURITY_CONSTRAINTS` |
+| 3.1 | database / migrations | **One migration must be RUN, deliberately, by the operator — not by this cutover.** `0011_notification_outbox_phone_constraints.sql` (§12a) converges the two `notification_outbox` phone constraints onto the release predicate. Production `SIGAP_AUTO_MIGRATE` is empty, so `docker compose up` applies **no** DDL: the cutover itself changes no schema, and the migration is a separate, explicitly authorized one-off. The inherited hardening of `0006` (§1 **C**) **will not** be reapplied by the version-only migrator (§1 **E**), which is exactly why `0011` exists. | `git diff --name-only d7705f09..HEAD -- packages/db/migrations` = `0006_notifications.sql` (inherited hardening) + `0011_...`; **§12 result recorded**; `0011` applied and re-classified `MATCHES_CURRENT_SECURITY_CONSTRAINTS` |
 | 3.2 | build images | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml build api web` (**`--build` is mandatory** — a bare `up -d` reuses the previously built images and deploys nothing, while still passing health checks) | build exits 0 for both services |
 | 3.3 | postgres | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d postgres` (waits on `pg-cert-init`) | `pg_isready -h 127.0.0.1 -p 5433 -U sigap -d sigap` |
 | 3.4 | queue engine | `docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d rust-engine` — rebuild **only** if `git diff --name-only <release-base>..RELEASE_CANDIDATE_HEAD -- apps/queue-engine` is non-empty (never in this stream). `<release-base>` is the commit the **currently deployed** images were built from — the value recorded in 3.0, not a historical design-phase pointer (§6a). | `nc -z localhost 50051` |
@@ -329,12 +332,14 @@ header under the same condition.
 | `RELEASE_CANDIDATE_HEAD` | The commit being deployed. |
 
 **The historical pointers in §6b are NOT production rollback targets.** Every one of them
-predates the `origin/main` security reconciliation (merge `6c0ac82`), which brought in four
-security commits — `96c2570` (remove the enumerable `formatted_number` lookup), `9d4e68e`
-(harden the notification denylist), `6f567f8` (restrict dev identity to read-only),
-`87f218e` (template rendering). `git merge-base --is-ancestor 87f218e <target>` is **false
+predates the `origin/main` security reconciliation (merge `00fedb1`), which brought in four
+security commits — `495fc3a` (remove the enumerable `formatted_number` lookup), `7a11a02`
+(harden the notification denylist), `62cdeb7` (restrict dev identity to read-only),
+`4d1669e` (template rendering). `git merge-base --is-ancestor 4d1669e <target>` is **false
 for all of them**, so **checking out a §6b pointer would silently revert live production
 security fixes.**
+(These are the post-rewrite SHAs; they resolve only in a clone with the rewritten
+history — a shallow or pre-rewrite clone reports `fatal: bad revision` for them.)
 
 > **Rule: never roll production back to a historical design-phase commit.** Production
 > rollback means restoring the **preserved, currently running image** — see §7c/§7d.
@@ -345,19 +350,54 @@ These hashes are retained to explain how the branch was built. They are **not** 
 rollback targets for production.
 
 **Anchor:** `d7705f09` — *"deploy: make production origin env-driven and route Sigap through
-the shared edge (#83)"*. It is the **merge-base with `origin/main`** and an **ancestor** of
-it, but it is now **5 commits behind** it:
+the shared edge (#83)"*. It is the pre-redesign **anchor** (historical fork point) and an
+**ancestor** of `origin/main`, and `d7705f09..origin/main` is non-empty (its size grows as
+`origin/main` advances):
 
 ```
 git merge-base --is-ancestor d7705f09 origin/main    # exit 0  — d7705f09 IS an ancestor
-git rev-list --count d7705f09..origin/main           # 5
-git merge-base --is-ancestor 87f218e d7705f09        # exit 1  — the security fixes are NOT in it
+# the first five commits in d7705f09..origin/main are the anchor's immediate
+# security-fix descendants (6893323 chore, 62cdeb7, 7a11a02, 495fc3a, 4d1669e
+# — four security fixes + one chore), in that order; assert each is a descendant
+# of the anchor and an ancestor of origin/main (drift-resistant, fail-loud):
+rc=0
+for sha in 6893323 62cdeb7 7a11a02 495fc3a 4d1669e; do
+  git merge-base --is-ancestor d7705f09 "$sha" \
+    || { echo "FAIL: $sha is not a descendant of the anchor d7705f09"; rc=1; }
+  git merge-base --is-ancestor "$sha" origin/main \
+    || { echo "FAIL: $sha is not an ancestor of origin/main"; rc=1; }
+done
+# 4d1669e (and thus the security fixes) must NOT be in the anchor: exit 1 is the
+# expected/good state; exit 0 means the anchor wrongly contains them; any other
+# exit (e.g. 128, bad revision / shallow or pre-rewrite clone) is "cannot evaluate".
+# Use the if-form so a non-zero status (including the expected exit 1) does not
+# trip set -e in gate mode.
+if git merge-base --is-ancestor 4d1669e d7705f09; then
+  echo "FAIL: 4d1669e must NOT be an ancestor of d7705f09"; rc=1
+else
+  s=$?
+  if [ "$s" -eq 1 ]; then
+    echo "OK: 4d1669e is not an ancestor of d7705f09 (expected)"
+  else
+    echo "FAIL: could not evaluate 4d1669e vs d7705f09 (exit $s; rewritten SHA may be unresolved — fetch full history)"; rc=1
+  fi
+fi
+echo "anchor-range rc=$rc"; [ "$rc" -eq 0 ]
 ```
 
+> **After the 2026-11-11 attribution rewrite** these SHAs are the REWRITTEN ones
+> (`4d1669e`, `7a11a02`, `62cdeb7`, `495fc3a`, `6893323`). They resolve only in a
+> clone that has the rewritten history — a shallow or pre-rewrite clone reports
+> `fatal: bad revision` and the checks above cannot be evaluated there. Fetch the
+> rewritten history (`fetch-depth: 0`, `git fetch --unshallow`) before relying on
+> them. The five security-fix commits are the **first five** in `d7705f09..origin/main`;
+> the rest of that range is history the rewrite re-parented (do not rely on a fixed
+> total count — it grows as `origin/main` advances).
+
 So the operative fact is **not** that `d7705f09` is unrelated to `origin/main` — it is that
-the five commits above it (`920e967`, `6f567f8`, `9d4e68e`, `96c2570`, `87f218e`) are
-**descendants** of it. Checking it out therefore **loses those five commits**, four of which
-are security fixes. That is why it is not a production rollback target.
+the five commits above it (`6893323`, `62cdeb7`, `7a11a02`, `495fc3a`, `4d1669e`) are
+**descendants** of it. Checking it out therefore **loses those five commits** (four security
+fixes and one chore). That is why it is not a production rollback target.
 
 | Phase | Phase end commit | What changed | Historical pointer (commit BEFORE the phase) | Expected behaviour if that pointer were deployed | DB restore? |
 |---|---|---|---|---|---|
@@ -392,10 +432,12 @@ and **not** undone by an image rollback — the constraint lives in the database
 the resulting rollback-compatibility question, which is **BLOCKING and UNKNOWN**.
 
 ```
-git diff --name-only origin/main..HEAD -- packages/db/migrations  # 0011_...sql  (one added file)
-git diff --stat origin/main..HEAD     -- packages/db/migrations  # non-empty by design (§1 B)
-git diff --stat d7705f09..HEAD         -- packages/db/migrations  # 0006 (4 ++--) + 0011
+git diff --name-only d7705f09..HEAD -- packages/db/migrations  # 0006_notifications.sql + 0011_...sql
+git diff --stat d7705f09..HEAD         -- packages/db/migrations  # non-empty by design (§1 B)
 ```
+> Post-rewrite note: since the historical attribution rewrite (2026-11-11) the redesign's
+> `0011` is already in `origin/main`, so `origin/main..HEAD` is legitimately empty on the
+> release branch — the migration inventory is anchored on `d7705f09`, not on `origin/main`.
 
 Neither diff proves anything about the **deployed database** — that is §12. The inspection has
 since run and returned `OLDER_WEAKER_CONSTRAINTS`; the database reaches
@@ -431,7 +473,7 @@ If **any** value is unavailable: **ABORT before `build`/`up`.** The historical a
 > **Identity contract.** A running image's revision is **never** inferred from the host Git
 > checkout, from an image creation timestamp, or from the mutable `latest` tag. It is read
 > from the container's `.Image` (a full `sha256:` id) via the evidence bundle. The host
-> checkout (`87f218e` on `main`) is **not** evidence of what the running containers were
+> checkout (`4d1669e` on `main`) is **not** evidence of what the running containers were
 > built from — the images predate it.
 
 ### 7b. Directory + environment proof (before any build or up)
@@ -937,7 +979,7 @@ image is a different binary and answers a different question.
 **Schema variants to run against.**
 
 - **A. pre-0011 weak schema** — apply migrations `0001`–`0010` and rewrite the two phone
-  constraints to the pre-`9d4e68e` weak form. This is the **baseline**: what the image does
+  constraints to the pre-`7a11a02` weak form. This is the **baseline**: what the image does
   today. **Test-cluster only:** the weak-form rewrite is a destructive schema mutation and
   must run **only** against the disposable test cluster — assert the target `DATABASE_URL`
   host/port is the test cluster (e.g. port ≥ 55900 or a dedicated test socket) and refuse
@@ -1128,9 +1170,11 @@ Neither option is authorized or executed. Both remain blocked on the **rollback 
 - the local identity selector is active (`SIGAP_ENV=local` + a subject);
 - `make db-seed` would **not** refuse (the demo-seed guard is bypassed);
 - the migration inventory differs from the declared release set: `git diff --name-only
-  origin/main..HEAD -- packages/db/migrations` must be **exactly**
-  `packages/db/migrations/0011_notification_outbox_phone_constraints.sql` (§1 **A**). Any
-  *other* added or edited migration aborts. **A non-empty `d7705f09..HEAD` migration diff does
+  d7705f09..HEAD -- packages/db/migrations` must be **exactly**
+  `packages/db/migrations/0006_notifications.sql packages/db/migrations/0011_notification_outbox_phone_constraints.sql` (§1 **A**) — the inherited `0006` hardening plus the added `0011`. Any
+  *other* added or edited migration aborts. (The baseline is the anchor, not `origin/main`:
+  since the 2026-11-11 attribution rewrite `0011` is already merged into `origin/main`, so
+  `origin/main..HEAD` is legitimately empty on the release branch.) **A non-empty `d7705f09..HEAD` migration diff does
   NOT abort** — it is the expected inherited upstream hardening (§1 **C**) plus `0011`. The
   abort is for a migration outside the declared inventory;
 - the DB schema inspection has not run, or classified `UNKNOWN` / `UNEXPECTED_DRIFT` (§12);
@@ -1265,11 +1309,11 @@ metadata-only inspection and it was run on 2026-10-09 against the production hos
   `SIGAP-60` (comment plus the `sigap.db.inspection` issue property).
 
 **Why it was needed.** The release carries an inherited edit to an already-shipped migration:
-`9d4e68e` strengthened the `notification_outbox` phone-denylist CHECK constraints inside
+`7a11a02` strengthened the `notification_outbox` phone-denylist CHECK constraints inside
 `0006_notifications.sql`. The migration runner
 (`apps/api/internal/migrate/migrate.go` → `Run()`) skips any version already recorded as
 applied (`if applied[m.Version] { continue }`) and **never re-reads the stored checksum**, so
-a database that applied `0006` before `9d4e68e` retains the **weaker** constraints
+a database that applied `0006` before `7a11a02` retains the **weaker** constraints
 indefinitely. Nothing in the repository could reveal which definition was live; the
 inspection did, and the answer was the weak form.
 
@@ -1503,7 +1547,7 @@ yields no classification row and must be recorded as `UNKNOWN`. `UNKNOWN` and
 | Class | Meaning | Action |
 |---|---|---|
 | `MATCHES_CURRENT_SECURITY_CONSTRAINTS` | Both phone predicates carry **both** conjuncts, bound to their own columns; the full 10-constraint and 17-column inventories match the release; no required version is missing and no version outside `1..11` is recorded | None. This is the state of a database built from HEAD (where `0006` already carries the strengthened predicate, so `0011` is a no-op) **and** the post-`0011` state of a drifted database, whether or not `0011`'s version row was recorded. This classifier deliberately does not distinguish them: the predicate is the control, the version row is bookkeeping. |
-| `OLDER_WEAKER_CONSTRAINTS` | Both phone constraints present and matching the pre-`9d4e68e` weak form (`<col> !~ '[0-9]{8,}'` only); everything else matches. **This is the recorded production state.** | Operator decides: **accept** (record compensating control) or **remediate forward** via a **new** migration — the prepared remediation is `0011` (§12b) |
+| `OLDER_WEAKER_CONSTRAINTS` | Both phone constraints present and matching the pre-`7a11a02` weak form (`<col> !~ '[0-9]{8,}'` only); everything else matches. **This is the recorded production state.** | Operator decides: **accept** (record compensating control) or **remediate forward** via a **new** migration — the prepared remediation is `0011` (§12b) |
 | `MISSING_CONSTRAINTS` | Fewer than two phone-denylist CHECKs exist, with the rest of the contract intact | Security finding — do not deploy until remediated or explicitly accepted in writing. `0011` also handles this state (§12b). |
 | `UNEXPECTED_DRIFT` | Any other deviation: unexpected/missing structural constraint, unexpected/missing column, unexpected/missing applied version, or a phone predicate that is neither known form (`{10,}` conjunct only, mis-bound column, `OR`, altered quantifier, extra term, or the two columns in different forms) | **STOP.** Do not classify, do not deploy. Escalate. `0011` refuses this state too, rather than guessing. |
 | `UNKNOWN` | Inspection not completed (no authorization, failure, timeout, partial output, non-zero `psql` exit, or step 2 not printing `CLASSIFICATION OK`) | **Default and BLOCKING.** Never a PASS. |
