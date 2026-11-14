@@ -1,0 +1,123 @@
+#!/bin/sh
+# .githooks/commit-msg — strip AI-agent attribution trailers from a commit message.
+#
+# Install (once per clone; a relative path resolves against THIS worktree root):
+#   git config core.hooksPath .githooks
+# Full install + verification story: docs/operations/git-attribution.md
+#
+# WHY THIS EXISTS
+# The `Co-authored-by:` trailers found in this repository's history were not put
+# there by git and not by the committer's git config — the identity has always
+# been `lostsky1403`. They are stamped into the message body by the AGENT TOOLS
+# (Trae / traeagent, Codebuff, Claude Code, OMP's `internal-model`), so the only
+# place they can be removed before they are recorded is a commit-msg hook.
+#
+# CONTRACT — a hook that blocks work is worse than the trailer it deletes:
+#   * exit 0 on EVERY path: missing argument, missing/unreadable message file,
+#     no awk, mktemp failure, unreadable input, no removal needed, success;
+#   * the message keeps its line count and everything else; only matching
+#     `Co-authored-by:` lines disappear;
+#   * a genuine human co-author is NEVER touched: a line is removed only when its
+#     email is a known AI address or its name is a known AI name, and never when
+#     the email is listed in SIGAP_ATTRIBUTION_ALLOWLIST;
+#   * when no AI trailer is present the file is left byte-identical (not even
+#     rewritten), so a clean message keeps its exact bytes and mtime.
+#
+# The detection list is mirrored from scripts/check-attribution.mjs, which is the
+# CI gate and the source of truth. Keep the two in step when either changes.
+#
+# Explicitly NOT controlled here: the committer identity. `user.name`/`user.email`
+# are already correct; setting them from a hook would only mask a real
+# misconfiguration. See docs/operations/git-attribution.md.
+
+msg_file=${1:-}
+
+# No message file (hook invoked oddly), unreadable, or no awk available: do
+# nothing and do not fail the commit.
+[ -n "$msg_file" ] && [ -f "$msg_file" ] && [ -r "$msg_file" ] || exit 0
+command -v awk >/dev/null 2>&1 || exit 0
+
+allow=${SIGAP_ATTRIBUTION_ALLOWLIST:-}
+
+tmp=$(mktemp "${TMPDIR:-/tmp}/sigap-commit-msg.XXXXXX" 2>/dev/null) || exit 0
+
+awk -v allow="$allow" '
+function lc(s) { return tolower(s) }
+
+function trim(s) {
+	sub(/^[ \t\r]+/, "", s)
+	sub(/[ \t\r]+$/, "", s)
+	return s
+}
+
+# A name matches when it IS an AI name, or STARTS with one followed by a
+# non-alphanumeric character: "Claude", "Claude 4.7" and "Claude Opus 4.7"
+# match; "Claudette" and a human "Jean-Claude" do not.
+function ai_name(name,   i, token, rest) {
+	for (i = 1; i <= n_ai_name; i++) {
+		token = ai_name_list[i]
+		if (name == token) return 1
+		if (index(name, token) == 1) {
+			rest = substr(name, length(token) + 1, 1)
+			if (rest !~ /[a-z0-9]/) return 1
+		}
+	}
+	return 0
+}
+
+function ai_email(email,   i) {
+	for (i = 1; i <= n_ai_email; i++) if (email == ai_email_list[i]) return 1
+	return 0
+}
+
+function human_allowlisted(email) {
+	return email != "" && (email in allow_set)
+}
+
+BEGIN {
+	split("traeagent codebuff claude internal-model anthropic", ai_name_list, " ")
+	n_ai_name = 5
+	split("traeagent@users.noreply.github.com noreply@codebuff.com noreply@anthropic.com", ai_email_list, " ")
+	n_ai_email = 3
+
+	# Allowlist wins over every detection rule: it is the only way to keep a
+	# human co-author whose name or address would otherwise match.
+	n_allow = split(allow, allow_items, /[,; ]+/)
+	for (i = 1; i <= n_allow; i++) {
+		entry = lc(trim(allow_items[i]))
+		gsub(/^<|>$/, "", entry)
+		if (entry != "") allow_set[entry] = 1
+	}
+}
+
+{
+	line = $0
+	lower = lc(line)
+
+	if (lower ~ /^[ \t\r]*co-authored-by:/) {
+		value = line
+		if (match(lower, /^[ \t\r]*co-authored-by:[ \t\r]*/)) value = substr(line, RLENGTH + 1)
+
+		email = ""
+		if (match(value, /<[^<>]*>/)) email = lc(substr(value, RSTART + 1, RLENGTH - 2))
+
+		name = value
+		sub(/<[^<>]*>.*$/, "", name)
+		name = lc(trim(name))
+
+		if (!human_allowlisted(email) && (ai_email(email) || ai_name(name))) next
+	}
+
+	print line
+}
+' "$msg_file" >"$tmp" 2>/dev/null || { rm -f "$tmp"; exit 0; }
+
+# Rewrite only when a line was actually removed.
+if cmp -s "$msg_file" "$tmp" 2>/dev/null; then
+	rm -f "$tmp"
+	exit 0
+fi
+
+cat "$tmp" >"$msg_file" 2>/dev/null
+rm -f "$tmp"
+exit 0
