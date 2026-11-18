@@ -50,6 +50,15 @@ of guessing — the "Git identity" section of
 [docs/operations/git-attribution.md](docs/operations/git-attribution.md) shows how to set
 it from PowerShell or the Git CLI.
 
+## Mandatory worktree/branch preflight
+
+Before **any** Git-changing operation, run the read-only topology preflight and follow
+[docs/operations/git-worktree-policy.md](docs/operations/git-worktree-policy.md). Never
+check out one branch in two worktrees, never switch the active development worktree to
+investigate another PR, and never reset, clean, prune, force-push or delete a branch or
+worktree without explicit owner approval. Uncertain entries are UNKNOWN, never
+SAFE_TO_DELETE. The live absolute-path inventory is in the project's OpenChamber knowledge.
+
 ## Before you commit
 
 - Commit from the worktree you edited, in that worktree's checkout of the branch.
