@@ -357,3 +357,59 @@ prefix rule is written to avoid.
   hook still cannot merge a trailer, because CI scans new commits on every push and PR.
 - **No blocking behaviour locally.** Nothing in this policy stops a commit; the failure is
   reported at the gate, where it can be fixed once, deliberately.
+
+---
+
+## 9. Commit author / committer identity is a separate control (PR #96 finding)
+
+The hook and the CI gate above examine **message trailers only**. They say nothing about
+the `author`/`committer` fields of a commit, so a clean `check-attribution.mjs` run is **not**
+proof of correct attribution. This section closes that finding.
+
+**Coverage gap at the PR head:** `core.hooksPath=.githooks` is set in the checkout, but the
+PR #96 head `036a1aa9…` and its base `51ba1d53…` do not contain
+`.githooks/commit-msg`, `scripts/check-attribution.mjs`, or the `Commit Attribution Check`
+CI job — those exist only on the development branch `feat/sigap-selfhosted-auth`. Therefore
+**no attribution guard ran on PR #96**, and even where the controls exist they are
+trailer-only. This is a separate finding from the historical trailer problem.
+
+**Observed:** the three commits of PR #96
+(`707c7076…`, `26f7c53a…`, `036a1aa9…`) carry `Author: sigap-ops <ops@local>` and
+`Committer: sigap-ops <ops@local>`. GitHub reports `author: null`, `committer: null`
+(no linked account), `author_association: null`, and `verified: false` for all three.
+`ops@local` is not a registered GitHub email, so those commits are not credited to any
+GitHub account in the Contributors graph; the historical attribution correction credits
+commits by matching the commit email to a GitHub account. The owner's authorized identity
+in this repository is `lostsky1403 <moch22188ti@student.nurulfikri.ac.id>` (also seen as
+the linked noreply form `114224549+lostsky1403@users.noreply.github.com`).
+
+**Where it came from:** no local, global, or system git config sets `sigap-ops` — the
+effective config in every checkout is `lostsky1403` / `moch22188ti@student.nurulfikri.ac.id`.
+The identity was applied per invocation to the PR commits, not configured as an authorized
+automation identity. It is not documented anywhere as an accepted bot; `AGENTS.md` requires
+commits to be authored by the configured human identity.
+
+**Required correction:** a **branch-only** author/committer correction on
+`hotfix/post-merge-ci-rust-stabilization`, using the maintainer identity, before merge.
+A dry-run rewrite in a disposable clone (nothing pushed) produced this exact mapping; the
+tree, message bodies, and timestamps are unchanged, so only metadata changes:
+
+| Old SHA | Proposed new SHA |
+| --- | --- |
+| `707c70764589c5ad9aabb9796670f2fe7e750b72` | `49f0cf3c66a0c22b3f8b2fef081585175db066bf` |
+| `26f7c53ae8ac1723424cc45d02de3045afb712e0` | `3cdb0b8b6b55e2bc3b1df1a4d1049a07eca7e888` |
+| `036a1aa9f04108cb95f8ce85e93a5c8a925056fc` | `3cb89538154ec1a415c6c456019c2700d550eea1` |
+
+Impact: the PR head moves from `036a1aa9…` to `3cb89538…`, forcing a force-push of the PR
+branch, a new CI run on the new head, and a new review baseline. `main` is untouched.
+**Do not force-push or rewrite without explicit owner authorization.** After correction,
+confirm the commit author/committer and `git var GIT_AUTHOR_IDENT` are the maintainer
+identity; run `node scripts/check-attribution.mjs --range origin/main..HEAD` from a checkout
+that actually contains the script (the PR branch currently does not), or add the control in
+the follow-up PR below.
+
+**Proposed regression control (separate follow-up, not implemented here):** add a CI check
+that asserts, for new commits, both `author.email` and `committer.email` are one of the
+maintainer addresses (the configured identity and the two documented noreply forms) and
+that neither is an unlinked local identity. This detects the exact gap that a
+trailer-only check misses.

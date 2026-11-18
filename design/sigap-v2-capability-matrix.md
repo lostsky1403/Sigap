@@ -205,3 +205,26 @@ Four gaps that matter more than the feature count suggests:
 - **PR #94** (fix/go-security-toolchain-1.26.11 -> main): **all 7 CI jobs green**, MERGEABLE, **not merged** (owner approval pending).
 - **OLD_HISTORY_REINTRODUCTION_BLOCKED=PASS.** The stale `F:\Sehat-Hub` checkout was re-synced non-destructively: 23 archive tags, 13 content-identical mirror branches + local `main` re-pointed to the rewritten tips, checkout moved off `local/r2-drill` onto `main` (a5c0e34). Verified: **no branch reaches the old main tip (b96c5174)**; no `reflog expire`/`gc` was run, so every pre-rewrite tip stays recoverable.
 - **AUTH_READINESS LEDGER.** `design/auth-readiness-review-v1.md` — 23 documented gaps classified (9 INFRA-BLOCKED, 6 OWNER-BLOCKED, 5 CODE-FIXABLE, 10 TEST-FIXABLE). Session-security Phase 1 **10/10 PASS** this run (JWKS rotation pinned at 2592000s, Go iss+aud enforcement, 15-min JWKS cache TTL, active-user RBAC gate). `VISUAL_QA` stays **OPEN** (48 PNGs, geometry proved, pixels not inspected).
+
+### 6.2 Regional release integration strategy — single source of truth
+
+The obsolete suggestion to **"promote `feat/sigap-selfhosted-auth` as the declared release
+branch" is removed**. It is not an acceptance gate and must not be repeated in any further
+report. A feature branch is not a release branch; relabelling it would falsify the release
+migration guard.
+
+The one strategy (full contract in `design/regional-release-integration-contract.md`):
+
+1. Preserve `feat/sigap-selfhosted-auth` as the development branch; no rename or reset.
+2. Integrate canonical `origin/main` (`51ba1d53fb85e76c557de3ff0d84b27688645e34`) into the
+   feature branch with a normal, non-rewriting merge, when separately authorized.
+3. Resolve conflicts while preserving Better Auth, regional RBAC, Patient Continuity, and
+   migrations `0012`–`0014`.
+4. After integration and regression verification, create a **NEW dedicated release branch
+   from the integrated development tip**: proposed `release/sigap-regional-v1` (a proposed
+   future name, not proof of creation).
+5. Do not rename/relabel the feature branch to satisfy the guard; do not merge the feature
+   branch into `main` in this task.
+
+`design/ui-ux-overhaul` above was the *historical* release branch for the `d7705f09`-anchored
+guard; it is not the regional release branch. The historical anchor is not repurposed.
