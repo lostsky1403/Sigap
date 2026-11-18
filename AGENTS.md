@@ -50,14 +50,27 @@ of guessing — the "Git identity" section of
 [docs/operations/git-attribution.md](docs/operations/git-attribution.md) shows how to set
 it from PowerShell or the Git CLI.
 
-## Mandatory worktree/branch preflight
+## Mandatory worktree/branch preflight (all coding agents)
 
-Before **any** Git-changing operation, run the read-only topology preflight and follow
-[docs/operations/git-worktree-policy.md](docs/operations/git-worktree-policy.md). Never
-check out one branch in two worktrees, never switch the active development worktree to
-investigate another PR, and never reset, clean, prune, force-push or delete a branch or
-worktree without explicit owner approval. Uncertain entries are UNKNOWN, never
-SAFE_TO_DELETE. The live absolute-path inventory is in the project's OpenChamber knowledge.
+OpenChamber, OMP, Trae, Codebuff, Claude Code and every other coding agent must follow
+[docs/operations/git-worktree-policy.md](docs/operations/git-worktree-policy.md). Before
+**any** coding or Git-changing work, and again before finishing, explicitly:
+
+1. Identify the active worktree (`git rev-parse --show-toplevel`, `git worktree list`).
+2. Verify the intended branch (`git branch --show-current` and its upstream).
+3. Inspect uncommitted **and** untracked changes (`git status --short`); never print secret values.
+4. Read the project worktree policy linked above and obey it.
+5. Preserve unrelated user work; never reset, clean, prune, force-push or delete a branch
+   or worktree without explicit owner approval. Uncertain entries are UNKNOWN, not SAFE_TO_DELETE.
+6. Use the configured human commit identity (`git var GIT_AUTHOR_IDENT`); never invent one or use `--author`.
+7. Reject unwanted AI attribution (no tool/model `Co-authored-by:` trailers; do not bypass the hook or gates).
+8. Avoid branch/worktree collisions: one branch per worktree, no detached HEAD for persistent tasks.
+9. Perform a post-task worktree audit (clean status, unpushed commits, no lost untracked work).
+10. Report every new branch, worktree, push and cleanup action, even when nothing was changed.
+
+Never switch the active Better Auth worktree to investigate another PR. The live
+absolute-path inventory is local-only project knowledge; public docs contain portable
+rules only.
 
 ## Before you commit
 

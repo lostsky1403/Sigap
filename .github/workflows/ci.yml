@@ -300,11 +300,30 @@ jobs:
       # explicitly authorized automation only) applies on trusted branches.
       - name: Verify commit author/committer identity
         env:
-          # Explicitly authorized automation identities present in the legacy
-          # pre-policy history of this branch (Pen.dev design commits) and the
-          # GitHub merge committer. Real human/maintainer commits are still
-          # required to use the configured identity; sigap-ops remains rejected.
-          SIGAP_AUTHORIZED_COMMITTERS: "design@sigap.local, design@sigap, impl@sigap.local, noreply@github.com"
+          # Historical Pen.dev design-tool author identities are grandfathered
+          # by EXACT immutable commit SHA only — never by email, name or date.
+          # A NEW commit reusing design@sigap / impl@sigap / sigap-ops is rejected.
+          # GitHub system merge commits are handled separately by the gate.
+          SIGAP_LEGACY_AUTHOR_COMMITS: >-
+            ffbd96dc3898d3383f3318d1c8fbe06992013073
+            f2621cf0e2286fe815942cd06b9808e911cd6866
+            62ad3fd40592801c6a08b3433325efb7a31e77ee
+            70c6f9fc746c1cc347bd111dde9404f548b0f2fe
+            2db86fbe708c372d238ef2e51914596c60843190
+            ac53647b7405086770c7031a7e66f73e063a1d79
+            bc7abfca2a7739c00541d5dfcfc3d74f6e60194b
+            41b11deae833fffbd20da698af314cbddc3ce0ea
+            5d092ad93c96f0273c7d85d77b525d14bfbb1d2d
+            37c1b130060ab4c3f7b504ca9abb8f6cc097a546
+            400e1285153759faed957aa45068e2c7a300c0cf
+            c3f08ed3a867a9a084a8c7172a74faa1898dc828
+            8da750c7b076b290033a95cbadc8c9299fd11438
+            aa2c2b1044644ee216385f6ea485aa12d9065286
+            58dfafacfaa996827c483701a101e24b1d725dbf
+            dff1cca33faebd63f1dde3f04cc72abb0d95efa4
+            6b1a572bd3156a6f24111d97f19ec18d1b10adc9
+            cdfdbbb4139995cdf2a32680b758d031e2ab0228
+            90c73b784bd88a4f1ccb53b22f80989c2fe46532
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"

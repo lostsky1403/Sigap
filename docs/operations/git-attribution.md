@@ -458,3 +458,24 @@ Trae, Codebuff, OMP or any other tool) must:
 These rules are enforced in CI by both gates; passing one is not evidence that the other
 passed. Attribution is correct only when author **and** committer are the right human (or
 an explicitly authorized automation identity) **and** no AI trailer is present.
+
+## 11. Historical design-tool exception — exact SHA only
+
+PR #97 contains 19 historical design/prototype commits authored by `SIGAP Design`
+(18) or `SIGAP Impl` (1) with local placeholder emails. All are committed by the
+maintainer, have no human co-author trailers, touch only design artifacts, and create no
+extra GitHub Contributors entry. The owner decided to **preserve** them without rewriting.
+
+The identity gate grandfathers those authors **by exact immutable commit SHA** via
+`SIGAP_LEGACY_AUTHOR_COMMITS` (the 19 full SHAs are listed in the CI workflow). It never
+uses a date, name, email or path pattern — backdating or reusing an allowed email cannot
+create a new exception. A new commit with `design@sigap`, `design@sigap.local`,
+`impl@sigap.local` or `sigap-ops <ops@local>` is rejected. Only the AUTHOR check is
+grandfathered; every commit still gets the AI-trailer check and a committer-identity
+check. GitHub's own merge committer (`noreply@github.com`) is accepted only for a real
+merge commit (two or more parents) whose author is a verified maintainer.
+
+`sh scripts/ops/test-attribution-exception.sh` proves both sides: the 19 historical
+commits pass, while new placeholder authors, `sigap-ops`, and AI trailers fail, and a
+maintainer commit, a fork contributor in permissive mode and a genuine human co-author
+pass.

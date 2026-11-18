@@ -34,7 +34,17 @@
  *                                where strict mode applies (auto mode only).
  *   SIGAP_AUTHORIZED_COMMITTERS  comma/semicolon separated emails or
  *                                `Name <email>` for authorized automation.
+ *   SIGAP_LEGACY_AUTHOR_COMMITS  EXACT full commit SHAs whose historical author
+ *                                identity is grandfathered. Never use a date rule
+ *                                (backdating defeats it); never use email patterns
+ *                                (a new commit could reuse them). Only the exact
+ *                                immutable SHA is exempt from AUTHOR checks, and
+ *                                every commit still gets the AI-trailer check.
  *   SIGAP_ATTRIBUTION_ALLOWLIST  forwarded to check-attribution.mjs (human co-authors).
+ *
+ * A GitHub system merge commit (committer noreply@github.com, >=2 parents, author
+ * is a verified maintainer) is accepted as a distinct, verified system identity —
+ * not as a generic agent placeholder.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -182,19 +192,20 @@ function isPlaceholder(name, email, authorized) {
 	return PLACEHOLDER_NAME_PATTERNS.some((re) => re.test(n)) || PLACEHOLDER_EMAIL_PATTERNS.some((re) => re.test(e));
 }
 
-/** New commits as {sha, subject, authorName, authorEmail, committerName, committerEmail}. */
+/** New commits as {sha, parents, subject, authorName, authorEmail, committerName, committerEmail}. */
 function readCommits(range) {
-	const out = git(['log', '--format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%x1e', range]);
+	const out = git(['log', '--format=%H%x00%P%x00%an%x00%ae%x00%cn%x00%ce%x00%x1e', range]);
 	const commits = [];
 	for (const record of out.split('\x1e')) {
 		const fields = record.split('\0').map((field) => field.trim());
-		if (fields.length < 5 || fields[0] === '') continue;
+		if (fields.length < 6 || fields[0] === '') continue;
 		commits.push({
 			sha: fields[0],
-			authorName: fields[1],
-			authorEmail: fields[2],
-			committerName: fields[3],
-			committerEmail: fields[4],
+			parents: fields[1] ? fields[1].split(/\s+/).filter(Boolean) : [],
+			authorName: fields[2],
+			authorEmail: fields[3],
+			committerName: fields[4],
+			committerEmail: fields[5],
 			subject: fields[0].slice(0, 10),
 		});
 	}
@@ -267,15 +278,31 @@ function main() {
 		splitEnv(process.env.SIGAP_AUTHORIZED_COMMITTERS).map(emailOf),
 	);
 	const allowed = new Set([...MAINTAINER_EMAILS, ...authorized]);
+	// Exact immutable SHAs only — never a date, name, email or path pattern.
+	const legacyCommits = new Set(
+		splitEnv(process.env.SIGAP_LEGACY_AUTHOR_COMMITS).map((sha) => sha.toLowerCase()),
+	);
 
 	const violations = [];
 	for (const commit of commits) {
+		const grandfathered = legacyCommits.has(commit.sha.toLowerCase());
 		const identities = [
 			{ role: 'author', name: commit.authorName, email: commit.authorEmail },
 			{ role: 'committer', name: commit.committerName, email: commit.committerEmail },
 		];
 		for (const identity of identities) {
+			// Historical provenance is preserved for the exact verified SHAs only.
+			if (identity.role === 'author' && grandfathered) continue;
 			const email = (identity.email ?? '').toLowerCase();
+			// GitHub's own merge committer is a verified system identity, distinct
+			// from generic agent placeholders: allow it only for a real merge commit
+			// (>=2 parents) whose author is a verified maintainer.
+			const githubSystemMerge =
+				identity.role === 'committer' &&
+				email === 'noreply@github.com' &&
+				commit.parents.length >= 2 &&
+				MAINTAINER_EMAILS.includes((commit.authorEmail ?? '').toLowerCase());
+			if (githubSystemMerge) continue;
 			const okAuthorized = authorized.has(email);
 			if (isPlaceholder(identity.name, identity.email, okAuthorized)) {
 				violations.push({ sha: commit.sha, reason: `${identity.role} is an unlinked automation placeholder: ${identity.name} <${identity.email}>` });
