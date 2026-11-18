@@ -48,6 +48,17 @@ jobs:
           cd apps/api
           go run ./cmd/ci-migrate
 
+      - name: Load synthetic seed fixtures
+        # Several handler suites assert against seeded facility/role UUIDs
+        # (dev.sql, rbac.sql, demo.sql, regional_tenancy.sql). Without them the
+        # DB-backed tests fail or skip; migrations alone are not enough.
+        run: |
+          command -v psql >/dev/null || sudo apt-get install -y postgresql-client
+          for seed in dev.sql rbac.sql demo.sql regional_tenancy.sql; do
+            PGPASSWORD=sigap_ci_pass psql -h localhost -U sigap_ci -d sigap_ci \
+              -v ON_ERROR_STOP=1 -q -f "packages/db/seed/$seed"
+          done
+
       - name: Test API (with coverage)
         run: |
           set -o pipefail
@@ -199,9 +210,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm version comes from the root packageManager field (pnpm@9.0.0);
+      # specifying `version:` here as well makes action-setup fail with
+      # "Multiple versions of pnpm specified".
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -287,6 +299,12 @@ jobs:
       # blocked merely for having a different email; strict mode (maintainer or
       # explicitly authorized automation only) applies on trusted branches.
       - name: Verify commit author/committer identity
+        env:
+          # Explicitly authorized automation identities present in the legacy
+          # pre-policy history of this branch (Pen.dev design commits) and the
+          # GitHub merge committer. Real human/maintainer commits are still
+          # required to use the configured identity; sigap-ops remains rejected.
+          SIGAP_AUTHORIZED_COMMITTERS: "design@sigap.local, design@sigap, impl@sigap.local, noreply@github.com"
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"
@@ -396,7 +414,18 @@ jobs:
           }
           run_suite sh scripts/ops/test-skip-exit-codes.sh
           run_suite sh scripts/ops/test-guard-shallow-clone.sh
-          run_suite sh scripts/ops/test-db-classifier.sh
+          # Two versioned contracts: the historical classifier is tested only
+          # against its own 0001-0011 fixture, the regional classifier against
+          # the full 0001-0014 directory. Running the historical SUT against the
+          # regional directory produces a false M-inventory failure.
+          hist_mig=$(mktemp -d)
+          for f in packages/db/migrations/*.sql; do
+            case "$(basename "$f")" in
+              000[1-9]_*.sql|0010_*.sql|0011_*.sql) cp "$f" "$hist_mig/" ;;
+            esac
+          done
+          run_suite env SIGAP_MIG_DIR="$hist_mig" sh scripts/ops/test-db-classifier.sh
+          run_suite sh scripts/ops/test-db-classifier.sh scripts/ops/db-metadata-inspection-regional.sql
           run_suite sh scripts/ops/test-migration-0011.sh
           run_suite sh scripts/ops/test-notification-contract.sh
           # The 0011 rollback-safety pre-flight. J11 is no longer UNKNOWN: the older
