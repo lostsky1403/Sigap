@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { page } from '$app/stores';
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
@@ -35,6 +35,8 @@
 	let loadedAt: Date | null = null;
 	let hasSession = getSession().hasSession;
 	let unsubscribeSession: (() => void) | undefined;
+
+	onDestroy(() => unsubscribeSession?.());
 
 	onMount(async () => {
 		id = get(page).params.id ?? '';

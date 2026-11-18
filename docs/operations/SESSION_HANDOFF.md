@@ -12,8 +12,12 @@ local untracked files or the project's OpenChamber knowledge.
 - Primary checkout role: tracks `main` only; may be behind origin; never reset or cleaned.
 - Active development branch: `feat/sigap-selfhosted-auth` — Better Auth, regional RBAC,
   Patient Continuity, migrations 0012–0014; source of **Draft PR #97** against `main`.
-- PR #97 reviewed head: `e292949864dcb854e65107d3d614f2a84bd88d8c` (9/9 CI jobs green).
-  Keep it Draft; do not mark ready or merge without explicit owner authorization.
+- Keep PR #97 Draft; do not mark ready or merge without explicit owner authorization.
+- **Live PR head is not pinned here.** Historical review snapshots recorded earlier in
+  this document — `e292949…`, then `cff2d35…` — are provenance only and go stale on the
+  next normal push. Recover the current head from Git and GitHub before acting (below).
+  The 2026-11-18 review ledger at `docs/operations/pr97-review-ledger.md` records the
+  exact head, CI run and verdicts it examined; it makes no claim about later commits.
 
 ## Policies that bind every agent
 
@@ -62,6 +66,23 @@ Public docs intentionally omit absolute paths. The current machine-specific work
 inventory is stored in the project's OpenChamber knowledge (local to this workstation);
 alternatively regenerate it from the preflight commands above. Never infer a branch's
 purpose from its name — mark uncertain entries UNKNOWN.
+
+## Recovering the live PR #97 state (do this before every review)
+
+```sh
+# Local development head (from the active development worktree)
+git -C <dev-worktree> rev-parse HEAD
+git -C <dev-worktree> status --short --branch
+
+# Remote PR head and CI — never assume the value from any snapshot or report
+gh pr view 97 --repo lostsky1403/Sigap --json headRefName,headRefOid,state,isDraft,commits,files
+gh pr checks 97 --repo lostsky1403/Sigap
+```
+
+Compare all three: local HEAD, remote PR `headRefOid`, and the head the CI checks belong
+to. If they differ, the report you are reading is a historical snapshot — re-review the
+new head rather than reusing its verdicts. Never treat 9/9 CI as proof of security; the
+review ledger states the source-level evidence behind each verdict.
 
 ## Where to resume
 

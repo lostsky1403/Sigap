@@ -29,6 +29,10 @@ const layoutServerSource = readFileSync(
 	join(here, '..', '..', 'routes', '+layout.server.ts'),
 	'utf8'
 );
+const rootLayoutSource = readFileSync(
+	join(here, '..', '..', 'routes', '+layout.svelte'),
+	'utf8'
+);
 
 /**
  * Strips comments before scanning.
@@ -111,6 +115,28 @@ describe('layout server exposure', () => {
 		// A hasSession that could be overridden by a query parameter would let a
 		// caller claim a session they do not have and reach the wrong 403 branch.
 		expect(layoutServerCode).not.toMatch(/url\.searchParams/);
+	});
+});
+
+describe('root layout session hydration', () => {
+	it('mirrors the server session flag into the client store', () => {
+		// The store is the only source the admin pages (and four citizen pages)
+		// read for their presentation state. If the root layout stops writing
+		// it, every one of them renders a permanent "signed out" — a real 403
+		// then shows the sign-in panel instead of the permission-denied panel.
+		// Verified by negative control: removing the setSession call turns this
+		// test red.
+		expect(rootLayoutSource).toMatch(
+			/setSession\(\{\s*hasSession:\s*data\.hasSession\s*\?\?\s*false\s*\}\)/
+		);
+	});
+
+	it('never writes the shared store during server-side rendering', () => {
+		// `state` in session.ts is a module singleton shared by all SSR requests
+		// in the Node process. An unguarded setSession() would let one request's
+		// session flag bleed into a concurrent request's render, so the write
+		// must be gated on the browser build constant.
+		expect(rootLayoutSource).toMatch(/if\s*\(browser\)\s*setSession\(/);
 	});
 });
 

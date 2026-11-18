@@ -1,8 +1,10 @@
 <script lang="ts">
 	import '../app.css';
 	import { onMount } from 'svelte';
+	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
 	import CitizenHeader from '$lib/citizen/CitizenHeader.svelte';
+	import { setSession } from '$lib/stores/session';
 	import type { LayoutData } from './$types';
 
 	export let data: LayoutData;
@@ -52,6 +54,22 @@
 	$: isAdminArea = $page.url.pathname.startsWith('/admin');
 	$: hasSession = data.hasSession ?? false;
 	$: userEmail = data.userEmail ?? '';
+
+	/**
+	 * Mirror the server-derived session flag into the shared client store.
+	 *
+	 * Admin pages (and four citizen pages) read their presentation state from
+	 * `getSession()` / `subscribeToSession()`, not from `data` directly. Without
+	 * this write the store stays at its initialize-only `false` for the whole
+	 * browser session, so a signed-in staff member who receives a 403 is shown
+	 * the "sign in again" panel instead of the permission-denied panel.
+	 *
+	 * Browser-only on purpose: the store is a module singleton shared by every
+	 * SSR request in the Node process. Writing it during server rendering would
+	 * let one request's session flag bleed into a concurrent request's render.
+	 * The server never reads this store — only the browser does.
+	 */
+	$: if (browser) setSession({ hasSession: data.hasSession ?? false });
 
 	/**
 	 * Which pages let the masthead carry the filled booking CTA.

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
 	import AdminFreshness from '$lib/admin/AdminFreshness.svelte';
@@ -79,6 +79,8 @@
 	let facilitiesLoaded = false;
 	let hasSession = getSession().hasSession;
 	let unsubscribeSession: (() => void) | undefined;
+
+	onDestroy(() => unsubscribeSession?.());
 	let filters: NotificationFilters = emptyFilters();
 	let currentPage = 1;
 

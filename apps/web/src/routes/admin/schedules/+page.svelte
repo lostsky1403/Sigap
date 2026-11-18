@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
 	import AdminFreshness from '$lib/admin/AdminFreshness.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
@@ -70,6 +70,8 @@
 	let activeOnly = false;
 	let hasSession = getSession().hasSession;
 	let unsubscribeSession: (() => void) | undefined;
+
+	onDestroy(() => unsubscribeSession?.());
 
 	/**
 	 * No `manageDenied` flag, and its absence is deliberate.
