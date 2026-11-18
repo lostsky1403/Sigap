@@ -408,8 +408,53 @@ identity; run `node scripts/check-attribution.mjs --range origin/main..HEAD` fro
 that actually contains the script (the PR branch currently does not), or add the control in
 the follow-up PR below.
 
-**Proposed regression control (separate follow-up, not implemented here):** add a CI check
-that asserts, for new commits, both `author.email` and `committer.email` are one of the
-maintainer addresses (the configured identity and the two documented noreply forms) and
-that neither is an unlinked local identity. This detects the exact gap that a
-trailer-only check misses.
+**Regression control (implemented in this follow-up):** `scripts/check-commit-identity.mjs`
+now verifies both the author and committer identity on new commits, rejects generic
+unlinked automation placeholders (`sigap-ops <ops@local>`, `root@localhost`, `bot@local`,
+AI-tool names), and delegates AI `Co-authored-by` detection to `check-attribution.mjs`.
+It runs in the `Commit Attribution Check` CI job after the trailer scan. On trusted
+maintainer branches (`main`, `design/ui-ux-overhaul`, `feat/sigap-selfhosted-auth`,
+`release/*`, `hotfix/*`) it requires the maintainer or an explicitly authorized automation
+identity (`SIGAP_AUTHORIZED_COMMITTERS`); fork PRs run in permissive mode so genuine external
+contributors are not blocked for having a different email. It scans only new commits, so
+historical canonical commits are never rewritten or failed. Verified by
+`sh scripts/ops/test-commit-identity.sh` (11 positive/negative cases, all passing).
+
+---
+
+## 10. How OpenChamber and other coding agents must commit in SIGAP
+
+Before creating **any** commit in this repository, an agent (OpenChamber, Claude Code,
+Trae, Codebuff, OMP or any other tool) must:
+
+1. **Use the configured git identity — never invent one.** Check it first:
+   ```sh
+   git config user.name            # expect: lostsky1403
+   git config user.email           # expect: moch22188ti@student.nurulfikri.ac.id
+   git var GIT_AUTHOR_IDENT        # expect: lostsky1403 <moch22188ti@...> +0700
+   ```
+   If either value is empty or unexpected, stop and ask the operator. Do not guess, and
+   do not pass `--author` to `git commit` as a substitute.
+2. **Never set a local automation identity** such as `sigap-ops <ops@local>`, `ci@local`,
+   or any `@local`/`@localhost` address. Those are exactly what the new gate rejects.
+   Authorized automation identities must be declared through `SIGAP_AUTHORIZED_COMMITTERS`
+   by the operator, not improvised by the agent.
+3. **Write no AI attribution trailers.** No `Co-authored-by:` naming a tool or model
+   (see §1–2). A legitimate human co-author is fine; add unusual human addresses to
+   `SIGAP_ATTRIBUTION_ALLOWLIST`.
+4. **Keep `core.hooksPath=.githooks` installed** in each clone; the local hook strips AI
+   trailers before they are recorded. Do not bypass it with `--no-verify`.
+5. **Verify after committing:**
+   ```sh
+   git log -1 --format='%an <%ae> | %cn <%ce>%n%B'
+   node scripts/check-commit-identity.mjs --range 'HEAD^!' --mode auto
+   ```
+   For a range of several new commits use `--range origin/main..HEAD` instead.
+6. **Never rewrite or force-push a branch without explicit owner authorization.** A
+   branch-only author/committer correction (like PR #96's) is a metadata-only rewrite:
+   trees, messages, dates and commit order must be verified identical before pushing,
+   and the push must use `--force-with-lease=<ref>:<exact-old-sha>` targeting only that ref.
+
+These rules are enforced in CI by both gates; passing one is not evidence that the other
+passed. Attribution is correct only when author **and** committer are the right human (or
+an explicitly authorized automation identity) **and** no AI trailer is present.

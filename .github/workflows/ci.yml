@@ -184,6 +184,37 @@ jobs:
         # could not be resolved, which the fetch-depth above exists to prevent —
         # it must fail loudly, never be read as a clean skip.
 
+      # A trailer-only check cannot see WHO authored/committed the commit. PR #96
+      # was built as sigap-ops <ops@local>, which the check above accepted. This
+      # gate verifies both author and committer identity on new commits only.
+      # Fork PRs stay in permissive mode so genuine external contributors are not
+      # blocked merely for having a different email; strict mode (maintainer or
+      # explicitly authorized automation only) applies on trusted branches.
+      - name: Verify commit author/committer identity
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+              mode=permissive
+            else
+              mode=auto
+            fi
+            branch="${{ github.event.pull_request.head.ref }}"
+          else
+            base="${{ github.event.before }}"
+            mode=auto
+            branch="${{ github.ref_name }}"
+          fi
+          head="${{ github.sha }}"
+          case "$base" in
+            0000000000000000000000000000000000000000) base="";;
+          esac
+          if [ -n "$base" ]; then
+            node scripts/check-commit-identity.mjs --range "$base..$head" --mode "$mode" --branch "$branch"
+          else
+            node scripts/check-commit-identity.mjs --range "$head^!" --mode "$mode" --branch "$branch"
+          fi
+
   ops-guards:
     name: Deployment Safety Guards
     runs-on: ubuntu-latest
