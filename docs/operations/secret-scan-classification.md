@@ -33,9 +33,11 @@ All 15 findings use the `generic-api-key` rule. Six **distinct matched values** 
 
 `.env:118`, `.scratch/rbac/*.token` (5 files), and `supabase/.temp/.../docker.env` (4 hits) are all **ignored and untracked** (`git check-ignore` and `git ls-files` verified). They are local dev/probe artifacts on this workstation and cannot be published by pushing the branch. They are deliberately **not** allowlisted — a developer must not rely on the scanner being silenced for them.
 
-## Policy
+## Policy (exact-finding, not commit-wide)
 
-`.gitleaks.toml` extends the default config and adds a **single commit-scoped allowlist** naming the 14 immutable commits that contain the 15 classified findings. No path, rule or regex is allowlisted, so a new credential — including one added to the same file — gets a new fingerprint in a new commit and is still reported. This was verified in a throwaway clone: adding a synthetic new credential to `scripts/ops/test-restore-contract.sh` produced exactly **1** finding (the new one) with the policy active, versus 15 without it.
+`.gitleaks.toml` contains **only** `title` and `[extend] useDefault = true` — no rules are disabled and no global/path/regex allowlist is defined. All 15 classified findings are excluded by exact **commit-qualified fingerprint** (`commit:file:rule:start-line`) in `.gitleaksignore`, the mechanism documented by Gitleaks 8.30.1. Fingerprints contain no secret values. Suppressing one exact finding is strictly narrower than suppressing every finding in a commit: a new credential in an allowlisted file, at an allowlisted line, or in a new commit has a different fingerprint and is reported.
+
+Adversarial verification (disposable clone, synthetic values only, exit status checked): raw scan, policy-adjusted scan, working-tree scan, known-false-positive suppression, new secret in an allowlisted file, new secret at an allowlisted line in a new commit, new secret in an unrelated file, a non-generic built-in rule (`aws-access-token`), CI config parity, and unrelated historical findings remain visible.
 
 Raw and policy-adjusted results must always be reported separately; a clean policy-adjusted scan is never evidence that the raw findings vanished.
 

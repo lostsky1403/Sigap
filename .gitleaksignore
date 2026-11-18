@@ -1,0 +1,25 @@
+# SIGAP exact-finding secret-scan exceptions.
+#
+# Each line is a commit-qualified fingerprint (commit:file:rule:line) emitted by
+# Gitleaks 8.30.1 for a finding that was individually classified as a UUID, a
+# local synthetic test token, or a documented 64-hex placeholder. See
+# docs/operations/secret-scan-classification.md. NO secret values appear here.
+#
+# Only the exact finding in the exact immutable commit is suppressed. A new
+# finding — even in the same file or at the same line in a new commit — has a
+# different fingerprint and is reported. Never add a secret value to this file.
+146ad669cf650bc635513b9dcd348072d2b4d78d:design/prototypes/sigap-civic-v2.pen:generic-api-key:36199
+1689e531cfbf0e964282fc16803fb318e2f8324a:design/prototypes/sigap-civic-v2.pen:generic-api-key:29690
+1d55c4368d4102c884228eae8993da26c68edfd1:scripts/ops/test-restore-contract.sh:generic-api-key:74
+3907aeabcdca24972a4d9eb4ad7d7a6a2627c997:apps/api/internal/auth/better_auth_compat_test.go:generic-api-key:24
+90c73b784bd88a4f1ccb53b22f80989c2fe46532:design/prototypes/sigap-civic-v2.pen:generic-api-key:29690
+95879c7a9e9c4bd8bf7cbcfb4d01b3aec407dc8a:design/prototypes/sigap-civic-v2.pen:generic-api-key:36199
+9e0d61a234341caf77a5383fa08d2f60d77885b3:scripts/ops/test-restore-contract.sh:generic-api-key:128
+aa2c2b1044644ee216385f6ea485aa12d9065286:design/prototypes/sigap-civic-v2.pen:generic-api-key:36199
+aa8d06aac6169dab0951e62c0c05f3bdb662298a:design/prototypes/sigap-civic-v2.pen:generic-api-key:29690
+bf84cce16b6d1559fd84b9e8d55c85be5f897561:scripts/ops/test-restore-contract.sh:generic-api-key:128
+d1f4c05102f642a9536c4efaf869efda66c7ad9a:scripts/ops/test-restore-contract.sh:generic-api-key:74
+ec5052690c28ea366728fdaa30dd75c5a930eb6f:design/email-mfa-flows-verification.md:generic-api-key:213
+ec5052690c28ea366728fdaa30dd75c5a930eb6f:design/email-mfa-flows-verification.md:generic-api-key:323
+ffc9a247458ecee0e41d268424337a22e6725c08:design/prototypes/sigap-civic-v2.pen:generic-api-key:29690
+fffae092c8c96991524709bd31b862d002a81f89:design/prototypes/sigap-civic-v2.pen:generic-api-key:36199
