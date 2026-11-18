@@ -847,6 +847,12 @@ func (h *BookingHandler) CancelAppointment(w http.ResponseWriter, r *http.Reques
 	// citizen's owned appointment.
 	actorAccountID := identity.ActorFromContext(r.Context()).PatientAccountID()
 	if ownerAccountID != nil && (actorAccountID == "" || actorAccountID != *ownerAccountID) {
+		// Record the refusal. This inline 403 is not a route RequiredPolicy, so
+		// identity/authz.go's logAuthzDenied never fires for it. Without this
+		// event a forbidden cancel attempt on another patient's owned appointment
+		// leaves no trace in the hash-chained audit log. No PHI is written — the
+		// detail is a fixed string; logBookingEvent derives the actor from context.
+		h.logBookingEvent(r, "appointment.cancel.denied", "denied", "cancel-ownership-check-failed")
 		writeError(w, http.StatusForbidden, "Anda tidak berhak membatalkan janji temu ini.")
 		return
 	}
@@ -1030,16 +1036,48 @@ func (h *BookingHandler) recordQueueTicket(ctx context.Context, now time.Time, t
 	return err
 }
 
+// logBookingEvent writes an appointment audit event with the actor from the
+// TRUSTED request context (populated by auth.Middleware from the verified JWT),
+// never from the request body or any client header.
+//
+// The appointment endpoints are public/code-only, but the middleware still
+// attaches a real Better Auth citizen actor when one is present. Previously this
+// helper hard-coded ActorType "anonymous" for every event, so an authenticated
+// citizen's booking/check-in/cancel was recorded as anonymous and — for the
+// code-only check-in — became unrecoverable. Deriving the actor here closes that
+// gap without touching ownership logic (booking.go:197-201, :848-852 remain
+// byte-identical): a staff actor still has an empty PatientAccountID, so its
+// appointment stays ownerless; only the audit attribution improves.
 func (h *BookingHandler) logBookingEvent(r *http.Request, action, status, detail string) {
 	if h.audit == nil {
 		return
 	}
-	h.audit.LogEvent(r.Context(), audit.Event{
+	ctx := r.Context()
+	actor := identity.ActorFromContext(ctx)
+
+	// Default: no authenticated principal (genuine code-only caller).
+	actorType := "anonymous"
+	actorUserID := ""
+
+	switch {
+	case actor.Type == identity.ActorUser && actor.AppUserID != "":
+		// Verified citizen/staff identity with a server-resolved app_users id.
+		actorType = string(identity.ActorUser)
+		actorUserID = actor.AuditUserID()
+	case actor.Type == identity.ActorDev:
+		// Local dev actor: AppUserID empty → audit row writes NULL; the dev
+		// FK-fallback in audit.Service handles that. Local-gated only.
+		actorType = string(identity.ActorDev)
+	case actor.Type == identity.ActorSystem:
+		actorType = string(identity.ActorSystem)
+	}
+
+	h.audit.LogEvent(ctx, audit.Event{
 		Action:       action,
 		ResourceType: "appointment",
-		ActorType:    "anonymous",
-		ActorUserID:  "",
-		RequestID:    identity.RequestIDFromContext(r.Context()),
+		ActorType:    actorType,
+		ActorUserID:  actorUserID,
+		RequestID:    identity.RequestIDFromContext(ctx),
 		Metadata: audit.SanitizeMetadata(map[string]any{
 			"status": status,
 			"detail": detail,

@@ -158,9 +158,107 @@ grandfathered by exact commit SHA; new unauthorized automation identities reject
 co-author trailers; historical/regional migration classifiers; deployment safety guards.
 No gate was weakened to obtain a PASS.
 
-## 5. Local regression after fixes
+## 5. Local regression after fixes (2026-11-18 baseline)
 
 - `pnpm check` (svelte-kit sync + svelte-check): **0 errors, 0 warnings**.
 - `pnpm test:unit` (vitest): **38 files, 751 tests passed** (749 baseline + 2 new).
 - `git var GIT_AUTHOR_IDENT`: `lostsky1403 <moch22188ti@student.nurulfikri.ac.id>`.
 - No push, no merge, no production deploy, no production DB change, no history rewrite.
+
+---
+
+## 6. Follow-up review 2026-11-19 — reassessment, fixes and expanded coverage
+
+Review head: local `c53d591` (the 2026-11-18 fix commit) on top of remote `cff2d35`.
+Go source byte-identical to the ledger's original head except the fixes below.
+
+### 6.1 Previous fixes re-verified
+- **F-1 (session hydration) — PASS.** `+layout.svelte:72` is
+  `$: if (browser) setSession({ hasSession: data.hasSession ?? false });`.
+  Browser-only, so no SSR module-singleton mutation; the reactive statement re-runs
+  on navigation/session updates. Added **behavioral component tests**
+  (`src/lib/ui/error-presentation.test.ts`, 5 tests): signed-out 403 → sign-in panel,
+  signed-in 403 → permission-denied panel, 401 → sign-in in both states.
+- **F-3 (subscription teardown) — PASS.** All seven admin pages call
+  `onDestroy(() => unsubscribeSession?.())`.
+- Source contract remains in `session.test.ts` (11 tests).
+
+### 6.2 Four open findings reassessed — all CONFIRMED, all fixed
+- **A — `regional_admin` `organization.manage` — CONFIRMED P3 (latent/inert).**
+  No route gates on it today, but unscoped grants expand per-facility, so a future
+  org-write route would authorize everywhere. Fixed at the proper location
+  (seed + mirrored test helper + seed SQL guard), **no migration touched**. Regression
+  assertion added to `org_tenancy_test.go`.
+- **B — audit hash not reproducible — CONFIRMED P3.** `computeHash` stamped its own
+  `time.Now()` while the INSERT used another. Fixed by threading ONE `occurredAt`
+  into both; `computeHash` now takes it as a parameter. New test
+  `TestComputeHash_ReproducibleFromStoredAt`. No schema change (`occurred_at` exists).
+- **C — booking audit drops actor — CONFIRMED P3 (forensic).** `logBookingEvent` now
+  derives actor from `identity.ActorFromContext` (trusted JWT), never client data;
+  distinct anonymous/user/dev/system types. Added `appointment.cancel.denied` event
+  for the previously unaudited ownership 403. Ownership logic untouched.
+- **D — admin proxies throwing `apiBase()` — CONFIRMED P3.** All 19 admin proxies
+  plus 2 public proxies migrated to `resolveApiBase()` (graceful 503 envelope,
+  fail-closed, no upstream request). New `proxy-config.test.ts` (6 tests) + contract
+  manifest updated. No auth/config failure is converted to success.
+
+### 6.3 Remaining high-risk review — 3 new P3, 2 fixed
+Recounted: prior 105 + 22 newly reviewed = **127 high-risk files reviewed**;
+**≈20 remaining** (mostly unexecuted test suites, a few frontend components, and
+94 low-risk design assets — not pixel-reviewed). No P0/P1/P2.
+- **NEW-1 — notification audit correlation — OPEN P3 (documented).** `notifications.go`
+  `log()` uses `context.Background()` and sets no RequestID/FacilityID/ResourceID
+  across 34 call sites. Forensic gap only; no authz bypass. Left OPEN rather than
+  risk a 34-site refactor before publication; exact correction recorded in §7.
+- **NEW-2 — crashed worker rows stuck in `processing` — FIXED.** Added
+  `requeueStaleProcessing()` at the start of the real worker path; idempotent,
+  preview stays read-only.
+- **NEW-3 — SSE frame injection via `facilityId` — FIXED.** `queue.go` now marshals
+  a typed struct with `json.Marshal` instead of `fmt.Sprintf`.
+
+### 6.4 Identity-deactivation ADR — reviewed, corrected, still owner-gated
+`design/identity-deactivation-policy-adr.md` corrected: the earlier "fail-open for
+citizens" assumption was wrong (the `user.create.after` hook provisions every
+`app_users` row). The recommended gate now **fails closed** on inactive/deleted,
+on a missing row, and on a query error — satisfying the invariant that a disabled
+identity cannot regain access because a dependent check failed. Added a six-state
+analysis (§4A) and a DB-outage negative-control test to §5. **Not implemented**;
+`IDENTITY_DEACTIVATION_ADR=RECOMMENDED`, `SESSION_LIFECYCLE=PARTIAL`, `STAFF_MFA=PARTIAL`.
+
+### 6.5 Local regression evidence (all PASS)
+- `pnpm check`: 0 errors / 0 warnings.
+- `pnpm test:unit`: **40 files, 762 tests passed** (751 + 11 new).
+- `pnpm build` (production, adapter-node): PASS.
+- `node tests/proxy-contracts.test.js`, `auth-actions.test.js`, `build-verification.test.js`: PASS.
+- `go build ./...`: PASS. `go test ./...`: PASS (DB-gated suites skip locally without
+  `DATABASE_URL`; CI provides disposable Postgres).
+- `cargo test --lib`: 7/7. `cargo audit`: 0 vulnerabilities (1 documented allowed warning).
+- `gitleaks detect` (975 commits, default rules + exact-fingerprint ignore): no leaks.
+- Attribution + commit-identity gates: PASS (verified after commit).
+
+### 6.6 Verdict after follow-up
+P0=0 · P1=0 · P2=0 (F-1 fixed) · confirmed P3: A/B/C/D + NEW-2/NEW-3 fixed,
+NEW-1 OPEN (forensic). AUTH_TRUST_BOUNDARY=PARTIAL, TENANT_ISOLATION=PASS,
+PATIENT_DATA_ISOLATION=PASS. No release branch, no merge, no production deploy.
+
+---
+
+## 7. Open P3 corrections (not applied — recorded for a follow-up)
+
+**NEW-1 — notification admin audit correlation.** `apps/api/internal/handler/
+notifications.go:651` `log()` calls `h.audit.LogEvent(context.Background(), ...)`
+with no `RequestID`, `FacilityID` or `ResourceID`; 34 call sites pass only actor
+and strings. Impact is forensic only (actor is recorded; authorization is enforced
+independently). Exact correction when taken up: thread `r.Context()` into `log()`,
+set `RequestID: identity.RequestIDFromContext(r.Context())`, pass the target
+notification's `ResourceID` and `FacilityID` where the row is available, and keep
+`SanitizeMetadata`. Test: as a staff actor call
+`POST /api/v1/admin/notifications/{id}/retry`, take the response `X-Request-ID`,
+assert the matching `audit_events` row carries that request id, the facility and
+the notification id. Deferred to avoid a 34-site refactor in the publication commit.
+
+**Known owner/infra-blocked items remain OPEN** (§3): identity-deactivation policy,
+trustedOrigins, deploy-env secret/https, TLS edge, SMTP, least-privilege auth role,
+durable rate limiting, audit sink, and the undeployed regional migrations. None are
+application defects fixed here; none had a gate weakened to obtain a PASS.
+

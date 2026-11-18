@@ -105,16 +105,17 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM role_ids r JOIN perm_ids p ON true
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- regional_admin: operational STATS ONLY (read) + tenancy directory manage.
--- Deliberately NO queue.manage/facility.manage/appointment.manage and NO
+-- regional_admin: operational STATS ONLY (read), including the org directory.
+-- Deliberately NO .manage keys at all (organization.manage included) and NO
 -- medical_record.read (that permission does not exist). audit.read stays
--- super_admin-only, unchanged.
+-- super_admin-only, unchanged. This matches the no-.manage invariant declared
+-- in auth/facility_scope.go and auth/rbac_resolver.go.
 WITH role_ids AS (
   SELECT id FROM roles WHERE name = 'regional_admin'
 ),
 perm_ids AS (
   SELECT id, key FROM permissions WHERE key IN (
-    'organization.read', 'organization.manage',
+    'organization.read',
     'facility.read',
     'queue.read',
     'appointment.read',
@@ -228,7 +229,7 @@ BEGIN
         JOIN role_permissions rp ON rp.role_id = r.id
         JOIN permissions p ON p.id = rp.permission_id
         WHERE r.name = 'regional_admin'
-          AND p.key IN ('queue.manage', 'facility.manage', 'appointment.manage', 'schedule.manage', 'medical_record.read')
+          AND p.key IN ('organization.manage', 'queue.manage', 'facility.manage', 'appointment.manage', 'schedule.manage', 'medical_record.read')
     ) THEN
         RAISE EXCEPTION 'regional_tenancy seed verification failed: regional_admin must remain stats read-only';
     END IF;

@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -92,9 +91,18 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		"data":    result,
 	})
 
-	// 7. Real-time: notify SSE subscribers that a bed/queue state may have changed
-	// (in real system this could carry actual new available count from engine).
-	events.Bus.Publish(fmt.Sprintf(`{"facility_id":"%s","action":"queue_created"}`, req.FacilityID))
+	// 7. Real-time: notify SSE subscribers that a bed/queue state may have
+	// changed. Marshal a typed struct instead of interpolating the client's
+	// facilityId into a format string: a quote or newline in that field could
+	// otherwise produce malformed JSON or inject an extra SSE frame. json.Marshal
+	// escapes it, so the published payload is always one valid JSON object.
+	frame, err := json.Marshal(struct {
+		FacilityID string `json:"facility_id"`
+		Action     string `json:"action"`
+	}{FacilityID: req.FacilityID, Action: "queue_created"})
+	if err == nil {
+		events.Bus.Publish(string(frame))
+	}
 
 	// 8. Audit: log successful queue generation with privacy-safe metadata.
 	// SanitizeMetadata ensures no patient PII leaks into the audit trail.

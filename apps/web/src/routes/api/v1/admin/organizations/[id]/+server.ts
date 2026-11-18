@@ -1,5 +1,6 @@
 import type { RequestEvent, RequestHandler } from '@sveltejs/kit';
-import { proxyHeaders, apiBase, authHeaders } from '$lib/server/auth';
+import { proxyHeaders, authHeaders } from '$lib/server/auth';
+import { resolveApiBase } from '$lib/server/upstream';
 
 async function proxy(
 	request: Request,
@@ -7,7 +8,10 @@ async function proxy(
 	event: RequestEvent,
 	method?: string
 ): Promise<Response> {
-	const upstream = await fetch(`${apiBase()}${path}`, {
+	const resolved = resolveApiBase();
+	if ('unavailable' in resolved) return resolved.unavailable;
+
+	const upstream = await fetch(`${resolved.base}${path}`, {
 		method: method ?? request.method,
 		headers: {
 			'Content-Type': request.headers.get('content-type') || 'application/json',

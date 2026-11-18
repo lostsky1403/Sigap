@@ -35,11 +35,12 @@ func orgAdminPermissions() []string {
 }
 
 // regionalAdminPermissions mirrors regional_tenancy.sql for regional_admin:
-// operational stats READ ONLY + tenancy directory. No .manage, no audit.read,
-// no medical_record.read (which must not exist).
+// operational stats READ ONLY (including the org directory). No .manage keys
+// at all — organization.manage included — no audit.read, no medical_record.read
+// (which must not exist). This is the documented no-.manage invariant.
 func regionalAdminPermissions() []string {
 	return []string{
-		"organization.read", "organization.manage",
+		"organization.read",
 		"facility.read",
 		"queue.read",
 		"appointment.read",
@@ -347,7 +348,7 @@ func TestOrgTenancy_OperatorCrossOrgQueueIsolation(t *testing.T) {
 // operational READ scope but no manage/clinical capability: it can list every
 // org but a mutation is denied because no .manage permission is granted.
 func TestOrgTenancy_RegionalAdminReadOnly(t *testing.T) {
-	pool, cleanup, _, _, facA1, _, _ := orgTenancyFixture(t)
+	pool, cleanup, _, _, facA1, facA2, facB1 := orgTenancyFixture(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -363,6 +364,19 @@ func TestOrgTenancy_RegionalAdminReadOnly(t *testing.T) {
 	}
 	if actor.HasPermission("medical_record.read") {
 		t.Fatalf("regional_admin must not hold medical_record.read")
+	}
+	// The no-.manage invariant includes organization.manage. Although no route
+	// gates on that key today, the regional admin's unscoped grants are expanded
+	// into per-facility grants for EVERY key — so if a future org-write handler
+	// used it, this seed would authorize the change at every facility. Pin both
+	// the flat and the per-facility form so the seed/test cannot drift back.
+	if actor.HasPermission("organization.manage") {
+		t.Fatalf("regional_admin must not hold organization.manage, got %v", actor.Permissions)
+	}
+	for _, f := range []string{facA1, facA2, facB1} {
+		if actor.HasPermissionAtFacility("organization.manage", uuid.MustParse(f)) {
+			t.Fatalf("regional_admin must not hold organization.manage at facility %s", f)
+		}
 	}
 
 	h := scopedHandler(pool)

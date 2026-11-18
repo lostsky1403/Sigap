@@ -124,8 +124,8 @@ const manifest = [
 	{ route: 'events/beds/+server.ts', methods: { GET: ['`${resolved.base}/api/v1/events/beds`'] } },
 	{ route: 'patient/status/+server.ts', methods: { GET: ['`/api/v1/patient/status${query}`'] } },
 	{ route: 'patient/appointments/+server.ts', methods: { GET: ["'/api/v1/patient/appointments'"] } },
-	{ route: 'public/facilities/+server.ts', methods: { GET: ['`${apiBase()}/api/v1/public/facilities`'] } },
-	{ route: 'public/service-units/+server.ts', methods: { GET: ['`${apiBase()}/api/v1/public/service-units${query}`'] } },
+	{ route: 'public/facilities/+server.ts', methods: { GET: ['`${resolved.base}/api/v1/public/facilities`'] } },
+	{ route: 'public/service-units/+server.ts', methods: { GET: ['`${resolved.base}/api/v1/public/service-units${query}`'] } },
 	{ route: 'queues/generate/+server.ts', methods: { POST: ['`${resolved.base}/api/v1/queues/generate`'] } }
 ];
 

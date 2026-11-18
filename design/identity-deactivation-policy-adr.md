@@ -1,7 +1,7 @@
 # ADR — Identity deactivation & revocation policy for SIGAP self-hosted auth
 
 **Status:** PROPOSED — owner decision required. Not implemented by this review.
-**Date:** 2026-11-18
+**Date:** 2026-11-18 · reviewed/corrected 2026-11-19
 **Scope:** `feat/sigap-selfhosted-auth` (Draft PR #97), head `cff2d35…`.
 **Related:** `design/session-lifecycle-policy.md` (normative clocks/§3 gap),
 `design/auth-gap-matrix-v2.md` (gap classification), `docs/operations/git-attribution.md`.
@@ -54,7 +54,7 @@ until a hard gate exists. Both facts must be stated in any security attestation.
 > authentication error at sign-in / session creation?
 
 Option B closes the identity-layer gap but reveals provisioning state (an
-account-existence/stdeactivation oracle) and requires a policy choice about
+account-existence/deactivation oracle) and requires a policy choice about
 error wording, enumeration resistance and audit. Option A preserves the
 anti-enumeration posture and relies on the immediate Go RBAC control. This ADR
 **recommends** a specific coherent Option B design below; it does not enact it.
@@ -66,7 +66,7 @@ anti-enumeration posture and relies on the immediate Go RBAC control. This ADR
 | # | Option | Boundary enforced | New JWTs for disabled identity | Existing JWT latency | Staff deactivation | Multi-facility role change | Migration | Verdict |
 |---|--------|-------------------|-------------------------------|---------------------|--------------------|----------------------------|-----------|---------|
 | 0 | Status quo (Go RBAC only) | Authorization only | Still minted | ≤1 h (identity), 0 s (privilege) | Immediate for authority; identity still accepted | Immediate (re-resolved) | none | Compensating control works; product gap stays OPEN. Recommended only if owner accepts the oracle trade-off. |
-| 1 | `databaseHooks.session.create.before` SQL gate in `auth.better.ts` | Identity + session creation | Refused at creation | still ≤1 h for *already-issued* tokens | Immediate at creation for staff with an `app_users` row | unchanged | none | **Recommended.** Smallest change; fail-open for identities without an `app_users` row (citizens), fail-closed for provisioned staff; keeps all clocks. |
+| 1 | `databaseHooks.session.create.before` SQL gate in `auth.better.ts` | Identity + session creation | Refused at creation | still ≤1 h for *already-issued* tokens | Immediate at creation for any subject with an `app_users` row | unchanged | none | **Recommended, with the corrected fail-closed semantics of §4.1.** Smallest change; refuses when a mapped identity is inactive/deleted **and** when the check itself cannot run; keeps all clocks. |
 | 2 | Better Auth admin plugin (`banned` / `banReason` / `banExpires`) | Identity layer, native | Refused natively; expiry supported | still ≤1 h | Tied to `auth.user.banned`, must be synced with `app_users.status` | unchanged | **Yes** — `auth.user` schema change + dual-source-of-truth sync | Heavier; two deactivation sources to keep consistent. Reject unless native ban expiry is required. |
 | 3 | Server-side session introspection in Go (every request checks `auth.session`) | Identity, zero-lag | n/a | 0 s (no JWT accepted after revoke) | Immediate | Immediate | none | Strongest, but couples the API to the web tier's session store and puts the web tier in every API request path. Reject for now; revisit if the 1 h bound is ever unacceptable. |
 | 4 | Shorten JWT TTL to 15 m | Identity (bounded tighter) | Still minted | ≤15 m | 0 s privilege / ≤15 m identity | Immediate | none | Cheap complementary lever, not a deactivation gate. Can be layered on Option 1 if the owner wants a shorter identity bound. |
@@ -84,17 +84,31 @@ Add a `databaseHooks.session.create.before` hook in
 query `public.app_users` by the auth user id as `subject`:
 
 ```sql
-SELECT 1 FROM public.app_users
-WHERE subject = $1 AND (status <> 'active' OR deleted_at IS NOT NULL);
+SELECT status, deleted_at FROM public.app_users WHERE subject = $1 LIMIT 1;
 ```
 
-- **Fail-closed** for provisioned staff (an `app_users` row exists and is not
-  active) → throw, so no session is created.
-- **Fail-open** for identities with no `app_users` row (citizen/patient
-  accounts provisioned outside staff provisioning) → session creation proceeds,
-  matching today's citizen behaviour.
+**Corrected model (review 2026-11-19).** The earlier draft said "fail-open for
+citizens without an `app_users` row". That was inaccurate: the
+`databaseHooks.user.create.after` hook at `auth.better.ts:148-190` provisions an
+`app_users` row for **every** new `auth.user`, citizen included (status `active`).
+So a subject with no row is the exception — a provisioning failure (the email-conflict
+path at `:165-188`), not the citizen norm. Hence:
+
+- If a row exists and is `status <> 'active'` OR `deleted_at IS NOT NULL` →
+  **throw; no session is created** (explicitly disabled/deleted identity).
+- If the query itself errors (DB unavailable) → **throw; fail closed.** A transient
+  identity-check failure must never mint a session for an identity whose status
+  could not be confirmed. This is the load-bearing correction: the security
+  invariant forbids an explicitly disabled identity from regaining access
+  *because a dependent check failed*.
+- If no row exists → **throw; fail closed** as well. Such an account has no SIGAP
+  identity (Go would resolve an empty `AppUserID` and 401 anyway), so allowing a
+  session would only create a token that authorizes nothing. If the owner later
+  wants self-healing provisioning, add an explicit create path — do not use a
+  silent fail-open here.
 - The check must run against the same DB the Go resolver reads; never a cached
-  copy.
+  copy. Net effect: the hook only ever mints a session for a **confirmed-active**
+  mapped identity.
 
 ### 4.2 Existing Better Auth session invalidation
 On staff deactivation, the deactivation operation (whichever admin surface
@@ -150,17 +164,54 @@ assertion.
 
 ---
 
+## 4A. Six-state invariant analysis (review 2026-11-19)
+
+The governing invariant: **an explicitly disabled or deleted identity must not
+regain protected application access because a dependent identity check fails.**
+Applied to each distinct state:
+
+| # | State | New session (web) | Existing session | Go RBAC per request | Pre-issued JWT | Invariant holds? |
+|---|-------|-------------------|------------------|---------------------|----------------|------------------|
+| 1 | Identity provider (Better Auth) unavailable | none can be minted (auth routes fail) | unchanged until exp/revoke | DB RBAC resolves independently | verifies to exp | **Yes** — outage cannot mint a new token; no fail-open mint path exists |
+| 2 | Existing valid session | n/a | still authoritative for JWT minting | full permissions from DB | valid to exp | Yes |
+| 3 | Application identity explicitly disabled (`status<>'active'`) | refused by §4.1 hook | should be revoked by §4.2; until then web still mints but Go denies | zero permissions (fail closed) | identity accepted to exp, no authority | **Yes after §4.1+§4.2** — authority always 0; today (no hook) gap is OPEN |
+| 4 | Identity deleted / suspended (`deleted_at` set or auth account removed) | refused by §4.1 hook (row inactive) or no auth user to sign in | revoked by §4.2 | zero permissions | to exp, no authority | Yes after §4.1+§4.2 |
+| 5 | Staff roles revoked (assignments disabled) | session still created (identity active) | unchanged | grants vanish next request → 403/404 | no authority | **Yes** — RBAC is re-resolved, roles are not cached in JWT |
+| 6 | Already-minted JWT still valid | n/a | n/a | permissions re-resolved; claim ignored | identity accepted ≤1 h, zero authority | Yes — bounded, documented latency |
+
+**What this changes vs the earlier draft:** the fail-open "no `app_users` row"
+case is removed — it was the one path where a failed/missing identity check
+could have produced a session. The hook now fails closed on error and on a
+missing row, so state 1 (provider outage) and a transient DB error cannot be
+confused with a confirmed-active identity. Note the distinction: *Go RBAC is the
+authority for access* and already fails closed for states 3–6; the §4.1 hook
+tightens *identity acceptance* so the two layers agree. It does **not** shorten
+the ≤1 h JWT identity bound (state 6) — only a shorter TTL or server-side
+introspection would do that, both owner-gated.
+
+**Owner decisions still required:** (a) adopt §4.1 fail-closed semantics (this
+review's correction); (b) error wording at sign-in (generic vs explicit — see §2
+oracle trade-off); (c) who performs §4.2 session revocation on deactivation;
+(d) audit/recovery treatment (§4.7–4.8); (e) MFA recovery alignment (§4.9).
+
+---
+
 ## 5. Regression tests required before this could be accepted
-1. Disabled `app_users` row → session creation refused by the 4.1 hook; assert
-   no `auth.session` row and no JWT minted.
-2. Identity with no `app_users` row → session still created (fail-open citizen
-   path).
-3. Deactivation with an existing session → `revoke-sessions` removes the row;
+1. Disabled `app_users` row (`status<>'active'`) → session creation refused by
+   the §4.1 hook; assert no `auth.session` row and no JWT minted. Repeat for
+   `deleted_at IS NOT NULL`.
+2. **No `app_users` row → session refused (fail closed), not the earlier
+   fail-open citizen assumption.** Add a negative-control case where the status
+   query throws (simulated DB outage) → session creation refused, proving a
+   failed dependency cannot mint a session (the §4A invariant).
+3. Active mapped identity → session created (positive control, so the gate is
+   not vacuously denying everyone).
+4. Deactivation with an existing session → `revoke-sessions` removes the row;
    replayed signed cookie rejected (`get-session` null, `/token` 401).
-4. Go RBAC still denies a disabled subject (existing `rbac_resolver_test.go`
+5. Go RBAC still denies a disabled subject (existing `rbac_resolver_test.go`
    negatives remain green).
-5. Cross-facility / sibling-org denial unchanged after role changes.
-6. Reactivation → new session allowed; old revoked JWT not resurrected.
+6. Cross-facility / sibling-org denial unchanged after role changes.
+7. Reactivation → new session allowed; old revoked JWT not resurrected.
 
 ---
 
