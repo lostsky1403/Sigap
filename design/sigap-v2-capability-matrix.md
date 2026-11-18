@@ -216,8 +216,10 @@ migration guard.
 The one strategy (full contract in `design/regional-release-integration-contract.md`):
 
 1. Preserve `feat/sigap-selfhosted-auth` as the development branch; no rename or reset.
-2. Integrate canonical `origin/main` (`51ba1d53fb85e76c557de3ff0d84b27688645e34`) into the
-   feature branch with a normal, non-rewriting merge, when separately authorized.
+2. Integrate canonical `origin/main` (`4813de64fcbac89ae9ce419f003a9120177c6867` after PR #96;
+   `51ba1d53…` was the pre-PR-#96 main) into the feature branch with a normal, non-rewriting
+   merge, when separately authorized. This integration was performed locally on
+   `b466c2d50a19f5a4aa53e4cb1e901f0db401a850`; the branch was not pushed.
 3. Resolve conflicts while preserving Better Auth, regional RBAC, Patient Continuity, and
    migrations `0012`–`0014`.
 4. After integration and regression verification, create a **NEW dedicated release branch

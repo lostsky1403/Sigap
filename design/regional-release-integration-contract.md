@@ -1,13 +1,16 @@
 # Regional release integration contract (single source of truth)
 
 **Status:** PROPOSED_CONTRACT — precise and internally consistent; verified at file and
-disposable-database level. Nothing in this document authorizes a merge, a force-push, a
-production migration, or a production deployment.
+disposable-database level. Nothing in this document authorizes a production migration or a
+production deployment. The canonical-main integration into the development branch was
+performed locally in this milestone; no branch was pushed and no release branch was created.
 
-Scope: PR #96 (`hotfix/post-merge-ci-rust-stabilization`, head
-`036a1aa9f04108cb95f8ce85e93a5c8a925056fc`) and the future regional release that follows
-the development branch `feat/sigap-selfhosted-auth` (worktree `F:\sigap-design-v2`,
-development head `7c4f7f46cfa830538154994a420b44656520abbb`).
+Scope: PR #96 is merged; canonical `main` is now
+`4813de64fcbac89ae9ce419f003a9120177c6867` (two-parent merge commit). The development
+branch `feat/sigap-selfhosted-auth` (worktree `F:\sigap-design-v2`) integrated that main with
+a non-rewriting merge; integrated HEAD is `b466c2d50a19f5a4aa53e4cb1e901f0db401a850`.
+`51ba1d53fb85e76c557de3ff0d84b27688645e34` was the pre-PR-#96 canonical main and remains a
+historical reference only.
 
 ---
 
@@ -24,8 +27,9 @@ The only release-integration strategy is:
 1. **Preserve the existing development feature branch.** `feat/sigap-selfhosted-auth`
    stays as-is; no rename, no relabel, no reset.
 2. **Integrate canonical `origin/main` into the feature branch with a normal, non-rewriting
-   merge**, when separately authorized. Canonical main is
-   `51ba1d53fb85e76c557de3ff0d84b27688645e34`.
+   merge**, when separately authorized. Canonical main after PR #96 is
+   `4813de64fcbac89ae9ce419f003a9120177c6867` (this integration was performed locally;
+   the branch was not pushed).
 3. **Resolve conflicts while preserving** Better Auth, regional RBAC, Patient Continuity,
    and migrations `0012`–`0014`.
 4. **After integration and regression verification, create a NEW dedicated release branch
@@ -43,16 +47,17 @@ creates no second strategy; the historical guard assertions stay untouched.
 ## Regional migration baseline — separate from the historical anchor
 
 ```
-REGIONAL_MIGRATION_BASE = 51ba1d53fb85e76c557de3ff0d84b27688645e34
+REGIONAL_MIGRATION_BASE = 4813de64fcbac89ae9ce419f003a9120177c6867
 REGIONAL_RELEASE_BRANCH = release/sigap-regional-v1          (proposed, future)
 ```
 
 The historical `d7705f09` anchor and its `0006` + `0011` assertions remain **global to the
-historical runbook** and must not be repurposed for the regional release.
+historical runbook** and must not be repurposed for the regional release. `51ba1d5…` was the
+pre-PR-#96 main and is retained only as historical provenance.
 
 ### PROPOSED_CONTRACT (asserted against `REGIONAL_MIGRATION_BASE`)
 
-Expected added migration set — exactly these three, relative to `51ba1d5…`:
+Expected added migration set — exactly these three, relative to `4813de64…`:
 
 ```
 packages/db/migrations/0012_service_day_wib.sql
@@ -82,11 +87,12 @@ The contract asserts:
 
 ### VERIFIED_IN_DISPOSABLE_BRANCH (evidence observed, not a release claim)
 
-- `git diff --name-status 51ba1d5…..feat/sigap-selfhosted-auth -- packages/db/migrations`
+- `git diff --name-status 4813de64…..feat/sigap-selfhosted-auth -- packages/db/migrations`
   → exactly `A 0012_service_day_wib.sql`, `A 0013_organizations.sql`,
-  `A 0014_patient_account.sql`; no `D`, `M`, or `R` rows.
-- `origin/main @ 51ba1d5…` carries `0001_init.sql … 0011_notification_outbox_phone_constraints.sql`
-  only; the feature tip carries `0001 … 0014`.
+  `A 0014_patient_account.sql`; no `D`, `M`, or `R` rows (re-verified on the integrated tip
+  `b466c2d…`, which has `4813de64…` as an ancestor).
+- `origin/main @ 4813de64…` carries `0001_init.sql … 0011_notification_outbox_phone_constraints.sql`
+  only; the integrated development tip carries `0001 … 0014`.
 - The three SHA-256 values above were recomputed from the actual files and match the
   values recorded in `design/migration-baseline-recovery-plan.md` and
   `design/migration-ledger-reconciliation.md` (where `0014` is labelled *pending*).
@@ -112,7 +118,7 @@ existing `d7705f09` block intact for historical branches:
 
 ```sh
 REGIONAL_RELEASE_BRANCH=release/sigap-regional-v1
-REGIONAL_MIGRATION_BASE=51ba1d53fb85e76c557de3ff0d84b27688645e34
+REGIONAL_MIGRATION_BASE=4813de64fcbac89ae9ce419f003a9120177c6867
 EXPECTED_REGIONAL_MIGRATIONS="packages/db/migrations/0012_service_day_wib.sql packages/db/migrations/0013_organizations.sql packages/db/migrations/0014_patient_account.sql"
 EXPECTED_REGIONAL_SHA256="0012_service_day_wib.sql:618154620aa57c9b044b2a19423ff24358ec050bd1a8d7a220076e7646157663 0013_organizations.sql:6bf14b56079e4a252bc366e57977b1b3daed5399dbd68c34371479a660c4d5b1 0014_patient_account.sql:001e7784b420649732970f963df2f24eca388b0e5d64cc83fd505ed925e21624"
 ```

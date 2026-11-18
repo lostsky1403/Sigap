@@ -33,14 +33,15 @@ only outside the repository (a secret, a DNS record, a platform toggle), it is m
 > statements below remain the *historical* `design/ui-ux-overhaul` release contract, anchored
 > on `d7705f09` with the inherited `0006` hardening plus `0011`. They are preserved verbatim.
 > The future regional release uses a **different, explicit baseline**:
-> `REGIONAL_MIGRATION_BASE = 51ba1d53fb85e76c557de3ff0d84b27688645e34`, with exactly three
-> added migrations — `0012_service_day_wib.sql`, `0013_organizations.sql`,
-> `0014_patient_account.sql` — and separate checksums. Do **not** repurpose `d7705f09` or the
-> `0006`+`0011` assertions for the regional release, and do not relabel
-> `feat/sigap-selfhosted-auth` as a release branch. Full proposed contract, guard block,
-> negative tests and the list of rows to update are in
-> `design/regional-release-integration-contract.md` (§6.2 for the single integration
-> strategy). This note changes no acceptance gate in this runbook.
+> `REGIONAL_MIGRATION_BASE = 4813de64fcbac89ae9ce419f003a9120177c6867` (canonical main after
+> PR #96; `51ba1d53fb85e76c557de3ff0d84b27688645e34` was the pre-PR-#96 main and is retained
+> only as historical provenance), with exactly three added migrations —
+> `0012_service_day_wib.sql`, `0013_organizations.sql`, `0014_patient_account.sql` — and
+> separate checksums. Do **not** repurpose `d7705f09` or the `0006`+`0011` assertions for the
+> regional release, and do not relabel `feat/sigap-selfhosted-auth` as a release branch. Full
+> contract, the implemented four-context guard, negative tests and the list of rows to update
+> are in `design/regional-release-integration-contract.md` (§6.2 for the single integration
+> strategy). This note changes no historical acceptance gate in this runbook.
 
 ---
 
