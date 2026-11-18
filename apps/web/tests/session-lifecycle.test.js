@@ -429,9 +429,12 @@ try {
 			// pg treats `sslmode=require` as verify-full and rejects the self-signed
 			// dev certificate), keep full verification everywhere else.
 			const localTarget = /@(127\.0\.0\.1|localhost):/.test(dbUrl);
+			// Honor an explicit sslmode=disable (CI service containers are plain
+			// TCP) while keeping the self-signed-certificate path for local dev.
+			const sslDisabled = /[?&]sslmode=disable(?:&|$)/i.test(dbUrl);
 			db = new pg.Client({
 				connectionString: localTarget ? dbUrl.replace(/([?&])sslmode=[^&]+(&?)/, (_m, lead, trail) => (trail ? lead : '')) : dbUrl,
-				ssl: localTarget ? { rejectUnauthorized: false } : undefined,
+				ssl: localTarget && !sslDisabled ? { rejectUnauthorized: false } : undefined,
 				connectionTimeoutMillis: 4000
 			});
 			try {

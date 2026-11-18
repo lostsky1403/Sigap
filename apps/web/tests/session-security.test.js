@@ -342,9 +342,13 @@ try {
 		}
 		if (pg) {
 			const localTarget = /@(127\.0\.0\.1|localhost):/.test(dbUrl);
+			// An EXPLICIT sslmode=disable must be honored even for a loopback
+			// target: CI service containers accept plain TCP only, while local
+			// dev clusters use a self-signed certificate with sslmode=require.
+			const sslDisabled = /[?&]sslmode=disable(?:&|$)/i.test(dbUrl);
 			db = new pg.Client({
 				connectionString: localTarget ? dbUrl.replace(/([?&])sslmode=[^&]+(&?)/, (_m, lead, trail) => (trail ? lead : '')) : dbUrl,
-				ssl: localTarget ? { rejectUnauthorized: false } : undefined,
+				ssl: localTarget && !sslDisabled ? { rejectUnauthorized: false } : undefined,
 				connectionTimeoutMillis: 4000
 			});
 			try {

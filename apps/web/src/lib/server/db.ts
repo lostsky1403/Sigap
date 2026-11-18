@@ -23,6 +23,11 @@ import { Pool } from "pg";
  */
 const rawUrl = process.env.SIGAP_DATABASE_URL ?? process.env.DATABASE_URL;
 const localTarget = rawUrl ? /@(127\.0\.0\.1|localhost):/.test(rawUrl) : false;
+// An EXPLICIT sslmode=disable is authoritative even for a loopback target:
+// CI Postgres service containers and other plain-TCP databases are reachable
+// this way. Only the self-signed-certificate local dev path gets the relaxed
+// `rejectUnauthorized: false`; production URLs are never touched.
+const sslDisabled = rawUrl ? /[?&]sslmode=disable(?:&|$)/i.test(rawUrl) : false;
 const strippedUrl = localTarget
 	? rawUrl!.replace(/([?&])sslmode=[^&]+(&?)/, (_m, lead: string, trail: string) =>
 			trail ? lead : ""
@@ -30,7 +35,7 @@ const strippedUrl = localTarget
 	: rawUrl;
 
 const connectionString = strippedUrl;
-const ssl = localTarget ? ({ rejectUnauthorized: false } as const) : undefined;
+const ssl = localTarget && !sslDisabled ? ({ rejectUnauthorized: false } as const) : undefined;
 
 let pool: Pool | undefined;
 
