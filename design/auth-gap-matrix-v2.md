@@ -307,3 +307,23 @@ is needed on that item as classified.
 - MFA §6 item 9's Go trust-boundary half.
 - The ten session-security negatives of §5, now green and self-contained
   (`61 passed, 0 failed, 0 skipped`, twice, zero residue).
+
+### 8. Post-integration E2E evidence (2026-11-18, integrated dev HEAD)
+- **Real Better Auth schema provisioned** on a disposable local Postgres through the
+  project's official `getMigrations(auth.options)` API (`better-auth/db/migration`): six
+  `auth` tables (`user`, `session`, `account`, `verification`, `jwks`, `twoFactor`), no
+  invented DDL. SIGAP migrations 0001–0014 were applied with the real Go runner first.
+- **Real authenticated browser journey passed 4/4** (`selfhosted-auth-journey.spec.ts`,
+  `-Jwt -NoAdminActor` preview, no local actor): patient A's two cross-facility cards +
+  real cancel, patient B isolation + denied cancel, org-A admin seeing exactly one org
+  with a sibling org id refused, super admin seeing both orgs. Real form sign-in →
+  Better Auth session → ES256 JWT/JWKS → Go authorization on every case.
+- **Live session suites on the migrated auth schema:**
+  `session-security.test.js` 61 passed / 0 failed / 0 skipped;
+  `session-lifecycle.test.js` 61 passed / 0 failed / 2 documented skips (no `auth.user`
+  banned column; the 1 h `freshAge` window is not waited out). Both suites' drift was
+  corrected in the tests, not by weakening a security assertion: lifecycle now signs in
+  explicitly (`autoSignIn: false`) and selects the "other device" by the sign-in token.
+- **Product status unchanged:** passing negative tests and real E2E journeys do NOT make
+  the overall session lifecycle or staff MFA READY — the owner/infra gaps above (SMTP,
+  MFA recovery, TLS edge, secrets, least-privilege DB role, audit sink) remain open.

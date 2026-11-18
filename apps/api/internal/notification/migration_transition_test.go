@@ -151,6 +151,16 @@ func stageMigrations(t *testing.T, maxVersion int) string {
 	return dst
 }
 
+// stage0011 isolates the HISTORICAL 0011 transition contract. These tests
+// reconstruct a production-shaped database at schema version 10 and run the
+// real runner to apply 0011. The repository now also carries 0012..0014; if the
+// full directory were used here, the runner would sweep those unrelated
+// migrations into the fixture and "exactly 1 applied (0011)" would break for
+// reasons that have nothing to do with the 0011 regression. Staging 0001..0011
+// keeps the original security assertions intact and independent of later work.
+// The fresh 0001..0014 chain is covered separately by TestFreshMigrationChain*.
+func stage0011(t *testing.T) string { return stageMigrations(t, 11) }
+
 func constraintDef(t *testing.T, pool *pgxpool.Pool, name string) (def string, valid bool) {
 	t.Helper()
 	err := pool.QueryRow(context.Background(),
@@ -242,10 +252,7 @@ func TestMigration0011_Transition_CompatibleHistory(t *testing.T) {
 		t.Fatalf("count rows: %v", err)
 	}
 
-	full, err := migrate.MigrateDir()
-	if err != nil {
-		t.Fatalf("resolve full migration dir: %v", err)
-	}
+	full := stage0011(t)
 	n, err := migrate.Run(ctx, pool, full)
 	if err != nil {
 		t.Fatalf("apply 0011 on compatible history: %v", err)
@@ -340,10 +347,7 @@ func TestMigration0011_Transition_ViolatingHistory(t *testing.T) {
 	}
 	defBefore, _ := constraintDef(t, pool, "notification_outbox_no_raw_phone_in_body_chk")
 
-	full, err := migrate.MigrateDir()
-	if err != nil {
-		t.Fatalf("resolve full migration dir: %v", err)
-	}
+	full := stage0011(t)
 	runErr := func() error {
 		_, err := migrate.Run(ctx, pool, full)
 		return err
@@ -475,10 +479,7 @@ func TestMigration0011_Transition_MixedStateRefused(t *testing.T) {
 	subjBefore, _ := constraintDef(t, pool, "notification_outbox_no_raw_phone_in_subject_chk")
 	bodyBefore, _ := constraintDef(t, pool, "notification_outbox_no_raw_phone_in_body_chk")
 
-	full, err := migrate.MigrateDir()
-	if err != nil {
-		t.Fatalf("resolve full migration dir: %v", err)
-	}
+	full := stage0011(t)
 	_, runErr := migrate.Run(ctx, pool, full)
 	if runErr == nil {
 		t.Fatal("0011 accepted a mixed strong/weak state; want a fail-closed RAISE")
@@ -525,10 +526,7 @@ func TestMigration0011_Transition_AbsentConstraintsAdded(t *testing.T) {
 		t.Fatalf("count rows: %v", err)
 	}
 
-	full, err := migrate.MigrateDir()
-	if err != nil {
-		t.Fatalf("resolve full migration dir: %v", err)
-	}
+	full := stage0011(t)
 	if _, err := migrate.Run(ctx, pool, full); err != nil {
 		t.Fatalf("0011 should ADD absent constraints, got: %v", err)
 	}

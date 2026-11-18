@@ -162,3 +162,18 @@ Assertions for that block, only when the branch context is the regional release:
 disposable branch/DB = YES; implemented in release branch = NO. The owner must authorize the
 integration merge and the release-branch creation before `MIGRATIONS_0012_0014_PLAN` can be
 reported as implemented.
+
+### Regression closure (2026-11-18, integrated dev HEAD `cee4619…`)
+- The **historical 0011 transition test** now stages only `0001..0011` through its existing
+  `stageMigrations` helper; the original fail-closed security assertions are unchanged.
+  New `TestFreshMigrationChain_0014` tests cover the fresh 14-migration chain: forward
+  order, ledger checksums, version-only idempotency (re-run applies 0), and pinned SHA-256
+  values proving `0001..0011` were not silently modified.
+- **Two versioned DB classifiers** now exist: the untouched historical
+  `db-metadata-inspection.sql` (expected versions 1..11) and
+  `db-metadata-inspection-regional.sql` (expected 1..14; required stays 1..10 so a
+  psql-applied 0011 or a not-yet-deployed regional migration is not false drift). Each
+  passes its own 33/0 fixture suite; a mismatched fixture is correctly rejected.
+  UNKNOWN and UNEXPECTED_DRIFT remain blocking in both.
+- Full Go regression with the disposable DB: **1080 passed, 0 failed, 0 skipped**.
+  Migration policy 10/0, deploy guards 31/0, shallow-clone 7/0, identity gate 11/0.

@@ -230,3 +230,13 @@ The one strategy (full contract in `design/regional-release-integration-contract
 
 `design/ui-ux-overhaul` above was the *historical* release branch for the `d7705f09`-anchored
 guard; it is not the regional release branch. The historical anchor is not repurposed.
+
+### 6.3 Post-integration regression closure (local development, not published)
+- Real Better Auth schema provisioned with the project's migration API; real form sign-in →
+  JWT/JWKS → Go authorization journey passed 4/4 (citizen A/B, org admin, super admin).
+- Session-security 61/0/0; session-lifecycle 61/0/2 (documented skips); full Go 1080/0/0;
+  Vitest 749; Rust tests pass; svelte-check 0/0; cargo audit blocking with two narrow
+  exceptions; govulncheck 0 reachable.
+- Remaining PARTIAL/OPEN: staff MFA recovery requirements, production SMTP/TLS/secrets,
+  least-privilege `auth` role, durable rate-limit store, audit sink, and the 0011 production
+  state — none are production-ready. No release branch was created; nothing was pushed.

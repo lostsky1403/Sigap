@@ -205,11 +205,15 @@ try {
 	);
 
 	check('jwt plugin still pinned to ES256', /alg:\s*"ES256"/.test(authSource), 'alg: "ES256"');
+	// The trust boundary is SHARED CONFIG, not hardcoded strings: Better Auth
+	// and the Go API both read SIGAP_AUTH_ISSUER / SIGAP_AUTH_AUDIENCE, with the
+	// local defaults below. Behavioral coverage (env overrides, token iss/aud,
+	// fail-closed production config) lives in auth-config-assertions.test.js.
 	check(
-		'jwt issuer/audience untouched (Go trust boundary)',
-		/issuer:\s*"http:\/\/127\.0\.0\.1:5173"/.test(authSource) &&
-			/audience:\s*"authenticated"/.test(authSource),
-		{ issuer: /issuer:\s*"([^"]+)"/.exec(authSource)?.[1], audience: /audience:\s*"([^"]+)"/.exec(authSource)?.[1] }
+		'jwt issuer/audience follow the Go API env vars, keeping local defaults',
+		/issuer:\s*process\.env\.SIGAP_AUTH_ISSUER\s*\?\?\s*"http:\/\/127\.0\.0\.1:5173"/.test(authSource) &&
+			/audience:\s*process\.env\.SIGAP_AUTH_AUDIENCE\s*\?\?\s*"authenticated"/.test(authSource),
+		{ issuer: /issuer:\s*(.*)/.exec(authSource)?.[1], audience: /audience:\s*(.*)/.exec(authSource)?.[1] }
 	);
 	check(
 		`jwt.expirationTime is exactly the policy's revocation bound (${POLICY.jwtExpirationSeconds}s)`,
@@ -609,15 +613,26 @@ try {
 
 		let createdUserId = null;
 		try {
-			// --- sign-up creates a session (auto sign-in) ---
+			// --- sign-up creates the identity; sign-in mints the session ---
+			// The product pins `emailAndPassword.autoSignIn: false` (see
+			// auth.better.ts): a sign-up must NOT mint a session, so the lifecycle
+			// suite has to sign in explicitly before asserting anything about
+			// session clocks, revocation or cookie rotation. session-security.test.js
+			// asserts the no-auto-sign-in contract; this suite owns the live session.
 			const jarA = withJar();
 			const signUp = await rateLimited(() =>
 				api(url, '/sign-up/email', { body: { email, password, name: 'Session Lifecycle Harness' }, jar: jarA })
 			);
 			check('sign-up succeeds', signUp.res.status === 200, { status: signUp.res.status, body: signUp.text.slice(0, 120) });
-			check('sign-up auto-signs-in: session cookie present', jarA.has(), [...jarA.header()]);
-			check('sign-up returns the session token the client can revoke later', typeof signUp.json?.token === 'string' && signUp.json.token.length > 0, signUp.json?.token);
-			createdUserId = signUp.json?.user?.id ?? null;
+			check('sign-up does NOT auto-sign-in (autoSignIn:false)', !jarA.has(), [...jarA.header()]);
+			const signInA = await rateLimited(() =>
+				api(url, '/sign-in/email', { body: { email, password }, jar: jarA })
+			);
+			check('explicit sign-in succeeds', signInA.res.status === 200, {
+				status: signInA.res.status, body: signInA.text.slice(0, 120)
+			});
+			check('sign-in returns the session token the client can revoke later', typeof signInA.json?.token === 'string' && signInA.json.token.length > 0, signInA.json?.token);
+			createdUserId = signUp.json?.user?.id ?? signInA.json?.user?.id ?? null;
 
 			if (typeof createdUserId !== 'string') {
 				throw new Error('sign-up did not return a user id; later phases cannot be attributed');
@@ -715,7 +730,11 @@ try {
 			);
 			const sessions = Array.isArray(listed.json) ? listed.json : [];
 			check('every listed session exposes its own token (needed to revoke one device)', sessions.every((s) => typeof s.token === 'string' && s.token.length > 0), sessions.map((s) => typeof s.token));
-			const otherDevice = sessions.find((s) => s.token !== signUp.json?.token);
+			// Identify the caller by the token from the EXPLICIT sign-in (sign-up
+			// mints no session under autoSignIn:false). Selecting by the old
+			// sign-up token would be `!== undefined` for every row and revoke the
+			// caller's own session, cascading into false 401s below.
+			const otherDevice = sessions.find((s) => s.token !== signInA.json?.token);
 			check('the other device is listed and is not the caller', Boolean(otherDevice?.token), sessions.length);
 
 			// --- cross-device revocation ---

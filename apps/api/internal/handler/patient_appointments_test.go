@@ -51,7 +51,12 @@ func seedAppointmentForOwner(
 		`INSERT INTO appointments
 		   (id, facility_id, service_unit_id, patient_display_name,
 		    patient_phone, appointment_time, status, checkin_code, patient_account_id)
-		 VALUES ($1, $2, $3, 'Citizen Test', '085550000001', $4, 'scheduled', $5, $6)`,
+		 -- Each seeded appointment needs a distinct phone: 0012's WIB unique
+		 -- index forbids two active bookings with the same facility+phone on the
+		 -- same service day, and these fixtures deliberately share a facility
+		 -- and are only hours apart. The checkin code makes the phone unique
+		 -- without changing what the ownership/ordering assertions verify.
+		 VALUES ($1, $2, $3, 'Citizen Test', '08555' || $5, $4, 'scheduled', $5, $6)`,
 		apptID, facilityID, serviceUnitID, at, code, ownerID)
 	return apptID, err
 }
