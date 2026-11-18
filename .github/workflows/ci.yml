@@ -13,6 +13,9 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://sigap_ci:sigap_ci_pass@localhost:5432/sigap_ci?sslmode=disable
+      # Several DB-backed suites key off SIGAP_DATABASE_URL, not DATABASE_URL.
+      # Leaving it unset made them silently skip in CI while the run stayed green.
+      SIGAP_DATABASE_URL: postgresql://sigap_ci:sigap_ci_pass@localhost:5432/sigap_ci?sslmode=disable
 
     services:
       postgres:
@@ -74,7 +77,7 @@ jobs:
             exit 1
           fi
           echo "Skip check (must be zero for DB-backed tests):"
-          if grep -E -- "--- SKIP: *(TestRBACResolver|TestFacilityScope|TestCheckIn)" test_output.log; then
+          if grep -E -- "--- SKIP: *(TestRBACResolver|TestFacilityScope|TestCheckIn|TestListMyAppointments|TestListPublicFacilities|TestPatientStatusLookup|TestMigration0011_Transition|TestFreshMigrationChain|TestCrossFacility)" test_output.log; then
             echo "FAIL: DB-backed tests were skipped despite CI PostgreSQL service"
             exit 1
           fi
@@ -166,6 +169,67 @@ jobs:
 
       - name: SvelteKit check
         run: pnpm --filter sigap-web run check
+
+  # Real Better Auth / session lifecycle coverage. Without this job the CI run
+  # can be green while every live auth assertion is skipped, which is exactly
+  # the gap this workflow closes. REQUIRE_DB=1 makes any skip fatal.
+  auth-integration:
+    name: Better Auth Integration
+    runs-on: ubuntu-latest
+    env:
+      SIGAP_DATABASE_URL: postgresql://sigap_ci:sigap_ci_pass@localhost:5432/sigap_ci?sslmode=disable
+      DATABASE_URL: postgresql://sigap_ci:sigap_ci_pass@localhost:5432/sigap_ci?sslmode=disable
+      BETTER_AUTH_SECRET: sigap-ci-only-not-a-production-secret-0001
+      SIGAP_SESSION_SECURITY_REQUIRE_DB: '1'
+      SIGAP_SESSION_LIFECYCLE_REQUIRE_DB: '1'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sigap_ci
+          POSTGRES_PASSWORD: sigap_ci_pass
+          POSTGRES_DB: sigap_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sigap_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply SIGAP migrations 0001-0014
+        run: cd apps/api && go run ./cmd/ci-migrate
+
+      - name: Provision Better Auth schema (official migration API)
+        run: cd apps/web && node scripts/provision-auth-schema.mjs
+
+      - name: Session security negatives (DB required)
+        run: cd apps/web && node tests/session-security.test.js
+
+      - name: Session lifecycle (DB required)
+        run: cd apps/web && node tests/session-lifecycle.test.js
+
+      - name: Auth config / registration / JWT claims (DB required)
+        run: cd apps/web && node tests/auth-config-assertions.test.js
 
   attribution:
     name: Commit Attribution Check
@@ -412,5 +476,8 @@ jobs:
         env:
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Commit-scoped policy for the 15 fully classified historical false
+          # positives. New findings in new commits are still reported.
+          GITLEAKS_CONFIG: .gitleaks.toml
         # gitleaks-action is free for public repos; private repos need a license.
         # Exits non-zero when leaks are found, keeping the gate blocking.

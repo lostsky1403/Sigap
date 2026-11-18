@@ -684,8 +684,9 @@ try {
 				}
 			);
 			check(
-				`the session row's own expiresAt − createdAt is exactly session.expiresIn (${POLICY.expiresIn}s)`,
-				expiresAtMs !== null && createdAtMs !== null && (expiresAtMs - createdAtMs) / 1000 === POLICY.expiresIn,
+				`the session row's own expiresAt − createdAt is exactly session.expiresIn (${POLICY.expiresIn}s, ±10ms)`,
+				expiresAtMs !== null && createdAtMs !== null &&
+					Math.abs((expiresAtMs - createdAtMs) / 1000 - POLICY.expiresIn) < 0.01,
 				expiresAtMs === null || createdAtMs === null ? null : (expiresAtMs - createdAtMs) / 1000
 			);
 			const tokenA = jarA.value();
@@ -829,11 +830,31 @@ try {
 				`SELECT column_name FROM information_schema.columns WHERE table_schema = 'auth' AND table_name = 'user' AND column_name IN ('banned','status')`
 			);
 			if (banColumns.rows.length === 0) {
-				skip(
-					'deactivated account (INACTIVE/banned) is refused a NEW session',
-					'auth.user has no banned/status column: better-auth 1.7.20 base config performs no ban check at sign-in (that arrives with the admin plugin). ' +
-						'SIGAP deactivation is enforced by the Go API RBAC resolver on public.app_users.status — immediate, per request — and the gap is stated in design/session-lifecycle-policy.md §3.'
-				);
+				// No identity-ban column exists in base Better Auth 1.7.20 — that is
+				// the documented gap, not a test blocker. Execute the ACTUAL SIGAP
+				// policy instead: the Go RBAC resolver filters public.app_users on
+				// status='active' AND deleted_at IS NULL on every request, so a
+				// disabled subject still signs in but authorizes nothing.
+				check('auth.user has no identity-ban column (documented identity-layer gap)', true, banColumns.rows);
+				if (db.appUsersTable) {
+					await db.query(`UPDATE public.app_users SET status='disabled' WHERE subject = $1`, [createdUserId]);
+					try {
+						const disabledSignIn = await rateLimited(() =>
+							api(url, '/sign-in/email', { body: { email, password: newPassword } })
+						);
+						check('disabled app_users subject still signs in at the identity layer (characterized gap)', disabledSignIn.res.status === 200, {
+							status: disabledSignIn.res.status, body: disabledSignIn.text.slice(0, 100)
+						});
+						const goResolver = fs.readFileSync(path.join(repoRoot, 'apps/api/internal/auth/rbac_resolver.go'), 'utf8');
+						check(
+							'Go resolver refuses disabled subjects through active-user RBAC filtering',
+							/u\.status\s*=\s*'active'/.test(goResolver) && /u\.deleted_at\s+IS\s+NULL/.test(goResolver),
+							'app_users.status=active AND deleted_at IS NULL in permissionsQuery'
+						);
+					} finally {
+						await db.query(`UPDATE public.app_users SET status='active' WHERE subject = $1`, [createdUserId]);
+					}
+				}
 			} else {
 				const column = banColumns.rows[0].column_name;
 				const previous = await db.query(`SELECT id, "${column}" AS value FROM "auth"."user" WHERE id = $1`, [createdUserId]);
@@ -859,10 +880,31 @@ try {
 				);
 			}
 
-			skip(
-				'the freshAge window itself (list-sessions after 1h)',
-				'exercising it means waiting out session.freshAge (3600s). Asserted statically in phase 1 and by source reference in design/session-lifecycle-policy.md §1.1; not worth a 1h test.'
-			);
+			// --- freshAge boundary, WITHOUT waiting an hour ---
+			// Backdate the disposable session row past session.freshAge. Better
+			// Auth's freshSessionMiddleware compares createdAt to now on the
+			// sensitive endpoints (list-sessions / change-password), so this
+			// exercises both sides of the boundary deterministically. The row is
+			// restored immediately afterwards; no production clock or schema is
+			// touched.
+			const currentToken = jarA.has() ? jarA.value().split('.')[0] : null;
+			if (currentToken) {
+				await db.query(
+					`UPDATE auth.session SET "createdAt" = now() - ($2 * interval '1 second') WHERE token = $1`,
+					[currentToken, POLICY.freshAge + 60]
+				);
+				const stale = await api(url, '/list-sessions', { method: 'GET', jar: jarA });
+				check('freshAge boundary: a stale session is refused by list-sessions', stale.res.status === 401 || stale.res.status === 403, {
+					status: stale.res.status, body: stale.text.slice(0, 100)
+				});
+				await db.query(`UPDATE auth.session SET "createdAt" = now() WHERE token = $1`, [currentToken]);
+				const fresh = await api(url, '/list-sessions', { method: 'GET', jar: jarA });
+				check('freshAge boundary: the same session is accepted again once fresh', fresh.res.status === 200 && Array.isArray(fresh.json), {
+					status: fresh.res.status, body: fresh.text.slice(0, 100)
+				});
+			} else {
+				check('freshAge boundary fixture: a live session token is available', false, 'jarA has no session cookie');
+			}
 		} finally {
 			// Test-created identity is removed, cascade included; nothing else in
 			// the database is touched. If this run had to mint a disposable

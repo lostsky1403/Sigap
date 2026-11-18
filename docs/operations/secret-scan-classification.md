@@ -1,0 +1,43 @@
+# Secret-scan classification — development branch (2026-11-18)
+
+Scope: full-history `gitleaks detect` on development HEAD `c916d710b15d05bb55c512258e1f62434970b96f` (967 commits), plus a working-tree-only scan. **No secret values are reproduced in this document** — only rule, file, line, commit and the evidence used to classify.
+
+## Summary
+
+| Metric | Value |
+| --- | --- |
+| Raw full-history findings (development HEAD) | **15** |
+| Findings also present on canonical main `4813de64…` | **2** |
+| Findings introduced on the development branch | **13** |
+| Genuine exposed credentials | **0** |
+| Unresolved findings | **0** |
+| Policy-adjusted findings (commit-scoped exclusion) | **0** |
+| Working-tree-only scan | 14 hits, all in ignored/untracked local artifacts or the 3 classified text findings below |
+
+All 15 findings use the `generic-api-key` rule. Six **distinct matched values** account for them; none carries a credential prefix (no `sk-`, `sk-ant-`, `ghp_`, `github_pat_`, `AKIA`/`ASIA`, `xox`, `pk_live`/`sk_live`, `AIza`). Two are UUIDs, two are short local test tokens, and two are 64-hex test placeholders.
+
+## Classification by value (6 unique values → 15 findings)
+
+| # | Values' shape | Files / lines | Introduction commits (author, date) | Classification | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 36-char **UUID** | `design/prototypes/sigap-civic-v2.pen:29690`, `:36199` (8 findings) | `95879c7a…`, `aa8d06aa…`, `fffae092…`, `1689e531…`, `146ad669…`, `ffc9a247…`, `aa2c2b10…`, `90c73b78…` — "SIGAP Design", 15 Oct 2026 | **False positive — design prototype UUID** | Matches `^[0-9a-f]{8}-…{12}$`; gitleaks' own matched context contains "token" (a field name in a Pen.dev design canvas); one unique value across two fixed lines carried unchanged through eight design commits; occurs in no other repo file; no service/config references it. The `.pen` format is encrypted and the Pencil app was unavailable, so the value was not read; classification rests on shape + context + usage evidence. |
+| 2 | 24-char alnum | `design/email-mfa-flows-verification.md:213`, `:323` (2 findings) | `ec505269…` — lostsky1403, 11 Nov 2026 | **Verified documentation placeholder** | Lines are a captured local `127.0.0.1:5173` password-reset URL and a local `auth.verification` DB snapshot; loopback-only, synthetic `.sigap.local` addresses; no credential prefix; same fingerprint at both lines. |
+| 3 | 36-char **UUID** | `apps/api/internal/auth/better_auth_compat_test.go:24` (1 finding) | `3907aeab…` — lostsky1403, 10 Nov 2026 | **False positive — test subject** | Constant is `betterAuthSub`; adjacent constants pin issuer/audience/kid to local dev values; a Better Auth user id (UUID), not a secret. |
+| 4 | 64-hex | `scripts/ops/test-restore-contract.sh:74` (2 findings) | `1d55c436…`, `d1f4c051…` — lostsky1403, 10 Oct 2026 | **Verified synthetic test fixture** | Current file documents the value as "A SYNTHETIC 64-hex placeholder, deliberately low-entropy" and replaced it with an obvious low-entropy constant; only format is load-bearing. |
+| 5 | 64-hex | `scripts/ops/test-restore-contract.sh:128` (2 findings) | `9e0d61a2…`, `bf84cce1…` — lostsky1403, 12 Oct 2026 | **Verified synthetic test fixture** | Same documented fixture; historic "realistic-looking digest" explicitly described as a false positive in the file comment. |
+
+(Values 4 and 5 are the 2 findings also present on canonical main; both were already accepted there.)
+
+## Working-tree-only findings (not published)
+
+`.env:118`, `.scratch/rbac/*.token` (5 files), and `supabase/.temp/.../docker.env` (4 hits) are all **ignored and untracked** (`git check-ignore` and `git ls-files` verified). They are local dev/probe artifacts on this workstation and cannot be published by pushing the branch. They are deliberately **not** allowlisted — a developer must not rely on the scanner being silenced for them.
+
+## Policy
+
+`.gitleaks.toml` extends the default config and adds a **single commit-scoped allowlist** naming the 14 immutable commits that contain the 15 classified findings. No path, rule or regex is allowlisted, so a new credential — including one added to the same file — gets a new fingerprint in a new commit and is still reported. This was verified in a throwaway clone: adding a synthetic new credential to `scripts/ops/test-restore-contract.sh` produced exactly **1** finding (the new one) with the policy active, versus 15 without it.
+
+Raw and policy-adjusted results must always be reported separately; a clean policy-adjusted scan is never evidence that the raw findings vanished.
+
+## Verdict
+
+No genuine or possibly-active credential was found, no rotation/revocation is required, no history rewrite is justified, and the development history is safe to publish from the secret-scan perspective.

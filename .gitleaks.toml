@@ -1,0 +1,32 @@
+# SIGAP Gitleaks policy — commit-scoped, immutable-history exclusion only.
+#
+# All 15 findings reported on the development HEAD were classified as UUIDs,
+# local synthetic test tokens, or documented 64-hex placeholders. They occur in
+# exactly the 14 immutable commits below. This allowlist suppresses findings
+# ONLY from those commits; any credential added in a new commit — including in
+# the same files — is still reported. No path, rule, regex or secret value is
+# allowlisted. Never put a secret value in this file.
+
+title = "SIGAP secret-scan policy"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fully classified false positives in immutable historical commits"
+commits = [
+  "146ad669cf650bc635513b9dcd348072d2b4d78d",
+  "1689e531cfbf0e964282fc16803fb318e2f8324a",
+  "1d55c4368d4102c884228eae8993da26c68edfd1",
+  "3907aeabcdca24972a4d9eb4ad7d7a6a2627c997",
+  "90c73b784bd88a4f1ccb53b22f80989c2fe46532",
+  "95879c7a9e9c4bd8bf7cbcfb4d01b3aec407dc8a",
+  "9e0d61a234341caf77a5383fa08d2f60d77885b3",
+  "aa2c2b1044644ee216385f6ea485aa12d9065286",
+  "aa8d06aac6169dab0951e62c0c05f3bdb662298a",
+  "bf84cce16b6d1559fd84b9e8d55c85be5f897561",
+  "d1f4c05102f642a9536c4efaf869efda66c7ad9a",
+  "ec5052690c28ea366728fdaa30dd75c5a930eb6f",
+  "ffc9a247458ecee0e41d268424337a22e6725c08",
+  "fffae092c8c96991524709bd31b862d002a81f89",
+]
