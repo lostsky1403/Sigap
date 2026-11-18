@@ -6,7 +6,8 @@ Scope: full-history `gitleaks detect` on development HEAD `c916d710b15d05bb55c51
 
 | Metric | Value |
 | --- | --- |
-| Raw full-history findings (development HEAD) | **15** |
+| Raw full-history findings (development HEAD, all local refs in the worktree) | **15** |
+| Raw findings in the publishable branch history alone (clean clone) | **14** — the one excluded finding is `9e0d61a2…` on a local-only branch; it is classified below anyway |
 | Findings also present on canonical main `4813de64…` | **2** |
 | Findings introduced on the development branch | **13** |
 | Genuine exposed credentials | **0** |
