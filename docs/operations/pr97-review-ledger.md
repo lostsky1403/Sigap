@@ -1,13 +1,18 @@
 # PR #97 application security & functional review ledger
 
 **Project:** SIGAP / `lostsky1403/Sigap` — Draft PR #97
-**Branch / head reviewed:** `feat/sigap-selfhosted-auth` @ `cff2d35bab3270a985be9c1823f6295e32493976`
+**Current published head:** `feat/sigap-selfhosted-auth` @ `880d593bcc71fb565b76715e1f7bc0b00e31b1af` (local = remote)
 **Base:** `main` @ `4813de64fcbac89ae9ce419f003a9120177c6867`
-**Review date:** 2026-11-18
-**CI at review:** GitHub Actions run `44338539484`, 9/9 required jobs `success` (head `cff2d35`).
+**Review dates:** 2026-11-18 (baseline), 2026-11-19 (reassessment + closure)
+**CI at current head:** GitHub Actions run `44358474789`, 9/9 required jobs `success` (head `880d593`).
+
+> **Historical snapshot — superseded:** the original review was at head `cff2d35…`
+> with CI run `44338539484`. Those values are provenance, not current. Sections 1–5
+> were written at that head; sections 6–9 record the current head `880d593`, its fixes
+> and its CI. Recover live state from Git/GitHub before acting (SESSION_HANDOFF.md).
 
 > CI green is **not** evidence of application security. Every verdict below comes from
-> reading the real source and tests at the exact head above.
+> reading the real source and tests at the exact head stated for that section.
 
 ## Scope honesty
 
@@ -261,4 +266,90 @@ the notification id. Deferred to avoid a 34-site refactor in the publication com
 trustedOrigins, deploy-env secret/https, TLS edge, SMTP, least-privilege auth role,
 durable rate limiting, audit sink, and the undeployed regional migrations. None are
 application defects fixed here; none had a gate weakened to obtain a PASS.
+
+---
+
+## 8. Final review closure — 2026-11-19, head `880d593`
+
+### 8.1 Remaining high-risk review CLOSED
+The ledger's prior ~20-file estimate is resolved. 14 net-new high-risk runtime files
+were reviewed (proxies, `+layout.server.ts`, `upstream.ts`, `client.ts`, `notifications/
+provider.go`, `types.go`, `handler/queue.go`, `notification-worker/main.go`, `0006_notifications.sql`),
+with 29 re-verified. **Union reviewed = 127 + 14 = 141 high-risk runtime files;
+0 high-risk runtime paths remain.** The five named gap categories (frontend→server
+data flow, admin actions, patient/queue mutations, notification paths, SQL transaction
+boundaries, session/auth error handling, security-critical test paths) were each worked.
+This is **not** 100% PR coverage: 94 PNG design assets and low-risk docs are out of
+scope; presentational `.svelte` components were pattern-triaged, not line-read.
+
+**No P0, P1, or P2 found.** All categories returned "no defect found" with checked
+evidence: no client token in browser storage/URL, no `{@html}`, no disabled/vacuous
+security skips (no `skip(true`/`.only`/`fixme`), proxy fail-closed, worker claim atomic.
+
+### 8.2 Two new P3 (non-blocking follow-up debt, not fixed)
+- **NEW-1a — P3 — `DevProvider.Deliver` non-atomic two-write sequence.**
+  `apps/api/internal/notification/provider.go:140` INSERT into
+  `notification_delivery_attempts` and `:168` UPDATE of `notification_outbox` run as
+  two separate `pool.Exec` calls with no transaction. If the UPDATE fails after the
+  INSERT, the attempt is committed but `attempt_count` is not advanced; the row stays
+  `processing`, is requeued after 15 min, and `Deliver` recomputes the same
+  `attempt_number`, colliding with `UNIQUE (outbox_id, attempt_number)`
+  (`0006_notifications.sql:126-127`) — a permanent requeue livelock in the offline dev
+  provider (worker enabled by default). No authz/PII impact. Smallest fix: wrap both
+  writes in one `pgx.Tx`. Untested by `provider_test.go`/`worker_test.go`.
+- **NEW-1b — P3 — vacuous PII-field guard test.**
+  `apps/api/internal/notification/worker_test.go:49-62`
+  `TestRenderTemplate_NoRawContactOrBodyInOutboxRow` asserts a `Fields()` method
+  `OutboxRow` does not implement (dead branch) plus unrelated determinism; it never
+  inspects `OutboxRow` fields, so the stated `RenderedBody` guard is unenforced.
+  `service_test.go:121-129` does reflect-check absence of `RecipientContact`/`RecipientContactHash`,
+  but not `RenderedBody`. No current exposure (field absent); test-quality debt only.
+- Both tracked as follow-up; neither blocks formal PR review. NEW-1 (notification
+  audit correlation) remains the carried-over OPEN P3 in §7.
+
+### 8.3 Audit integrity assurance — precise claims
+Evidence: `apps/api/internal/audit/service.go` (read in full), `0004_audit_events.sql`,
+`design/blockchain-necessity-matrix.md`. The timestamp reproducibility defect is fixed
+(one `occurredAt` threaded into hash and INSERT; unit test proves recomputation).
+
+- **AUDIT_HASH_REPRODUCIBILITY = PASS.** `computeHash` payload fields (action,
+  resource_type, resource_id, actor_type, actor_user_id, metadata, previous_hash, at)
+  are all persisted; `occurred_at` now equals the hashed `at` (ms-truncated). A single
+  event's `event_hash` can be recomputed from its stored row given the same canonical
+  serialization. Caveat: a verifier must reproduce Go's `map[string]any` JSON encoding
+  and float64 normalization; no verifier exists in code (see C).
+- **AUDIT_CHAIN_LINEARITY = PARTIAL.** `previousHash()` (`service.go:165-182`) does
+  `SELECT event_hash … ORDER BY occurred_at DESC LIMIT 1` in a **separate statement**
+  from the INSERT (`:110-124`), with no transaction or lock. Concurrent writers can
+  read the same previous hash → two rows share a `previous_hash` (a fork/gap). Source
+  comment (`:164`) and `blockchain-necessity-matrix.md:50` document this; it is a known
+  best-effort limitation, not a hidden defect. A live concurrency proof on disposable
+  Postgres was not run in this task; the conclusion is from source.
+- **AUDIT_CHAIN_VERIFICATION = PARTIAL.** No chain-walking verifier exists anywhere
+  (grep: only `computeHash`/`previousHash` in `service.go` and a single-hash unit test).
+  Individual hashes are reproducible (A), but there is no retained independent
+  commitment and no tool that verifies the ordered chain end-to-end.
+- **AUDIT_WRITE_FAILURE_POLICY = OPEN.** Writes are best-effort: failures are
+  `slog.Warn`-logged and never returned to the caller (`service.go:50-53,125-160`).
+  Observable only in logs; not recoverable from the request path. This is a deliberate,
+  documented policy ("should not block the critical path"), and the product contract
+  accepts it — but there is no retry/alerting sink.
+- **AUDIT_PRODUCTION_ASSURANCE = NOT_READY to call "tamper-evident".** The product
+  contract (`blockchain-necessity-matrix.md:39-52`) itself describes the log as
+  *best-effort*, racing under concurrency, with *no external anchor* and *no retained
+  independent commitment*. The hashes give tamper-*evidence to a DB reader* against
+  single-operator accidental/low-skill tampering; they do not survive a privileged
+  operator who can rewrite rows and recompute the chain (`:51`). The required guarantees
+  are explicitly specified as best-effort, NOT as tamper-evident — so the correct claim
+  is "append-only, individually hash-reproducible, best-effort chain with documented
+  gaps", not "verified tamper-evident audit log". Do not upgrade the claim without a
+  verifier + external anchor + owner decision.
+
+### 8.4 PR review readiness
+No P0/P1/P2; 141 high-risk runtime files reviewed, 0 high-risk remaining; CI 9/9 on
+`880d593`; security suites executed with zero DB-backed skips; documentation corrected;
+outstanding items are explicit owner/infra decisions and non-blocking P3 debt.
+**Verdict: READY for formal code review** (PR stays DRAFT — readiness is not approval
+to merge). Separate from production, which is **NOT_READY** (no release branch, no
+deploy, no 0012–0014 production migration, infra/owner gaps open).
 
