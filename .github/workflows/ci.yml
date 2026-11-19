@@ -464,6 +464,12 @@ jobs:
           done
           run_suite env SIGAP_MIG_DIR="$hist_mig" sh scripts/ops/test-db-classifier.sh
           run_suite sh scripts/ops/test-db-classifier.sh scripts/ops/db-metadata-inspection-regional.sql
+          # Four-context migration inventory matrix (A/B/C/D) and the new
+          # stacked-child context E matrix. Context E activates ONLY on a real
+          # pull_request event with exact base/head/repository identity; here
+          # its negative controls run on throwaway git fixtures, never this repo.
+          run_suite sh scripts/ops/test-migration-inventory-policy.sh
+          run_suite sh scripts/ops/test-stacked-migration-guard.sh
           run_suite sh scripts/ops/test-migration-0011.sh
           run_suite sh scripts/ops/test-notification-contract.sh
           # The 0011 rollback-safety pre-flight. J11 is no longer UNKNOWN: the older
