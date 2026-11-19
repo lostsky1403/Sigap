@@ -1,10 +1,7 @@
 <script lang="ts">
-	import { DENSITY } from '$lib/ui/density';
-	import Button from '$lib/ui/Button.svelte';
-	import { RefreshCw } from 'lucide-svelte';
 
 	/**
-	 * The admin toolbar: client-side filters on the left, refresh on the right.
+	 * The admin toolbar: client-side filters, and the scope note beneath them.
 	 *
 	 * `AdminToolbar` exists so the honesty rule about filtering lives in exactly
 	 * one place. Every filter in the admin read layer narrows data the server has
@@ -13,16 +10,13 @@
 	 * querying the clinic's data when they are narrowing their own view, so the
 	 * note component renders below every filter row and states the real scope.
 	 *
-	 * The refresh control is a real `<button>` rather than a link, because it
-	 * performs an action. It is also the manual counterpart to the polling
-	 * controller on the queue board, and it carries an `aria-busy` state so a
-	 * screen reader announces the in-flight refresh instead of leaving silence.
+	 * There is deliberately NO refresh control here. Every admin page's refresh
+	 * lives in the header beside the freshness label, which is where the Pen
+	 * draws it and what makes "Diperbarui HH.MM" and the control that updates it
+	 * the same object. A second refresh in the toolbar would be a duplicate
+	 * affordance for one action, and the two could disagree about their disabled
+	 * state during an in-flight read.
 	 */
-	export let onRefresh: (() => void) | undefined = undefined;
-	export let refreshing: boolean = false;
-	export let refreshLabel: string = 'Perbarui';
-	/** Set false on a page with no polling or manual refresh (Ringkasan loads once). */
-	export let showRefresh: boolean = true;
 	/**
 	 * The scope statement. Shown on every admin page that reads scoped data, so
 	 * "the list is already limited to your facilities" is never a per-page
@@ -31,57 +25,58 @@
 	export let note: string = '';
 </script>
 
-<div class="sigap-admin-toolbar">
-	{#if $$slots.default}
-		<div class="sigap-admin-toolbar__filters">
-			<slot />
-		</div>
-	{/if}
+<!--
+	The toolbar BLOCK. It exists so the filter row and the scope note share one
+	bottom edge: a rule that separates the whole toolbar region from the table
+	below it. A plain wrapper `<div>` with no role and no styling of its own, so
+	the landmark structure and every accessible name are unchanged.
+-->
+<div class="sigap-admin-toolbar__block">
+	<div class="sigap-admin-toolbar">
+		{#if $$slots.default}
+			<div class="sigap-admin-toolbar__filters">
+				<slot />
+			</div>
+		{/if}
 
-	{#if showRefresh && onRefresh}
-		<div class="sigap-admin-toolbar__actions">
-			<Button
-				variant="secondary"
-				size={DENSITY.adminCompact}
-				icon={RefreshCw}
-				label={refreshLabel}
-				disabled={refreshing}
-				onClick={() => onRefresh?.()}
-			/>
-		</div>
+	</div>
+
+	{#if note}
+		<p class="sigap-admin-toolbar__note">{note}</p>
 	{/if}
 </div>
 
-{#if note}
-	<p class="sigap-admin-toolbar__note">{note}</p>
-{/if}
-
 <style>
+	/*
+		The toolbar's bottom edge. DECORATIVE, so `--sigap-border-subtle`: it
+		separates the filter region from the table below it and is not a control
+		boundary. The block also carries the bottom margin, so the rule and the
+		spacing below it can never drift apart.
+	*/
+	.sigap-admin-toolbar__block {
+		padding-bottom: var(--sigap-space-3);
+		margin-bottom: var(--sigap-space-4);
+		border-bottom: 1px solid var(--sigap-border-subtle);
+	}
+
 	.sigap-admin-toolbar {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: flex-end;
 		justify-content: space-between;
-		gap: 12px;
+		gap: var(--sigap-space-3);
 	}
 
 	.sigap-admin-toolbar__filters {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: flex-end;
-		gap: 12px;
-	}
-
-	.sigap-admin-toolbar__actions {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		flex-shrink: 0;
+		gap: var(--sigap-space-3);
 	}
 
 	.sigap-admin-toolbar__note {
-		margin: 8px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-2) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 </style>

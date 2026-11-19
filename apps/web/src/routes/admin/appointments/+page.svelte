@@ -1,13 +1,16 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
+	import AdminFreshness from '$lib/admin/AdminFreshness.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
 	import AdminToolbar from '$lib/admin/AdminToolbar.svelte';
 	import FacilityFilter from '$lib/admin/FacilityFilter.svelte';
 	import DataTable from '$lib/ui/DataTable.svelte';
+	import PaginationControls from '$lib/ui/PaginationControls.svelte';
 	import AppointmentRow from '$lib/admin/AppointmentRow.svelte';
 	import AdminConfirmDialog from '$lib/admin/AdminConfirmDialog.svelte';
 	import AdminMutationFeedback from '$lib/admin/AdminMutationFeedback.svelte';
+	import { ADMIN_PAGE_SIZE, clampPage, pageSlice } from '$lib/admin/paginate';
 	import { RADIUS } from '$lib/design/tokens';
 	import {
 		listAppointments,
@@ -54,11 +57,22 @@
 	let units: AdminServiceUnit[] = [];
 	let loading = true;
 	let error: import('$lib/api/errors').ApiError | null = null;
+	/*
+		Separate from `loading`: that drives `AdminReadState`, which replaces the
+		table with a loading panel. Right for a first read, wrong for a refresh —
+		the operator asked for fresh data and should keep reading the rows they
+		already have.
+	*/
+	let refreshing = false;
+	/** When the rows on screen were last confirmed by the server. */
+	let loadedAt: Date | null = null;
 	let facilitiesLoaded = false;
 	let facilityFilter = '';
 	let statusFilter: AppointmentStatus | '' = '';
 	let hasSession = getSession().hasSession;
 	let unsubscribeSession: (() => void) | undefined;
+
+	onDestroy(() => unsubscribeSession?.());
 
 	onMount(async () => {
 		unsubscribeSession = subscribeToSession((session) => {
@@ -76,6 +90,10 @@
 
 		if (appointmentResult.ok) {
 			appointments = appointmentResult.data;
+			// Stamped here as well as in `reloadAppointments`, so the header states
+			// a freshness from the first paint rather than only after a manual
+			// refresh.
+			loadedAt = new Date();
 		} else {
 			// An abort is normalized to a non-error by the client; anything here is
 			// a genuine failure worth replacing the page for.
@@ -99,6 +117,36 @@
 		if (statusFilter && appointment.status !== statusFilter) return false;
 		return true;
 	});
+
+	/**
+	 * The page operator is reading, and the one rule about it.
+	 *
+	 * `currentPage` is what the pager requests; `visiblePage` is what is actually
+	 * rendered. The two can differ for exactly one reason: a shrink. When a
+	 * filter narrows the list, or a mutation removes a row, the requested page
+	 * can pass the end of the now-smaller list, and `clampPage` pulls it back so
+	 * the operator never reads a page that no longer exists.
+	 *
+	 * A filter change resets to page 1 (below). A mutation reload replaces
+	 * `appointments` WITHOUT touching `facilityFilter`/`statusFilter`, so that
+	 * reset does not fire and the row the operator acted on stays on their
+	 * screen — but `visiblePage` still clamps if the reload genuinely emptied the
+	 * page they were on.
+	 */
+	let currentPage = 1;
+
+	$: {
+		// These two reads bind the reset to the filters only. `appointments` is
+		// deliberately absent: a mutation reload replaces it WITHOUT touching the
+		// filters, so the operator keeps their place. `void` marks each read as
+		// deliberate dependency wiring rather than a dead statement.
+		void facilityFilter;
+		void statusFilter;
+		currentPage = 1;
+	}
+
+	$: visiblePage = clampPage(currentPage, filtered.length);
+	$: paged = pageSlice(filtered, visiblePage);
 
 	/**
 	 * The status filter's labels, in the order an operator would use them.
@@ -150,10 +198,29 @@
 			// referred to may no longer be in the state that caused it.
 			errorId = '';
 			errorMessage = '';
+			// Stamped only on success: a failed read leaves the previous time
+			// standing, because the previous rows are still what is on screen.
+			loadedAt = new Date();
 		} else {
 			error = result.error;
 		}
 		loading = false;
+	}
+
+	/**
+	 * The header's `Perbarui`. Re-reads without blanking the table.
+	 *
+	 * It cannot call `reloadAppointments` directly: that sets `loading`, which
+	 * swaps the table for a loading panel, so the rows would disappear under the
+	 * operator's cursor every time they asked for fresh data.
+	 */
+	async function refreshAppointments() {
+		refreshing = true;
+		try {
+			await reloadAppointments();
+		} finally {
+			refreshing = false;
+		}
 	}
 
 	async function handleTransition(id: string, next: AppointmentStatus) {
@@ -237,11 +304,17 @@
 	<AdminPageHeader
 		title="Janji Temu"
 		subtitle="Daftar janji temu dalam lingkup akses Anda. Data tidak diperbarui otomatis; gunakan Perbarui untuk memuat ulang."
-	/>
+	>
+		<svelte:fragment slot="aside">
+			<AdminFreshness
+				{loadedAt}
+				refreshing={refreshing}
+				onRefresh={() => void refreshAppointments()}
+			/>
+		</svelte:fragment>
+	</AdminPageHeader>
 
 	<AdminToolbar
-		refreshing={loading}
-		showRefresh={false}
 		note="Daftar janji temu sudah dibatasi fasilitas dalam lingkup akses Anda. Filter di bawah hanya mempersempit tampilan data yang sudah dimuat."
 	>
 		<FacilityFilter
@@ -277,6 +350,7 @@
 		scopeEmpty={facilitiesLoaded && isEmptyScope(facilities)}
 		emptyTitle="Belum ada janji temu"
 		emptyDescription={ORDINARY_EMPTY_DESCRIPTION}
+		onRetry={() => void reloadAppointments()}
 	>
 		{#if filtered.length === 0}
 			<div class="sigap-admin-nomatch" style:border-radius={RADIUS.panel} role="status">
@@ -303,10 +377,10 @@
 					{ label: 'Fasilitas', secondary: true },
 					{ label: 'Layanan', secondary: true },
 					{ label: 'Status' },
-					{ label: 'Aksi' }
+					{ label: 'Aksi', pin: true }
 				]}
 			>
-				{#each filtered as appointment (appointment.id)}
+				{#each paged as appointment (appointment.id)}
 					<AppointmentRow
 						{appointment}
 						facilityName={facilityName(facilityIndex, appointment.facility_id)}
@@ -329,6 +403,21 @@
 				Diperbarui pukul {formatDateTime(appointments[0]?.updated_at ?? null)} — waktu
 				perubahan status terakhir yang tercatat pada data ini.
 			</p>
+
+			<!--
+				Bounded paging of the already-loaded rows. `total={filtered.length}`
+				matches the client-side filter; `page` is the CLAMPED page (never a
+				page the filter mutation left empty) so the control's own disabled
+				states and range line always describe the rows actually on screen.
+			-->
+			<PaginationControls
+				page={visiblePage}
+				pageSize={ADMIN_PAGE_SIZE}
+				total={filtered.length}
+				label="Navigasi halaman janji temu"
+				itemLabel="janji temu"
+				onPageChange={(next) => (currentPage = next)}
+			/>
 		{/if}
 	</AdminReadState>
 </div>
@@ -365,24 +454,25 @@
 	.sigap-admin-field {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: var(--sigap-space-1);
 	}
 
 	.sigap-admin-field__label {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		font-weight: 500;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-admin-field__select {
-		height: 36px;
+		height: var(--sigap-control-admin-compact);
 		min-width: 170px;
-		padding: 0 10px;
+		padding: 0 var(--sigap-space-3);
+		/* A control boundary: the essential token, never the subtle one. */
 		border: 1px solid var(--sigap-border);
 		background-color: var(--sigap-surface);
 		color: var(--sigap-foreground);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 	}
 
 	.sigap-admin-field__select:focus-visible {
@@ -397,39 +487,41 @@
 	*/
 
 	.sigap-appointment-row__source {
-		margin: 8px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-2) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-nomatch {
-		padding: 24px;
+		padding: var(--sigap-space-5);
 		text-align: center;
 		background-color: var(--sigap-surface);
-		border: 1px dashed var(--sigap-border);
+		/* A panel outline is decorative; this is a message, not a control. */
+		border: 1px dashed var(--sigap-border-subtle);
 	}
 
 	.sigap-admin-nomatch__title {
-		margin: 0 0 4px;
-		font-size: 15px;
+		margin: 0 0 var(--sigap-space-1);
+		font-size: var(--sigap-type-subtitle);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-admin-nomatch__body {
-		margin: 0 0 12px;
-		font-size: 14px;
+		margin: 0 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-body);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-nomatch__reset {
-		height: 36px;
-		padding: 0 14px;
+		height: var(--sigap-control-admin-compact);
+		padding: 0 var(--sigap-space-4);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		background-color: var(--sigap-surface);
+		/* A control boundary: this is a button. */
 		border: 1px solid var(--sigap-border);
 		cursor: pointer;
 	}

@@ -2,8 +2,9 @@
 	import { onMount, tick } from 'svelte';
 	import CheckinForm from '$lib/citizen/CheckinForm.svelte';
 	import QueueTicket from '$lib/citizen/QueueTicket.svelte';
+	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import { RADIUS } from '$lib/design/tokens';
-	import { TicketCheck } from 'lucide-svelte';
+	import { AlertTriangle, TicketCheck } from 'lucide-svelte';
 	import Icon from '$lib/ui/Icon.svelte';
 	import { checkInAppointment, wrongCheckInCode } from '$lib/api/endpoints/public';
 	import { isAbort } from '$lib/api/errors';
@@ -59,6 +60,29 @@
 	$: isWrongCode = failure?.kind === 'wrong-code';
 
 	/**
+	 * The wrong-code failure is also a field problem, so it marks the code
+	 * control as well as raising the alert.
+	 *
+	 * The alert above the form says what happened; the red boundary and the
+	 * inline message say WHERE. Every other failure — 404, 409, 429, 5xx — is
+	 * about the booking or the service rather than about the text in the
+	 * field, so those keep the alert alone: red-bordering the input for a
+	 * rate limit would point at the wrong control and invite the citizen to
+	 * retype a code that was already correct.
+	 *
+	 * The message is a named constant rather than an inline literal so the
+	 * ternary's two branches share a declared type. Inline, TypeScript widens
+	 * the empty branch to `{ checkin_code?: undefined }` and the union stops
+	 * being assignable to the `Record<string, string>` the form expects.
+	 */
+	const WRONG_CODE_ERROR: Record<string, string> = {
+		checkin_code: 'Periksa kembali kode ini.'
+	};
+
+	let fieldErrors: Record<string, string> = {};
+	$: fieldErrors = isWrongCode ? WRONG_CODE_ERROR : {};
+
+	/**
 	 * Reads the deep link.
 	 *
 	 * Canonical names are `appointment_id` and `checkin_code`. The legacy
@@ -87,7 +111,11 @@
 		if (outcome.ok) {
 			ticket = outcome.data;
 			await tick();
-			document.getElementById('sigap-checkin-result')?.focus();
+			// preventScroll: the result sits below the page header, and focusing
+			// normally scrolls it into view — leaving the h1 clipped under the
+			// sticky masthead. The form is replaced in place, so there is
+			// nothing to scroll to.
+			document.getElementById('sigap-checkin-result')?.focus({ preventScroll: true });
 			return;
 		}
 		if (isAbort(outcome.error)) return;
@@ -128,13 +156,11 @@
 	<title>Check-In — Sigap</title>
 </svelte:head>
 
-<div class="sigap-checkin">
-	<section class="sigap-checkin__intro" aria-labelledby="sigap-checkin-title">
-		<h1 id="sigap-checkin-title" class="sigap-page-title">Check-In</h1>
-		<p class="sigap-page-subtitle">
-			Masukkan kode check-in dari janji temu Anda untuk mendapat nomor antrean.
-		</p>
-	</section>
+<div class="sigap-page sigap-checkin">
+	<PageHeader
+		title="Check-in janji temu"
+		description="Masukkan ID janji temu dan kode check-in yang Anda terima. Kode bersifat case-insensitive."
+	/>
 
 	<!--
 		Two mutually exclusive outcomes. An appointment check-in redeems a code
@@ -143,22 +169,57 @@
 		booking down a path that cannot find it.
 	-->
 	<nav class="sigap-checkin__alt" aria-label="Alternatif check-in">
-		<span class="sigap-checkin__alt-label">Datang tanpa janji temu?</span>
+		<span class="sigap-checkin__alt-label">Belum punya janji temu?</span>
 		<a
 			class="sigap-checkin__alt-link"
 			style:border-radius={RADIUS.control}
 			href="/queues/new"
 		>
-			Ambil antrean walk-in
+			Ambil nomor antrean tanpa janji
 		</a>
 	</nav>
 
 	{#if ticket}
 		<div id="sigap-checkin-result" tabindex="-1">
-			<QueueTicket {ticket} onReset={reset} onCopy={copyValue} />
+			<QueueTicket {ticket} {checkinCode} onReset={reset} onCopy={copyValue} />
 		</div>
 	{:else}
 		<section class="sigap-checkin__panel" style:border-radius={RADIUS.panel}>
+			<!--
+				The three identifiers are collapsed behind a disclosure so they
+				are still reachable but no longer a wall of prose before the two
+				fields the citizen actually needs. The inline field helpers still
+				say where each value comes from; this expands the full picture —
+				including the queue number, which is produced after check-in and
+				is never typed on this page — for anyone who wants it.
+			-->
+			<details class="sigap-checkin__explainer">
+				<summary class="sigap-checkin__explainer-title">Di mana saya menemukan ini?</summary>
+				<dl class="sigap-checkin__explainer-list">
+					<div class="sigap-checkin__explainer-item">
+						<dt class="sigap-checkin__explainer-term">ID janji temu</dt>
+						<dd class="sigap-checkin__explainer-def">
+							Pengenal untuk menemukan janji temu Anda. Ada di halaman konfirmasi
+							janji temu, bagian 'Detail teknis'.
+						</dd>
+					</div>
+					<div class="sigap-checkin__explainer-item">
+						<dt class="sigap-checkin__explainer-term">Kode check-in</dt>
+						<dd class="sigap-checkin__explainer-def">
+							6 karakter yang membuka check-in janji temu Anda. Ada di bagian
+							'Detail teknis' yang sama.
+						</dd>
+					</div>
+					<div class="sigap-checkin__explainer-item">
+						<dt class="sigap-checkin__explainer-term">Nomor antrean</dt>
+						<dd class="sigap-checkin__explainer-def">
+							Urutan Anda setelah check-in berhasil. Diterbitkan setelah check-in,
+							tampil di tiket dan layar ruang tunggu — tidak diisi di halaman ini.
+						</dd>
+					</div>
+				</dl>
+			</details>
+
 			{#if failure}
 				<!--
 					The wrong-code case gets its own message. `role="alert"` because
@@ -179,12 +240,21 @@
 							</p>
 						</div>
 					{:else}
-						<p>{resolveFailureMessage(failure)}</p>
+						<span class="sigap-checkin__failure-icon" aria-hidden="true">
+							<Icon icon={AlertTriangle} size={18} />
+						</span>
+						<p class="sigap-checkin__failure-title">{resolveFailureMessage(failure)}</p>
 					{/if}
 				</div>
 			{/if}
 
-			<CheckinForm bind:appointmentId bind:checkinCode {submitting} onSubmit={submit} />
+			<CheckinForm
+				bind:appointmentId
+				bind:checkinCode
+				{submitting}
+				errors={fieldErrors}
+				onSubmit={submit}
+			/>
 
 			<p class="sigap-checkin__copy-hint" role="status" aria-live="polite">{copyHint}</p>
 		</section>
@@ -192,38 +262,49 @@
 </div>
 
 <style>
-	.sigap-checkin {
-		max-width: 640px;
-		margin: 0 auto;
-		padding: 20px 16px 8px;
-	}
+	/*
+		Layout comes from `.sigap-page`: the standard 40px desktop offset and
+		48px gutter.
 
-	@media (min-width: 768px) {
-		.sigap-checkin {
-			padding: 32px 24px 8px;
-		}
+		The 560px cap is on the PANEL, not on the page, and that is the whole
+		point of the correction. The Pen draws the check-in card from x 48 to
+		x 607 — 560px wide, sitting against the left gutter — so capping the
+		container instead would centre a narrow column on a 1440 screen and
+		leave margins the approved frame does not have.
+	*/
+	/*
+		The result block receives focus when check-in succeeds, and the browser
+		scrolls a focused element into view. The masthead is sticky and 56px
+		tall, so without this the heading it lands on is clipped underneath it.
+	*/
+	#sigap-checkin-result {
+		scroll-margin-top: 72px;
 	}
 
 	.sigap-checkin__alt {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 8px;
-		margin-top: 16px;
+		gap: var(--sigap-space-2);
 	}
 
 	.sigap-checkin__alt-label {
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
+	/*
+		An outlined link styled as a button, so it keeps `--sigap-border`: it is
+		something the citizen operates, and the decorative hairline would leave
+		it with no visible boundary at all.
+	*/
 	.sigap-checkin__alt-link {
 		display: inline-flex;
 		align-items: center;
 		/* Citizen touch floor. */
-		min-height: 44px;
-		padding: 0 12px;
-		font-size: 13px;
+		min-height: var(--sigap-control-citizen);
+		padding: 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		border: 1px solid var(--sigap-border);
@@ -239,21 +320,83 @@
 		outline-offset: 2px;
 	}
 
+	/*
+		The result panel frames content; it is not a control. Decorative
+		hairline, per the border split — the inputs inside keep their own
+		`--sigap-border` boundaries.
+	*/
 	.sigap-checkin__panel {
-		margin-top: 16px;
-		padding: 16px;
+		max-width: 560px;
+		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
+	/*
+		The identifier explainer: a sunken inset collapsed behind a `<summary>`
+		so it sits available but not front-and-centre. Decorative outline on the
+		inset; the terms carry the emphasis.
+	*/
+	.sigap-checkin__explainer {
+		margin-bottom: var(--sigap-space-4);
+		padding: var(--sigap-space-3);
+		background-color: var(--sigap-surface-sunken);
+		border: 1px solid var(--sigap-border-subtle);
+		border-radius: var(--sigap-radius-control);
+	}
+
+	.sigap-checkin__explainer summary {
+		cursor: pointer;
+	}
+
+	.sigap-checkin__explainer summary:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
+	}
+
+	.sigap-checkin__explainer-title {
+		margin: 0 0 var(--sigap-space-2);
+		font-size: var(--sigap-type-label);
+		font-weight: 600;
+		line-height: 1.4;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-checkin__explainer-list {
+		margin: 0;
+	}
+
+	.sigap-checkin__explainer-item + .sigap-checkin__explainer-item {
+		margin-top: var(--sigap-space-2);
+	}
+
+	.sigap-checkin__explainer-term {
+		font-size: var(--sigap-type-caption);
+		font-weight: 600;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-checkin__explainer-def {
+		margin: 2px 0 0;
+		font-size: var(--sigap-type-caption);
+		line-height: 1.5;
+		color: var(--sigap-muted);
+	}
+
+	/*
+		A tone-carrying alert: tone border, tone icon, tone text, tinted ground.
+		The tint is what separates it from the panel behind it — a red hairline
+		alone on white reads as a stray rule rather than as a failure.
+	*/
 	.sigap-checkin__failure {
 		display: flex;
 		align-items: flex-start;
-		gap: 10px;
-		margin-bottom: 16px;
-		padding: 12px;
-		font-size: 13px;
+		gap: var(--sigap-space-3);
+		margin-bottom: var(--sigap-space-4);
+		padding: var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-danger);
+		background-color: var(--sigap-danger-tint);
 		border: 1px solid var(--sigap-danger);
 	}
 
@@ -269,14 +412,14 @@
 	}
 
 	.sigap-checkin__failure-body {
-		margin: 2px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-1) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-checkin__copy-hint {
-		margin: 12px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-3) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 		min-height: 16px;
 	}

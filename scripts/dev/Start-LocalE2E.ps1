@@ -613,7 +613,7 @@ try {
 
     Write-Step "Loading local seed data (SIGAP_ENV=local)"
     $env:SIGAP_ENV = 'local'
-    foreach ($seed in 'dev.sql', 'rbac.sql', 'demo.sql') {
+    foreach ($seed in 'dev.sql', 'rbac.sql', 'demo.sql', 'regional_tenancy.sql') {
         $path = Join-Path $RepoRoot "packages\db\seed\$seed"
         Invoke-Native -FilePath $psql -Label "seed $seed" -TimeoutSeconds 120 `
             -Arguments @($dbUrl, '-v', 'ON_ERROR_STOP=1', '-q', '-f', $path) | Out-Null

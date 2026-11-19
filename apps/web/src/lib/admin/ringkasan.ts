@@ -68,7 +68,23 @@ export function activeFacilityCount(facilities: readonly AdminFacility[]): numbe
 }
 
 /**
- * The headline strip. Three figures, each traceable to one scoped list.
+ * The operator's facility scope, stated from the loaded facility list.
+ *
+ * The client never learns role or scope from the server (see session.ts); the
+ * one scoped read it has is the facility list itself. One facility means a
+ * scoped operator and is named. More than one is NOT the same as "all": a user
+ * can hold roles at a subset of facilities (user_roles has no constraint that a
+ * holder must cover the whole catalogue), so the label names the count, not an
+ * "all" the client cannot prove. Zero is the class-1 empty scope, surfaced
+ * before this label can render.
+ */
+export function scopeLabel(facilities: readonly AdminFacility[]): string {
+	if (facilities.length === 1) return facilities[0].name;
+	return `${facilities.length} fasilitas dalam lingkup Anda`;
+}
+
+/**
+ * The headline figures, each traceable to one scoped list.
  *
  * Notification counts are deliberately ABSENT. The outbox summary is scoped to
  * the operator's own facilities but counts delivery attempts, not clinic
@@ -78,7 +94,7 @@ export function activeFacilityCount(facilities: readonly AdminFacility[]): numbe
 export function headlineMetrics(input: RingkasanInput): DerivedMetric[] {
 	return [
 		{
-			label: 'Antrean aktif',
+			label: 'Antrean aktif hari ini',
 			value: activeQueueCount(input.queues),
 			source: 'Daftar antrean',
 			detail: 'Menunggu, dipanggil, dan sedang dilayani',
@@ -117,6 +133,20 @@ export function attentionItems(input: RingkasanInput): DerivedMetric[] {
 		items.push({
 			label: 'Antrean menunggu belum dipanggil',
 			value: waiting,
+			source: 'Daftar antrean',
+			href: '/admin/queues'
+		});
+	}
+
+	// A called ticket that has not reached a terminal state is a patient who
+	// has been summoned and is still waiting to be served. It is the second
+	// half of the queue's actionable surface, and it is derivable from the
+	// same scoped list with no new figure or heuristic.
+	const called = input.queues.filter((ticket) => ticket.status === 'called').length;
+	if (called > 0) {
+		items.push({
+			label: 'Pasien dipanggil, menunggu dilayani',
+			value: called,
 			source: 'Daftar antrean',
 			href: '/admin/queues'
 		});

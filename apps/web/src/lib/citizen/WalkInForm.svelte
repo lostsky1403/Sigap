@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import Select, { type Option } from '$lib/ui/Select.svelte';
@@ -34,15 +35,54 @@
 	 */
 	let attempted = false;
 
+	/**
+	 * The controls are locked while a request is in flight, not only while the
+	 * catalog loads.
+	 *
+	 * A disabled control is visibly locked: the primitives paint the sunken
+	 * ground and the muted text, so the form reads as busy rather than as
+	 * broken, and a second submit cannot be assembled from a field the citizen
+	 * edited mid-request. `disabled` alone would leave the fields live during
+	 * submit, which is the state this exists to avoid.
+	 *
+	 * The facility helper text deliberately keys off `disabled` alone: during a
+	 * submit the catalog has already loaded, so "Memuat daftar fasilitas..."
+	 * would be a lie about what the form is waiting for.
+	 */
+	$: locked = disabled || submitting;
+
 	$: facilityError = errors.facility_id ?? (attempted ? validateRequired(facilityId, 'Fasilitas') : '');
-	$: nameError = errors.fullName ?? (attempted ? validateName(fullName) : '');
+	$: nameError = errors.fullName ?? (attempted ? validateName(fullName, 'Nama lengkap') : '');
 	$: phoneError = errors.phone ?? (attempted ? validatePhone(phone) : '');
 
-	function handleSubmit() {
+	async function handleSubmit() {
 		attempted = true;
-		if (validateRequired(facilityId, 'Fasilitas')) return;
-		if (validateName(fullName)) return;
-		if (validatePhone(phone)) return;
+
+		/*
+			Focus the first control that failed, after the error text has been
+			rendered.
+
+			Without this a keyboard or screen-reader user is left on the submit
+			button: the errors appear above them, they are told something is
+			wrong, and the only way back to the field is to Shift+Tab through the
+			form guessing where the problem is. The `tick()` is required — the
+			error is a reactive statement, so the field does not exist as invalid
+			until after the update flushes.
+		*/
+		const firstInvalidId = validateRequired(facilityId, 'Fasilitas')
+			? 'sigap-walkin-facilityId'
+			: validateName(fullName, 'Nama lengkap')
+				? 'sigap-walkin-fullName'
+				: validatePhone(phone)
+					? 'sigap-walkin-phone'
+					: null;
+
+		if (firstInvalidId) {
+			await tick();
+			document.getElementById(firstInvalidId)?.focus();
+			return;
+		}
+
 		onSubmit();
 	}
 </script>
@@ -63,7 +103,7 @@
 			describedBy={facilityError ? 'sigap-walkin-facilityId-error' : ''}
 			invalid={Boolean(facilityError)}
 			required
-			{disabled}
+			disabled={locked}
 		/>
 	</Field>
 
@@ -74,7 +114,7 @@
 			bind:value={fullName}
 			describedBy={nameError ? 'sigap-walkin-fullName-error' : ''}
 			invalid={Boolean(nameError)}
-			{disabled}
+			disabled={locked}
 			required
 		/>
 	</Field>
@@ -94,13 +134,13 @@
 			bind:value={phone}
 			describedBy={phoneError ? 'sigap-walkin-phone-error' : ''}
 			invalid={Boolean(phoneError)}
-			{disabled}
+			disabled={locked}
 			required
 		/>
 	</Field>
 
 	<Button type="submit" disabled={submitting || disabled} fullWidth>
-		{submitting ? 'Memproses...' : 'Ambil Nomor Antrean'}
+		{submitting ? 'Memproses...' : 'Ambil nomor antrean'}
 	</Button>
 </form>
 
@@ -108,6 +148,6 @@
 	.sigap-walkin-form {
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		gap: var(--sigap-space-4);
 	}
 </style>

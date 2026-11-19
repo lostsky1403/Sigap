@@ -31,12 +31,14 @@ var AllowList = []string{"/health", "/readyz"}
 var Registry = []Route{
 	{Method: http.MethodPost, Path: "/api/v1/queues/generate"},
 	{Method: http.MethodPost, Path: "/api/v1/appointments"},
+	{Method: http.MethodPost, Path: "/api/v1/appointments/cancel"},
 	{Method: http.MethodPost, Path: "/api/v1/appointments/", Prefix: true},
 	{Method: http.MethodGet, Path: "/api/v1/events/beds"},
 	{Method: http.MethodGet, Path: "/api/v1/facilities/nearby"},
 	{Method: http.MethodGet, Path: "/api/v1/public/facilities"},
 	{Method: http.MethodGet, Path: "/api/v1/public/service-units"},
 	{Method: http.MethodGet, Path: "/api/v1/patient/status"},
+	{Method: http.MethodGet, Path: "/api/v1/patient/appointments"},
 	{Method: http.MethodGet, Path: "/api/v1/admin/facilities", RequiredPolicy: "facility.read"},
 	{Method: http.MethodGet, Path: "/api/v1/admin/facilities/", Prefix: true, RequiredPolicy: "facility.read"},
 	{Method: http.MethodPost, Path: "/api/v1/admin/facilities", RequiredPolicy: "facility.manage"},
@@ -74,6 +76,8 @@ var Registry = []Route{
 	{Method: http.MethodGet, Path: "/api/v1/admin/notifications", RequiredPolicy: "notification.read"},
 	{Method: http.MethodGet, Path: "/api/v1/admin/notifications/", Prefix: true, RequiredPolicy: "notification.read"},
 	{Method: http.MethodPost, Path: "/api/v1/admin/notifications/", Prefix: true, RequiredPolicy: "notification.manage"},
+	{Method: http.MethodGet, Path: "/api/v1/admin/organizations", RequiredPolicy: "organization.read"},
+	{Method: http.MethodGet, Path: "/api/v1/admin/organizations/", Prefix: true, RequiredPolicy: "organization.read"},
 }
 
 // IsAllowListed reports whether a path bypasses authorization.

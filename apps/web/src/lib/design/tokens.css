@@ -1,10 +1,18 @@
 /**
- * SIGAP frozen design tokens — CSS custom property source.
+ * SIGAP design tokens — CSS custom property source.
  *
- * These values are fixed by design/DESIGN.md. The legacy `--accent: #059669`
- * emerald token has been REMOVED: the single brand color is now
- * `--sigap-primary: #0F766E`. Nothing in the system may reintroduce an
- * emerald/slate palette.
+ * V2.2. These values are the definitive values from the approved Pen.dev
+ * artifact (`design/prototypes/sigap.pen`, schema v2.21, 36 variables). Where
+ * the historical DESIGN.md disagreed, the Pen document wins.
+ *
+ * The legacy `--accent: #059669` emerald token was removed in Phase 3B1 and
+ * must not return. The single brand color is `--sigap-primary: #0F766E`.
+ *
+ * Two border tokens, and the distinction is load-bearing:
+ *   --sigap-border        essential control boundaries only (4.16:1 on white)
+ *   --sigap-border-subtle decorative separators only        (1.28:1)
+ * The retired single `--sigap-border: #E0DDD8` (1.24:1) was wired to both jobs,
+ * which is the accessibility defect this split fixes.
  *
  * tokens.test.ts asserts every declaration below against
  * src/lib/design/tokens.ts, so the two files cannot drift.
@@ -13,21 +21,30 @@
 :root {
 	/* Brand */
 	--sigap-primary: #0f766e;
+	--sigap-primary-strong: #115e59;
 	--sigap-primary-hover: #0b6b63;
 	--sigap-primary-active: #084f49;
+	--sigap-primary-tint: #e6f1ef;
+	--sigap-on-primary: #ffffff;
 
 	/* Surfaces and text */
-	--sigap-canvas: #f7f6f3;
+	--sigap-canvas: #f7f9f8;
 	--sigap-surface: #ffffff;
-	--sigap-foreground: #1c1b1a;
-	--sigap-muted: #57534e;
-	--sigap-border: #e0ddd8;
+	--sigap-surface-sunken: #f1f4f3;
+	--sigap-foreground: #17211f;
+	--sigap-muted: #5f6f6b;
+	--sigap-border: #767e7c;
+	--sigap-border-subtle: #e0e6e3;
 
-	/* Semantic status */
-	--sigap-success: #2f7d32;
-	--sigap-warning: #b45309;
-	--sigap-danger: #c4322a;
-	--sigap-info: #1d6bb5;
+	/* Semantic status, each with the tint ground it is rendered on */
+	--sigap-success: #147a3a;
+	--sigap-success-tint: #e9f4ec;
+	--sigap-warning: #ac4f08;
+	--sigap-warning-tint: #fbf1e4;
+	--sigap-danger: #b42318;
+	--sigap-danger-tint: #fbedea;
+	--sigap-info: #2563a6;
+	--sigap-info-tint: #eaf1f8;
 
 	/* Radii: exactly three steps */
 	--sigap-radius-control: 6px;
@@ -39,13 +56,24 @@
 	--sigap-control-admin-compact: 36px;
 	--sigap-control-admin-comfortable: 40px;
 
-	/* 8px spacing rhythm */
-	--sigap-space-1: 8px;
-	--sigap-space-2: 16px;
-	--sigap-space-3: 24px;
-	--sigap-space-4: 32px;
-	--sigap-space-5: 40px;
-	--sigap-space-6: 48px;
+	/* 4px-based spacing ladder */
+	--sigap-space-1: 4px;
+	--sigap-space-2: 8px;
+	--sigap-space-3: 12px;
+	--sigap-space-4: 16px;
+	--sigap-space-5: 24px;
+	--sigap-space-6: 32px;
+	--sigap-space-7: 48px;
+	--sigap-space-8: 64px;
+
+	/* Type scale */
+	--sigap-type-display: 32px;
+	--sigap-type-page-title: 20px;
+	--sigap-type-subtitle: 15px;
+	--sigap-type-body: 14px;
+	--sigap-type-label: 13px;
+	--sigap-type-caption: 12px;
+	--sigap-type-micro: 11px;
 
 	/* Single standardized icon stroke width */
 	--sigap-icon-stroke: 1.75;

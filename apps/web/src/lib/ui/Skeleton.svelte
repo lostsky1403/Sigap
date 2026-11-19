@@ -39,7 +39,7 @@
 	}
 
 	.sigap-skeleton {
-		background-color: var(--sigap-border);
+		background-color: var(--sigap-border-subtle);
 		/* Flat pulse. No gradient sweep, per the frozen visual rules. */
 		animation: sigap-pulse 1.4s ease-in-out infinite;
 	}

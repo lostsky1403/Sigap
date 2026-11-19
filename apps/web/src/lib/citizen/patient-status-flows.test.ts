@@ -4,6 +4,7 @@ import Status from '../../routes/patient/status/+page.svelte';
 import {
 	visitProgressFrom,
 	visitOutcomeLabel,
+	visitGuidance,
 	VISIT_PROGRESS_LABELS,
 	VISIT_PROGRESS_ORDER
 } from './citizenFlow';
@@ -56,12 +57,27 @@ describe('visit progress reproduces mapCheckinStatus', () => {
 	 * for it.
 	 */
 	it.each([
-		['not_checked_in', 'check-in'],
-		['checked_in', 'antre'],
-		['in_queue', 'dilayani'],
-		['selesai', 'selesai']
-	])('maps %s to the %s step', (backend, step) => {
-		expect(visitProgressFrom(backend)).toEqual({ kind: 'step', step });
+		['not_checked_in', undefined, 'check-in'],
+		['checked_in', undefined, 'antre'],
+		// `in_queue` alone means the citizen holds a ticket and is WAITING.
+		// The previous mapping sent them to "Dilayani" (being served) the moment
+		// a ticket existed, which told every checked-in citizen they were
+		// already with a clinician while they sat in the waiting room.
+		['in_queue', 'waiting', 'antre'],
+		['in_queue', undefined, 'antre'],
+		['in_queue', 'called', 'dilayani'],
+		['in_queue', 'in_service', 'dilayani'],
+		['in_queue', 'completed', 'selesai'],
+		['selesai', undefined, 'selesai']
+	])('maps %s (queue %s) to the %s step', (backend, queueStatus, step) => {
+		expect(visitProgressFrom(backend, queueStatus)).toEqual({ kind: 'step', step });
+	});
+
+	it('treats a cancelled ticket as cancelled even while the appointment is queued', () => {
+		// The ticket can be cancelled without the appointment being updated, so
+		// the ticket status has to win: showing "Antre" for a cancelled ticket
+		// keeps a citizen waiting for a call that will never come.
+		expect(visitProgressFrom('in_queue', 'cancelled')).toEqual({ kind: 'cancelled' });
 	});
 
 	it('treats dibatalkan and tidak_hadir as outcomes, not progress', () => {
@@ -92,6 +108,63 @@ describe('visit progress reproduces mapCheckinStatus', () => {
 			'Dilayani',
 			'Selesai'
 		]);
+	});
+});
+
+describe('visitGuidance distinguishes the state arms', () => {
+	/**
+	 * The owner-reported defect: a ticket in `in_service` was shown "Dilayani"
+	 * alongside "wait to be called" — a contradiction. The guidance is the fix,
+	 * and it must never collapse `called` and `in_service` into one line, nor
+	 * interpolate a number that is not there.
+	 */
+	it('gives called and in-service different instructions', () => {
+		const called = visitGuidance(
+			visitProgressFrom('in_queue', 'called'),
+			'called',
+			'PHB-0004'
+		);
+		const served = visitGuidance(
+			visitProgressFrom('in_queue', 'in_service'),
+			'in_service',
+			'PHB-0004'
+		);
+		expect(called).toContain('dipanggil');
+		expect(called).not.toContain('sedang dilayani');
+		expect(served).toContain('sedang dilayani');
+		expect(called).not.toBe(served);
+	});
+
+	it('interpolates the queue number in the waiting arm, and omits it when absent', () => {
+		expect(visitGuidance(visitProgressFrom('in_queue', 'waiting'), 'waiting', 'PHB-0004')).toContain(
+			'PHB-0004'
+		);
+		expect(
+			visitGuidance(visitProgressFrom('in_queue', 'waiting'), 'waiting', undefined)
+		).not.toContain('PHB-0004');
+	});
+
+	it.each([
+		['cancelled', 'dibatalkan'],
+		['no_show', 'tidak hadir'],
+		['unknown', 'Hubungi fasilitas']
+	])('%s returns its own terminal line', (_name, phrase) => {
+		// Build the terminal progress directly; visitProgressFrom only handles
+		// cancelled via checkin_status, so the other two are asserted on the
+		// guidance surface itself.
+		if (_name === 'cancelled') {
+			expect(visitGuidance({ kind: 'cancelled' })).toContain(phrase);
+		} else if (_name === 'no_show') {
+			expect(visitGuidance({ kind: 'no-show' })).toContain(phrase);
+		} else {
+			expect(visitGuidance({ kind: 'unknown', raw: 'x' })).toContain(phrase);
+		}
+	});
+
+	it('tells a not-yet-checked-in appointment to check in', () => {
+		expect(visitGuidance(visitProgressFrom('not_checked_in'), undefined, undefined)).toContain(
+			'check-in'
+		);
 	});
 });
 
@@ -142,10 +215,26 @@ describe('/patient/status', () => {
 		await waitFor(() => expect(document.querySelector('[data-testid="visit-steps"]')).toBeTruthy());
 
 		expect(document.body.textContent).toContain('Puskesmas Sukajaya');
-		// in_queue is the current step.
+		// FOUND has checkin_status 'in_queue' AND queue_status 'waiting': the
+		// citizen holds a ticket and is waiting, so the current step is Antre.
+		// Only a called or in-service ticket is Dilayani.
+		const current = document.querySelector('[aria-current="step"]');
+		expect(current?.textContent).toContain('Antre');
+		// And the earlier step is marked done, not just recoloured.
+		expect(document.querySelectorAll('.sigap-visit__step--done')).toHaveLength(1);
+	});
+
+	it('advances to Dilayani only once the ticket is called', async () => {
+		await lookupWith(() =>
+			jsonResponse({
+				success: true,
+				data: { ...FOUND, queue_status: 'called' }
+			})
+		);
+		await waitFor(() => expect(document.querySelector('[data-testid="visit-steps"]')).toBeTruthy());
+
 		const current = document.querySelector('[aria-current="step"]');
 		expect(current?.textContent).toContain('Dilayani');
-		// And the earlier steps are marked done, not just recoloured.
 		expect(document.querySelectorAll('.sigap-visit__step--done')).toHaveLength(2);
 	});
 
@@ -192,8 +281,12 @@ describe('/patient/status', () => {
 
 		// Not found is its own state: nothing is broken, the code is unknown.
 		expect(document.querySelector('[data-testid="status-error"]')).toBeNull();
-		// And it tells the citizen what to try instead.
-		expect(document.body.textContent).toContain('nomor antrean');
+		// And the guidance names the code the citizen actually holds. The endpoint
+		// resolves check-in codes only, so advice to try a ticket number would be
+		// a dead end — a regression this pins.
+		const guidance = document.querySelector('[data-testid="status-not-found"]')?.textContent ?? '';
+		expect(guidance).toMatch(/kode check-in/i);
+		expect(guidance).not.toMatch(/nomor antrean/i);
 	});
 
 	it('renders a 429 with the backend copy verbatim', async () => {
@@ -219,14 +312,35 @@ describe('/patient/status', () => {
 	it('rejects a malformed code without sending a request', async () => {
 		// safeCodeRe in patient.go is ^[A-Za-z0-9-]+$, and maxPatientCodeLen
 		// is 64. Catching it here turns a round trip into an inline message.
+		//
+		// The input is a character the code can never contain. Whitespace is
+		// deliberately NOT used here: it is now absorbed rather than rejected,
+		// because a code read aloud or copied from an SMS arrives as
+		// "5ZE IOO" often enough that refusing it blames the citizen for a
+		// formatting difference the lookup can absorb.
 		const calls = mockApi(() => jsonResponse({ success: true, data: FOUND }));
 		render(Status);
 		await waitFor(() => expect(field('Kode check-in')).toBeTruthy());
 
-		await fireEvent.input(field('Kode check-in'), { target: { value: 'has space' } });
+		await fireEvent.input(field('Kode check-in'), { target: { value: 'kode!salah' } });
 		await fireEvent.click(screen.getByRole('button', { name: /Cek Status/ }));
 		await waitFor(() => expect(document.body.textContent).toContain('huruf, angka'));
 		expect(calls).toHaveLength(0);
+	});
+
+	it('absorbs spaces in a code instead of rejecting it', async () => {
+		// The owner-reported failure: a citizen typed the code the way they read
+		// it and the app told them it was invalid or not found. Spaces are
+		// removed before validation and before the request.
+		const calls = mockApi(() => jsonResponse({ success: true, data: FOUND }));
+		render(Status);
+		await waitFor(() => expect(field('Kode check-in')).toBeTruthy());
+
+		await fireEvent.input(field('Kode check-in'), { target: { value: 'AB 12 CD' } });
+		await fireEvent.click(screen.getByRole('button', { name: /Cek Status/ }));
+
+		await waitFor(() => expect(calls).toHaveLength(1));
+		expect(calls[0].url).toContain('code=AB12CD');
 	});
 
 	it('does not send a request for an empty code', async () => {
@@ -239,6 +353,22 @@ describe('/patient/status', () => {
 		expect(calls).toHaveLength(0);
 	});
 
+	it('prefills from a ?code= link and strips it from the address bar', async () => {
+		// The queue ticket links here with the code it was just checked in
+		// with. The code is a bearer token, so it is copied into the field and
+		// removed from the URL — it must not stay in history or travel onward
+		// in a Referer header.
+		window.history.replaceState({}, '', '/patient/status?code=AB12CD&from=ticket');
+		mockApi(() => jsonResponse({ success: true, data: FOUND }));
+		render(Status);
+
+		await waitFor(() =>
+			expect((field('Kode check-in') as HTMLInputElement).value).toBe('AB12CD')
+		);
+		// Other parameters are preserved; only the code is removed.
+		expect(window.location.search).toBe('?from=ticket');
+	});
+
 	it('has one h1 and one lookup input', async () => {
 		mockApi(() => jsonResponse({ success: true, data: FOUND }));
 		render(Status);
@@ -248,5 +378,111 @@ describe('/patient/status', () => {
 		// One field, because the backend accepts both kinds of code in the
 		// same parameter.
 		expect(document.querySelectorAll('input')).toHaveLength(1);
+	});
+
+	describe('cancellation of a scheduled visit', () => {
+		const SCHEDULED = {
+			found_by: 'checkin_code' as const,
+			facility_name: 'Puskesmas Sukajaya',
+			service_unit_name: 'Poli Umum',
+			appointment_status: 'scheduled' as const,
+			checkin_status: 'not_checked_in'
+		};
+
+		/**
+		 * Routes the status GET and the cancel POST to separate handlers, returns
+		 * the calls so a test can assert URL/method/body. The cancel mutation is
+		 * keyed to the code the lookup resolved, so the body is under test here.
+		 */
+		async function cancelFlow({
+			status,
+			cancel
+		}: {
+			status: () => Response | Promise<Response>;
+			cancel?: () => Response | Promise<Response>;
+		}) {
+			const calls: { url: string; method: string; body?: unknown }[] = [];
+			globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = String(input);
+				const method = (init?.method ?? 'GET').toUpperCase();
+				calls.push({
+					url,
+					method,
+					body: init?.body ? JSON.parse(String(init.body)) : undefined
+				});
+				if (url.includes('/appointments/cancel')) return await (cancel ?? status)();
+				return await status();
+			}) as never;
+
+			render(Status);
+			await waitFor(() => expect(field('Kode check-in')).toBeTruthy());
+			await fireEvent.input(field('Kode check-in'), { target: { value: 'AB12CD' } });
+			await fireEvent.click(screen.getByRole('button', { name: /Cek Status/ }));
+			await screen.findByRole('button', { name: /Batalkan janji/ });
+			await fireEvent.click(screen.getByRole('button', { name: /Batalkan janji/ }));
+			await screen.findByRole('button', { name: /Ya, batalkan/ });
+			return calls;
+		}
+
+		it('200 replaces the pass with the cancelled state', async () => {
+			const calls = await cancelFlow({
+				status: () => jsonResponse({ success: true, data: SCHEDULED }),
+				cancel: () => jsonResponse({ success: true, data: { appointment_id: 'x', status: 'cancelled' } })
+			});
+			await fireEvent.click(screen.getByRole('button', { name: /Ya, batalkan/ }));
+			await waitFor(() => expect(document.querySelector('[data-testid="status-cancelled"]')).toBeTruthy());
+			// The cancel was keyed to the resolved code, not the raw field.
+			expect(calls[calls.length - 1].body).toEqual({ checkin_code: 'AB12CD' });
+		});
+
+		it('409 stays on the receipt with the server message inline', async () => {
+			await cancelFlow({
+				status: () => jsonResponse({ success: true, data: SCHEDULED }),
+				cancel: () =>
+					jsonResponse({ success: false, error: 'Janji temu sudah tidak dapat dibatalkan.' }, 409)
+			});
+			await fireEvent.click(screen.getByRole('button', { name: /Ya, batalkan/ }));
+			await waitFor(() => expect(document.querySelector('[data-testid="cancel-error"]')).toBeTruthy());
+			expect(document.body.textContent).toContain('sudah tidak dapat dibatalkan');
+			// Still the receipt, not an error or not-found state.
+			expect(document.querySelector('[data-testid="status-not-found"]')).toBeNull();
+			expect(document.querySelector('[data-testid="status-error"]')).toBeNull();
+		});
+
+		it('404 becomes the not-found state, distinct from an error', async () => {
+			await cancelFlow({
+				status: () => jsonResponse({ success: true, data: SCHEDULED }),
+				cancel: () => jsonResponse({ success: false, error: 'Kode tidak ditemukan.' }, 404)
+			});
+			await fireEvent.click(screen.getByRole('button', { name: /Ya, batalkan/ }));
+			await waitFor(() => expect(document.querySelector('[data-testid="status-not-found"]')).toBeTruthy());
+		});
+
+		it('429 renders the unavailable banner, never "Kode tidak ditemukan"', async () => {
+			await cancelFlow({
+				status: () => jsonResponse({ success: true, data: SCHEDULED }),
+				cancel: () =>
+					jsonResponse({ success: false, error: 'Terlalu banyak permintaan. Coba lagi nanti.' }, 429)
+			});
+			await fireEvent.click(screen.getByRole('button', { name: /Ya, batalkan/ }));
+			await waitFor(() => expect(document.querySelector('[data-testid="status-error"]')).toBeTruthy());
+			expect(document.querySelector('[data-testid="status-not-found"]')).toBeNull();
+		});
+
+		it('cancels the RESOLVED code, not whatever is now in the field', async () => {
+			// A citizen looks up A, then edits the field to B. Cancelling by the
+			// live field would cancel B — a different (possibly a relative's)
+			// appointment. The mutation must use the code that resolved A.
+			const calls = await cancelFlow({
+				status: () => jsonResponse({ success: true, data: SCHEDULED }),
+				cancel: () => jsonResponse({ success: false, error: 'x' }, 409) // never reached; body is the assertion
+			});
+			// Divert the field before confirming.
+			await fireEvent.input(field('Kode check-in'), { target: { value: 'ZZ99ZZ' } });
+			await fireEvent.click(screen.getByRole('button', { name: /Ya, batalkan/ }));
+			await waitFor(() => expect(calls.some((c) => c.url.includes('/appointments/cancel'))).toBe(true));
+			const cancelCall = calls.find((c) => c.url.includes('/appointments/cancel'));
+			expect(cancelCall?.body).toEqual({ checkin_code: 'AB12CD' });
+		});
 	});
 });

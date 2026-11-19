@@ -13,17 +13,30 @@
     "test:unit:watch": "vitest",
     "preview:e2e": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
     "e2e": "playwright test",
-    "e2e:install": "playwright install chromium"
+    "e2e:install": "playwright install chromium",
+    "capture:review": "node scripts/capture-review.mjs",
+    "capture:status-found": "node scripts/capture-status-found.mjs",
+    "seed:review": "node scripts/seed-review.mjs",
+    "audit:overflow": "node scripts/audit-overflow.mjs",
+    "smoke:admin-header": "node scripts/smoke-admin-header.mjs",
+    "verify:masthead": "node scripts/verify-masthead.mjs",
+    "verify:type-scale": "node scripts/verify-type-scale.mjs",
+    "verify:secondary-columns": "node scripts/verify-secondary-columns.mjs",
+    "verify:read-states": "node scripts/verify-admin-read-states.mjs",
+    "verify:findings": "node scripts/verify-findings.mjs",
+    "verify:integration": "node scripts/verify-real-integration.mjs",
+    "verify:status-errors": "node scripts/verify-status-error-map.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",
     "@sveltejs/adapter-node": "^3.0.0",
-    "@sveltejs/kit": "^2.5.0",
+    "@sveltejs/kit": "^2.20.0",
     "@sveltejs/vite-plugin-svelte": "^4.0.4",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/svelte": "^5.2.4",
     "@testing-library/user-event": "^14.5.2",
     "@types/node": "^26.6.3",
+    "@types/pg": "^8",
     "autoprefixer": "^10.4.19",
     "jsdom": "^25.0.1",
     "postcss": "^8.4.38",
@@ -37,6 +50,10 @@
   "dependencies": {
     "@supabase/ssr": "^0.12.6",
     "@supabase/supabase-js": "^2.116.0",
-    "lucide-svelte": "^1.0.1"
+    "@opentelemetry/api": "^1.9.0",
+    "better-auth": "^1.7.20",
+    "kysely": "^0.29.0",
+    "lucide-svelte": "^1.0.1",
+    "pg": "^8"
   }
 }

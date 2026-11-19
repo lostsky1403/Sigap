@@ -1,21 +1,68 @@
 import { fail, redirect } from '@sveltejs/kit';
-import type { Actions } from './$types';
+import type { Actions, PageServerLoad } from './$types';
+import { auth, betterAuthConfigured } from '$lib/server/auth.better';
+import { allowLogin } from '$lib/server/rate-limit';
+
+/**
+ * Tells the page, before the citizen types anything, whether signing in can
+ * work at all. When Better Auth (self-hosted) is unconfigured — no Postgres
+ * connection string for its `auth` schema — trying to sign in can never
+ * succeed, so announcing that up front is honest.
+ */
+export const load: PageServerLoad = () => ({
+	authConfigured: betterAuthConfigured()
+});
 
 export const actions: Actions = {
-	async default({ request, locals }) {
-		if (!locals.supabase) {
+	async default(event) {
+		const { request, locals } = event;
+		if (!locals.auth) {
 			return fail(503, { message: 'Autentikasi belum dikonfigurasi.' });
+		}
+		if (!allowLogin(event.getClientAddress())) {
+			return fail(429, { message: 'Terlalu banyak percobaan. Coba lagi nanti.' });
 		}
 		const data = await request.formData();
 		const email = String(data.get('email') ?? '').trim();
 		const password = String(data.get('password') ?? '');
+		// Same-origin return-to path only: must start with `/`, must not start with
+		// `//` (protocol-relative), and must not contain a backslash — browsers
+		// normalise `/\evil.com` to `//evil.com`, so a backslash is an off-site
+		// bounce (CWE-601) that the two checks above do not catch.
+		const rawTo = String(data.get('redirectTo') ?? '').trim();
+		const redirectTo =
+			rawTo.startsWith('/') && !rawTo.startsWith('//') && !rawTo.includes('\\') ? rawTo : '/';
 		if (!email || !password) {
 			return fail(400, { message: 'Email dan kata sandi wajib diisi.' });
 		}
-		const { error } = await locals.supabase.auth.signInWithPassword({ email, password });
-		if (error) {
-			return fail(401, { message: 'Email atau kata sandi salah.' });
+
+try {
+			// The sveltekitCookies plugin routes the session cookie through
+			// SvelteKit's cookies API, so signInEmail sets it correctly (no manual
+			// Set-Cookie handling).
+			await auth.api.signInEmail({ body: { email, password } });
+		} catch (err) {
+			// Distinguish a genuine credential rejection (401) from an auth-store
+			// outage: telling someone their password is wrong while the service is
+			// down is the exact misdiagnosis this action must avoid.
+			//
+			// better-call's APIError carries the HTTP status NAME in `status`
+			// ("UNAUTHORIZED") and the numeric code in `statusCode`; comparing
+			// `status` to 401 never matched, so a wrong password was reported as an
+			// outage. Accept either shape.
+			let credentialRejection = false;
+			if (err && typeof err === 'object') {
+				if ('statusCode' in err && err.statusCode === 401) {
+					credentialRejection = true;
+				} else if ('status' in err && (err.status === 401 || err.status === 'UNAUTHORIZED')) {
+					credentialRejection = true;
+				}
+			}
+			if (credentialRejection) {
+				return fail(401, { message: 'Email atau kata sandi salah.' });
+			}
+			return fail(503, { message: 'Layanan sedang bermasalah. Silakan coba lagi.' });
 		}
-		redirect(303, '/');
+		redirect(303, redirectTo);
 	}
 };

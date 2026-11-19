@@ -9,6 +9,7 @@ import {
 	validateName,
 	validateAppointmentTime,
 	validateLookupCode,
+	normalizeLookupCode,
 	estimatedWaitLabel,
 	checkInDeepLink,
 	classifyCheckInFailure,
@@ -110,16 +111,24 @@ const defaultHandler = (url: string) => {
 };
 
 /**
- * Finds a labelled control by a substring of its accessible name.
+ * Finds a labelled form control by a substring of its accessible name.
  *
  * Not `getByLabelText(exact)`. A required Field renders its label as
- * "Fasilities *(wajib diisi)*" — the visible asterisk plus a visually hidden
+ * "Fasilitas *(wajib diisi)*" — the visible asterisk plus a visually hidden
  * "(wajib diisi)" for screen readers — so the accessible name is the whole
  * string, not the bare word. Querying the exact bare word fails on every
  * required field, which is a test-authoring trap rather than a product defect.
+ *
+ * Scoped to form controls on purpose. The stepper above the form also names
+ * "Fasilitas" and "Layanan" — and, since those steps became revisitable, it
+ * names them in a button whose accessible name is "Ubah fasilitas". A bare
+ * `getByLabelText(/Fasilitas/i)` therefore matches two elements and throws,
+ * which says nothing about the behaviour under test.
  */
 function labelled(name: string): HTMLElement {
-	return screen.getByLabelText(new RegExp(name, 'i'));
+	return screen.getByLabelText(new RegExp(name, 'i'), {
+		selector: 'select, input, textarea'
+	});
 }
 
 const facilityField = () => labelled('Fasilitas') as HTMLSelectElement;
@@ -145,6 +154,9 @@ async function fillValidBooking() {
 beforeEach(() => {
 	document.body.innerHTML = '';
 	window.history.replaceState({}, '', '/appointments/new');
+	// The booking page persists a draft to sessionStorage; a previous test's
+	// selections must not leak into the next render.
+	window.sessionStorage.clear();
 });
 
 afterEach(() => {
@@ -191,8 +203,21 @@ describe('citizen flow helpers', () => {
 		expect(validateLookupCode('')).toContain('wajib diisi');
 		expect(validateLookupCode('ABC123')).toBe('');
 		expect(validateLookupCode('A-1')).toBe('');
-		expect(validateLookupCode('has space')).toContain('huruf, angka');
+		expect(validateLookupCode('kode!salah')).toContain('huruf, angka');
 		expect(validateLookupCode('x'.repeat(65))).toContain('terlalu panjang');
+	});
+
+	it('absorbs whitespace in a lookup code rather than rejecting it', () => {
+		// A citizen reading a code aloud or pasting it from an SMS produces
+		// "AB 12 CD". The old rule called that malformed and told them to fix
+		// characters they had not got wrong.
+		expect(validateLookupCode('AB 12 CD')).toBe('');
+		expect(normalizeLookupCode('AB 12 CD')).toBe('AB12CD');
+		expect(normalizeLookupCode('  ab12cd  ')).toBe('ab12cd');
+		// A dash is a real character in this system (ticket numbers are
+		// "PHB-0004"), so it is NOT stripped — that would change which strings
+		// are accepted rather than absorb a formatting accident.
+		expect(normalizeLookupCode('PHB-0004')).toBe('PHB-0004');
 	});
 
 	it('words a wait time as an estimate, never as a live figure', () => {
@@ -360,7 +385,7 @@ describe('/appointments/new', () => {
 		const steps = Array.from(document.querySelectorAll('.sigap-stepper__label')).map(
 			(node) => node.textContent?.trim()
 		);
-		expect(steps).toEqual(['Fasilitas', 'Layanan', 'Waktu + Data Diri']);
+		expect(steps).toEqual(['Fasilitas', 'Layanan', 'Waktu + data']);
 		// The current step is marked, not just implied by position.
 		expect(document.querySelector('[aria-current="step"]')?.textContent).toContain('Fasilitas');
 	});
@@ -477,7 +502,12 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		// Click from an EMPTY form. The primary action is always enabled and
+		// reads "Lanjutkan" before a facility/service are chosen, but pressing it
+		// still validates locally and names the missing selection — it is not a
+		// dead button, and it must not fire a request for a form it already knows
+		// is incomplete.
+		await fireEvent.click(screen.getByRole('button', { name: /Lanjutkan/ }));
 		await waitFor(() => expect(document.body.textContent).toContain('wajib diisi'));
 
 		// Nothing was sent: a form that validates locally must not spend a
@@ -492,7 +522,7 @@ describe('/appointments/new', () => {
 		await fillValidBooking();
 
 		await fireEvent.input(phoneField(), { target: { value: '123' } });
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(document.body.textContent).toContain('10-15 digit angka'));
 		expect(calls.some((c) => c.method === 'POST')).toBe(false);
@@ -507,7 +537,7 @@ describe('/appointments/new', () => {
 		await fireEvent.input(timeField(), {
 			target: { value: '2000-01-01T10:00' }
 		});
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(document.body.textContent).toContain('masa depan'));
 		expect(calls.some((c) => c.method === 'POST')).toBe(false);
@@ -520,7 +550,7 @@ describe('/appointments/new', () => {
 		await fillValidBooking();
 
 		await fireEvent.input(nameField(), { target: { value: '' } });
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => {
 			const name = nameField() as HTMLInputElement;
@@ -556,7 +586,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true));
 		const post = calls.find((c) => c.method === 'POST')!;
@@ -603,9 +633,9 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
-		await waitFor(() => expect(document.body.textContent).toContain('berhasil dibuat'));
+		await waitFor(() => expect(document.body.textContent).toContain('Janji temu berhasil'));
 		// The code the citizen has to write down.
 		expect(document.querySelector('[data-testid="booking-checkin-code"]')?.textContent?.trim()).toBe('ZZ99YY');
 		expect(document.querySelector('[data-testid="booking-appointment-id"]')?.textContent?.trim()).toBe('appt-xyz');
@@ -643,7 +673,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(document.body.textContent).toContain('Fasilitas tidak ditemukan.'));
 		// Announced, not just coloured.
@@ -666,7 +696,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(document.body.textContent).toContain('Slot jadwal sudah penuh.'));
 	});
@@ -688,7 +718,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(document.body.textContent).toContain('batas pemesanan per hari'));
 	});
@@ -704,7 +734,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(document.body.textContent).toContain(GENERIC_UNAVAILABLE));
 		// A 5xx must not leak the raw server string: "Gagal menyimpan janji
@@ -734,7 +764,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 		await tick();
 		await new Promise((resolve) => setTimeout(resolve, 40));
 
@@ -742,7 +772,7 @@ describe('/appointments/new', () => {
 		// someone for navigating away is the whole thing this avoids.
 		expect(document.querySelector('[role="alert"]')).toBeNull();
 		expect(facilityField()).toBeTruthy();
-		expect(screen.getByRole('button', { name: /Daftar Janji Temu/ })).toBeTruthy();
+		expect(screen.getByRole('button', { name: /Konfirmasi janji temu/ })).toBeTruthy();
 	});
 
 	it('preselects a facility from ?facility_id= and ignores an unknown one', async () => {
@@ -798,7 +828,7 @@ describe('/appointments/new', () => {
 		render(Booking);
 		await waitFor(() => expect(facilityField()).toBeTruthy());
 		await fillValidBooking();
-		await fireEvent.click(screen.getByRole('button', { name: /Daftar Janji Temu/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Konfirmasi janji temu/ }));
 
 		await waitFor(() => expect(screen.getByRole('button', { name: /Salin kode/ })).toBeTruthy());
 

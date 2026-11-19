@@ -108,12 +108,90 @@ export function deactivateFacility(
 	);
 }
 
+/* ----------------------------- organizations ---------------------------- */
+
+/**
+ * A tenant directory row from `GET /api/v1/admin/organizations`.
+ *
+ * The list carries ONLY the organizations inside the caller's resolved
+ * organization scope (`ListOrganizations` narrows to `OrganizationScope`), so
+ * what the client receives is already the authorized view — never a directory
+ * the client may trim or expand. A caller without `organization.read` receives
+ * `HTTP 200 + []`, deliberately the same shape as "an org-scoped actor with no
+ * orgs", so the empty directory is rendered as a plain empty state rather than
+ * as a distinct refusal: existence across organizations is not leaked.
+ */
+export interface AdminOrganization {
+	id: string;
+	name: string;
+	region: string;
+	is_active: boolean;
+	/** `omitempty` on the wire; absent when the column is NULL. */
+	created_at?: string;
+	updated_at?: string;
+}
+
+export function listOrganizations(
+	signal?: AbortSignal
+): Promise<ApiResult<AdminOrganization[]>> {
+	return apiFetchList<AdminOrganization>('/api/v1/admin/organizations', { signal });
+}
+
+/**
+ * The tenant-aware operational stats aggregate for one organization, from
+ * `GET /api/v1/admin/organizations/{id}`.
+ *
+ * Every count is an integer aggregate bounded by the facilities where the actor
+ * holds `facility.read` — never a patient row, a medical record, or PII. A
+ * forged or sibling organization id, or a caller without `organization.read`,
+ * is answered 404 (not 403): the org's existence is never disclosed across
+ * scopes, so a 404 here must be shown as "not found / not authorized" rather
+ * than as a transient failure the client could retry.
+ */
+export interface AdminOrganizationOverview {
+	id: string;
+	name: string;
+	region: string;
+	is_active: boolean;
+	facility_count: number;
+	service_unit_count: number;
+	active_queue_count: number;
+	appointment_count: number;
+}
+
+export function getOrganizationOverview(
+	id: string,
+	signal?: AbortSignal
+): Promise<ApiResult<AdminOrganizationOverview>> {
+	return apiFetch<AdminOrganizationOverview>(
+		`/api/v1/admin/organizations/${encodeURIComponent(id)}`,
+		{ signal }
+	);
+}
+
 /* -------------------------------- queues -------------------------------- */
 
+export interface ListQueueTicketsOptions {
+	/**
+	 * The service day to read, `YYYY-MM-DD` in WIB. Omit to let the server apply
+	 * its own default — today in Asia/Jakarta. A past date reads that day's
+	 * history, never a different write path. See
+	 * `design/service-day-queue-policy.md`.
+	 */
+	date?: string;
+	signal?: AbortSignal;
+}
+
 export function listQueueTickets(
-	signal?: AbortSignal
+	options: ListQueueTicketsOptions = {}
 ): Promise<ApiResult<AdminQueueTicket[]>> {
-	return apiFetchList<AdminQueueTicket>('/api/v1/admin/queues', { signal });
+	return apiFetchList<AdminQueueTicket>('/api/v1/admin/queues', {
+		signal: options.signal,
+		// `query.date` is dropped by `buildUrl` when undefined/null, so omitting
+		// `date` produces the plain `/api/v1/admin/queues` URL and the server's
+		// today-in-WIB default applies.
+		query: { date: options.date }
+	});
 }
 
 export function getQueueTicket(
@@ -175,15 +253,28 @@ export interface ServiceUnitInput {
 	description?: string;
 }
 
+/**
+ * Creates a service unit under one facility.
+ *
+ * `facility_id` travels in the BODY, not the path. The path form
+ * (`/api/v1/admin/facilities/{id}/service-units`) is not registered in the Go
+ * route table, so every call to it was answered by the deny-by-default
+ * middleware with a 401 that reads like an auth failure. The handler
+ * (`CreateServiceUnit` in admin.go) parses the facility from the request body
+ * and then checks `schedule.manage` at that specific facility — which is the
+ * real authorization step, and the reason the id must be the caller's target
+ * rather than something the server infers.
+ */
 export function createServiceUnit(
 	facilityId: string,
 	input: ServiceUnitInput,
 	signal?: AbortSignal
 ): Promise<ApiResult<{ id: string }>> {
-	return apiFetch<{ id: string }>(
-		`/api/v1/admin/facilities/${encodeURIComponent(facilityId)}/service-units`,
-		{ method: 'POST', body: input, signal }
-	);
+	return apiFetch<{ id: string }>('/api/v1/admin/service-units', {
+		method: 'POST',
+		body: { facility_id: facilityId, ...input },
+		signal
+	});
 }
 
 /* ------------------------------- schedules ------------------------------ */

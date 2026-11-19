@@ -93,6 +93,7 @@ const permissionsQuery = `
 SELECT u.id,
        p.key,
        ur.facility_id,
+       ur.organization_id,
        r.name
 FROM app_users u
 LEFT JOIN user_roles ur
@@ -105,7 +106,7 @@ LEFT JOIN permissions p ON p.id = rp.permission_id
 WHERE u.subject = $1
   AND u.status = 'active'
   AND u.deleted_at IS NULL
-ORDER BY p.key, ur.facility_id NULLS FIRST, r.name`
+ORDER BY p.key, ur.facility_id NULLS FIRST, ur.organization_id NULLS FIRST, r.name`
 
 // permissionsByAppUserQuery is permissionsQuery keyed by the trusted internal
 // app_users.id instead of the external subject. It is intentionally the same
@@ -115,6 +116,7 @@ const permissionsByAppUserQuery = `
 SELECT u.id,
        p.key,
        ur.facility_id,
+       ur.organization_id,
        r.name
 FROM app_users u
 LEFT JOIN user_roles ur
@@ -127,7 +129,7 @@ LEFT JOIN permissions p ON p.id = rp.permission_id
 WHERE u.id = $1
   AND u.status = 'active'
   AND u.deleted_at IS NULL
-ORDER BY p.key, ur.facility_id NULLS FIRST, r.name`
+ORDER BY p.key, ur.facility_id NULLS FIRST, ur.organization_id NULLS FIRST, r.name`
 
 // ResolveByAppUserID resolves the effective grant set directly from the
 // server-side app_users.id, bypassing the external subject lookup.
@@ -149,7 +151,7 @@ func (r *rbacResolver) ResolveByAppUserID(ctx context.Context, appUserID string)
 		return ResolvedPermissions{}, fmt.Errorf("resolve permissions for app user: %w", err)
 	}
 	defer rows.Close()
-	return scanResolvedPermissions(rows)
+	return r.scanResolvedPermissions(ctx, rows)
 }
 
 // Resolve implements Resolver.
@@ -166,25 +168,39 @@ func (r *rbacResolver) Resolve(ctx context.Context, subject string) (ResolvedPer
 		return ResolvedPermissions{}, fmt.Errorf("resolve permissions for subject: %w", err)
 	}
 	defer rows.Close()
-	return scanResolvedPermissions(rows)
+	return r.scanResolvedPermissions(ctx, rows)
 }
 
-// scanResolvedPermissions folds the shared (key, facility, role) result shape
-// into a ResolvedPermissions, preserving facility provenance and applying the
-// global-super_admin rule.
-func scanResolvedPermissions(rows pgx.Rows) (ResolvedPermissions, error) {
-	var (
-		appUserID  string
-		permission *string
-		facilityID *uuid.UUID
-		roleName   *string
-		perms      []string
-		grants     []identity.FacilityGrant
-		seenPerm   = make(map[string]struct{})
-		seenGrant  = make(map[string]struct{})
-	)
+// rawGrantRow is one unfolded (key, facility, org, role) tuple from the RBAC
+// join. Facility and organization may both be nil for a zero-scope or global
+// assignment; the role name disambiguates the two.
+type rawGrantRow struct {
+	key            string
+	facilityID     *uuid.UUID
+	organizationID *uuid.UUID
+	roleName       *string
+}
+
+// scanResolvedPermissions folds the shared (key, facility, organization, role)
+// result shape into a ResolvedPermissions. It preserves facility provenance,
+// applies the global super_admin/regional_admin rule, and expands an
+// org-scoped assignment into one concrete facility grant per facility of that
+// organization — so the org axis stays a pure derivation of
+// facilities.organization_id and never widens beyond it.
+func (r *rbacResolver) scanResolvedPermissions(ctx context.Context, rows pgx.Rows) (ResolvedPermissions, error) {
+	appUserID := ""
+	perms := []string{}
+	seenPerm := make(map[string]struct{})
+	var raw []rawGrantRow
+
 	for rows.Next() {
-		if err := rows.Scan(&appUserID, &permission, &facilityID, &roleName); err != nil {
+		var (
+			permission     *string
+			facilityID     *uuid.UUID
+			organizationID *uuid.UUID
+			roleName       *string
+		)
+		if err := rows.Scan(&appUserID, &permission, &facilityID, &organizationID, &roleName); err != nil {
 			return ResolvedPermissions{}, fmt.Errorf("scan resolved permission: %w", err)
 		}
 		// The LEFT JOINs yield a NULL permission key when the active user has
@@ -198,28 +214,44 @@ func scanResolvedPermissions(rows pgx.Rows) (ResolvedPermissions, error) {
 			perms = append(perms, key)
 			seenPerm[key] = struct{}{}
 		}
-
-		// A global assignment (facility_id IS NULL) only yields an
-		// unrestricted grant for the super_admin role. Every other role
-		// assigned without a facility is scoped to nothing and therefore
-		// grants no facility provenance at all.
-		unrestricted := facilityID == nil && roleName != nil && *roleName == superAdminRoleName
-
-		grantKey := key + "\x00" + grantScopeKey(facilityID, unrestricted)
-		if _, ok := seenGrant[grantKey]; ok {
-			continue
-		}
-		seenGrant[grantKey] = struct{}{}
-
-		grant := identity.FacilityGrant{Key: key, Unrestricted: unrestricted}
-		if facilityID != nil {
-			scoped := *facilityID
-			grant.FacilityID = &scoped
-		}
-		grants = append(grants, grant)
+		raw = append(raw, rawGrantRow{key: key, facilityID: facilityID, organizationID: organizationID, roleName: roleName})
 	}
 	if err := rows.Err(); err != nil {
 		return ResolvedPermissions{}, fmt.Errorf("iterate resolved permissions: %w", err)
+	}
+
+	facilityByOrg, regionalAll, err := r.expansionSets(ctx, raw)
+	if err != nil {
+		return ResolvedPermissions{}, err
+	}
+
+	grants := []identity.FacilityGrant{}
+	seenGrant := make(map[string]struct{})
+	for _, row := range raw {
+		switch {
+		case row.facilityID != nil:
+			scoped := *row.facilityID
+			grants = appendUniqueGrant(grants, seenGrant, identity.FacilityGrant{Key: row.key, FacilityID: &scoped})
+		case row.organizationID != nil:
+			for _, f := range facilityByOrg[*row.organizationID] {
+				fid := f
+				grants = appendUniqueGrant(grants, seenGrant, identity.FacilityGrant{Key: row.key, FacilityID: &fid})
+			}
+		case row.roleName != nil && *row.roleName == regionalAdminRoleName:
+			// Unscoped regional_admin: explicit per-facility grants over ALL
+			// facilities, NOT the unrestricted flag (which stays super_admin
+			// only). Operational read is preserved; no .manage keys are in its
+			// seeded permission set, so nothing here can authorize a mutation.
+			for _, f := range regionalAll {
+				fid := f
+				grants = appendUniqueGrant(grants, seenGrant, identity.FacilityGrant{Key: row.key, FacilityID: &fid})
+			}
+		case row.roleName != nil && *row.roleName == superAdminRoleName:
+			grants = appendUniqueGrant(grants, seenGrant, identity.FacilityGrant{Key: row.key, Unrestricted: true})
+		default:
+			// zero-scope: facility_id NULL, org NULL, and not super_admin or
+			// regional_admin. Grants no facility provenance at any facility.
+		}
 	}
 
 	return ResolvedPermissions{
@@ -229,14 +261,100 @@ func scanResolvedPermissions(rows pgx.Rows) (ResolvedPermissions, error) {
 	}, nil
 }
 
-// superAdminRoleName is the only role whose unscoped (facility_id IS NULL)
-// assignment confers global reach. It mirrors the predicate used by
-// facilityScopeQuery so the permission view and the scope view can never
-// disagree about who is globally unrestricted.
-const superAdminRoleName = "super_admin"
+// appendUniqueGrant dedupes by (key, scope) and appends when new. It preserves
+// the previous grantScopeKey semantics: one entry per (key, facility) or
+// (key, global).
+func appendUniqueGrant(grants []identity.FacilityGrant, seen map[string]struct{}, g identity.FacilityGrant) []identity.FacilityGrant {
+	key := g.Key + "\x00" + grantScopeKey(g.FacilityID, g.Unrestricted)
+	if _, ok := seen[key]; ok {
+		return grants
+	}
+	seen[key] = struct{}{}
+	return append(grants, g)
+}
 
-// grantScopeKey builds the dedupe key distinguishing the three grant shapes:
-// global, facility-scoped to a specific facility, and provenance-free.
+// expansionSets precomputes the two derived facility sets the grant fold needs:
+//   - facilityByOrg: per-organization facility lists (for org-scoped grants);
+//   - allFacilities: the full facility list (for an unscoped regional_admin),
+//     nil when no unscoped regional_admin grant is present.
+func (r *rbacResolver) expansionSets(ctx context.Context, raw []rawGrantRow) (map[uuid.UUID][]uuid.UUID, []uuid.UUID, error) {
+	facilityByOrg := make(map[uuid.UUID][]uuid.UUID)
+	orgSet := make(map[uuid.UUID]struct{})
+	needAll := false
+	for _, row := range raw {
+		if row.organizationID != nil && row.facilityID == nil {
+			orgSet[*row.organizationID] = struct{}{}
+		}
+		if row.roleName != nil && *row.roleName == regionalAdminRoleName &&
+			row.facilityID == nil && row.organizationID == nil {
+			needAll = true
+		}
+	}
+
+	if len(orgSet) > 0 {
+		orgIDs := make([]uuid.UUID, 0, len(orgSet))
+		for id := range orgSet {
+			orgIDs = append(orgIDs, id)
+		}
+		facilityRows, err := r.pool.Query(ctx,
+			`SELECT organization_id, id FROM facilities WHERE organization_id = ANY($1)`, orgIDs)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve org facilities: %w", err)
+		}
+		for facilityRows.Next() {
+			var (
+				orgID      uuid.UUID
+				facilityID uuid.UUID
+			)
+			if err := facilityRows.Scan(&orgID, &facilityID); err != nil {
+				facilityRows.Close()
+				return nil, nil, fmt.Errorf("scan org facility: %w", err)
+			}
+			facilityByOrg[orgID] = append(facilityByOrg[orgID], facilityID)
+		}
+		if err := facilityRows.Err(); err != nil {
+			facilityRows.Close()
+			return nil, nil, fmt.Errorf("iterate org facilities: %w", err)
+		}
+		facilityRows.Close()
+	}
+
+	var allFacilities []uuid.UUID
+	if needAll {
+		rows, err := r.pool.Query(ctx, `SELECT id FROM facilities`)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve all facilities: %w", err)
+		}
+		for rows.Next() {
+			var id uuid.UUID
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, nil, fmt.Errorf("scan facility: %w", err)
+			}
+			allFacilities = append(allFacilities, id)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, nil, fmt.Errorf("iterate all facilities: %w", err)
+		}
+		rows.Close()
+	}
+
+	return facilityByOrg, allFacilities, nil
+}
+
+// superAdminRoleName is the only role whose unscoped (facility_id IS NULL)
+// assignment confers the GLOBAL/unrestricted reach. regionalAdminRoleName is
+// regional over every facility but deliberately explicit, never unrestricted,
+// so super_admin stays the sole operator of scope.Unrestricted (the gate behind
+// CreateFacility/DeactivateFacility).
+const (
+	superAdminRoleName   = "super_admin"
+	regionalAdminRoleName = "regional_admin"
+)
+
+// grantScopeKey builds the dedupe key distinguishing the grant shapes: global,
+// facility-scoped to a specific facility, and provenance-free.
 func grantScopeKey(facilityID *uuid.UUID, unrestricted bool) string {
 	if unrestricted {
 		return "global"

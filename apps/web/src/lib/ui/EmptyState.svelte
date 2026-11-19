@@ -53,7 +53,7 @@
 		padding: 32px 24px;
 		text-align: center;
 		background-color: var(--sigap-surface);
-		border: 1px dashed var(--sigap-border);
+		border: 1px dashed var(--sigap-border-subtle);
 	}
 
 	.sigap-empty__icon {

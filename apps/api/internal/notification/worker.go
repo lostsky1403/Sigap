@@ -145,10 +145,38 @@ func (w *Worker) RunOnce(ctx context.Context, batchSize int, preview bool) (RunR
 	return w.runOnceReal(ctx, batchSize)
 }
 
+// requeueStaleProcessing returns rows a crashed worker left in 'processing'
+// back to 'pending' once their safety window has elapsed. claim() set
+// next_attempt_at = NOW() + 15m when it marked a row 'processing', but nothing
+// ever reset that state if the worker died before processRow finished — so the
+// row would be stuck forever despite the comment claiming recovery. This is an
+// idempotent owner-free reclaim: only rows whose window has fully elapsed are
+// touched, and a live worker re-claims them through the normal FOR UPDATE
+// SKIP LOCKED path. Preview mode never calls this (it stays strictly read-only).
+func (w *Worker) requeueStaleProcessing(ctx context.Context) error {
+	const sql = `
+UPDATE notification_outbox
+SET status = 'pending'
+WHERE status = 'processing' AND next_attempt_at <= NOW()`
+	tag, err := w.pool.Exec(ctx, sql)
+	if err != nil {
+		return fmt.Errorf("worker: requeue stale processing: %w", err)
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		slog.Warn("worker: requeued stale processing rows", "count", n)
+	}
+	return nil
+}
+
 // runOnceReal is the production-mode path: claim() transitions a row
 // to processing, processRow() hands it to the provider, scheduleRetry()
 // reschedules failures. Counters reflect the actual transitions.
 func (w *Worker) runOnceReal(ctx context.Context, batchSize int) (RunResult, error) {
+	// Recover rows abandoned by a crashed worker before claiming new ones.
+	if err := w.requeueStaleProcessing(ctx); err != nil {
+		return RunResult{}, err
+	}
+
 	var r RunResult
 	for i := 0; i < batchSize; i++ {
 		row, ok, err := w.claim(ctx)

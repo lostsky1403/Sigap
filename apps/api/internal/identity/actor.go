@@ -73,6 +73,31 @@ type Actor struct {
 	AppUserID      string
 }
 
+// AuditUserID returns the value that belongs in `audit_events.actor_user_id`.
+//
+// That column is a uuid with a foreign key to app_users.id, and the two id
+// fields on an Actor are not interchangeable:
+//
+//   - UserID is the EXTERNAL subject (a Supabase `sub`, or a local test
+//     subject such as "local-facility-admin"). It is an identity claim from
+//     outside this system and has no reason to be a uuid at all.
+//   - AppUserID is the server-side app_users.id the resolver mapped that
+//     subject to. It is the only value the column accepts.
+//
+// Handlers previously passed UserID. In production the Supabase `sub` is
+// uuid-shaped, so the value is at least the right TYPE and the failure is
+// invisible: the insert then violates the foreign key whenever the subject is
+// not literally an app_users.id, and the audit service only retries without
+// the column when the actor type is "dev". Under the local test identity the
+// subject is not uuid-shaped at all, so the insert fails earlier with SQLSTATE
+// 22P02. Either way every affected admin read and write produced no audit row.
+//
+// Empty means "no resolvable app user", which the caller writes as NULL. An
+// audit row with no actor is still worth keeping; a discarded audit row is not.
+func (a Actor) AuditUserID() string {
+	return a.AppUserID
+}
+
 // IsZero reports whether the actor is absent (no identity attached).
 func (a Actor) IsZero() bool {
 	return a.UserID == "" && a.Type == "" && len(a.Permissions) == 0

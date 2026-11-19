@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { fly } from 'svelte/transition';
 	import { RADIUS } from '$lib/design/tokens';
-	import { User, LogIn, LogOut, ChevronDown } from 'lucide-svelte';
+	import { authAlternate } from './navigation';
+	import { User, LogOut, ChevronDown } from 'lucide-svelte';
 	import Icon from '$lib/ui/Icon.svelte';
 
 	/**
@@ -20,6 +21,13 @@
 	 */
 	export let hasSession: boolean = false;
 	export let userEmail: string = '';
+
+	/**
+	 * The current route, used only to choose the signed-out auth control.
+	 * A path is not an authorisation input: `authAlternate` reads it to pick
+	 * between two fixed links and can produce nothing else.
+	 */
+	export let path: string = '/';
 
 	let open = false;
 	let root: HTMLDivElement | null = null;
@@ -124,24 +132,18 @@
 		{/if}
 	{:else}
 		<!--
-			Sign-in and register are navigation, so they are real links. The shared
-			Button primitive renders a <button> by design and deliberately has no
-			link mode, so these two repeat its visual contract rather than faking an
-			anchor with a button.
+			One control, not two. The frozen masthead carries a single auth
+			link whose label flips with the page: "Daftar" on the login form,
+			"Masuk" everywhere else. Two buttons here would put a second filled
+			primary in the masthead, competing with the page's own primary
+			action and with the booking CTA beside it.
+
+			It is outlined rather than filled for the same reason: the masthead
+			never carries a filled primary, so the page below keeps exactly one.
 		-->
-		<div class="sigap-account__anonymous">
-			<a class="sigap-account__link" style:border-radius={RADIUS.control} href="/auth/login">
-				<Icon icon={LogIn} size={18} />
-				<span>Masuk</span>
-			</a>
-			<a
-				class="sigap-account__link sigap-account__link--primary"
-				style:border-radius={RADIUS.control}
-				href="/auth/register"
-			>
-				<span>Daftar</span>
-			</a>
-		</div>
+		<a class="sigap-account__link" href={authAlternate(path).href}>
+			<span>{authAlternate(path).label}</span>
+		</a>
 	{/if}
 </div>
 
@@ -189,7 +191,8 @@
 		min-width: 232px;
 		padding: 8px;
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		/* Panel edge, not a control edge: the items inside are the controls. */
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-account__email {
@@ -201,7 +204,7 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		border-bottom: 1px solid var(--sigap-border);
+		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-account__item {
@@ -228,41 +231,38 @@
 		outline-offset: -2px;
 	}
 
-	.sigap-account__anonymous {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
+	/*
+		The single signed-out auth control.
 
+		Outlined, never filled. The masthead is chrome: it frames the page and
+		does not compete with whatever the page below it promotes. A filled
+		button here would be a second primary action on every screen in the
+		app, which is precisely what the frozen frames avoid — the one filled
+		masthead button in the reference appears on a browse page that has no
+		primary of its own.
+
+		`--sigap-border` and not `--sigap-border-subtle`: this is operable, so
+		its outline is the thing that says so, and it has to clear 3:1.
+	*/
 	.sigap-account__link {
 		display: inline-flex;
 		align-items: center;
-		gap: 8px;
+		justify-content: center;
+		/* Citizen touch floor, matching every other masthead control. */
 		height: 44px;
-		padding: 0 16px;
+		padding: 0 var(--sigap-space-4);
 		font-size: 14px;
 		font-weight: 500;
 		color: var(--sigap-foreground);
 		background-color: var(--sigap-surface);
 		border: 1px solid var(--sigap-border);
+		border-radius: var(--sigap-radius-control);
 		text-decoration: none;
 	}
 
 	.sigap-account__link:hover {
-		border-color: var(--sigap-primary);
 		color: var(--sigap-primary);
-	}
-
-	.sigap-account__link--primary {
-		color: var(--sigap-surface);
-		background-color: var(--sigap-primary);
 		border-color: var(--sigap-primary);
-	}
-
-	.sigap-account__link--primary:hover {
-		color: var(--sigap-surface);
-		background-color: var(--sigap-primary-hover);
-		border-color: var(--sigap-primary-hover);
 	}
 
 	.sigap-account__link:focus-visible {

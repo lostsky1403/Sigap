@@ -191,6 +191,8 @@ EXPECTED_MIGRATION_DIFF="packages/db/migrations/0011_notification_outbox_phone_c
 # ops/release-readiness-hardening (which shares a commit subject but is not the
 # branch CI gates on). Override with SIGAP_RELEASE_BRANCH when the release moves.
 RELEASE_BRANCH="${SIGAP_RELEASE_BRANCH:-design/ui-ux-overhaul}"
+REGIONAL_DEV_BRANCH="${SIGAP_REGIONAL_DEV_BRANCH:-feat/sigap-selfhosted-auth}"
+REGIONAL_RELEASE_BRANCH="${SIGAP_REGIONAL_RELEASE_BRANCH:-release/sigap-regional-v1}"
 HEAD_REF="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')}}"
 
 # A missing base ref and an EMPTY diff are different failures and must not be
@@ -256,6 +258,23 @@ if [ "${missing_base_ref:-0}" -eq 0 ]; then
         else
           bad "runbook does not document the non-empty d7705f09..HEAD diff as expected/classified"
         fi
+      fi
+    elif [ "$HEAD_REF" = "$REGIONAL_DEV_BRANCH" ]; then
+      # C: the regional DEVELOPMENT branch explicitly permits ONLY the declared
+      # 0012-0014 additions against the canonical main baseline. It is never a
+      # release branch; the dedicated guard enforces that and the checksums.
+      if sh scripts/ops/check-migration-inventory.sh --branch "$HEAD_REF" --context C; then
+        ok
+      else
+        bad "regional development migration inventory failed the declared-set guard"
+      fi
+    elif [ "$HEAD_REF" = "$REGIONAL_RELEASE_BRANCH" ]; then
+      # D: the future dedicated release branch, when it exists, must satisfy the
+      # explicit baseline and exact declared inventory (fail-closed until then).
+      if sh scripts/ops/check-migration-inventory.sh --branch "$HEAD_REF" --context D; then
+        ok
+      else
+        bad "dedicated regional release migration inventory failed the declared-set guard"
       fi
     else
       if [ -n "$destroyed" ]; then

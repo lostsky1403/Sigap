@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
+	import AdminFreshness from '$lib/admin/AdminFreshness.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
 	import AdminToolbar from '$lib/admin/AdminToolbar.svelte';
 	import FacilityFilter from '$lib/admin/FacilityFilter.svelte';
@@ -11,11 +12,13 @@
 		showsStaleWarning,
 		type QueueBoardState
 	} from '$lib/admin/queueBoard';
+	import { serviceDayKey } from '$lib/admin/queueSource';
 	import { listFacilities, listQueueTickets, updateQueueTicketStatus } from '$lib/api/endpoints/admin';
 	import { isEmptyScope } from '$lib/admin/readState';
 	import { runAdminMutation } from '$lib/admin/adminMutation';
 	import AdminMutationFeedback from '$lib/admin/AdminMutationFeedback.svelte';
 	import { QUEUE_STATUS_LABEL } from '$lib/domain/status';
+	import { formatDate } from '$lib/domain/format';
 	import { RADIUS } from '$lib/design/tokens';
 	import Icon from '$lib/ui/Icon.svelte';
 	import { AlertTriangle } from 'lucide-svelte';
@@ -34,8 +37,20 @@
 	 * administrator changes a grant, which is rare, and the ticket rows carry
 	 * their own facility references — polling a second list every thirty seconds
 	 * would add a request per board for data that is already in hand.
+	 *
+	 * Service-day scope (T-3B4-04 / `design/service-day-queue-policy.md`): the
+	 * board defaults to TODAY by omitting `date`, so the server's WIB default
+	 * applies. Selecting a past date sends it explicitly and re-reads that day's
+	 * history. Future dates are rejected by `max` on the control, so the scope is
+	 * always today-or-earlier.
 	 */
-	const board = createQueueBoard({ read: (signal) => listQueueTickets(signal) });
+	const todayKey = serviceDayKey(new Date()) ?? '';
+	let serviceDate = todayKey;
+
+	const board = createQueueBoard({
+		read: (signal) =>
+			listQueueTickets({ signal, date: serviceDate === todayKey ? undefined : serviceDate })
+	});
 
 	let state: QueueBoardState = board.state;
 	let facilities: AdminFacility[] = [];
@@ -102,6 +117,24 @@
 	$: stale = showsStaleWarning(state);
 
 	/**
+	 * The service-day scope as two derived facts: whether we are on live today,
+	 * and what the heading should read. Today keeps the verbatim "Antrean";
+	 * a historical date names the day so an operator can tell it apart from live
+	 * work without changing anything else on the board.
+	 */
+	$: isTodayScope = serviceDate === todayKey;
+	$: serviceDayTitle = isTodayScope ? 'Antrean' : `Antrean — ${formatDate(serviceDate)}`;
+
+	/** Refetches the board for the newly selected service day. */
+	function onServiceDayChange(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		// An emptied input means "back to live work": reset to today so the
+		// request omits `date` and the server's WIB default applies again.
+		serviceDate = input.value || todayKey;
+		void board.refresh();
+	}
+
+	/**
 	 * T-3B5-01: the transition handler.
 	 *
 	 * Each piece of state below is scoped to ONE ticket, not to the board. Three
@@ -163,24 +196,54 @@
 
 <div class="sigap-admin-page">
 	<AdminPageHeader
-		title="Antrean"
+		title={serviceDayTitle}
 		subtitle="Pantau antrean dalam lingkup akses Anda. Pembaruan otomatis sekitar 30 detik, dijeda saat tab tidak aktif."
 	>
 		<svelte:fragment slot="aside">
-			{#if updatedLabel}
-				<!--
-					Always present once data has loaded, INCLUDING in the stale state. An
-					operator looking at possibly-out-of-date rows is exactly who needs to
-					be told when those rows were true.
-				-->
-				<span class="sigap-admin-updated" aria-live="polite">{updatedLabel}</span>
-			{/if}
+			<!--
+				Always present once data has loaded, INCLUDING in the stale state. An
+				operator looking at possibly-out-of-date rows is exactly who needs to
+				be told when those rows were true.
+			-->
+			<AdminFreshness
+				loadedAt={state.lastUpdated}
+				refreshing={state.refreshing}
+				onRefresh={() => void board.refresh()}
+			/>
 		</svelte:fragment>
 	</AdminPageHeader>
 
+	<!--
+		Service-day scope. This is a SERVER selection, not a client-side filter:
+		changing it re-reads the queue for the chosen day, so it lives apart from
+		the toolbar (whose filters only narrow data already loaded for this day).
+		`max` forbids future dates — the board is today-or-history, never tomorrow.
+	-->
+	<div class="sigap-admin-service-day">
+		<label class="sigap-admin-service-day__label" for="queue-service-day">
+			Hari layanan
+		</label>
+		<div class="sigap-admin-service-day__field">
+			<input
+				id="queue-service-day"
+				class="sigap-admin-service-day__input"
+				style:border-radius={RADIUS.control}
+				type="date"
+				value={serviceDate}
+				max={todayKey}
+				on:input={onServiceDayChange}
+			/>
+			<span class="sigap-admin-service-day__hint" aria-live="polite">
+				{#if isTodayScope}
+					Hari ini
+				{:else}
+					Riwayat
+				{/if}
+			</span>
+		</div>
+	</div>
+
 	<AdminToolbar
-		refreshing={state.refreshing}
-		onRefresh={() => void board.refresh()}
 		note="Daftar antrean sudah dibatasi fasilitas dalam lingkup akses Anda. Filter di bawah hanya mempersempit tampilan data yang sudah dimuat."
 	>
 		<div class="sigap-admin-search">
@@ -255,6 +318,8 @@
 				tickets={filtered}
 				{facilities}
 				onTransition={handleTransition}
+				readOnly={!isTodayScope}
+				serviceDay={!isTodayScope ? serviceDate : undefined}
 				{pendingTicketId}
 				{pendingStatus}
 				{errorTicketId}
@@ -276,34 +341,28 @@
 		min-width: 0;
 	}
 
-	.sigap-admin-updated {
-		font-size: 12px;
-		color: var(--sigap-muted);
-		/* Tabular figures so the label does not jitter as the minutes tick over. */
-		font-variant-numeric: tabular-nums;
-	}
-
 	.sigap-admin-search {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: var(--sigap-space-1);
 	}
 
 	.sigap-admin-search__label {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		font-weight: 500;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-admin-search__input {
-		height: 36px;
+		height: var(--sigap-control-admin-compact);
 		width: 180px;
-		padding: 0 10px;
+		padding: 0 var(--sigap-space-3);
+		/* A control boundary: the essential token, never the subtle one. */
 		border: 1px solid var(--sigap-border);
 		background-color: var(--sigap-surface);
 		color: var(--sigap-foreground);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 	}
 
 	.sigap-admin-search__input:focus-visible {
@@ -311,16 +370,66 @@
 		outline-offset: 2px;
 	}
 
+	/*
+		The service-day scope selector. The same column layout as `.sigap-admin-search`
+		so the label + control read as one unit, kept apart from the toolbar below.
+	*/
+	.sigap-admin-service-day {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sigap-space-1);
+		margin-bottom: var(--sigap-space-3);
+	}
+
+	.sigap-admin-service-day__label {
+		font-size: var(--sigap-type-caption);
+		font-weight: 500;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-admin-service-day__field {
+		display: flex;
+		align-items: center;
+		gap: var(--sigap-space-3);
+	}
+
+	.sigap-admin-service-day__input {
+		height: var(--sigap-control-admin-compact);
+		padding: 0 var(--sigap-space-3);
+		border: 1px solid var(--sigap-border);
+		background-color: var(--sigap-surface);
+		color: var(--sigap-foreground);
+		font: inherit;
+		font-size: var(--sigap-type-label);
+	}
+
+	.sigap-admin-service-day__input:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: 2px;
+	}
+
+	.sigap-admin-service-day__hint {
+		font-size: var(--sigap-type-label);
+		color: var(--sigap-muted);
+	}
+
+	/*
+		The stale banner keeps the previous rows on screen; this panel is the
+		warning above them. Its outline is a panel outline — decorative — so it
+		uses the subtle token. The leading 3px edge stays `--sigap-danger`: that
+		is the part that carries the warning, and a warning the operator cannot
+		see is not a warning.
+	*/
 	.sigap-admin-stale {
 		display: flex;
-		gap: 10px;
+		gap: var(--sigap-space-3);
 		align-items: flex-start;
-		margin: 12px 0;
-		padding: 12px;
-		font-size: 13px;
+		margin: var(--sigap-space-3) 0;
+		padding: var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		line-height: 1.45;
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 		border-left: 3px solid var(--sigap-danger);
 		color: var(--sigap-danger);
 	}
@@ -337,33 +446,35 @@
 	}
 
 	.sigap-admin-nomatch {
-		padding: 24px;
+		padding: var(--sigap-space-5);
 		text-align: center;
 		background-color: var(--sigap-surface);
-		border: 1px dashed var(--sigap-border);
+		/* A panel outline is decorative; this is a message, not a control. */
+		border: 1px dashed var(--sigap-border-subtle);
 	}
 
 	.sigap-admin-nomatch__title {
-		margin: 0 0 4px;
-		font-size: 15px;
+		margin: 0 0 var(--sigap-space-1);
+		font-size: var(--sigap-type-subtitle);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-admin-nomatch__body {
-		margin: 0 0 12px;
-		font-size: 14px;
+		margin: 0 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-body);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-nomatch__reset {
-		height: 36px;
-		padding: 0 14px;
+		height: var(--sigap-control-admin-compact);
+		padding: 0 var(--sigap-space-4);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		background-color: var(--sigap-surface);
+		/* A control boundary: this is a button. */
 		border: 1px solid var(--sigap-border);
 		cursor: pointer;
 	}

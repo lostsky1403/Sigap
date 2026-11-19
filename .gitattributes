@@ -15,6 +15,12 @@ deploy/systemd/* text eol=lf
 # and every ops script here is run on the production host or in CI.
 *.sh text eol=lf
 
+# Git hooks. `.githooks/commit-msg` runs under POSIX sh (and under Git for Windows'
+# own sh, which tolerates CR — but not every contributor's machine will), so the same
+# shebang hazard applies. It also edits a message file in place with awk, where a
+# stray CR would end up inside the recorded commit message.
+.githooks/* text eol=lf
+
 # Migration SQL. apps/api/internal/migrate records SHA-256(content) into
 # schema_migrations.checksum, so the file's BYTES are evidence. A CRLF checkout hashes
 # differently from an LF one, which makes that recorded digest non-reproducible across

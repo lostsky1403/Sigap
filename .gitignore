@@ -28,3 +28,25 @@ sigap-pre-redesign-*.tar.gz
 # and it must never contain a credential — which is why the script writes only
 # command output, never its own environment.
 lock-drill-evidence/
+
+# Review scratch: screenshot crops used to read the approved Pen frames while
+# comparing them against the running app. Evidence, not source.
+.scratch/
+
+# Review captures produced by apps/web/scripts/capture-review.mjs. Regenerable
+# from the running local stack, so they are evidence rather than source.
+review-shots/
+
+# Go build output (Makefile `build` target writes apps/api/bin/sigap-api).
+apps/api/bin/
+
+# Local preview runtime: logs, pid files, and the disposable E2E cluster.
+.local-preview/
+.local-e2e/
+
+# Playwright artifacts
+apps/web/test-results/
+apps/web/playwright-report/
+
+# local Supabase stack (keys + config + cached CLI)
+supabase/

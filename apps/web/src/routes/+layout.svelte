@@ -1,8 +1,10 @@
 <script lang="ts">
 	import '../app.css';
 	import { onMount } from 'svelte';
+	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
 	import CitizenHeader from '$lib/citizen/CitizenHeader.svelte';
+	import { setSession } from '$lib/stores/session';
 	import type { LayoutData } from './$types';
 
 	export let data: LayoutData;
@@ -52,6 +54,38 @@
 	$: isAdminArea = $page.url.pathname.startsWith('/admin');
 	$: hasSession = data.hasSession ?? false;
 	$: userEmail = data.userEmail ?? '';
+
+	/**
+	 * Mirror the server-derived session flag into the shared client store.
+	 *
+	 * Admin pages (and four citizen pages) read their presentation state from
+	 * `getSession()` / `subscribeToSession()`, not from `data` directly. Without
+	 * this write the store stays at its initialize-only `false` for the whole
+	 * browser session, so a signed-in staff member who receives a 403 is shown
+	 * the "sign in again" panel instead of the permission-denied panel.
+	 *
+	 * Browser-only on purpose: the store is a module singleton shared by every
+	 * SSR request in the Node process. Writing it during server rendering would
+	 * let one request's session flag bleed into a concurrent request's render.
+	 * The server never reads this store — only the browser does.
+	 */
+	$: if (browser) setSession({ hasSession: data.hasSession ?? false });
+
+	/**
+	 * Which pages let the masthead carry the filled booking CTA.
+	 *
+	 * Only the catalog. `/faskes` promotes nothing of its own — it is a
+	 * browsable list — so the reference fills `Buat Janji Temu` there. Every
+	 * other citizen page carries a filled primary in its body (the landing
+	 * page's task picker, the auth forms' submit, the booking form's next
+	 * step), and a filled masthead button on top of that would give the screen
+	 * two competing primaries.
+	 *
+	 * A path list, not a role or a permission check: this chooses a button
+	 * variant and nothing else.
+	 */
+	let ctaEmphasis: 'filled' | 'outlined' = 'outlined';
+	$: ctaEmphasis = $page.url.pathname === '/faskes' ? 'filled' : 'outlined';
 </script>
 
 {#if isAdminArea}
@@ -63,24 +97,15 @@
 	-->
 	<slot />
 {:else}
-	<CitizenHeader path={$page.url.pathname} {hasSession} {userEmail} />
+	<CitizenHeader path={$page.url.pathname} {hasSession} {userEmail} {ctaEmphasis} />
 
 	<!--
-		The bottom padding reserves the fixed tab bar plus the device safe-area
-		inset, so the last element of a long page can never end up underneath it.
+		`<main>` is a bare landmark. The bottom reserve that keeps content clear
+		of the fixed tab bar lives on `.sigap-page`, the container every page
+		already renders — not here, because a page that does not use that
+		container would then get the reserve twice.
 	-->
-	<main class="sigap-citizen-main">
+	<main>
 		<slot />
 	</main>
 {/if}
-
-<style>
-	.sigap-citizen-main {
-		/*
-		 * 96px clears the 56px tab bar with room to spare, and
-		 * env(safe-area-inset-bottom) adds the home-indicator inset on devices
-		 * that have one.
-		 */
-		padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
-	}
-</style>

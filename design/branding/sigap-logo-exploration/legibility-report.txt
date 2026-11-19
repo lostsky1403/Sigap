@@ -1,0 +1,36 @@
+SIGAP concepts — legibility test
+rendered from the delivered SVGs at true pixel sizes (skill Chrome backend)
+
+file         colour           px     ink  islands
+concept-a.svg brand #0F766E    64   27.2%        1
+concept-a.svg brand #0F766E    32   25.8%        1
+concept-a.svg brand #0F766E    16   25.0%        1
+concept-a.svg black            64   27.2%        1
+concept-a.svg black            32   25.8%        1
+concept-a.svg black            16   25.0%        1
+concept-a.svg white            64   27.2%        1
+concept-a.svg white            32   25.8%        1
+concept-a.svg white            16   25.0%        1
+concept-b.svg brand #0F766E    64   28.4%        1
+concept-b.svg brand #0F766E    32   27.6%        1
+concept-b.svg brand #0F766E    16   29.7%        1
+concept-b.svg black            64   28.4%        1
+concept-b.svg black            32   27.6%        1
+concept-b.svg black            16   29.7%        1
+concept-b.svg white            64   28.4%        1
+concept-b.svg white            32   27.6%        1
+concept-b.svg white            16   29.7%        1
+concept-c.svg brand #0F766E    64   38.4%        2
+concept-c.svg brand #0F766E    32   37.0%        2
+concept-c.svg brand #0F766E    16   39.1%        2
+concept-c.svg black            64   38.4%        2
+concept-c.svg black            32   37.0%        2
+concept-c.svg black            16   39.1%        2
+concept-c.svg white            64   38.4%        2
+concept-c.svg white            32   37.0%        2
+concept-c.svg white            16   39.1%        2
+
+Contrast of the brand colour (WCAG 2.1 relative luminance):
+  #0F766E on light #FFFFFF     5.47:1  (AA text + non-text)
+  #0F766E on canvas #F7F6F3    5.06:1  (AA text + non-text)
+  #0F766E on dark #0B1220      3.42:1  (non-text only)

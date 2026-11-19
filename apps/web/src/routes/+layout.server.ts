@@ -26,6 +26,6 @@ export const load: LayoutServerLoad = ({ locals }) => {
 		userEmail: locals.session?.user?.email ?? null,
 		// Derived from the same session object the proxies use, so the header and
 		// the 403 presentation can never disagree about whether anyone is signed in.
-		hasSession: Boolean(locals.session?.access_token)
+		hasSession: Boolean(locals.session?.session?.token)
 	};
 };

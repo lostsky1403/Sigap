@@ -119,7 +119,11 @@ func GuardDevNetworkBinding() error {
 
 	devActive := strings.EqualFold(os.Getenv("SIGAP_DEV_IDENTITY"), "true") ||
 		strings.EqualFold(os.Getenv("SIGAP_AUTH_MODE"), "dev") ||
-		strings.EqualFold(os.Getenv("SIGAP_ENGINE_FALLBACK"), "dev")
+		strings.EqualFold(os.Getenv("SIGAP_ENGINE_FALLBACK"), "dev") ||
+		// F1: the local RBAC test selector is a dev-only capability too. Without
+		// it here, SIGAP_ENV=local + the selector + SIGAP_API_HOST=0.0.0.0 would
+		// expose header-driven, DB-backed identity selection to the network.
+		strings.EqualFold(os.Getenv("SIGAP_LOCAL_RBAC_TEST_IDENTITY"), "true")
 
 	if !devActive {
 		return nil
@@ -131,7 +135,7 @@ func GuardDevNetworkBinding() error {
 	}
 
 	return fmt.Errorf(
-		"dev-only capabilities enabled (SIGAP_DEV_IDENTITY/SIGAP_AUTH_MODE/SIGAP_ENGINE_FALLBACK) " +
+		"dev-only capabilities enabled (SIGAP_DEV_IDENTITY/SIGAP_AUTH_MODE/SIGAP_ENGINE_FALLBACK/SIGAP_LOCAL_RBAC_TEST_IDENTITY) " +
 			"but SIGAP_API_HOST=%q is not a loopback address. "+
 			"Set SIGAP_API_HOST=127.0.0.1 to start, or disable dev capabilities.",
 		host,
