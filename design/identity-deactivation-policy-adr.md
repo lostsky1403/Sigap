@@ -282,7 +282,61 @@ in an isolated worktree based on PR #97 head `2b1bb86`; PR #97 itself is untouch
 - `go build ./...` / `go test ./...`: PASS (DB-gated Go suites skip locally without
   `DATABASE_URL`).
 
-### 9.4 Residual limitations
+### 9.4 Real-database verification — 2026-11-19 (disposable PostgreSQL 18)
+A task-owned, loopback-only PostgreSQL 18 cluster (port 55432, db
+`sigap_identity_test`, user `sigap_test`, self-signed SSL) was provisioned,
+migrations 0001–0014 applied (14/14), and the Better Auth auth schema created
+via `getMigrations(auth.options)` (6 tables). No shared/dev/production DB was
+used. Verified with REAL runtime behaviour:
+
+- **integration test (built app, HTTP API, real session rows):** 22/22 assertions
+  PASS — active citizen/staff login 200 + session row; inactive/soft-deleted/
+  missing-identity login 401 with generic `INVALID_EMAIL_OR_PASSWORD` and **no
+  session row**; simulated DB outage fails closed; repeated attempts stay denied;
+  reactivation allows a fresh session. The test was rewritten as a built-app HTTP
+  runner (Node runtime) because the prior `.js` variant that imported `.ts`
+  directly could not resolve SvelteKit's `$app/*` virtual modules.
+- **real deactivation operation:** a live session (count 1) was created via the
+  built app, `provision-staff.mjs --deactivate <email> --apply` ran against the
+  disposable DB → `sessions_after=0`, `app_users.status=disabled`, subsequent
+  login 401. `DEACTIVATION_RUNTIME=PASS`.
+- **DB-backed regression suites:** session-security **62/0/0**, session-lifecycle
+  **67/0/0**, auth-config **0/0/0** — all with `REQUIRE_DB=1` semantics, zero skips.
+  Two stale gap-characterization assertions were updated from "disabled still
+  signs in" to "disabled is refused at the identity layer" (strengthening, not
+  weakening); the expiry test now uses a fresh post-reactivation device.
+- strict attribution (`2b1bb86..HEAD`, mode strict) PASS; Gitleaks 0 leaks;
+  `pnpm check` 0/0; `pnpm test:unit` 768/768; production build PASS;
+  `go build ./...` / `go test ./...` PASS (DB-gated suites skip locally without
+  `DATABASE_URL`; with the minimal disposable DB three schedule tests that need a
+  demo facility fixture fail — an environment-fixture issue, not a regression;
+  CI's full seed supplies that fixture).
+- **MFA runtime path:** NOT exercised end-to-end locally. Hook coverage of the
+  two-factor session mint was confirmed from library source in §9.2, but no TOTP
+  verification test was driven against the disposable DB. `MFA_HOOK_RUNTIME=NOT_RUN`.
+- **Go per-request RBAC / regional / patient isolation:** not re-driven against
+  the disposable DB beyond the existing suites; covered by PR #97's 9/9 CI on
+  head `2b1bb86` (unchanged by this feature branch).
+- **deactivation/login race:** source review shows the gate queries live status
+  at each sign-in and the deactivation operation revokes sessions then sets
+  status; an in-flight login that passes the gate just before deactivation could
+  still mint a session that deactivation then revokes (the revocation runs after
+  and deletes all sessions). No atomic cross-system guarantee is claimed — the
+  lifecycle contract's zero-privilege outcome still holds via Go RBAC. Status OPEN
+  for an explicit race test.
+
+### 9.5 CI / stacked-PR integration plan
+`.github/workflows/ci.yml` triggers `pull_request` only for `main` and
+`design/ui-ux-overhaul`. A stacked PR targeting `feat/sigap-selfhosted-auth`
+will **not** auto-trigger CI. Least-disruptive options (owner-gated, none done
+here): (a) run the PostgreSQL CI job locally/reproduce the nine checks before
+opening the stacked PR — already done for the relevant suites above; (b) with
+owner approval, add `feat/sigap-selfhosted-auth` to the workflow's PR target so
+the stacked PR gets real CI; (c) after PR #97 merges to `main`, rebase this branch
+onto the new `main` and open a normal PR (which triggers CI). Do NOT open a PR to
+`main` now (would duplicate PR #97) and do NOT modify the protected parent PR.
+
+### 9.6 Residual limitations
 - `SESSION_LIFECYCLE` stays **PARTIAL** until the DB-backed integration suite runs
   green in CI and the full lifecycle acceptance (revoked session cannot mint JWT,
   cross-facility denial, MFA) is proven against real state.

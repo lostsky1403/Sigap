@@ -415,7 +415,7 @@ check(
 );
 check(
 	'the hook is registered on databaseHooks.user.create.after',
-	/databaseHooks:\s*\{[\s\S]{0,600}?create:\s*\{[\s\S]{0,1200}?after:\s*async\s*\(user\)/.test(source),
+	/databaseHooks:\s*\{[\s\S]{0,2000}?user:\s*\{[\s\S]{0,400}?create:\s*\{[\s\S]{0,1200}?after:\s*async\s*\(user\)/.test(source),
 	null
 );
 check(
