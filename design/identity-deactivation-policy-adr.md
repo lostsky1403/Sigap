@@ -336,10 +336,51 @@ the stacked PR gets real CI; (c) after PR #97 merges to `main`, rebase this bran
 onto the new `main` and open a normal PR (which triggers CI). Do NOT open a PR to
 `main` now (would duplicate PR #97) and do NOT modify the protected parent PR.
 
-### 9.6 Residual limitations
-- `SESSION_LIFECYCLE` stays **PARTIAL** until the DB-backed integration suite runs
-  green in CI and the full lifecycle acceptance (revoked session cannot mint JWT,
-  cross-facility denial, MFA) is proven against real state.
+### 9.7 Final security gates — 2026-11-19 (real MFA + race + fixture parity)
+A second task-owned disposable PostgreSQL 18 cluster (loopback `127.0.0.1:55433`,
+db `sigap_mfa_test`, user `sigap_test`, self-signed SSL) was used. Migrations
+0001–0014 (14/14), Better Auth schema (6 tables), and the additive demo fixtures
+(`dev.sql` + `rbac.sql` + `demo.sql`) were applied. No shared/production DB used.
+
+- **MFA/TOTP runtime — PASS (18/18).** Real enrolled TOTP (RFC 6238 generated
+  from the enable response's base32 secret) through the built app's HTTP API:
+  (A) active TOTP sign-in mints a session; (B) disabling between credential
+  sign-in and TOTP verification blocks verification and leaves **no** session;
+  (C) deactivation revokes the MFA-authenticated session; (D) after reactivation
+  a fresh MFA login succeeds and the old session is not resurrected. This closes
+  the prior `MFA_HOOK_RUNTIME=NOT_RUN` gap with runtime evidence, not source
+  inspection. (`tests/mfa-runtime.mjs`)
+- **Deactivation/login race — PASS (bounded concurrency, 8 iterations).** A
+  sign-in request and the real `--deactivate --apply` operation were interleaved
+  repeatedly; after deactivation completed, **no usable session remained** and
+  status was `disabled`. The final-state invariant holds because deactivation
+  deletes all sessions after the status update. No atomic cross-system guarantee
+  is claimed — only the verified post-deactivation invariant. (`tests/deactivation-race.mjs`)
+- **Go fixture parity — PASS.** The three previously failing schedule tests pass
+  once `demo.sql` (which seeds facility `...d000`) is applied after `dev.sql` and
+  `rbac.sql`; the earlier failure was a missing demo fixture, not a defect. Full
+  `go test ./...` passes with the seeded disposable DB.
+- **Targeted regression:** identity integration 22/22; session-security 62/0/0;
+  session-lifecycle 67/0/0; auth-config 0/0/0 (all DB-gated, zero skips); Vitest
+  768/768; svelte-check 0/0; strict attribution PASS; Gitleaks 0 leaks.
+
+### 9.8 Residual limitations (final)
+- `SESSION_LIFECYCLE` stays **PARTIAL** only for the unresolved MFA **recovery /
+  backup-code / lockout lifecycle** acceptance criteria — the core identity gate,
+  TOTP session creation, deactivation, race invariant and session revocation are
+  now runtime-verified. `STAFF_MFA=PARTIAL` for the same recovery/lockout gaps.
 - No atomic cross-system revocation is claimed: session deletion + app_users status
   update are separate operations with observable partial failure, not one transaction.
-- Race conditions in the previous_hash audit chain are unrelated and unchanged.
+- Race verification is bounded (8 iterations) final-state, not a proof of the
+  absence of every transient timing window; the approved policy's zero-authority
+  outcome is additionally enforced by Go's per-request RBAC.
+- The intermittent 429 rate-limit observed during tests was a shared-bucket test
+  artifact (no forwarded client IP); tests forward rotating loopback IPs. It is
+  not an identity-gate behaviour and does not affect production semantics.
+- Previous JWTs remain valid to their 1 h `exp` (documented bound); no zero-second
+  JWT revocation is claimed. Race conditions in the previous_hash audit chain are
+  unrelated and unchanged.
+- CI: `.github/workflows/ci.yml` triggers PRs only for `main` and
+  `design/ui-ux-overhaul`; a stacked PR to `feat/sigap-selfhosted-auth` will not
+  auto-run CI. All nine relevant suites were reproduced locally on the feature
+  head. Owner must approve either a workflow target addition or a post-merge PR.
