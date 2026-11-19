@@ -4,7 +4,10 @@ on:
   push:
     branches: [ main, design/ui-ux-overhaul ]
   pull_request:
-    branches: [ main, design/ui-ux-overhaul ]
+    # TEMPORARY (feature branch only): feat/sigap-selfhosted-auth lets the
+    # Draft stacked PR #98 run this workflow before the parent PR merges.
+    # Remove this trigger when PR #98 is retargeted to main after integration.
+    branches: [ main, design/ui-ux-overhaul, feat/sigap-selfhosted-auth ]
 
 jobs:
   api:
@@ -193,6 +196,7 @@ jobs:
       BETTER_AUTH_SECRET: sigap-ci-only-not-a-production-secret-0001
       SIGAP_SESSION_SECURITY_REQUIRE_DB: '1'
       SIGAP_SESSION_LIFECYCLE_REQUIRE_DB: '1'
+      SIGAP_IDENTITY_DEACTIVATION_REQUIRE_DB: '1'
     services:
       postgres:
         image: postgres:16
@@ -242,6 +246,21 @@ jobs:
 
       - name: Auth config / registration / JWT claims (DB required)
         run: cd apps/web && node tests/auth-config-assertions.test.js
+
+      # Identity-deactivation runtime acceptance. These tests SPAWN the built
+      # SvelteKit app and drive real HTTP auth endpoints, so the production
+      # bundle must exist first. BETTER_AUTH_SECRET is injected at job level.
+      - name: Build web app for runtime auth tests
+        run: cd apps/web && pnpm build
+
+      - name: Identity deactivation HTTP integration (DB required)
+        run: cd apps/web && node tests/identity-deactivation.integration.test.js
+
+      - name: MFA / TOTP session creation runtime (DB required)
+        run: cd apps/web && node tests/mfa-runtime.mjs
+
+      - name: Deactivation/login race probe (DB required)
+        run: cd apps/web && node tests/deactivation-race.mjs
 
   attribution:
     name: Commit Attribution Check

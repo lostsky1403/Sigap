@@ -3,16 +3,21 @@
 // then release the gate read and observe whether a usable session appears.
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import net from 'node:net';
 import pg from 'pg';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const DB = process.env.SIGAP_DATABASE_URL, SECRET = process.env.BETTER_AUTH_SECRET;
+const DB = process.env.SIGAP_DATABASE_URL || process.env.DATABASE_URL, SECRET = process.env.BETTER_AUTH_SECRET;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const buildEntry = path.join(root, 'build', 'index.js');
+if (!DB) { console.error('DEACTIVATION_RACE=FAIL missing SIGAP_DATABASE_URL/DATABASE_URL'); process.exit(1); }
+if (!SECRET) { console.error('DEACTIVATION_RACE=FAIL missing BETTER_AUTH_SECRET'); process.exit(1); }
+if (!fs.existsSync(buildEntry)) { console.error('DEACTIVATION_RACE=FAIL build/index.js missing (run pnpm build)'); process.exit(1); }
 const stripped = DB.replace(/[?&]sslmode=[^&]+(&?)/,(_m,t)=>(t?'':''));
-const pool = new pg.Pool({ connectionString: stripped, ssl:{rejectUnauthorized:false} });
+const sslDisabled = /[?&]sslmode=disable(?:&|$)/i.test(DB);
+const pool = new pg.Pool({ connectionString: stripped, ssl: sslDisabled ? undefined : {rejectUnauthorized:false} });
 const port = await new Promise(r=>{const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>r(p));});});
 const url=`http://127.0.0.1:${port}`;
 // We need a controllable gate: inject latency via a lock on app_users row held

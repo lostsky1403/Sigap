@@ -40,7 +40,13 @@ try { pg = await import('pg'); } catch (e) { skip(`pg unavailable (${e?.code || 
 // and set ssl explicitly so Node's pg does not reject it. Production URLs are
 // never handled by this test runner.
 const TEST_DB_URL = DATABASE_URL.replace(/[?&]sslmode=[^&]+(&?)/, (_m, t) => (t ? '' : ''));
-const pool = new pg.Pool({ connectionString: TEST_DB_URL, ssl: { rejectUnauthorized: false } });
+const sslDisabled = /[?&]sslmode=disable(?:&|$)/i.test(DATABASE_URL);
+const pool = new pg.Pool({
+  connectionString: TEST_DB_URL,
+  // Explicit sslmode=disable (CI service container) stays plain TCP; only the
+  // self-signed local dev path needs relaxed verification.
+  ssl: sslDisabled ? undefined : { rejectUnauthorized: false }
+});
 try { await pool.query('select 1'); } catch (e) { await pool.end(); skip(`DB unreachable (${e?.code || 'unknown'})`); }
 
 const freePort = () => new Promise((resolve, reject) => {

@@ -184,10 +184,18 @@ function resolveTarget({ fromEnvFile }) {
  */
 function createPool({ connectionString, loopback }) {
 	const local = loopback || /@(127\.0\.0\.1|localhost):/.test(connectionString);
+	// An EXPLICIT sslmode=disable is authoritative even on loopback: CI service
+	// containers and other plain-TCP databases are reachable this way. This
+	// mirrors src/lib/server/db.ts exactly — only the self-signed local dev path
+	// gets relaxed verification. Production URLs are never touched.
+	const sslDisabled = /[?&]sslmode=disable(?:&|$)/i.test(connectionString);
 	const stripped = local
 		? connectionString.replace(/([?&])sslmode=[^&]+(&?)/, (_m, lead, trail) => (trail ? lead : ''))
 		: connectionString;
-	return new Pool({ connectionString: stripped, ssl: local ? { rejectUnauthorized: false } : undefined });
+	return new Pool({
+		connectionString: stripped,
+		ssl: local && !sslDisabled ? { rejectUnauthorized: false } : undefined
+	});
 }
 
 // ---------------------------------------------------------------------------
