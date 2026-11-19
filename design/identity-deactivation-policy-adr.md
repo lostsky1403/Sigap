@@ -224,3 +224,68 @@ oracle trade-off); (c) who performs §4.2 session revocation on deactivation;
 
 **Owner decision needed:** choose 0 / 1 / 4 and approve error-wording and audit
 treatment. Until then `IDENTITY_DEACTIVATION_POLICY=OPEN`.
+
+---
+
+## 9. Implementation record — 2026-11-19 (branch `feat/sigap-identity-deactivation`)
+
+Owner **adopted Option 1** with the ten policy items in the task brief. Implemented
+in an isolated worktree based on PR #97 head `2b1bb86`; PR #97 itself is untouched.
+
+### 9.1 What was actually implemented
+- `apps/web/src/lib/server/identity-status.ts` — `assertActiveIdentity(subject)`.
+  Queries `public.app_users` by `subject` and **throws a single generic
+  `APIError.from("UNAUTHORIZED", { message: "Email atau kata sandi salah.",
+  code: "INVALID_EMAIL_OR_PASSWORD" })`** for every denial: blank/non-string
+  subject, no DB pool, query error (DB outage), no row, `status <> 'active'`, or
+  `deleted_at IS NOT NULL`. Returns void only for a confirmed-active identity.
+  No SQL/status/existence signal is exposed — the login action maps that exact
+  APIError shape to the same message as a wrong password (anti-enumeration).
+- `apps/web/src/lib/server/auth.better.ts` — `databaseHooks.session.create.before`
+  calls `assertActiveIdentity(session.userId)`. In Better Auth 1.7.20
+  (`with-hooks.mjs:11`) a thrown error from `create.before` propagates and the
+  session row is never written; no JWT can be minted for a refused identity.
+  Coverage of creation paths (static source verification): every session write
+  goes through `internalAdapter.createSession`, which is wrapped by
+  `createWithHooks(data, "session", …)` (`internal-adapter.mjs:336`); that includes
+  the ordinary `signInEmail` path (autoSignIn is false at sign-up) and the
+  two-factor/MFA path where a verified TOTP mints a fresh session
+  (`plugins/two-factor/index.mjs:174`). No alternative session-creation path that
+  bypasses the adapter hook was found. This is a source-level confirmation, not a
+  runtime proof (no disposable DB was available locally).
+- `apps/web/scripts/provision-staff.mjs --deactivate` is the **real, existing**
+  deactivation operation: it sets `app_users.status='disabled'` and calls
+  `internalAdapter.deleteUserSessions` (verified `after === 0`, `fail()` on
+  partial failure). Its stale "can still create a session" note was corrected to
+  reflect the new gate. No new public admin endpoint was invented.
+
+### 9.2 ADR statements kept true after implementation
+- The ≤1 h JWT identity bound is **unchanged** — a previously issued JWT still
+  verifies to `exp`; only new-session creation is gated. No zero-second claim.
+- Go RBAC still re-resolves `app_users.status` per request (zero authority for a
+  disabled subject) — unchanged, still the authorization authority.
+- There is still **one** source of truth (`public.app_users`); no `auth.user.banned`.
+- MFA behaviour is untouched (`STAFF_MFA=PARTIAL`).
+- Audit: refusing the session is observable in logs/the generic error; there is
+  no Go `audit_events` write (gap 9 unchanged, owner/infra-blocked).
+
+### 9.3 Test evidence (honest)
+- `apps/web/src/lib/server/identity-status.test.ts`: **6/6 PASS** with a FAKE pool
+  (ACTIVE allowed; DISABLED/SOFT-DELETED/MISSING/DB-error/blank-subject all denied
+  with the generic 401 shape). Runs without a DB.
+- `apps/web/tests/identity-deactivation.integration.test.js`: DB-gated integration
+  suite for the 16 mandated scenarios (real session rows, responses, JWT bound,
+  reactivation). **NOT RUN locally** — no disposable Postgres credentials on this
+  host; it SKIPs without DB and FAILs with `SIGAP_IDENTITY_DEACTIVATION_REQUIRE_DB=1`
+  (no fake PASS). CI must run it with disposable Postgres.
+- Frontend `pnpm test:unit`: **768/768 PASS**; `pnpm check` 0/0; production build PASS.
+- `go build ./...` / `go test ./...`: PASS (DB-gated Go suites skip locally without
+  `DATABASE_URL`).
+
+### 9.4 Residual limitations
+- `SESSION_LIFECYCLE` stays **PARTIAL** until the DB-backed integration suite runs
+  green in CI and the full lifecycle acceptance (revoked session cannot mint JWT,
+  cross-facility denial, MFA) is proven against real state.
+- No atomic cross-system revocation is claimed: session deletion + app_users status
+  update are separate operations with observable partial failure, not one transaction.
+- Race conditions in the previous_hash audit chain are unrelated and unchanged.
