@@ -845,8 +845,11 @@ try {
 						const disabledSignIn = await rateLimited(() =>
 							api(url, '/sign-in/email', { body: { email, password: newPassword } })
 						);
-						check('disabled app_users subject still signs in at the identity layer (characterized gap)', disabledSignIn.res.status === 200, {
+						check('disabled app_users subject is REFUSED at the identity layer (fail-closed session gate)', disabledSignIn.res.status === 401, {
 							status: disabledSignIn.res.status, body: disabledSignIn.text.slice(0, 100)
+						});
+						check('refusal is a generic credential error (no account-status leak)', /INVALID_EMAIL_OR_PASSWORD/.test(disabledSignIn.text) && !/disabled/i.test(disabledSignIn.text), {
+							body: disabledSignIn.text.slice(0, 100)
 						});
 						const goResolver = fs.readFileSync(path.join(repoRoot, 'apps/api/internal/auth/rbac_resolver.go'), 'utf8');
 						check(

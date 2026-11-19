@@ -6,13 +6,17 @@
 #   B  ordinary hotfix/other      — no migration change relative to origin/main
 #   C  regional development       — feat/sigap-selfhosted-auth, baseline 4813de64, exactly 0012-0014 added
 #   D  future dedicated release   — release/sigap-regional-v1, baseline 4813de64, exactly 0012-0014 added
+#   E  explicit stacked child     — PR #98 child of C: parent validated against the
+#                                  canonical baseline, child must change zero migrations.
+#                                  Active ONLY on a real pull_request event whose
+#                                  base/head/repository match the declared contract.
 #
 # A feature branch is NEVER a release branch: forcing context D on the regional
 # development branch, or overriding the release branch name to it, is a violation.
 # No branch, tag, file or ref is modified by this script.
 #
 # Usage:
-#   sh scripts/ops/check-migration-inventory.sh [--branch NAME] [--baseline SHA] [--context A|B|C|D]
+#   sh scripts/ops/check-migration-inventory.sh [--branch NAME] [--baseline SHA] [--context A|B|C|D|E]
 # Exit: 0 pass | 1 inventory/context violation | 2 fail-closed (missing prerequisite / bad config)
 
 set -u
@@ -25,6 +29,12 @@ HIST_RELEASE_BRANCH=design/ui-ux-overhaul
 REGIONAL_BASE=4813de64fcbac89ae9ce419f003a9120177c6867
 REGIONAL_DEV_BRANCH=feat/sigap-selfhosted-auth
 REGIONAL_RELEASE_BRANCH=release/sigap-regional-v1
+# Context E is bound to EXACTLY this stacked child and its parent. These are
+# constants, not environment-supplied declarations: an arbitrary base/head in
+# the environment can never select the stacked exemption.
+STACKED_CHILD_BRANCH=feat/sigap-identity-deactivation
+STACKED_BASE_BRANCH=feat/sigap-selfhosted-auth
+EXPECTED_REPOSITORY=lostsky1403/Sigap
 MIG_DIR=packages/db/migrations
 EXPECTED_REGIONAL="packages/db/migrations/0012_service_day_wib.sql packages/db/migrations/0013_organizations.sql packages/db/migrations/0014_patient_account.sql"
 EXPECTED_SHA256="0012_service_day_wib.sql:618154620aa57c9b044b2a19423ff24358ec050bd1a8d7a220076e7646157663 0013_organizations.sql:6bf14b56079e4a252bc366e57977b1b3daed5399dbd68c34371479a660c4d5b1 0014_patient_account.sql:001e7784b420649732970f963df2f24eca388b0e5d64cc83fd505ed925e21624"
@@ -66,8 +76,80 @@ fi
 if [ "$branch" = "$REGIONAL_DEV_BRANCH" ] && [ "$context" = 'D' ]; then
   fail "context D (release) cannot be applied to the development branch '$REGIONAL_DEV_BRANCH'"
 fi
+# --- Context E helpers: stacked child of the verified regional dev branch ---
+# Verify the checksums of the declared 0012-0014 at an arbitrary git ref, not
+# just in the working tree, so inherited content is validated at the parent.
+check_regional_checksums_at() {
+  ref=$1
+  for pair in $EXPECTED_SHA256; do
+    file=${pair%%:*}; want=${pair#*:}
+    actual=$(git show "$ref:$MIG_DIR/$file" 2>/dev/null | sha256sum | awk '{print $1}')
+    [ -n "$actual" ] || fail "E: declared migration missing at $ref: $file"
+    [ "$actual" = "$want" ] || fail "E: checksum drift at $ref for $file: $actual"
+  done
+  ok "E: declared 0012-0014 checksums match at $ref"
+}
+
+validate_stacked_context() {
+  # All identity inputs are constants checked against the GitHub event; an
+  # arbitrary environment-supplied base/head can never select this exemption.
+  [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ] || stop "E: requires pull_request event"
+  [ "${GITHUB_BASE_REF:-}" = "$STACKED_BASE_BRANCH" ] || stop "E: base ref must be $STACKED_BASE_BRANCH"
+  [ "${GITHUB_HEAD_REF:-}" = "$STACKED_CHILD_BRANCH" ] || stop "E: head ref must be $STACKED_CHILD_BRANCH"
+  [ "${GITHUB_REPOSITORY:-}" = "$EXPECTED_REPOSITORY" ] || stop "E: repository must be $EXPECTED_REPOSITORY"
+  # HEAD must be the PR merge commit: exactly two parents, parent = base tip,
+  # second parent = head tip, and the base must be an ancestor of the head.
+  np=$(git rev-list --parents -n 1 HEAD | awk '{print NF-1}')
+  [ "$np" -eq 2 ] || stop "E: HEAD must be a PR merge commit with 2 parents (got $np)"
+  parent=$(git rev-parse --verify --quiet "HEAD^1^{commit}") || stop "E: parent commit (HEAD^1) unavailable"
+  child=$(git rev-parse --verify --quiet "HEAD^2^{commit}") || stop "E: child commit (HEAD^2) unavailable"
+  git merge-base --is-ancestor "$parent" "$child" || fail "E: verified parent is not an ancestor of the child"
+  # Cross-check the merge parents against the fetched branch refs when present.
+  if git rev-parse --verify --quiet "origin/$STACKED_BASE_BRANCH^{commit}" >/dev/null 2>&1; then
+    [ "$(git rev-parse "origin/$STACKED_BASE_BRANCH")" = "$parent" ] \
+      || fail "E: merge parent does not match origin/$STACKED_BASE_BRANCH"
+  fi
+  if git rev-parse --verify --quiet "origin/$STACKED_CHILD_BRANCH^{commit}" >/dev/null 2>&1; then
+    [ "$(git rev-parse "origin/$STACKED_CHILD_BRANCH")" = "$child" ] \
+      || fail "E: merge second parent does not match origin/$STACKED_CHILD_BRANCH"
+  fi
+  ok "E: PR event/base/head/repository and merge ancestry verified"
+}
+
+validate_stacked_parent() {
+  # The parent must carry EXACTLY the authorized regional migration set
+  # relative to the canonical baseline, with unchanged applied history.
+  p_ns=$(git diff --name-status "$base".."$parent" -- "$MIG_DIR")
+  p_added=$(printf '%s\n' "$p_ns" | awk '$1=="A"{print $2}' | sort)
+  p_destroyed=$(printf '%s\n' "$p_ns" | awk '$1=="D"||$1~/^R/{print $0}')
+  p_modified=$(printf '%s\n' "$p_ns" | awk '$1=="M"{print $2}')
+  [ -z "$p_destroyed" ] || fail "E: parent deletes/renames an applied migration: $(printf '%s' "$p_destroyed" | tr '\n' ' ')"
+  [ -z "$p_modified" ] || fail "E: parent modifies an applied migration: $(printf '%s' "$p_modified" | tr '\n' ' ')"
+  [ "$(printf '%s' "$p_added" | tr '\n' ' ' | sed 's/ $//')" = "$EXPECTED_REGIONAL" ] \
+    || fail "E: parent inventory mismatch (got: $(printf '%s' "$p_added" | tr '\n' ' '))"
+  reg=$base
+  reg_ns=$(git diff --name-status "$reg".."$parent" -- "$MIG_DIR")
+  reg_added=$(printf '%s\n' "$reg_ns" | awk '$1=="A"{print $2}' | sort)
+  [ "$(printf '%s' "$reg_added" | tr '\n' ' ' | sed 's/ $//')" = "$EXPECTED_REGIONAL" ] \
+    || fail "E: parent inventory vs canonical regional baseline mismatch"
+  check_regional_checksums_at "$parent"
+  ok "E: parent carries exactly declared 0012-0014 vs $base"
+}
+
+validate_stacked_child() {
+  # The child must change ZERO migrations relative to the verified parent.
+  c_ns=$(git diff --name-status "$parent".."$child" -- "$MIG_DIR")
+  [ -z "$c_ns" ] || fail "E: child changes migrations vs parent: $(printf '%s' "$c_ns" | tr '\n' ' ')"
+  # Also verify the actual tree content the run will use (defence in depth).
+  c_work=$(git diff --name-status "$parent"..HEAD -- "$MIG_DIR")
+  [ -z "$c_work" ] || fail "E: checkout tree changes migrations vs parent"
+  check_regional_checksums_at "$child"
+  check_forward_order
+  ok "E: child changes zero migrations vs verified parent"
+}
+
 case "$context" in
-  A|B|C|D) ;;
+  A|B|C|D|E) ;;
   *) stop "unknown context '$context'" ;;
 esac
 
@@ -83,12 +165,14 @@ case "$context" in
        || fail "C: development context requires '$REGIONAL_DEV_BRANCH' (got '$branch')" ;;
   D) [ "$branch" = "$REGIONAL_RELEASE_BRANCH" ] \
        || fail "D: release context requires '$REGIONAL_RELEASE_BRANCH' (got '$branch')" ;;
+   E) [ "$branch" = "$STACKED_CHILD_BRANCH" ] \
+        || fail "E: stacked-child context requires '$STACKED_CHILD_BRANCH' (got '$branch')" ;;
 esac
 
 case "$context" in
   A) base=$HIST_ANCHOR ;;
   B) base=origin/main ;;
-  C|D) base=${baseline:-$REGIONAL_BASE} ;;
+  C|D|E) base=${baseline:-$REGIONAL_BASE} ;;
 esac
 
 git rev-parse --verify --quiet "$base^{commit}" >/dev/null 2>&1 || stop "baseline '$base' is not available in this checkout — fetch full history"
@@ -174,6 +258,12 @@ case "$context" in
     grep -q "$REGIONAL_BASE" docs/operations/DEPLOYMENT_RUNBOOK.md \
       || fail 'D: regional baseline is not declared in the deployment runbook'
     ok "D: dedicated regional release contract satisfied (baseline $base)"
+    ;;
+  E)
+    validate_stacked_context
+    validate_stacked_parent
+    validate_stacked_child
+    ok "E: stacked child adds zero migrations; parent 0012-0014 inventory and checksums enforced"
     ;;
 esac
 
