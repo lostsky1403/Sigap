@@ -1,0 +1,10 @@
+# SIGAP Gitleaks configuration.
+#
+# Default detection rules are explicitly inherited — no rules are disabled and
+# no global/path/allowlist suppression is defined here. The 15 classified
+# historical false positives are excluded by EXACT finding fingerprint in
+# .gitleaksignore (commit:file:rule:line), not by suppressing whole commits.
+title = "SIGAP secret-scan policy"
+
+[extend]
+useDefault = true

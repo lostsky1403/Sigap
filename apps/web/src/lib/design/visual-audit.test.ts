@@ -112,6 +112,10 @@ function auditedFiles(): string[] {
 			join(webRoot, 'src', 'routes', 'appointments', 'check-in', '+page.svelte'),
 			join(webRoot, 'src', 'routes', 'queues', 'new', '+page.svelte'),
 			join(webRoot, 'src', 'routes', 'patient', 'status', '+page.svelte'),
+			// V2.2. /wallet was the last route still carrying the unmigrated
+			// emerald/slate palette and a dark theme of its own. It is now the
+			// approved truthful empty state, so it joins the audited set.
+			join(webRoot, 'src', 'routes', 'wallet', '+page.svelte'),
 			// Phase 3B3 auth presentation. These three were the last pages in
 			// the product still carrying the unmigrated emerald Tailwind palette,
 			// so bringing them in is what proves the palette is actually gone
@@ -469,6 +473,7 @@ describe('visual anti-pattern audit: scan integrity', () => {
 			'src/routes/appointments/check-in/+page.svelte',
 			'src/routes/queues/new/+page.svelte',
 			'src/routes/patient/status/+page.svelte',
+			'src/routes/wallet/+page.svelte',
 			'src/routes/auth/login/+page.svelte',
 			'src/routes/auth/register/+page.svelte',
 			'src/routes/auth/logout/+page.svelte'
@@ -493,6 +498,7 @@ describe('visual anti-pattern audit: scan integrity', () => {
 		 */
 		for (const page of [
 			'src/lib/citizen/AuthForms.svelte',
+			'src/routes/wallet/+page.svelte',
 			'src/routes/auth/login/+page.svelte',
 			'src/routes/auth/register/+page.svelte',
 			'src/routes/auth/logout/+page.svelte',
@@ -532,7 +538,8 @@ describe('visual anti-pattern audit: scan integrity', () => {
 			'src/routes/auth/register/+page.svelte',
 			'src/routes/faskes/+page.svelte',
 			'src/routes/patient/status/+page.svelte',
-			'src/routes/queues/new/+page.svelte'
+			'src/routes/queues/new/+page.svelte',
+			'src/routes/wallet/+page.svelte'
 		]);
 	});
 });

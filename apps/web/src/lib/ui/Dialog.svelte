@@ -278,7 +278,7 @@
 		padding: 0;
 		color: var(--sigap-foreground);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-dialog::backdrop {

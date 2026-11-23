@@ -153,14 +153,17 @@ async function expectNoHorizontalOverflow(page: Page) {
 async function expectContentClearsBottomNav(page: Page) {
 	const clearance = await page.evaluate(() => {
 		const nav = document.querySelector('.sigap-bottom-nav');
-		const main = document.querySelector('.sigap-citizen-main');
-		if (!nav || !main) return null;
+		// The reserve lives on `.sigap-page`, not on `<main>`: `<main>` is a bare
+		// landmark (routes/+layout.svelte) and has no padding of its own. There is
+		// no `.sigap-citizen-main` element in the markup.
+		const container = document.querySelector('.sigap-page');
+		if (!nav || !container) return null;
 		return {
-			mainPaddingBottom: parseFloat(getComputedStyle(main).paddingBottom) || 0,
+			mainPaddingBottom: parseFloat(getComputedStyle(container).paddingBottom) || 0,
 			navHeight: nav.getBoundingClientRect().height
 		};
 	});
-	expect(clearance, 'the bottom nav and main must both exist').not.toBeNull();
+	expect(clearance, 'the bottom nav and the page container must both exist').not.toBeNull();
 	if (!clearance) return;
 	expect(clearance.mainPaddingBottom).toBeGreaterThanOrEqual(clearance.navHeight);
 }
@@ -228,7 +231,7 @@ test.describe('A. booking', () => {
 		const bookingLink = rows
 			.filter({ hasText: chosen!.name })
 			.first()
-			.getByRole('link');
+			.getByRole('link', { name: /Buat janji temu/ });
 		await expect(bookingLink).toHaveAttribute('href', /\/appointments\/new\?facility_id=/);
 		await bookingLink.click();
 
@@ -258,7 +261,7 @@ test.describe('A. booking', () => {
 		await expect(page.locator('.sigap-booking-summary')).toBeVisible();
 		await expect(page.locator('.sigap-booking-summary')).toContainText(chosen!.name);
 
-		await page.getByRole('button', { name: /Daftar Janji Temu/ }).click();
+		await page.getByRole('button', { name: /Konfirmasi janji temu/ }).click();
 
 		// The real backend accepted it. The success panel carries the code,
 		// so its appearance is the proof — there is no fixture to satisfy.
@@ -299,7 +302,7 @@ test.describe('A. booking', () => {
 		await page.locator('#sigap-booking-appointment_time').fill(futureLocalDateTime());
 		await page.locator('#sigap-booking-patient_display_name').fill('Dewi Lestari');
 		await page.locator('#sigap-booking-patient_phone').fill(uniquePhone());
-		await page.getByRole('button', { name: /Daftar Janji Temu/ }).click();
+		await page.getByRole('button', { name: /Konfirmasi janji temu/ }).click();
 
 		const codeEl = page.locator('[data-testid="booking-checkin-code"]');
 		await expect(codeEl).toBeVisible(SETTLE);
@@ -371,10 +374,12 @@ test.describe('B. check-in', () => {
 			expect(body, `the ticket must not claim ${forbidden}`).not.toContain(forbidden);
 		}
 
-		// The way onward.
+		// The way onward, carrying the code. A bare link opens the status page
+		// with an empty field, and the ticket never displayed the code, so the
+		// citizen would have to retype something they cannot see.
 		await expect(
 			page.getByRole('link', { name: /Cek status kunjungan/i })
-		).toHaveAttribute('href', '/patient/status');
+		).toHaveAttribute('href', `/patient/status?code=${journey.checkinCode}`);
 	});
 
 	test('a wrong check-in code is a wrong code, not a sign-in prompt', async ({ page }) => {
@@ -397,7 +402,7 @@ test.describe('B. check-in', () => {
 		await page.locator('#sigap-booking-appointment_time').fill(futureLocalDateTime());
 		await page.locator('#sigap-booking-patient_display_name').fill('Andi Pratama');
 		await page.locator('#sigap-booking-patient_phone').fill(uniquePhone());
-		await page.getByRole('button', { name: /Daftar Janji Temu/ }).click();
+		await page.getByRole('button', { name: /Konfirmasi janji temu/ }).click();
 		await expect(page.locator('[data-testid="booking-checkin-code"]')).toBeVisible(SETTLE);
 
 		const href = (await page.locator('.sigap-booking__cta').getAttribute('href')) ?? '';
@@ -454,7 +459,7 @@ test.describe('B. check-in', () => {
 
 	test('offers the walk-in alternative for someone with no booking', async ({ page }) => {
 		await page.goto('/appointments/check-in');
-		const link = page.getByRole('link', { name: /Ambil antrean walk-in/i });
+		const link = page.getByRole('link', { name: /Ambil nomor antrean tanpa janji/i });
 		await expect(link).toHaveAttribute('href', '/queues/new');
 	});
 });
@@ -512,10 +517,12 @@ test.describe('C. status', () => {
 		await page.getByRole('button', { name: /Cek Status/ }).click();
 
 		// Not-found is its own state. Nothing is broken; the code is unknown.
-		// And the page says what else could work.
+		// And the guidance names the code the citizen actually holds: the endpoint
+		// resolves check-in codes only, so advice to try a ticket number would be
+		// a dead end.
 		await expect(page.locator('[data-testid="status-not-found"]')).toBeVisible(SETTLE);
 		await expect(page.locator('[data-testid="status-error"]')).toHaveCount(0);
-		await expect(page.locator('body')).toContainText(/nomor antrean/i);
+		await expect(page.locator('[data-testid="status-not-found"]')).not.toContainText(/nomor antrean/i);
 	});
 });
 
@@ -609,7 +616,7 @@ test.describe('D. walk-in', () => {
 			{ timeout: SETTLE.timeout }
 		);
 
-		await page.getByRole('button', { name: /Ambil Nomor Antrean/ }).click();
+		await page.getByRole('button', { name: /Ambil nomor antrean/ }).click();
 
 		/*
 		 * The backend MUST succeed. A 5xx here is a real infrastructure failure,
@@ -667,10 +674,15 @@ test.describe('D. walk-in', () => {
 			expect(text, `walk-in must not claim ${forbidden}`).not.toContain(forbidden);
 		}
 
-		// The way onward, now that there is a number to check on.
-		await expect(
-			page.getByRole('link', { name: /Cek status kunjungan/i })
-		).toHaveAttribute('href', '/patient/status');
+		// There is no status link, and that is the fix, not a regression.
+		//
+		// /patient/status resolves CHECK-IN CODES only: a formatted queue number
+		// is a per-facility daily sequence, and accepting it would let anyone
+		// walk the sequence and read other patients' visits. The old CTA sent
+		// every walk-in patient to a lookup that could only answer "Kode tidak
+		// ditemukan", then told them their number could not be used there.
+		await expect(page.getByRole('link', { name: /Cek status kunjungan/i })).toHaveCount(0);
+		await expect(page.getByTestId('walkin-track-note')).toContainText(/layar ruang tunggu/i);
 		await expect(page.locator('[data-testid="walkin-error"]')).toHaveCount(0);
 
 		// The booking-code route remains available as the alternative for a
@@ -688,7 +700,7 @@ test.describe('D. walk-in', () => {
 			if (request.method() === 'POST') posted.push(request.url());
 		});
 
-		await page.getByRole('button', { name: /Ambil Nomor Antrean/ }).click();
+		await page.getByRole('button', { name: /Ambil nomor antrean/ }).click();
 
 		// Inline validation, and nothing was sent. The daily limiter is keyed
 		// on phone and facility, so a request with neither would consume a
@@ -758,7 +770,7 @@ test.describe('responsive and accessibility', () => {
 				// Clipping is the failure: a step whose label is cut off tells a
 				// citizen the form is longer than it is, and hides which step
 				// they are on.
-				for (const label of ['Fasilitas', 'Layanan', 'Waktu + Data Diri']) {
+				for (const label of ['Fasilitas', 'Layanan', 'Waktu + data']) {
 					const item = stepper.locator('li', { hasText: label });
 					await expect(item).toBeVisible();
 					const clipped = await item.evaluate((el) => {

@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import WalkInForm from '$lib/citizen/WalkInForm.svelte';
+	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import { RADIUS } from '$lib/design/tokens';
-	import { TicketCheck, Copy, Check } from 'lucide-svelte';
+	import { AlertTriangle, TicketCheck, Copy, Check } from 'lucide-svelte';
 	import Icon from '$lib/ui/Icon.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { listPublicFacilities, generateQueueTicket, normalizeQueueTicket } from '$lib/api/endpoints/public';
@@ -95,7 +96,10 @@
 			 */
 			ticket = normalizeQueueTicket(outcome.data);
 			await tick();
-			document.getElementById('sigap-walkin-result')?.focus();
+			// preventScroll: same reason as check-in — focusing would scroll the
+			// ticket into view and clip the page heading under the sticky
+			// masthead.
+			document.getElementById('sigap-walkin-result')?.focus({ preventScroll: true });
 			return;
 		}
 		if (isAbort(outcome.error)) return;
@@ -143,14 +147,11 @@
 	<title>Ambil Antrean Walk-In — Sigap</title>
 </svelte:head>
 
-<div class="sigap-walkin">
-	<section class="sigap-walkin__intro" aria-labelledby="sigap-walkin-title">
-		<h1 id="sigap-walkin-title" class="sigap-page-title">Ambil Antrean Walk-In</h1>
-		<p class="sigap-page-subtitle">
-			Untuk kunjungan tanpa janji temu. Datang langsung ke fasilitas dan ambil nomor antrean di
-			sini.
-		</p>
-	</section>
+<div class="sigap-page sigap-walkin">
+	<PageHeader
+		title="Ambil antrean tanpa janji"
+		description="Datang langsung ke fasilitas dan ambil nomor antrean. Tidak perlu membuat janji temu terlebih dahulu."
+	/>
 
 	<!--
 		The counterpart of the check-in page's walk-in link. Someone who already
@@ -186,7 +187,7 @@
 					<Icon icon={TicketCheck} size={20} />
 				</span>
 				<div>
-					<h2 class="sigap-walkin__ticket-title" id="sigap-walkin-confirmed-title">
+					<h2 class="sigap-section-title" id="sigap-walkin-confirmed-title">
 						Nomor antrean Anda
 					</h2>
 					<p class="sigap-walkin__ticket-sub">
@@ -198,7 +199,7 @@
 			<div class="sigap-walkin__number-block">
 				<p class="sigap-walkin__number-label" id="sigap-walkin-number-label">Nomor antrean</p>
 				<p
-					class="sigap-walkin__number"
+					class="sigap-walkin__number sigap-identifier"
 					aria-labelledby="sigap-walkin-number-label"
 					data-testid="walkin-number"
 				>
@@ -220,19 +221,30 @@
 			{/if}
 
 			<div class="sigap-walkin__actions">
-				<a
-					class="sigap-walkin__cta"
-					style:border-radius={RADIUS.control}
-					style:background-color="var(--sigap-primary)"
-					style:color="var(--sigap-surface)"
-					href="/patient/status"
-				>
-					Cek status kunjungan
-				</a>
+				<!--
+					There is deliberately no "check your status" link here.
+
+					`/patient/status` resolves CHECK-IN CODES only. A queue number
+					is sequential per facility per day ("PHB-0004"), so accepting
+					it would let anyone walk the sequence and read other patients'
+					visit status — the enumeration vector that endpoint exists to
+					close. Offering the link anyway sent every walk-in patient to
+					a lookup that could only ever answer "Kode tidak ditemukan",
+					and the page then told them their number could not be used
+					there: a dead end presented as a feature.
+
+					What a walk-in patient can actually do is watch the facility's
+					waiting-room display, which is where the number is called.
+				-->
 				<Button variant="ghost" onClick={reset}>Ambil antrean lain</Button>
 			</div>
 
 			<p class="sigap-walkin__copy-hint" role="status" aria-live="polite">{copyHint}</p>
+
+			<p class="sigap-walkin__track-note" data-testid="walkin-track-note">
+				Pantau nomor ini di layar ruang tunggu fasilitas. Untuk memantau dari ponsel,
+				Anda memerlukan kode check-in, yang hanya diterbitkan untuk janji temu.
+			</p>
 		</section>
 	{:else}
 		<section class="sigap-walkin__section" style:border-radius={RADIUS.panel}>
@@ -243,7 +255,10 @@
 					whether to wait until tomorrow or go to another facility.
 				-->
 				<div class="sigap-walkin__failure" role="alert" data-testid="walkin-error">
-					{resolveFailureMessage(failure)}
+					<span class="sigap-walkin__failure-icon" aria-hidden="true">
+						<Icon icon={AlertTriangle} size={18} />
+					</span>
+					<p class="sigap-walkin__failure-text">{resolveFailureMessage(failure)}</p>
 				</div>
 			{/if}
 
@@ -261,45 +276,46 @@
 </div>
 
 <style>
-	.sigap-walkin {
-		max-width: 640px;
-		margin: 0 auto;
-		padding: 20px 16px 8px;
-	}
+	/*
+		Layout comes from `.sigap-page`. The Pen gives the walk-in frame the
+		standard 40px desktop offset and runs its sections across the full
+		content column, so there is no panel cap here.
+	*/
 
-	@media (min-width: 768px) {
-		.sigap-walkin {
-			padding: 32px 24px 8px;
-		}
-	}
-
+	/*
+		The form panel frames fields; it is not a control. Decorative hairline,
+		per the border split — the select and inputs inside keep their own
+		`--sigap-border` boundaries.
+	*/
 	.sigap-walkin__section {
-		margin-top: 16px;
-		padding: 16px;
+		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-walkin__alt {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 8px;
-		margin-top: 16px;
+		gap: var(--sigap-space-2);
 	}
 
 	.sigap-walkin__alt-label {
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
+	/*
+		An outlined link styled as a button, so it keeps `--sigap-border`: it is
+		something the citizen operates.
+	*/
 	.sigap-walkin__alt-link {
 		display: inline-flex;
 		align-items: center;
 		/* Citizen touch floor. */
-		min-height: 44px;
-		padding: 0 12px;
-		font-size: 13px;
+		min-height: var(--sigap-control-citizen);
+		padding: 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		border: 1px solid var(--sigap-border);
@@ -315,27 +331,53 @@
 		outline-offset: 2px;
 	}
 
+	/*
+		A tone-carrying alert: tone border, tone icon, tone text, tinted ground.
+		Verbatim server copy inside, so the citizen is told what actually failed.
+	*/
 	.sigap-walkin__failure {
-		margin-bottom: 16px;
-		padding: 12px;
-		font-size: 13px;
+		display: flex;
+		align-items: flex-start;
+		gap: var(--sigap-space-3);
+		margin-bottom: var(--sigap-space-4);
+		padding: var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-danger);
+		background-color: var(--sigap-danger-tint);
 		border: 1px solid var(--sigap-danger);
 	}
 
+	.sigap-walkin__failure-icon {
+		display: flex;
+		flex: none;
+	}
+
+	.sigap-walkin__failure-text {
+		margin: 0;
+	}
+
+	/*
+		The ticket card frames content; it is not a control, so it takes the
+		decorative hairline. The number inside carries the emphasis.
+	*/
 	.sigap-walkin__ticket {
-		margin-top: 16px;
-		padding: 16px;
+		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
+		/*
+			Focused on success, so the browser scrolls it into view. The sticky
+			56px masthead would otherwise cover its heading.
+		*/
+		scroll-margin-top: 72px;
 	}
 
 	.sigap-walkin__ticket-head {
 		display: flex;
 		align-items: flex-start;
-		gap: 12px;
+		gap: var(--sigap-space-3);
 	}
 
+	/* A badge: 1px tone border, tone glyph, tinted ground — never filled. */
 	.sigap-walkin__ticket-icon {
 		display: flex;
 		align-items: center;
@@ -344,64 +386,69 @@
 		height: 40px;
 		flex: none;
 		color: var(--sigap-primary);
+		background-color: var(--sigap-primary-tint);
 		border: 1px solid var(--sigap-primary);
-	}
-
-	.sigap-walkin__ticket-title {
-		margin: 0;
-		font-size: 16px;
-		font-weight: 600;
-		color: var(--sigap-foreground);
+		border-radius: var(--sigap-radius-control);
 	}
 
 	.sigap-walkin__ticket-sub {
-		margin: 2px 0 0;
-		font-size: 13px;
+		margin: var(--sigap-space-1) 0 0;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
+	/*
+		The number block. Decorative outline, because the block frames a value
+		rather than being operable; the tinted ground is the approved
+		queue-number ground.
+	*/
 	.sigap-walkin__number-block {
-		margin-top: 16px;
-		padding: 16px;
+		margin-top: var(--sigap-space-4);
+		padding: var(--sigap-space-4);
 		text-align: center;
-		background-color: var(--sigap-canvas);
-		border: 1px solid var(--sigap-border);
+		background-color: var(--sigap-primary-tint);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-walkin__number-label {
-		margin: 0 0 4px;
-		font-size: 12px;
+		margin: 0 0 var(--sigap-space-1);
+		font-size: var(--sigap-type-caption);
 		font-weight: 500;
 		color: var(--sigap-muted);
 	}
 
+	/*
+		The queue number: `.sigap-identifier` supplies the monospace stack and
+		tabular figures, `--sigap-primary-strong` the readable teal. Display
+		size, because this is the one value the citizen reads aloud at the
+		counter.
+	*/
 	.sigap-walkin__number {
-		margin: 0 0 12px;
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 36px;
+		margin: 0 0 var(--sigap-space-3);
+		font-size: 40px;
 		font-weight: 700;
-		letter-spacing: 0.12em;
-		color: var(--sigap-foreground);
+		color: var(--sigap-primary-strong);
 		user-select: all;
 		overflow-wrap: anywhere;
 	}
 
+	/* An inner note, not a control: decorative outline. */
 	.sigap-walkin__wait {
-		margin-top: 16px;
-		padding: 12px;
-		border: 1px solid var(--sigap-border);
+		margin-top: var(--sigap-space-4);
+		padding: var(--sigap-space-3);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-walkin__wait-value {
 		margin: 0;
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		font-weight: 500;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-walkin__wait-caveat {
-		margin: 4px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-1) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
@@ -409,29 +456,23 @@
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 12px;
-		margin-top: 16px;
+		gap: var(--sigap-space-3);
+		margin-top: var(--sigap-space-4);
 	}
 
-	.sigap-walkin__cta {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-height: 44px;
-		padding: 0 16px;
-		font-size: 14px;
-		font-weight: 500;
-		text-decoration: none;
-	}
-
-	.sigap-walkin__cta:focus-visible {
-		outline: 2px solid var(--sigap-primary);
-		outline-offset: 2px;
+	/*
+		Where the citizen can actually follow their number. Sits below the copy
+		hint, in the same muted weight: it is guidance, not an alert.
+	*/
+	.sigap-walkin__track-note {
+		margin: var(--sigap-space-3) 0 0;
+		font-size: var(--sigap-type-label);
+		color: var(--sigap-muted);
 	}
 
 	.sigap-walkin__copy-hint {
-		margin: 12px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-3) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 		min-height: 16px;
 	}

@@ -98,25 +98,26 @@
 	.sigap-facility-filter {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: var(--sigap-space-1);
 	}
 
 	.sigap-facility-filter__label {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		font-weight: 500;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-facility-filter__select {
-		/* 36px, the frozen compact admin control height. */
-		height: 36px;
+		/* The frozen compact admin control height, via its token. */
+		height: var(--sigap-control-admin-compact);
 		min-width: 190px;
-		padding: 0 10px;
+		padding: 0 var(--sigap-space-3);
+		/* A control boundary, so the essential `--sigap-border`, never the subtle one. */
 		border: 1px solid var(--sigap-border);
 		background-color: var(--sigap-surface);
 		color: var(--sigap-foreground);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 	}
 
 	.sigap-facility-filter__select:focus-visible {
@@ -126,7 +127,7 @@
 
 	.sigap-facility-filter__count {
 		margin: 0;
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 </style>

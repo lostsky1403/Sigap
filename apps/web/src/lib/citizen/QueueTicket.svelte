@@ -22,10 +22,25 @@
 	 * behind a tooltip.
 	 */
 	export let ticket: CheckInResult;
+	/**
+	 * The code this ticket was produced from, carried so the status CTA can
+	 * prefill the next screen. `CheckInResult` does not echo it back, and the
+	 * citizen cannot be expected to retype a code the ticket never showed.
+	 */
+	export let checkinCode: string = '';
 	export let onReset: () => void = () => {};
 	export let onCopy: (label: string, value: string) => void = () => {};
 
 	let copied = false;
+
+	/**
+	 * The status page reads `?code=`. Encoded because this is user input and a
+	 * stray `&` or `#` would otherwise truncate the parameter; the fallback
+	 * keeps the plain link working if the code is somehow absent.
+	 */
+	$: statusHref = checkinCode.trim()
+		? `/patient/status?code=${encodeURIComponent(checkinCode.trim())}`
+		: '/patient/status';
 </script>
 
 <section
@@ -38,7 +53,7 @@
 			<Icon icon={Ticket} size={20} />
 		</span>
 		<div>
-			<h2 class="sigap-ticket__title" id="sigap-ticket-title">Check-in berhasil</h2>
+			<h2 class="sigap-section-title" id="sigap-ticket-title">Check-in berhasil</h2>
 			<p class="sigap-ticket__sub">Simpan nomor antrean berikut dan tunjukkan di loket.</p>
 		</div>
 	</div>
@@ -52,7 +67,7 @@
 			write down by hand at the counter.
 		-->
 		<p
-			class="sigap-ticket__number"
+			class="sigap-ticket__number sigap-identifier"
 			aria-labelledby="sigap-ticket-number-label"
 			data-testid="queue-number"
 		>
@@ -82,13 +97,7 @@
 	{/if}
 
 	<div class="sigap-ticket__actions">
-		<a
-			class="sigap-ticket__cta"
-			style:border-radius={RADIUS.control}
-			href="/patient/status"
-			style:background-color="var(--sigap-primary)"
-			style:color="var(--sigap-surface)"
-		>
+		<a class="sigap-ticket__cta" style:border-radius={RADIUS.control} href={statusHref}>
 			Cek status kunjungan
 		</a>
 		<Button variant="ghost" onClick={onReset}>Check-in lain</Button>
@@ -105,15 +114,15 @@
 		<dl class="sigap-ticket__detail-list">
 			<div>
 				<dt>appointment_id</dt>
-				<dd data-testid="ticket-appointment-id">{ticket.appointment_id}</dd>
+				<dd class="sigap-identifier" data-testid="ticket-appointment-id">{ticket.appointment_id}</dd>
 			</div>
 			<div>
 				<dt>queue_ticket_id</dt>
-				<dd data-testid="ticket-queue-id">{ticket.queue_ticket_id}</dd>
+				<dd class="sigap-identifier" data-testid="ticket-queue-id">{ticket.queue_ticket_id}</dd>
 			</div>
 			<div>
 				<dt>formatted_number</dt>
-				<dd data-testid="ticket-formatted-number">{ticket.formatted_number}</dd>
+				<dd class="sigap-identifier" data-testid="ticket-formatted-number">{ticket.formatted_number}</dd>
 			</div>
 			<div>
 				<dt>status</dt>
@@ -124,18 +133,23 @@
 </section>
 
 <style>
+	/*
+		The ticket card frames content; it is not operable, so it takes the
+		decorative hairline and the number inside carries the emphasis.
+	*/
 	.sigap-ticket {
-		padding: 16px;
+		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-ticket__head {
 		display: flex;
 		align-items: flex-start;
-		gap: 12px;
+		gap: var(--sigap-space-3);
 	}
 
+	/* A badge: 1px tone border, tone glyph, tinted ground — never filled. */
 	.sigap-ticket__icon {
 		display: flex;
 		align-items: center;
@@ -144,66 +158,69 @@
 		height: 40px;
 		flex: none;
 		color: var(--sigap-primary);
+		background-color: var(--sigap-primary-tint);
 		border: 1px solid var(--sigap-primary);
-	}
-
-	.sigap-ticket__title {
-		margin: 0;
-		font-size: 16px;
-		font-weight: 600;
-		color: var(--sigap-foreground);
+		border-radius: var(--sigap-radius-control);
 	}
 
 	.sigap-ticket__sub {
-		margin: 2px 0 0;
-		font-size: 13px;
+		margin: var(--sigap-space-1) 0 0;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
+	/*
+		The number block frames a value rather than being operable: decorative
+		outline, and the approved queue-number tinted ground.
+	*/
 	.sigap-ticket__number-block {
-		margin-top: 16px;
-		padding: 16px;
+		margin-top: var(--sigap-space-4);
+		padding: var(--sigap-space-4);
 		text-align: center;
-		background-color: var(--sigap-canvas);
-		border: 1px solid var(--sigap-border);
+		background-color: var(--sigap-primary-tint);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-ticket__number-label {
-		margin: 0 0 4px;
-		font-size: 12px;
+		margin: 0 0 var(--sigap-space-1);
+		font-size: var(--sigap-type-caption);
 		font-weight: 500;
 		color: var(--sigap-muted);
 	}
 
+	/*
+		The queue number: `.sigap-identifier` supplies the monospace stack and
+		tabular figures, `--sigap-primary-strong` the readable teal, and the
+		display size is what makes it unmissable at the counter.
+	*/
 	.sigap-ticket__number {
-		margin: 0 0 12px;
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 36px;
+		margin: 0 0 var(--sigap-space-3);
+		font-size: 40px;
 		font-weight: 700;
-		letter-spacing: 0.12em;
-		color: var(--sigap-foreground);
+		color: var(--sigap-primary-strong);
 		user-select: all;
 		overflow-wrap: anywhere;
 	}
 
+	/* An inner note, not a control: decorative outline. */
 	.sigap-ticket__wait {
-		margin-top: 16px;
-		padding: 12px;
+		margin-top: var(--sigap-space-4);
+		padding: var(--sigap-space-3);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-ticket__wait-value {
 		margin: 0;
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		font-weight: 500;
 		color: var(--sigap-foreground);
 	}
 
 	/* The caveat is muted but never hidden: it qualifies the number above it. */
 	.sigap-ticket__wait-caveat {
-		margin: 4px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-1) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
@@ -211,18 +228,21 @@
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 12px;
-		margin-top: 16px;
+		gap: var(--sigap-space-3);
+		margin-top: var(--sigap-space-4);
 	}
 
+	/* The one filled primary action in this action context. */
 	.sigap-ticket__cta {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		min-height: 44px;
-		padding: 0 16px;
-		font-size: 14px;
+		min-height: var(--sigap-control-citizen);
+		padding: 0 var(--sigap-space-4);
+		font-size: var(--sigap-type-body);
 		font-weight: 500;
+		color: var(--sigap-on-primary);
+		background-color: var(--sigap-primary);
 		text-decoration: none;
 	}
 
@@ -232,34 +252,34 @@
 	}
 
 	.sigap-ticket__details {
-		margin-top: 16px;
-		font-size: 12px;
+		margin-top: var(--sigap-space-4);
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-ticket__details summary {
-		min-height: 44px;
+		min-height: var(--sigap-control-citizen);
 		display: flex;
 		align-items: center;
 		cursor: pointer;
 	}
 
+	/* A `<dl>` panel, not a control: decorative outline. */
 	.sigap-ticket__detail-list {
-		margin: 8px 0 0;
-		padding: 12px;
-		background-color: var(--sigap-canvas);
-		border: 1px solid var(--sigap-border);
+		margin: var(--sigap-space-2) 0 0;
+		padding: var(--sigap-space-3);
+		background-color: var(--sigap-surface-sunken);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-ticket__detail-list dt {
-		font-size: 11px;
+		font-size: var(--sigap-type-micro);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-ticket__detail-list dd {
-		margin: 0 0 8px;
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 11px;
+		margin: 0 0 var(--sigap-space-2);
+		font-size: var(--sigap-type-micro);
 		color: var(--sigap-foreground);
 		overflow-wrap: anywhere;
 	}

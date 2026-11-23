@@ -45,12 +45,12 @@
 
 .EXAMPLE
     # Full startup (engine + API + web) in separate windows:
-    $env:DATABASE_URL = "postgresql://sigap:pass@localhost:5434/sigap?sslmode=require"
+    $env:DATABASE_URL = "postgresql://sigap:<POSTGRES_PASSWORD from .env>@localhost:5433/sigap?sslmode=require"
     pwsh -NoProfile -File scripts/dev/Start-LocalDev.ps1
 
 .EXAMPLE
     # Configure env only — start processes manually:
-    $env:DATABASE_URL = "postgresql://sigap:pass@localhost:5434/sigap?sslmode=require"
+    $env:DATABASE_URL = "postgresql://sigap:<POSTGRES_PASSWORD from .env>@localhost:5433/sigap?sslmode=require"
     . scripts/dev/Start-LocalDev.ps1 -NoStart
 
 .NOTES
@@ -81,7 +81,7 @@ if ([string]::IsNullOrWhiteSpace($env:DATABASE_URL)) {
     Write-Host "[FAIL] DATABASE_URL is not set." -ForegroundColor Red
     Write-Host ""
     Write-Host "  Set it before running this script:" -ForegroundColor Yellow
-    Write-Host '  $env:DATABASE_URL = "postgresql://sigap:pass@localhost:5434/sigap?sslmode=require"' -ForegroundColor Yellow
+    Write-Host '  $env:DATABASE_URL = "postgresql://sigap:<POSTGRES_PASSWORD from .env>@localhost:5433/sigap?sslmode=require"' -ForegroundColor Yellow
     Write-Host ""
     exit 1
 }

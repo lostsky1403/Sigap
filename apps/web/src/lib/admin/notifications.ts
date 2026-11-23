@@ -1,5 +1,5 @@
 import { formatNumber } from '$lib/domain/format';
-import type { NotificationStatus, NotificationSummary } from '$lib/api/types/api';
+import type { NotificationChannel, NotificationStatus, NotificationSummary } from '$lib/api/types/api';
 
 /**
  * The notification outbox read layer's derived values.
@@ -58,6 +58,23 @@ export const NOTIFICATION_STATUS_LABEL: Record<NotificationStatus, string> = {
 	delivered: 'Terkirim',
 	failed: 'Gagal',
 	cancelled: 'Dibatalkan'
+};
+
+/**
+ * Indonesian label for a delivery channel.
+ *
+ * The wire values are lowercase machine tokens ("whatsapp", "sms", "dev") and
+ * were being printed verbatim into both the KANAL column and the channel filter,
+ * so an operator read "whatsapp" where the Pen draws "WhatsApp". "dev" is worse
+ * than untidy: it is an internal test channel leaking a build detail into an
+ * operations screen, and it is labelled as a test channel so nobody mistakes it
+ * for a real delivery route.
+ */
+export const NOTIFICATION_CHANNEL_LABEL: Record<NotificationChannel, string> = {
+	dev: 'Uji coba',
+	sms: 'SMS',
+	whatsapp: 'WhatsApp',
+	email: 'Email'
 };
 
 /** Badge tone per status. Paired with the label, never used as the only signal. */

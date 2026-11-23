@@ -50,7 +50,8 @@ export const CITIZEN_DESTINATIONS: readonly CitizenDestination[] = [
 		ariaLabel: 'Check-In Janji Temu',
 		icon: 'ClipboardCheck'
 	},
-	{ label: 'Status', href: '/patient/status', ariaLabel: 'Status kunjungan', icon: 'Activity' }
+	{ label: 'Status', href: '/patient/status', ariaLabel: 'Status kunjungan', icon: 'Activity' },
+	{ label: 'Janji Saya', href: '/patient/appointments', ariaLabel: 'Janji saya', icon: 'CalendarDays' }
 ] as const;
 
 /**
@@ -65,4 +66,36 @@ export function isActiveDestination(path: string, href: string): boolean {
 	const normalise = (value: string) =>
 		value.length > 1 && value.endsWith('/') ? value.slice(0, -1) : value;
 	return normalise(path) === normalise(href);
+}
+
+/** The one auth control the signed-out masthead carries. */
+export interface AuthAlternate {
+	label: string;
+	href: string;
+}
+
+/**
+ * The masthead's signed-out auth control, which flips on the auth pages.
+ *
+ * On the login page it offers "Daftar"; everywhere else — including the
+ * register page — it offers "Masuk". That is not a display trick: a citizen
+ * standing on the login form does not need a second link to the login form,
+ * and a citizen on the register form does not need a second link to register.
+ * The control always points at the thing they cannot currently do.
+ *
+ * The frozen reference shows exactly this: `Daftar` beside the booking CTA on
+ * 17 Citizen / Masuk, and `Masuk` beside it on 18 Citizen / Daftar and on
+ * every other signed-out page.
+ *
+ * Sign-in only. A signed-in masthead renders the account disclosure instead,
+ * because offering "Masuk" to someone already signed in is the bug this
+ * function exists to make impossible.
+ */
+export function authAlternate(path: string): AuthAlternate {
+	const normalise = (value: string) =>
+		value.length > 1 && value.endsWith('/') ? value.slice(0, -1) : value;
+	const onLogin = normalise(path) === '/auth/login';
+	return onLogin
+		? { label: 'Daftar', href: '/auth/register' }
+		: { label: 'Masuk', href: '/auth/login' };
 }

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/sigap/sigap/apps/api/internal/auth"
 	"github.com/sigap/sigap/apps/api/internal/identity"
 	"github.com/sigap/sigap/apps/api/internal/notification"
+	"github.com/sigap/sigap/apps/api/internal/service"
 )
 
 // AdminHandler handles administration endpoints gated by the RBAC permission
@@ -25,6 +28,8 @@ type AdminHandler struct {
 	audit         *audit.Service
 	scopeResolver auth.FacilityScope
 	grantResolver auth.FacilityGrantResolver
+	orgScope      auth.OrganizationScope
+	queueSvc      service.QueueService
 }
 
 // NewAdminHandler creates an admin handler backed by a pgx pool.
@@ -38,6 +43,14 @@ func (h *AdminHandler) WithAudit(a *audit.Service) *AdminHandler {
 	return h
 }
 
+// WithQueueService attaches the queue engine service used to mint a queue
+// ticket when a desk clerk checks a patient in at the counter. Mirrors
+// BookingHandler.WithQueueService.
+func (h *AdminHandler) WithQueueService(s service.QueueService) *AdminHandler {
+	h.queueSvc = s
+	return h
+}
+
 // WithFacilityScopeResolver attaches the facility scope resolver. When nil,
 // non-dev requests fail closed; callers must wire the resolver in production.
 func (h *AdminHandler) WithFacilityScopeResolver(r auth.FacilityScope) *AdminHandler {
@@ -48,7 +61,21 @@ func (h *AdminHandler) WithFacilityScopeResolver(r auth.FacilityScope) *AdminHan
 	// immediately instead of a stale authentication-time snapshot.
 	if _, ok := r.(auth.DBFacilityScopeMarker); ok {
 		h.grantResolver = auth.NewDBFacilityGrantResolver(h.pool)
+		// The org axis is as live as the facility axis; wire it from the same
+		// DB-backed marker so production (NewDBFacilityScope) gets org scope
+		// without a second wiring step in main.go.
+		if h.orgScope == nil {
+			h.orgScope = auth.NewDBOrganizationScope(h.pool)
+		}
 	}
+	return h
+}
+
+// WithOrganizationScopeResolver attaches the organization scope resolver used
+// by the org directory/overview handlers. When nil, non-dev org reads fail
+// closed.
+func (h *AdminHandler) WithOrganizationScopeResolver(r auth.OrganizationScope) *AdminHandler {
+	h.orgScope = r
 	return h
 }
 
@@ -734,7 +761,7 @@ func (h *AdminHandler) logAccess(r *http.Request, actor identity.Actor, action, 
 		Action:       action,
 		ResourceType: "facility",
 		ActorType:    string(actor.Type),
-		ActorUserID:  actor.UserID,
+		ActorUserID:  actor.AuditUserID(),
 		RequestID:    identity.RequestIDFromContext(r.Context()),
 		Metadata: audit.SanitizeMetadata(map[string]any{
 			"status": status,
@@ -758,11 +785,60 @@ type queueTicketResponse struct {
 
 // --- Queue admin handlers ---
 
-// ListQueueTickets handles GET /api/v1/admin/queues?facility_id=...
+// serviceDayWIB is the single timezone the service day is defined in. Indonesia
+// runs Asia/Jakarta (WIB) at UTC+7 with no daylight-saving transition, so a
+// fixed-offset zone is exact and avoids a tzdata file dependency at boot. The
+// facilities table carries no timezone column today; a future per-facility
+// timezone column is the additive way to localise the day boundary per facility.
+var serviceDayWIB = time.FixedZone("WIB", 7*60*60)
+
+// serviceDayRange returns the half-open WIB service-day window [start, end)
+// containing the given instant. It is the write-path analogue of resolveServiceDay
+// (which resolves a date string): the allocator passes time.Now() so a freshly
+// minted queue_number is counted against the WIB calendar day, matching the read
+// path and closing the UTC-vs-WIB allocation divergence. No session-tz-dependent
+// SQL cast is involved; the bounds are computed in Go and passed as parameters.
+func serviceDayRange(instant time.Time) (start, end time.Time) {
+	wib := instant.In(serviceDayWIB)
+	start = time.Date(wib.Year(), wib.Month(), wib.Day(), 0, 0, 0, 0, serviceDayWIB)
+	return start, start.AddDate(0, 0, 1)
+}
+
+// resolveServiceDay turns the optional `date` query value into the WIB calendar
+// day it names and its half-open [start, end) instant bounds. An empty value is
+// replaced by TODAY in WIB — the live-board default that also scopes the admin
+// overview. A malformed value returns an error; the caller reports it as a 400
+// without ever touching the database. Filtering is WIB-only by design: the
+// facilities table does not yet carry a per-facility timezone.
+func resolveServiceDay(raw string) (start, end time.Time, err error) {
+	var day time.Time
+	if raw == "" {
+		now := time.Now().In(serviceDayWIB)
+		day = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, serviceDayWIB)
+	} else {
+		parsed, perr := time.ParseInLocation("2006-01-02", raw, serviceDayWIB)
+		if perr != nil {
+			return time.Time{}, time.Time{}, perr
+		}
+		day = parsed
+	}
+	return day, day.AddDate(0, 0, 1), nil
+}
+
+// ListQueueTickets handles GET /api/v1/admin/queues?facility_id=...&date=YYYY-MM-DD.
 //
 // The route-level queue.read check is COARSE. The list is restricted to the
 // facilities where queue.read is GRANTED, so a queue.read held at one facility
 // cannot be used to read another facility's tickets.
+//
+// Service-day scope: `date` selects the facility-local calendar day to read,
+// expressed as a WIB (Asia/Jakarta) day. When `date` is omitted the board
+// defaults to TODAY in WIB, so a caller reading the live board never sees
+// all-time history by accident — and the admin overview (Ringkasan), which
+// consumes this same endpoint without a `date`, inherits the same today scope.
+// An explicit past date is read-only history. The list is never filtered by
+// status, so unresolved prior-day tickets remain visible under the requested
+// day (see design/service-day-queue-policy.md).
 func (h *AdminHandler) ListQueueTickets(w http.ResponseWriter, r *http.Request) {
 	actor := identity.ActorFromContext(r.Context())
 
@@ -785,18 +861,24 @@ func (h *AdminHandler) ListQueueTickets(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	dayStart, dayEnd, derr := resolveServiceDay(r.URL.Query().Get("date"))
+	if derr != nil {
+		writeError(w, http.StatusBadRequest, "Format tanggal tidak valid. Gunakan YYYY-MM-DD.")
+		h.logQueueAccess(r, actor, "queue.list", "validation_error", "invalid date")
+		return
+	}
+
 	query := `SELECT id, facility_id, queue_number, formatted_number, status,
-			registered_at, called_at, completed_at FROM queue_tickets`
-	args := []any{}
+			registered_at, called_at, completed_at FROM queue_tickets
+		WHERE registered_at >= $1 AND registered_at < $2`
+	args := []any{dayStart, dayEnd}
 	if !readSet.Unrestricted {
-		query += " WHERE facility_id = ANY($1)"
+		query += " AND facility_id = ANY($3)"
 		args = append(args, readSet.IDs)
 	}
-	query += " ORDER BY registered_at DESC"
+	query += " ORDER BY registered_at DESC, id DESC"
 
-	var rows pgx.Rows
-	var err error
-	rows, err = h.pool.Query(ctx, query, args...)
+	rows, err := h.pool.Query(ctx, query, args...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Gagal mengambil data antrean.")
 		h.logQueueAccess(r, actor, "queue.list", "error", err.Error())
@@ -1103,7 +1185,7 @@ func (h *AdminHandler) logQueueAccess(r *http.Request, actor identity.Actor, act
 		Action:       action,
 		ResourceType: "queue",
 		ActorType:    string(actor.Type),
-		ActorUserID:  actor.UserID,
+		ActorUserID:  actor.AuditUserID(),
 		RequestID:    identity.RequestIDFromContext(r.Context()),
 		Metadata: audit.SanitizeMetadata(map[string]any{
 			"status": status,
@@ -1562,7 +1644,7 @@ func (h *AdminHandler) logServiceUnitAccess(r *http.Request, actor identity.Acto
 		Action:       action,
 		ResourceType: "service_unit",
 		ActorType:    string(actor.Type),
-		ActorUserID:  actor.UserID,
+		ActorUserID:  actor.AuditUserID(),
 		RequestID:    identity.RequestIDFromContext(r.Context()),
 		Metadata: audit.SanitizeMetadata(map[string]any{
 			"status": status,
@@ -2140,7 +2222,7 @@ func (h *AdminHandler) logScheduleAccess(r *http.Request, actor identity.Actor, 
 		Action:       action,
 		ResourceType: "schedule",
 		ActorType:    string(actor.Type),
-		ActorUserID:  actor.UserID,
+		ActorUserID:  actor.AuditUserID(),
 		RequestID:    identity.RequestIDFromContext(r.Context()),
 		Metadata: audit.SanitizeMetadata(map[string]any{
 			"status": status,
@@ -2402,7 +2484,7 @@ func (h *AdminHandler) ListAppointments(w http.ResponseWriter, r *http.Request) 
 		query += " WHERE facility_id = ANY($1)"
 		args = append(args, readSet.IDs)
 	}
-	query += " ORDER BY appointment_time DESC"
+	query += " ORDER BY appointment_time DESC, updated_at DESC, id DESC"
 
 	rows, err := h.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -2510,13 +2592,14 @@ func (h *AdminHandler) UpdateAppointmentStatus(w http.ResponseWriter, r *http.Re
 	}
 
 	var current string
-	selectQuery := `SELECT status FROM appointments WHERE id = $1`
+	var apptFacility, patientName, patientPhone string
+	selectQuery := `SELECT status, facility_id, patient_display_name, patient_phone FROM appointments WHERE id = $1`
 	selectArgs := []any{id}
 	if !scope.Unrestricted {
-		selectQuery = `SELECT status FROM appointments WHERE id = $1 AND facility_id = ANY($2)`
+		selectQuery = `SELECT status, facility_id, patient_display_name, patient_phone FROM appointments WHERE id = $1 AND facility_id = ANY($2)`
 		selectArgs = []any{id, scope.IDs}
 	}
-	if err := h.pool.QueryRow(ctx, selectQuery, selectArgs...).Scan(&current); err != nil {
+	if err := h.pool.QueryRow(ctx, selectQuery, selectArgs...).Scan(&current, &apptFacility, &patientName, &patientPhone); err != nil {
 		if err == pgx.ErrNoRows {
 			writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
 			h.logAppointmentAccess(r, actor, "appointment.status_updated", "not_found", id)
@@ -2543,11 +2626,18 @@ func (h *AdminHandler) UpdateAppointmentStatus(w http.ResponseWriter, r *http.Re
 		setClause += ", cancelled_at = NOW()"
 	}
 
-	updateQuery := fmt.Sprintf("UPDATE appointments SET %s, updated_at = NOW() WHERE id = $2", setClause)
-	updateArgs := []any{status, id}
+	// Guarded on the status the caller READ, not just on existence. Two
+	// concurrent check-ins both read 'scheduled', both pass the in-memory
+	// transition check above, and — without this predicate — both UPDATE and
+	// both mint a queue ticket, leaving a phantom patient on the board with a
+	// burnt number. The public check-in closes the same race with an optimistic
+	// guard (AUDIT-1004 in booking.go); the second writer's UPDATE then matches
+	// zero rows, and that is reported as a conflict below, not as not-found.
+	updateQuery := fmt.Sprintf("UPDATE appointments SET %s, updated_at = NOW() WHERE id = $2 AND status = $3", setClause)
+	updateArgs := []any{status, id, current}
 	if !scope.Unrestricted {
-		updateQuery = fmt.Sprintf("UPDATE appointments SET %s, updated_at = NOW() WHERE id = $3 AND facility_id = ANY($2)", setClause)
-		updateArgs = []any{status, scope.IDs, id}
+		updateQuery = fmt.Sprintf("UPDATE appointments SET %s, updated_at = NOW() WHERE id = $3 AND facility_id = ANY($2) AND status = $4", setClause)
+		updateArgs = []any{status, scope.IDs, id, current}
 	}
 	res, err := h.pool.Exec(ctx, updateQuery, updateArgs...)
 	if err != nil {
@@ -2556,20 +2646,247 @@ func (h *AdminHandler) UpdateAppointmentStatus(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if res.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
-		h.logAppointmentAccess(r, actor, "appointment.status_updated", "not_found", id)
+		// The SELECT above proved the row exists and is in scope, so zero rows
+		// here is not "not found" — it is a concurrent request that already
+		// moved the status out from under this one. A conflict, not a not-found:
+		// "tidak ditemukan" would tell the operator the appointment vanished.
+		writeError(w, http.StatusConflict, "Janji temu sudah diproses oleh permintaan lain.")
+		h.logAppointmentAccess(r, actor, "appointment.status_updated", "conflict", id)
 		return
 	}
 
+	// --- Mint a queue ticket for counter check-in (N4) ---
+	// The public POST /check-in path already mints a queue number when a
+	// citizen checks in digitally; mirror that here so a desk clerk who checks
+	// a patient in at the counter does not strand the appointment at checked_in
+	// with no queue number — a state with no exit, because a retry can no
+	// longer match the scheduled->checked_in transition, so a number could
+	// never be minted. On any failure we release the appointment back to
+	// scheduled and audit, so a retry can claim it and mint a number.
+	var ticketID, formattedNumber string
+	if status == "checked_in" && current == "scheduled" {
+		if h.queueSvc == nil {
+			slog.Error("queue service not configured", "appointment_id", id)
+			if _, rbErr := h.rollbackAdminCheckIn(ctx, id); rbErr != nil {
+				slog.Error("admin check-in rollback failed",
+					"appointment_id", id, "err", rbErr.Error())
+			}
+			writeError(w, http.StatusInternalServerError, "Layanan antrean tidak tersedia.")
+			h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", "queue service nil")
+			return
+		}
+
+		genRes, genErr := h.queueSvc.Generate(ctx, service.GenerateInput{
+			FacilityID: apptFacility,
+			Patient: service.PatientInput{
+				FullName: patientName,
+				Phone:    patientPhone,
+			},
+		})
+		if genErr != nil {
+			slog.Error("admin check-in queue generation failed",
+				"appointment_id", id, "facility_id", apptFacility, "err", genErr.Error())
+			rows, rbErr := h.rollbackAdminCheckIn(ctx, id)
+			if rbErr != nil {
+				slog.Error("admin check-in rollback failed",
+					"appointment_id", id, "err", rbErr.Error())
+			} else if rows == 0 {
+				slog.Warn("admin rollback guard: appointment no longer in checked_in state",
+					"appointment_id", id)
+				writeError(w, http.StatusConflict, "Janji temu sudah diproses oleh permintaan lain.")
+				h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", "rollback guard conflict")
+				return
+			}
+
+			// dev fallback mirrors the booking path's SIGAP_ENGINE_FALLBACK=dev:
+			// re-acquire the scheduled->checked_in transition and mint the ticket
+			// locally (the in-memory FakeQueueService answers without touching any
+			// database, so the API must persist the row itself).
+			if os.Getenv("SIGAP_ENGINE_FALLBACK") == "dev" {
+				slog.Warn("SIGAP_ENGINE_FALLBACK=dev: retrying queue generation with FakeQueueService",
+					"appointment_id", id)
+				ct, acqErr := h.pool.Exec(ctx,
+					`UPDATE appointments SET status = 'checked_in', checkin_at = NOW(), updated_at = NOW() WHERE id = $1 AND status = 'scheduled' AND queue_ticket_id IS NULL`,
+					id)
+				if acqErr != nil {
+					slog.Error("admin fallback re-acquire failed",
+						"appointment_id", id, "err", acqErr.Error())
+					writeError(w, http.StatusInternalServerError, "Gagal memperbarui status check-in.")
+					h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", "fallback re-acquire failed")
+					return
+				}
+				if ct.RowsAffected() == 0 {
+					slog.Warn("admin fallback guard: appointment no longer in scheduled state",
+						"appointment_id", id)
+					writeError(w, http.StatusConflict, "Janji temu sudah diproses oleh permintaan lain.")
+					h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", "fallback guard conflict")
+					return
+				}
+
+				genRes, genErr = service.NewFakeQueueService().Generate(ctx, service.GenerateInput{
+					FacilityID: apptFacility,
+					Patient: service.PatientInput{
+						FullName: patientName,
+						Phone:    patientPhone,
+					},
+				})
+				if genErr != nil {
+					slog.Error("admin fallback queue generation failed",
+						"appointment_id", id, "err", genErr.Error())
+					if _, rbErr := h.rollbackAdminCheckIn(ctx, id); rbErr != nil {
+						slog.Error("admin check-in rollback failed",
+							"appointment_id", id, "err", rbErr.Error())
+					}
+					writeError(w, http.StatusInternalServerError, "Gagal mengambil nomor antrean.")
+					h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", "fallback generate failed")
+					return
+				}
+
+				// No engine issued this ticket, so this process mints the id and
+				// stores the row itself (mirrors booking's recordQueueTicket).
+				genRes.TicketID = uuid.New().String()
+				if err := h.recordAdminQueueTicket(ctx, time.Now(), genRes.TicketID, apptFacility, patientName, patientPhone, genRes.FormattedNumber); err != nil {
+					slog.Error("admin fallback ticket insert failed",
+						"appointment_id", id, "queue_ticket_id", genRes.TicketID, "err", err.Error())
+					if _, rbErr := h.rollbackAdminCheckIn(ctx, id); rbErr != nil {
+						slog.Error("admin check-in rollback failed",
+							"appointment_id", id, "err", rbErr.Error())
+					}
+					writeError(w, http.StatusInternalServerError, "Gagal membuat tiket antrean.")
+					h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", "fallback insert failed")
+					return
+				}
+			} else {
+				writeError(w, http.StatusInternalServerError, "Gagal mengambil nomor antrean.")
+				h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", "queue generate failed")
+				return
+			}
+		}
+
+		// The engine commits queue_tickets against its own DATABASE_URL; when
+		// that is not this database the row is invisible here and the foreign
+		// key would reject the attach below. Report it rather than fabricate a
+		// local row (mirrors booking's verifyQueueTicketVisible reasoning).
+		if err := h.verifyAdminQueueTicket(ctx, genRes.TicketID); err != nil {
+			slog.Error("queue ticket is not visible in this database; check that the queue engine and the API share one DATABASE_URL",
+				"appointment_id", id, "queue_ticket_id", genRes.TicketID, "err", err.Error())
+			if _, rbErr := h.rollbackAdminCheckIn(ctx, id); rbErr != nil {
+				slog.Error("admin check-in rollback failed",
+					"appointment_id", id, "err", rbErr.Error())
+			}
+			writeError(w, http.StatusServiceUnavailable, "Layanan antrean tidak sinkron. Coba lagi sebentar lagi.")
+			h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", "ticket not visible")
+			return
+		}
+
+		// Attach the ticket atomically. The guarded predicate makes a duplicate
+		// request a no-op: only the request that owns the checked_in row can
+		// attach, and once queue_ticket_id is set the transition can no longer
+		// be repeated from scheduled.
+		ct, attachErr := h.pool.Exec(ctx,
+			`UPDATE appointments SET queue_ticket_id = $1, updated_at = NOW() WHERE id = $2 AND status = 'checked_in' AND queue_ticket_id IS NULL`,
+			genRes.TicketID, id)
+		if attachErr != nil {
+			slog.Error("admin check-in ticket attach failed",
+				"appointment_id", id, "queue_ticket_id", genRes.TicketID, "err", attachErr.Error())
+			if _, rbErr := h.rollbackAdminCheckIn(ctx, id); rbErr != nil {
+				slog.Error("admin check-in rollback failed",
+					"appointment_id", id, "err", rbErr.Error())
+			}
+			writeError(w, http.StatusInternalServerError, "Gagal menyelesaikan check-in.")
+			h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", "ticket attach failed")
+			return
+		}
+		if ct.RowsAffected() == 0 {
+			slog.Warn("admin check-in attach guard: appointment already has a queue ticket",
+				"appointment_id", id)
+			writeError(w, http.StatusConflict, "Janji temu sudah diproses oleh permintaan lain.")
+			h.logAppointmentAccess(r, actor, "appointment.status_updated", "error", "attach guard conflict")
+			return
+		}
+
+		ticketID = genRes.TicketID
+		formattedNumber = genRes.FormattedNumber
+	}
+
+	data := map[string]any{
+		"id":         id,
+		"status":     status,
+		"updated_at": time.Now().UTC(),
+	}
+	if ticketID != "" {
+		data["queue_ticket_id"] = ticketID
+		data["formatted_number"] = formattedNumber
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
-		"data": map[string]any{
-			"id":         id,
-			"status":     status,
-			"updated_at": time.Now().UTC(),
-		},
+		"data":    data,
 	})
 	h.logAppointmentAccess(r, actor, "appointment.status_updated", "ok", fmt.Sprintf("%s->%s", current, status))
+}
+
+// rollbackAdminCheckIn releases an appointment the admin transition claimed but
+// could not attach a queue ticket to. Identical to the public check-in
+// rollback: the guard keeps the release idempotent and stops it from undoing a
+// concurrent request that already completed. The release runs on a context
+// detached from the request (the failure that brought us here is often a
+// timeout).
+func (h *AdminHandler) rollbackAdminCheckIn(ctx context.Context, id string) (int64, error) {
+	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
+	ct, err := h.pool.Exec(rbCtx,
+		`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
+}
+
+// verifyAdminQueueTicket confirms the ticket the queue service issued actually
+// exists in THIS database before the appointment may reference it. Mirrors
+// booking's verifyQueueTicketVisible: a non-UUID id is rejected as a named
+// error, and an absent UUID means the engine committed elsewhere — reported,
+// never repaired.
+func (h *AdminHandler) verifyAdminQueueTicket(ctx context.Context, ticketID string) error {
+	if _, err := uuid.Parse(ticketID); err != nil {
+		return fmt.Errorf("queue service returned a non-UUID ticket id %q: %w", ticketID, err)
+	}
+
+	var exists bool
+	if err := h.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM queue_tickets WHERE id = $1)`, ticketID,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("look up queue ticket: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("queue ticket %s was issued but is not in this database", ticketID)
+	}
+	return nil
+}
+
+// recordAdminQueueTicket inserts a queue ticket this process minted itself.
+// Mirrors booking's recordQueueTicket: it exists for exactly one caller — the
+// SIGAP_ENGINE_FALLBACK=dev path, where the in-memory FakeQueueService answers
+// without touching any database, so the API must persist the ticket.
+func (h *AdminHandler) recordAdminQueueTicket(ctx context.Context, now time.Time, ticketID, facilityID, patientName, patientPhone, formattedNumber string) error {
+	dayStart, dayEnd := serviceDayRange(now)
+	_, err := h.pool.Exec(ctx,
+		`WITH p AS (
+		    INSERT INTO patients (id, full_name, phone, date_of_birth)
+		    VALUES ($1::uuid, $2, $3, '2000-01-01')
+		    ON CONFLICT (phone) DO UPDATE SET full_name = EXCLUDED.full_name
+		    RETURNING id
+		)
+		INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status, registered_at)
+		SELECT $4::uuid, $5::uuid, p.id,
+		       (SELECT COALESCE(MAX(qt.queue_number), 0) + 1 FROM queue_tickets qt
+		         WHERE qt.facility_id = $5::uuid AND qt.registered_at >= $7 AND qt.registered_at < $8),
+		       $6, 'waiting', $9
+		FROM p
+		ON CONFLICT (id) DO NOTHING`,
+		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber, dayStart, dayEnd, now)
+	return err
 }
 
 // AppointmentsRouter dispatches appointment admin requests by method and path suffix.
@@ -2610,7 +2927,7 @@ func (h *AdminHandler) logAppointmentAccess(r *http.Request, actor identity.Acto
 		Action:       action,
 		ResourceType: "appointment",
 		ActorType:    string(actor.Type),
-		ActorUserID:  actor.UserID,
+		ActorUserID:  actor.AuditUserID(),
 		RequestID:    identity.RequestIDFromContext(r.Context()),
 		Metadata: audit.SanitizeMetadata(map[string]any{
 			"status": status,

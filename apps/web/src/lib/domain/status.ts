@@ -158,3 +158,37 @@ export const APPOINTMENT_STATUS_LABEL: Record<AppointmentStatus, string> = {
 	cancelled: 'Dibatalkan',
 	no_show: 'Tidak Datang'
 };
+
+/**
+ * Indonesian label for the ACTION that moves a ticket INTO a status.
+ *
+ * Deliberately separate from `QUEUE_STATUS_LABEL`, and the distinction is not
+ * cosmetic. A status label names a STATE ("Dibatalkan" = it is cancelled); an
+ * action label names what pressing the button will DO ("Batalkan" = cancel it).
+ * Rendering the state noun on a button reads as a description of the current
+ * row — an operator scanning a "Menunggu" row whose button says "Dibatalkan"
+ * can reasonably conclude the row is already cancelled, and one who wants to
+ * cancel it has no obvious control. The Pen draws the imperative forms.
+ *
+ * Two verbs intentionally differ from their status: `cancelled` and `skipped`
+ * are past-participle states with no imperative form in Indonesian, so the
+ * action is the bare verb (Batalkan / Lewati) and the state is the di- form.
+ */
+export const QUEUE_TRANSITION_LABEL: Record<QueueStatus, string> = {
+	waiting: 'Kembalikan ke antrean',
+	called: 'Panggil',
+	in_service: 'Layani',
+	completed: 'Selesaikan',
+	cancelled: 'Batalkan',
+	skipped: 'Lewati'
+};
+
+/** Indonesian label for the ACTION that moves an appointment INTO a status. */
+export const APPOINTMENT_TRANSITION_LABEL: Record<AppointmentStatus, string> = {
+	scheduled: 'Jadwalkan',
+	checked_in: 'Check-in',
+	queued: 'Antrekan',
+	completed: 'Selesaikan',
+	cancelled: 'Batalkan',
+	no_show: 'Tandai tidak datang'
+};

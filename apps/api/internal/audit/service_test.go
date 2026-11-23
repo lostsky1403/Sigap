@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSanitizeMetadata_Redacts(t *testing.T) {
@@ -113,7 +114,8 @@ func TestComputeHash(t *testing.T) {
 		Metadata:     map[string]any{"facility_id": "42"},
 	}
 
-	hash := computeHash(e, "")
+	occurredAt := time.Date(2026, 11, 19, 1, 2, 3, 456000000, time.UTC).Truncate(time.Millisecond)
+	hash := computeHash(e, "", occurredAt)
 	if len(hash) != 64 {
 		t.Errorf("expected hex length 64, got %d", len(hash))
 	}
@@ -121,13 +123,44 @@ func TestComputeHash(t *testing.T) {
 		t.Errorf("expected lowercase hex, got %s", hash)
 	}
 
-	// With previous hash — format should still be valid hex
-	hash2 := computeHash(e, "abc123")
+	// With previous hash - format should still be valid hex
+	hash2 := computeHash(e, "abc123", occurredAt)
 	if len(hash2) != 64 {
 		t.Errorf("expected hex length 64 with prev, got %d", len(hash2))
 	}
 	if hash == hash2 {
 		t.Error("different previous hash should produce different event hash")
+	}
+}
+
+// TestComputeHash_ReproducibleFromStoredAt pins the audit-chain invariant
+// (ledger finding F-3): event_hash must be recomputable from the row that was
+// persisted. Previously computeHash stamped its own time.Now() while the INSERT
+// used a separate time.Now(), so honest rows could never be verified. After the
+// fix the caller threads ONE occurredAt into both, so (a) the same inputs always
+// give the same hash and (b) changing only the timestamp changes the hash —
+// proving the hashed instant is the one supplied by the caller, not hidden
+// inside the function.
+func TestComputeHash_ReproducibleFromStoredAt(t *testing.T) {
+	e := Event{
+		Action:       "appointment.created",
+		ResourceType: "appointment",
+		ActorType:    "user",
+		Metadata:     map[string]any{"status": "scheduled"},
+	}
+	at := time.Date(2026, 11, 19, 1, 2, 3, 456000000, time.UTC).Truncate(time.Millisecond)
+
+	first := computeHash(e, "prev", at)
+	// Same stored row inputs, recomputed later (e.g. after restart/export).
+	recomputed := computeHash(e, "prev", at)
+	if first != recomputed {
+		t.Fatalf("event_hash not reproducible from stored occurred_at: %s != %s", first, recomputed)
+	}
+	// A different hashed instant must change the hash — otherwise the timestamp
+	// is not actually bound into the digest and the stored row is not verifiable.
+	other := computeHash(e, "prev", at.Add(time.Second))
+	if first == other {
+		t.Fatal("event_hash does not bind the occurred_at timestamp")
 	}
 }
 

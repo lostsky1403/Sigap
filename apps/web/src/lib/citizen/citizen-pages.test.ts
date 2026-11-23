@@ -281,7 +281,12 @@ describe('Beranda', () => {
 			expect(href).not.toContain('/wallet');
 		}
 		expect(hrefs).toContain('/faskes');
-		expect(hrefs).toContain('/appointments/new');
+		// The catalog is the way into booking: the task picker's primary CTA
+		// lands on /faskes, and every booking link from there preselects a
+		// facility. Asserting the bare path would demand a link that enters
+		// the booking form with no facility chosen, which is the composition
+		// the approved design removes.
+		expect(hrefs.some((href) => href?.startsWith('/appointments/new'))).toBe(true);
 		expect(hrefs).toContain('/appointments/check-in');
 		expect(hrefs).toContain('/patient/status');
 	});
@@ -402,7 +407,7 @@ describe('/faskes', () => {
 		await waitFor(() => expect(screen.getByRole('searchbox')).toBeTruthy());
 
 		const row = document.querySelector('#sigap-facility-results li');
-		const link = within(row as HTMLElement).getByRole('link');
+		const link = within(row as HTMLElement).getByRole('link', { name: /Buat janji temu/ });
 		const href = link.getAttribute('href') ?? '';
 
 		// Booking is Phase 3B3; this phase only has to arrive there with the

@@ -662,7 +662,7 @@ func (h *NotificationsHandler) log(actor identity.Actor, action, status, detail 
 		Action:       action,
 		ResourceType: "notification",
 		ActorType:    string(actor.Type),
-		ActorUserID:  actor.UserID,
+		ActorUserID:  actor.AuditUserID(),
 		Metadata:     audit.SanitizeMetadata(metadata),
 	})
 }

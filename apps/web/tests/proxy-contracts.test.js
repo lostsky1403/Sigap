@@ -66,8 +66,16 @@ const manifest = [
 		methods: { POST: ["`/api/v1/admin/notifications/${encodeURIComponent(event.params.id ?? '')}/retry`"] }
 	},
 	{
+		route: 'admin/organizations/+server.ts',
+		methods: { GET: ['`/api/v1/admin/organizations${query}`'] }
+	},
+	{
+		route: 'admin/organizations/[id]/+server.ts',
+		methods: { GET: ["`/api/v1/admin/organizations/${encodeURIComponent(event.params.id ?? '')}`"] }
+	},
+	{
 		route: 'admin/queues/+server.ts',
-		methods: { GET: ["'/api/v1/admin/queues'"] }
+		methods: { GET: ['`/api/v1/admin/queues${query}`'] }
 	},
 	{
 		route: 'admin/queues/[id]/+server.ts',
@@ -108,21 +116,23 @@ const manifest = [
 		}
 	},
 	{ route: 'appointments/+server.ts', methods: { POST: ["'/api/v1/appointments'"] } },
+	{ route: 'appointments/cancel/+server.ts', methods: { POST: ["'/api/v1/appointments/cancel'"] } },
 	{
 		route: 'appointments/[id]/check-in/+server.ts',
 		methods: { POST: ["`/api/v1/appointments/${encodeURIComponent(event.params.id ?? '')}/check-in`"] }
 	},
-	{ route: 'events/beds/+server.ts', methods: { GET: ['`${apiBase}/api/v1/events/beds`'] } },
+	{ route: 'events/beds/+server.ts', methods: { GET: ['`${resolved.base}/api/v1/events/beds`'] } },
 	{ route: 'patient/status/+server.ts', methods: { GET: ['`/api/v1/patient/status${query}`'] } },
-	{ route: 'public/facilities/+server.ts', methods: { GET: ['`${apiBase()}/api/v1/public/facilities`'] } },
-	{ route: 'public/service-units/+server.ts', methods: { GET: ['`${apiBase()}/api/v1/public/service-units${query}`'] } },
-	{ route: 'queues/generate/+server.ts', methods: { POST: ['`${apiBase}/api/v1/queues/generate`'] } }
+	{ route: 'patient/appointments/+server.ts', methods: { GET: ["'/api/v1/patient/appointments'"] } },
+	{ route: 'public/facilities/+server.ts', methods: { GET: ['`${resolved.base}/api/v1/public/facilities`'] } },
+	{ route: 'public/service-units/+server.ts', methods: { GET: ['`${resolved.base}/api/v1/public/service-units${query}`'] } },
+	{ route: 'queues/generate/+server.ts', methods: { POST: ['`${resolved.base}/api/v1/queues/generate`'] } }
 ];
 
 assert.deepEqual(
 	discoveredRoutes,
 	manifest.map(({ route }) => route).sort(),
-	'Proxy manifest must cover exactly the 23 API proxy files'
+	'Proxy manifest must cover exactly the 28 API proxy files'
 );
 
 const methodBlock = (source, method) => {
@@ -405,6 +415,8 @@ const forwardsQuery = (route) => {
 for (const route of [
 	'admin/notifications/+server.ts',
 	'admin/notifications/summary/+server.ts',
+	'admin/organizations/+server.ts',
+	'admin/queues/+server.ts',
 	'patient/status/+server.ts',
 	'public/service-units/+server.ts'
 ]) {
@@ -413,7 +425,6 @@ for (const route of [
 
 for (const route of [
 	'admin/facilities/+server.ts',
-	'admin/queues/+server.ts',
 	'admin/appointments/+server.ts',
 	'admin/schedules/+server.ts',
 	'admin/service-units/+server.ts',

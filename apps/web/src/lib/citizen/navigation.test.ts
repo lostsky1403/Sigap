@@ -39,15 +39,17 @@ const bottomNavSource = readFileSync(join(here, 'CitizenBottomNav.svelte'), 'utf
 const desktopNavSource = readFileSync(join(here, 'CitizenDesktopNav.svelte'), 'utf8');
 const accountSource = readFileSync(join(here, 'AccountMenu.svelte'), 'utf8');
 const layoutSource = readFileSync(join(webRoot, 'src', 'routes', '+layout.svelte'), 'utf8');
+const appCssSource = readFileSync(join(webRoot, 'src', 'app.css'), 'utf8');
 
 describe('citizen navigation contract', () => {
-	it('declares exactly four destinations', () => {
-		expect(CITIZEN_DESTINATIONS).toHaveLength(4);
+	it('declares exactly five destinations', () => {
+		expect(CITIZEN_DESTINATIONS).toHaveLength(5);
 		expect(CITIZEN_DESTINATIONS.map((d) => d.label)).toEqual([
 			'Beranda',
 			'Faskes',
 			'Check-In',
-			'Status'
+			'Status',
+			'Janji Saya'
 		]);
 	});
 
@@ -57,7 +59,8 @@ describe('citizen navigation contract', () => {
 			Beranda: '/',
 			Faskes: '/faskes',
 			'Check-In': '/appointments/check-in',
-			Status: '/patient/status'
+			Status: '/patient/status',
+			'Janji Saya': '/patient/appointments'
 		});
 	});
 
@@ -106,12 +109,12 @@ describe('citizen shell: mobile at 390px', () => {
 		document.body.innerHTML = '';
 	});
 
-	it('renders the bottom navigation with exactly four links', async () => {
+	it('renders the bottom navigation with exactly five links', async () => {
 		render(CitizenBottomNav, { path: '/' });
 		await tick();
 		const nav = screen.getByRole('navigation', { name: 'Navigasi bawah' });
 		const links = nav.querySelectorAll('a');
-		expect(links).toHaveLength(4);
+		expect(links).toHaveLength(5);
 	});
 
 	it('marks exactly one tab as the current page', async () => {
@@ -164,11 +167,16 @@ describe('citizen shell: mobile at 390px', () => {
 	});
 
 	it('reserves content clearance so the bar cannot cover the page', () => {
-		// The layout, not the nav, owns the reserved space: the bar is fixed, so
-		// without padding on the content the last row would sit underneath it.
-		expect(layoutSource).toMatch(/sigap-citizen-main/);
-		expect(layoutSource).toMatch(/padding-bottom/);
-		expect(layoutSource).toMatch(/safe-area-inset-bottom/);
+		// The reserve lives on `.sigap-page`, the container every page renders,
+		// rather than on the layout's `<main>`. It has to be exactly one place:
+		// on both, every page would carry the clearance twice, and a page that
+		// does not use the container would get none.
+		expect(appCssSource).toMatch(/\.sigap-page\s*\{[^}]*padding:/);
+		expect(appCssSource).toMatch(/env\(safe-area-inset-bottom/);
+		expect(appCssSource).toMatch(/96px/);
+		// And the layout must NOT carry it, which is what makes the above the
+		// only owner rather than a second copy.
+		expect(layoutSource).not.toMatch(/padding-bottom:\s*calc\(96px/);
 	});
 
 	it('hides the bottom nav at desktop widths and shows the desktop nav', () => {
@@ -194,16 +202,22 @@ describe('citizen shell: desktop at 1440px', () => {
 		document.body.innerHTML = '';
 	});
 
-	it('renders a one-line desktop navigation with the four destinations', async () => {
+	it('renders a one-line desktop navigation with the five destinations', async () => {
 		render(CitizenDesktopNav, { path: '/' });
 		await tick();
 		const nav = screen.getByRole('navigation', { name: 'Navigasi utama' });
 		const links = Array.from(nav.querySelectorAll('a'));
-		// Four destinations plus the booking CTA, which is an action rather than
-		// a destination and therefore lives outside the list.
+		// Exactly the five destinations. The booking CTA is chrome and lives in
+		// the masthead's action cluster, not in this landmark — so "five
+		// destinations" is true of the rendered nav, not only of the array.
 		expect(links).toHaveLength(5);
-		expect(links[0].getAttribute('href')).toBe('/');
-		expect(links[4].textContent).toContain('Buat Janji Temu');
+		expect(links.map((a) => a.getAttribute('href'))).toEqual([
+			'/',
+			'/faskes',
+			'/appointments/check-in',
+			'/patient/status',
+			'/patient/appointments'
+		]);
 	});
 
 	it('marks exactly one desktop link as the current page', async () => {
@@ -239,7 +253,10 @@ describe('citizen shell: header composition', () => {
 		const banner = screen.getByRole('banner');
 		expect(banner).toBeTruthy();
 		expect(banner.querySelector('nav[aria-label="Navigasi utama"]')).toBeTruthy();
-		expect(banner.querySelector('.sigap-citizen-header__account')).toBeTruthy();
+		expect(banner.querySelector('.sigap-account')).toBeTruthy();
+		// The booking CTA is chrome in the same cluster, so it must be inside
+		// the banner rather than in a page body or a navigation landmark.
+		expect(banner.querySelector('a[href="/appointments/new"]')).toBeTruthy();
 	});
 
 	it('renders exactly one banner and two named navigation landmarks', async () => {
@@ -277,12 +294,34 @@ describe('account menu: identity only', () => {
 		document.body.innerHTML = '';
 	});
 
-	it('offers Masuk and Daftar when signed out', async () => {
-		render(AccountMenu, { hasSession: false });
+	it('offers one auth control, pointing at the other auth page', async () => {
+		// On any page that is not the login form, the control offers "Masuk".
+		render(AccountMenu, { hasSession: false, path: '/' });
 		await tick();
-		expect(screen.getByRole('link', { name: /Masuk/ })).toBeTruthy();
-		expect(screen.getByRole('link', { name: /Daftar/ })).toBeTruthy();
+		const masuk = screen.getByRole('link', { name: 'Masuk' });
+		expect(masuk.getAttribute('href')).toBe('/auth/login');
+		// And never a second, competing "Daftar" button beside it.
+		expect(screen.queryByRole('link', { name: 'Daftar' })).toBeNull();
 		expect(document.querySelector('form[action="/auth/logout"]')).toBeNull();
+	});
+
+	it('flips the auth control on the auth pages, so it never links to itself', async () => {
+		// Standing on the login form, the useful control is "Daftar".
+		render(AccountMenu, { hasSession: false, path: '/auth/login' });
+		await tick();
+		expect(screen.getByRole('link', { name: 'Daftar' }).getAttribute('href')).toBe(
+			'/auth/register'
+		);
+		expect(screen.queryByRole('link', { name: 'Masuk' })).toBeNull();
+
+		document.body.innerHTML = '';
+
+		// And on the register form it is "Masuk", because a link to the page
+		// you are already on is not an affordance.
+		render(AccountMenu, { hasSession: false, path: '/auth/register' });
+		await tick();
+		expect(screen.getByRole('link', { name: 'Masuk' }).getAttribute('href')).toBe('/auth/login');
+		expect(screen.queryByRole('link', { name: 'Daftar' })).toBeNull();
 	});
 
 	it('offers Keluar when signed in', async () => {

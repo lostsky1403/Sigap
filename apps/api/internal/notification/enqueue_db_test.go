@@ -39,23 +39,52 @@ type agreementVector struct {
 	why string
 }
 
-func TestEnqueue_GoAndDatabaseAgree(t *testing.T) {
+// newNotificationPool provisions a throwaway schema (test_notification) on the
+// server named by DATABASE_URL and returns a pool whose search_path routes every
+// unqualified reference there. It drops and recreates the schema before applying
+// the full migration chain, so each test starts from a clean, known state.
+//
+// WHY NOT public. The shared dev DB already carries the full release schema, but
+// its schema_migrations table is EMPTY (the schema was built out-of-band, not by
+// migrate.Run). Running migrate.Run against public therefore re-applies 0001_init
+// and its CREATE TYPE facility_type, which fails with SQLSTATE 42710 (already
+// exists). Routing the pool to a dedicated schema makes these agreement tests
+// independent of the shared public schema's state. "public" stays second on the
+// path only so extension-backed functions (e.g. gen_random_uuid) resolve.
+//
+// Requires DATABASE_URL. Skips when unset.
+func newNotificationPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		t.Skip("DATABASE_URL not set; skipping Enqueue agreement test")
+		t.Skip("DATABASE_URL not set; skipping notification DB agreement test")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	pool, err := pgxpool.New(ctx, dbURL)
+	cfg, err := pgxpool.ParseConfig(dbURL)
 	if err != nil {
-		t.Fatalf("connect: %v", err)
+		t.Fatalf("parse pool config: %v", err)
+	}
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = "test_notification, public"
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("connect pool: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	svc := NewService(pool)
 
-	// Ensure the release schema is present. Applying the full migration set is
-	// idempotent, so this is a no-op when another test already built it.
+	if _, err := pool.Exec(ctx, `DROP SCHEMA IF EXISTS test_notification CASCADE`); err != nil {
+		t.Fatalf("drop test_notification schema: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE SCHEMA test_notification`); err != nil {
+		t.Fatalf("create test_notification schema: %v", err)
+	}
+
 	dir, err := migrate.MigrateDir()
 	if err != nil {
 		t.Fatalf("resolve migration dir: %v", err)
@@ -63,6 +92,13 @@ func TestEnqueue_GoAndDatabaseAgree(t *testing.T) {
 	if _, err := migrate.Run(ctx, pool, dir); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
+
+	return pool
+}
+
+func TestEnqueue_GoAndDatabaseAgree(t *testing.T) {
+	pool := newNotificationPool(t)
+	svc := NewService(pool)
 
 	// Confirm the schema under test really is the strengthened release shape.
 	def, valid := constraintDef(t, pool, "notification_outbox_no_raw_phone_in_body_chk")
@@ -175,26 +211,7 @@ func TestEnqueue_GoAndDatabaseAgree(t *testing.T) {
 //
 // Requires DATABASE_URL. Skips when unset.
 func TestPredicate_CorpusAgreesWithTheDatabase(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set; skipping predicate corpus/database agreement test")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	t.Cleanup(pool.Close)
-
-	dir, err := migrate.MigrateDir()
-	if err != nil {
-		t.Fatalf("resolve migration dir: %v", err)
-	}
-	if _, err := migrate.Run(ctx, pool, dir); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
+	pool := newNotificationPool(t)
 	def, valid := constraintDef(t, pool, "notification_outbox_no_raw_phone_in_body_chk")
 	if !valid || !containsSub(def, "{10,}") {
 		t.Fatalf("database is not the strengthened release schema: def=%q validated=%v", def, valid)
@@ -268,26 +285,7 @@ func substituteVars(tpl string, vars map[string]string) string {
 //
 // Requires DATABASE_URL. Skips when unset.
 func TestRenderedQueueNumber_GoAndDatabaseAgree(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set; skipping rendered-queue-number agreement test")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	t.Cleanup(pool.Close)
-
-	dir, err := migrate.MigrateDir()
-	if err != nil {
-		t.Fatalf("resolve migration dir: %v", err)
-	}
-	if _, err := migrate.Run(ctx, pool, dir); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
+	pool := newNotificationPool(t)
 
 	def, valid := constraintDef(t, pool, "notification_outbox_no_raw_phone_in_body_chk")
 	if !valid || !containsSub(def, "{10,}") {

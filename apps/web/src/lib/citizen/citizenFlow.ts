@@ -80,12 +80,19 @@ export function validateRequired(value: string, label: string): string {
 	return '';
 }
 
-export function validateName(value: string): string {
+/**
+ * A person's name, with the label the caller actually rendered.
+ *
+ * The message used to be hardcoded as "Nama pasien" while the walk-in form
+ * labels the field "Nama lengkap". An error that names a field the citizen
+ * cannot see on the page sends them looking for something that is not there.
+ */
+export function validateName(value: string, label = 'Nama pasien'): string {
 	const trimmed = asText(value).trim();
-	if (!trimmed) return 'Nama pasien wajib diisi.';
+	if (!trimmed) return `${label} wajib diisi.`;
 	// Same ceiling as validateBookAppointment, so a 51-character name is caught
 	// here rather than after a round trip.
-	if (trimmed.length > 100) return 'Nama pasien maksimal 100 karakter.';
+	if (trimmed.length > 100) return `${label} maksimal 100 karakter.`;
 	return '';
 }
 
@@ -109,9 +116,23 @@ export function validateAppointmentTime(value: string, now: Date = new Date()): 
 	return '';
 }
 
+/**
+ * Strips every space a citizen might insert while reading a code aloud or
+ * copying it out of an SMS ("5ZE IOO").
+ *
+ * Only whitespace. Dashes are NOT stripped: `PHB-0004` is a real ticket format
+ * and a dash is a meaningful character in this system, so removing it would
+ * change which strings are accepted rather than absorbing a formatting
+ * accident. The backend applies the same rule (`strings.Fields` join), so the
+ * two layers agree on what a code is.
+ */
+export function normalizeLookupCode(value: string): string {
+	return asText(value).replace(/\s+/g, '');
+}
+
 /** The backend's cap on a lookup code, from `maxPatientCodeLen` in patient.go. */
 export function validateLookupCode(value: string): string {
-	const trimmed = asText(value).trim();
+	const trimmed = normalizeLookupCode(value);
 	if (!trimmed) return 'Kode wajib diisi.';
 	if (trimmed.length > 64) return 'Kode terlalu panjang.';
 	// The backend's safeCodeRe. Checking it here turns a round trip into an
@@ -120,11 +141,6 @@ export function validateLookupCode(value: string): string {
 		return 'Kode hanya boleh berisi huruf, angka, dan tanda hubung.';
 	}
 	return '';
-}
-
-/** The backend's own charset for check-in codes, from `generateCheckinCode`. */
-export function looksLikeCheckinCode(value: string): boolean {
-	return /^[A-Z0-9]{6}$/i.test(value.trim());
 }
 
 /* ------------------------------------------------------------------ *
@@ -355,23 +371,53 @@ export type VisitProgress =
 /**
  * Maps the backend's `checkin_status` onto a progress presentation.
  *
- * The switch mirrors `mapCheckinStatus` in patient.go:
+ * `in_queue` is NOT "being served". The backend derives it from
+ * `appointment_status = 'queued'`, which is set the moment a queue ticket
+ * exists — the citizen is holding a number and waiting, which is step 2
+ * (Antre), not step 3 (Dilayani). Mapping it to Dilayani told every
+ * checked-in citizen they were already being seen while they sat in the
+ * waiting room; the ticket status is what distinguishes the two.
+ *
+ * `queueStatus` is the ticket's own state, already present on the response.
+ * It is optional because a scheduled appointment has no ticket yet:
+ *
+ *   waiting                -> Antre   (holding a number)
+ *   called / in_service    -> Dilayani (their turn has come)
+ *   completed              -> Selesai
+ *   cancelled              -> Dibatalkan
+ *
+ * The switch otherwise mirrors `mapCheckinStatus` in patient.go:
  *   not_checked_in → Check-In
  *   checked_in     → Antre
- *   in_queue       → Dilayani
  *   selesai        → Selesai
  *   dibatalkan     → Dibatalkan
  *   tidak_hadir    → Tidak hadir
  *   anything else  → returned unchanged by the backend, and passed through here
  */
-export function visitProgressFrom(checkinStatus: string): VisitProgress {
+export function visitProgressFrom(checkinStatus: string, queueStatus?: string): VisitProgress {
 	switch (checkinStatus) {
 		case 'not_checked_in':
 			return { kind: 'step', step: 'check-in' };
 		case 'checked_in':
 			return { kind: 'step', step: 'antre' };
 		case 'in_queue':
-			return { kind: 'step', step: 'dilayani' };
+			switch (queueStatus) {
+				case 'called':
+				case 'in_service':
+					return { kind: 'step', step: 'dilayani' };
+				case 'completed':
+					return { kind: 'step', step: 'selesai' };
+				case 'cancelled':
+					return { kind: 'cancelled' };
+				case 'skipped':
+					// Passed over. Not a step and not `no_show` either — the
+					// citizen did arrive — so it is surfaced as itself.
+					return { kind: 'unknown', raw: 'skipped' };
+				default:
+					// No ticket status, or `waiting`: they hold a number and are
+					// waiting. This is the common case after check-in.
+					return { kind: 'step', step: 'antre' };
+			}
 		case 'selesai':
 			return { kind: 'step', step: 'selesai' };
 		case 'dibatalkan':
@@ -396,6 +442,49 @@ export function visitOutcomeLabel(progress: VisitProgress): string {
 	if (progress.kind === 'cancelled') return 'Janji temu dibatalkan';
 	if (progress.kind === 'no-show') return 'Tidak hadir';
 	return '';
+}
+
+/**
+ * The single "what happens next" line for a visit's current state.
+ *
+ * `visitProgressFrom` deliberately collapses `called` (your number is on the
+ * board NOW) and `in_service` (you are already at the counter) into the one
+ * `Dilayani` step, because the progress indicator has to show the SAME label
+ * the backend computed. The next action is NOT the same for the two: `called`
+ * means "go to the counter", `in_service` means "stay, you are being seen".
+ * Guidance therefore re-reads the raw `queueStatus` to split them, without
+ * touching the pinned label or the mapper.
+ *
+ * `queueNumber` is optional: a scheduled appointment checked in but not yet
+ * handed a ticket has no number to tell someone to watch for.
+ */
+export function visitGuidance(
+	progress: VisitProgress,
+	queueStatus?: string,
+	queueNumber?: string
+): string {
+	if (progress.kind === 'cancelled') return 'Janji temu Anda telah dibatalkan.';
+	if (progress.kind === 'no-show') {
+		return 'Anda tercatat tidak hadir. Hubungi fasilitas untuk informasi lebih lanjut.';
+	}
+	if (progress.kind === 'unknown') {
+		return 'Hubungi fasilitas untuk informasi status kunjungan Anda.';
+	}
+
+	switch (progress.step) {
+		case 'check-in':
+			return 'Saat tiba di fasilitas, lakukan check-in menggunakan kode check-in Anda.';
+		case 'antre':
+			return queueNumber
+				? `Nomor antrean Anda ${queueNumber}. Tunggu sampai dipanggil — nomor akan muncul di layar tunggu fasilitas.`
+				: 'Anda sudah masuk antrean. Tunggu sampai dipanggil — nomor Anda akan muncul di layar tunggu fasilitas.';
+		case 'dilayani':
+			return queueStatus === 'called'
+				? 'Nomor antrean Anda sedang dipanggil. Segera menuju loket layanan.'
+				: 'Anda sedang dilayani. Kunjungan Anda sedang berlangsung.';
+		case 'selesai':
+			return 'Kunjungan Anda telah selesai.';
+	}
 }
 
 /* ------------------------------------------------------------------ *

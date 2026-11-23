@@ -30,8 +30,15 @@
 	 */
 	export let checkinStatus: string;
 	export let queueNumber: string = '';
+	/**
+	 * The ticket's own state (`waiting`, `called`, `in_service`, ...).
+	 *
+	 * Required to tell "holding a number" from "being served": the appointment
+	 * status alone cannot, because it is `queued` for both.
+	 */
+	export let queueStatus: string | undefined = undefined;
 
-	$: progress = visitProgressFrom(checkinStatus);
+	$: progress = visitProgressFrom(checkinStatus, queueStatus);
 	/*
 	 * Narrowed once, in the script, rather than with a `: this is ...` guard in
 	 * the template. The template then reads a plain optional value, and the
@@ -51,6 +58,26 @@
 
 <div class="sigap-visit" style:border-radius={RADIUS.panel} data-testid="visit-progress">
 	<p class="sigap-visit__label" id="sigap-visit-label">Status kunjungan</p>
+
+	{#if queueNumber}
+		<!--
+			The pass's signature element, and the one thing a citizen reads from
+			across a waiting room: the queue number at 48px in the monospace
+			identifier stack, on the primary tint, with an 11px uppercase eyebrow
+			above it. The Pen draws exactly this block on all three status frames
+			(48px at 1440, 40px at 390, 34px at 360), and it is the reason the
+			page exists — a 13px inline "Nomor antrean: …" line buries the single
+			fact the citizen came for.
+
+			The size steps down with the viewport so the number never wraps or
+			overflows a 360px phone; a queue number that breaks across two lines
+			is unreadable at the counter.
+		-->
+		<div class="sigap-visit__pass" style:border-radius={RADIUS.control}>
+			<p class="sigap-visit__pass-eyebrow">Nomor antrean</p>
+			<p class="sigap-visit__pass-number sigap-identifier">{queueNumber}</p>
+		</div>
+	{/if}
 
 	{#if progress.kind === 'unknown'}
 		<!--
@@ -106,23 +133,22 @@
 		</ol>
 	{/if}
 
-	{#if queueNumber}
-		<p class="sigap-visit__queue">
-			Nomor antrean: <span class="sigap-visit__queue-number">{queueNumber}</span>
-		</p>
-	{/if}
 </div>
 
 <style>
+	/*
+		The visit panel frames a status list; nothing here is operable, so the
+		panel outline and the step dots are decorative hairlines.
+	*/
 	.sigap-visit {
-		padding: 16px;
+		padding: var(--sigap-space-4);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-visit__label {
-		margin: 0 0 12px;
-		font-size: 13px;
+		margin: 0 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
@@ -130,7 +156,7 @@
 	.sigap-visit__steps {
 		display: flex;
 		flex-direction: column;
-		gap: 12px;
+		gap: var(--sigap-space-3);
 		margin: 0;
 		padding: 0;
 		list-style: none;
@@ -139,7 +165,7 @@
 	.sigap-visit__step {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: var(--sigap-space-2);
 	}
 
 	.sigap-visit__marker {
@@ -149,10 +175,10 @@
 		width: 24px;
 		height: 24px;
 		flex: none;
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		font-weight: 600;
 		color: var(--sigap-muted);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-visit__step--done .sigap-visit__marker {
@@ -162,11 +188,11 @@
 
 	.sigap-visit__step:has(.sigap-visit__marker[aria-current='step']) .sigap-visit__marker {
 		background-color: var(--sigap-primary);
-		color: var(--sigap-surface);
+		color: var(--sigap-on-primary);
 	}
 
 	.sigap-visit__step-label {
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		color: var(--sigap-muted);
 	}
 
@@ -178,21 +204,52 @@
 	.sigap-visit__unknown,
 	.sigap-visit__outcome {
 		margin: 0;
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		font-weight: 500;
 		color: var(--sigap-foreground);
 	}
 
-	.sigap-visit__queue {
-		margin: 12px 0 0;
-		font-size: 13px;
-		color: var(--sigap-muted);
+	/*
+		The queue-number pass. The Pen draws it on `$primary-tint` with the
+		number in `$primary-strong`, which is why it is the one tinted surface on
+		an otherwise white panel: it marks the block as the answer the citizen
+		came for rather than as another metadata row.
+	*/
+	.sigap-visit__pass {
+		margin-top: var(--sigap-space-4);
+		padding: var(--sigap-space-4);
+		background-color: var(--sigap-primary-tint);
 	}
 
-	.sigap-visit__queue-number {
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	.sigap-visit__pass-eyebrow {
+		margin: 0;
+		/* 11px is the floor, and the Pen draws this eyebrow at exactly 11px. */
+		font-size: var(--sigap-type-micro);
 		font-weight: 600;
-		color: var(--sigap-foreground);
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--sigap-primary-strong);
+	}
+
+	.sigap-visit__pass-number {
+		margin: var(--sigap-space-1) 0 0;
+		/* 34px at 360, 40px at 390, 48px at 1440 — the Pen's three values. */
+		font-size: 34px;
+		font-weight: 700;
+		line-height: 1.1;
+		color: var(--sigap-primary-strong);
+	}
+
+	@media (min-width: 390px) {
+		.sigap-visit__pass-number {
+			font-size: 40px;
+		}
+	}
+
+	@media (min-width: 1024px) {
+		.sigap-visit__pass-number {
+			font-size: 48px;
+		}
 	}
 
 	.sigap-visually-hidden {

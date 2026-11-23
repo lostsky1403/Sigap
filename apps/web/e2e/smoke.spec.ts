@@ -36,11 +36,29 @@ test.describe('local seeded stack smoke', () => {
 		await expect(page.locator('body')).toBeVisible();
 	});
 
-	test('login page exposes a usable form', async ({ page }) => {
+	test('login page states whether signing in is possible', async ({ page }) => {
 		const response = await page.goto('/auth/login');
 		expect(response?.status()).toBe(200);
-		await expect(page.locator('form')).toBeVisible();
-		await expect(page.locator('input[type="password"]')).toBeVisible();
+
+		/*
+		 * Two legitimate states, and the page must be honest about which.
+		 *
+		 * With Supabase configured it renders the form. Without it — as in this
+		 * local preview — the form is withheld and replaced by a notice, because
+		 * a form that cannot succeed is a thing that looks interactive and is
+		 * not. The notice used to appear only AFTER a submit, described as a
+		 * transient outage, which told the citizen to try again later for an
+		 * action that could never work.
+		 */
+		const form = page.locator('form');
+		const notice = page.getByTestId('auth-unavailable');
+		await expect(form.or(notice).first()).toBeVisible();
+
+		if (await form.count()) {
+			await expect(page.locator('input[type="password"]')).toBeVisible();
+		} else {
+			await expect(notice).toContainText(/belum tersedia|gangguan/i);
+		}
 	});
 
 	test('unauthenticated admin area does not render privileged content', async ({ page }) => {

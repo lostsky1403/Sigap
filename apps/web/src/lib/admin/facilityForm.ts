@@ -25,9 +25,23 @@
  * `validateFacilityForm` takes a mode.
  */
 
+import { facilityTypeLabel } from '$lib/citizen/facilityType';
+
 /** Mirrors validFacilityTypes. */
 export const FACILITY_TYPES = ['rumah_sakit', 'puskesmas'] as const;
 export type FacilityType = (typeof FACILITY_TYPES)[number];
+
+/**
+ * The type choices as an operator reads them.
+ *
+ * The error used to print the raw enum ("pilih: rumah_sakit, puskesmas") while
+ * the select right above it offered "Rumah sakit" / "Puskesmas". An operator
+ * who has just been told their choice is invalid is then given two tokens that
+ * appear nowhere on screen — a message that cannot be acted on.
+ */
+function facilityTypeChoices(): string {
+	return FACILITY_TYPES.map((t) => facilityTypeLabel(t)).join(', ');
+}
 
 /** The exact character set Go's ContainsAny rejects. */
 export const FORBIDDEN_PHONE_CHARACTERS = '<>"\'' + '&';
@@ -101,9 +115,9 @@ export function validateFacilityForm(
 	}
 
 	if (values.type !== '' && !FACILITY_TYPES.includes(values.type as FacilityType)) {
-		errors.type = 'Tipe fasilitas tidak valid (pilih: rumah_sakit, puskesmas).';
+		errors.type = `Tipe fasilitas tidak valid (pilih: ${facilityTypeChoices()}).`;
 	} else if (isCreate && values.type === '') {
-		errors.type = 'Tipe fasilitas tidak valid (pilih: rumah_sakit, puskesmas).';
+		errors.type = `Tipe fasilitas tidak valid (pilih: ${facilityTypeChoices()}).`;
 	}
 
 	if (isCreate) {

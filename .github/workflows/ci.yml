@@ -13,6 +13,9 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://sigap_ci:sigap_ci_pass@localhost:5432/sigap_ci?sslmode=disable
+      # Several DB-backed suites key off SIGAP_DATABASE_URL, not DATABASE_URL.
+      # Leaving it unset made them silently skip in CI while the run stayed green.
+      SIGAP_DATABASE_URL: postgresql://sigap_ci:sigap_ci_pass@localhost:5432/sigap_ci?sslmode=disable
 
     services:
       postgres:
@@ -45,6 +48,17 @@ jobs:
           cd apps/api
           go run ./cmd/ci-migrate
 
+      - name: Load synthetic seed fixtures
+        # Several handler suites assert against seeded facility/role UUIDs
+        # (dev.sql, rbac.sql, demo.sql, regional_tenancy.sql). Without them the
+        # DB-backed tests fail or skip; migrations alone are not enough.
+        run: |
+          command -v psql >/dev/null || sudo apt-get install -y postgresql-client
+          for seed in dev.sql rbac.sql demo.sql regional_tenancy.sql; do
+            PGPASSWORD=sigap_ci_pass psql -h localhost -U sigap_ci -d sigap_ci \
+              -v ON_ERROR_STOP=1 -q -f "packages/db/seed/$seed"
+          done
+
       - name: Test API (with coverage)
         run: |
           set -o pipefail
@@ -74,7 +88,7 @@ jobs:
             exit 1
           fi
           echo "Skip check (must be zero for DB-backed tests):"
-          if grep -E -- "--- SKIP: *(TestRBACResolver|TestFacilityScope|TestCheckIn)" test_output.log; then
+          if grep -E -- "--- SKIP: *(TestRBACResolver|TestFacilityScope|TestCheckIn|TestListMyAppointments|TestListPublicFacilities|TestPatientStatusLookup|TestMigration0011_Transition|TestFreshMigrationChain|TestCrossFacility)" test_output.log; then
             echo "FAIL: DB-backed tests were skipped despite CI PostgreSQL service"
             exit 1
           fi
@@ -167,6 +181,173 @@ jobs:
       - name: SvelteKit check
         run: pnpm --filter sigap-web run check
 
+  # Real Better Auth / session lifecycle coverage. Without this job the CI run
+  # can be green while every live auth assertion is skipped, which is exactly
+  # the gap this workflow closes. REQUIRE_DB=1 makes any skip fatal.
+  auth-integration:
+    name: Better Auth Integration
+    runs-on: ubuntu-latest
+    env:
+      SIGAP_DATABASE_URL: postgresql://sigap_ci:sigap_ci_pass@localhost:5432/sigap_ci?sslmode=disable
+      DATABASE_URL: postgresql://sigap_ci:sigap_ci_pass@localhost:5432/sigap_ci?sslmode=disable
+      BETTER_AUTH_SECRET: sigap-ci-only-not-a-production-secret-0001
+      SIGAP_SESSION_SECURITY_REQUIRE_DB: '1'
+      SIGAP_SESSION_LIFECYCLE_REQUIRE_DB: '1'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sigap_ci
+          POSTGRES_PASSWORD: sigap_ci_pass
+          POSTGRES_DB: sigap_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sigap_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm version comes from the root packageManager field (pnpm@9.0.0);
+      # specifying `version:` here as well makes action-setup fail with
+      # "Multiple versions of pnpm specified".
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply SIGAP migrations 0001-0014
+        run: cd apps/api && go run ./cmd/ci-migrate
+
+      - name: Provision Better Auth schema (official migration API)
+        run: cd apps/web && node scripts/provision-auth-schema.mjs
+
+      - name: Session security negatives (DB required)
+        run: cd apps/web && node tests/session-security.test.js
+
+      - name: Session lifecycle (DB required)
+        run: cd apps/web && node tests/session-lifecycle.test.js
+
+      - name: Auth config / registration / JWT claims (DB required)
+        run: cd apps/web && node tests/auth-config-assertions.test.js
+
+  attribution:
+    name: Commit Attribution Check
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 because the check resolves a commit RANGE. A shallow
+      # checkout cannot see the base commit, and the check reports that as exit 2
+      # (missing prerequisite) rather than passing vacuously — see the note on
+      # exit codes below.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Scans ONLY the commits this push or pull request adds, so the AI
+      # co-author trailers already sitting in this repository's history can never
+      # fail the job. The agent tools (Trae, Codebuff, Claude Code, OMP) stamp
+      # those trailers into the message body when they create a commit;
+      # `.githooks/commit-msg` strips them locally, and this is the gate that does
+      # not depend on a developer having installed that hook.
+      # See docs/operations/git-attribution.md.
+      - name: Scan new commits for AI co-author trailers
+        run: |
+          # On pull_request, github.sha is the merge commit, so base..merge is
+          # exactly the set of commits the PR adds (and needs no access to the
+          # fork's refs). On push, github.event.before is the previous tip.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          head="${{ github.sha }}"
+          # A new branch pushes with `before` set to forty zeros, which is not a
+          # revision; scan just the pushed tip in that case.
+          case "$base" in
+            0000000000000000000000000000000000000000) base="";;
+          esac
+          if [ -n "$base" ]; then
+            node scripts/check-attribution.mjs --range "$base..$head"
+          else
+            node scripts/check-attribution.mjs --range "$head^!"
+          fi
+        # Exit 1 is the gate: an AI trailer was found. Exit 2 means the range
+        # could not be resolved, which the fetch-depth above exists to prevent —
+        # it must fail loudly, never be read as a clean skip.
+
+      # A trailer-only check cannot see WHO authored/committed the commit. PR #96
+      # was built as sigap-ops <ops@local>, which the check above accepted. This
+      # gate verifies both author and committer identity on new commits only.
+      # Fork PRs stay in permissive mode so genuine external contributors are not
+      # blocked merely for having a different email; strict mode (maintainer or
+      # explicitly authorized automation only) applies on trusted branches.
+      - name: Verify commit author/committer identity
+        env:
+          # Historical Pen.dev design-tool author identities are grandfathered
+          # by EXACT immutable commit SHA only — never by email, name or date.
+          # A NEW commit reusing design@sigap / impl@sigap / sigap-ops is rejected.
+          # GitHub system merge commits are handled separately by the gate.
+          SIGAP_LEGACY_AUTHOR_COMMITS: >-
+            ffbd96dc3898d3383f3318d1c8fbe06992013073
+            f2621cf0e2286fe815942cd06b9808e911cd6866
+            62ad3fd40592801c6a08b3433325efb7a31e77ee
+            70c6f9fc746c1cc347bd111dde9404f548b0f2fe
+            2db86fbe708c372d238ef2e51914596c60843190
+            ac53647b7405086770c7031a7e66f73e063a1d79
+            bc7abfca2a7739c00541d5dfcfc3d74f6e60194b
+            41b11deae833fffbd20da698af314cbddc3ce0ea
+            5d092ad93c96f0273c7d85d77b525d14bfbb1d2d
+            37c1b130060ab4c3f7b504ca9abb8f6cc097a546
+            400e1285153759faed957aa45068e2c7a300c0cf
+            c3f08ed3a867a9a084a8c7172a74faa1898dc828
+            8da750c7b076b290033a95cbadc8c9299fd11438
+            aa2c2b1044644ee216385f6ea485aa12d9065286
+            58dfafacfaa996827c483701a101e24b1d725dbf
+            dff1cca33faebd63f1dde3f04cc72abb0d95efa4
+            6b1a572bd3156a6f24111d97f19ec18d1b10adc9
+            cdfdbbb4139995cdf2a32680b758d031e2ab0228
+            90c73b784bd88a4f1ccb53b22f80989c2fe46532
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+              mode=permissive
+            else
+              mode=auto
+            fi
+            branch="${{ github.event.pull_request.head.ref }}"
+          else
+            base="${{ github.event.before }}"
+            mode=auto
+            branch="${{ github.ref_name }}"
+          fi
+          head="${{ github.sha }}"
+          case "$base" in
+            0000000000000000000000000000000000000000) base="";;
+          esac
+          if [ -n "$base" ]; then
+            node scripts/check-commit-identity.mjs --range "$base..$head" --mode "$mode" --branch "$branch"
+          else
+            node scripts/check-commit-identity.mjs --range "$head^!" --mode "$mode" --branch "$branch"
+          fi
+
   ops-guards:
     name: Deployment Safety Guards
     runs-on: ubuntu-latest
@@ -252,7 +433,18 @@ jobs:
           }
           run_suite sh scripts/ops/test-skip-exit-codes.sh
           run_suite sh scripts/ops/test-guard-shallow-clone.sh
-          run_suite sh scripts/ops/test-db-classifier.sh
+          # Two versioned contracts: the historical classifier is tested only
+          # against its own 0001-0011 fixture, the regional classifier against
+          # the full 0001-0014 directory. Running the historical SUT against the
+          # regional directory produces a false M-inventory failure.
+          hist_mig=$(mktemp -d)
+          for f in packages/db/migrations/*.sql; do
+            case "$(basename "$f")" in
+              000[1-9]_*.sql|0010_*.sql|0011_*.sql) cp "$f" "$hist_mig/" ;;
+            esac
+          done
+          run_suite env SIGAP_MIG_DIR="$hist_mig" sh scripts/ops/test-db-classifier.sh
+          run_suite sh scripts/ops/test-db-classifier.sh scripts/ops/db-metadata-inspection-regional.sql
           run_suite sh scripts/ops/test-migration-0011.sh
           run_suite sh scripts/ops/test-notification-contract.sh
           # The 0011 rollback-safety pre-flight. J11 is no longer UNKNOWN: the older
@@ -332,5 +524,8 @@ jobs:
         env:
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Commit-scoped policy for the 15 fully classified historical false
+          # positives. New findings in new commits are still reported.
+          GITLEAKS_CONFIG: .gitleaks.toml
         # gitleaks-action is free for public repos; private repos need a license.
         # Exits non-zero when leaks are found, keeping the gate blocking.

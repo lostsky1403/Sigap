@@ -1,11 +1,13 @@
-import type { SupabaseClient } from '@supabase/ssr';
-import type { AuthSessionLike } from './lib/server/auth';
+import type { auth as BetterAuth, AuthSession } from '$lib/server/auth.better';
 
 declare global {
 	namespace App {
 		interface Locals {
-			supabase: SupabaseClient | null;
-			session: AuthSessionLike | null;
+			auth: BetterAuth | null;
+			/** The Better Auth session envelope, exactly as `auth.api.getSession` returns it. */
+			session: AuthSession | null;
+			/** The ES256 JWT minted by the Better Auth jwt plugin for the Go API. */
+			jwt: string | null;
 		}
 	}
 }

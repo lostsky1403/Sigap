@@ -12,18 +12,20 @@ import {
 	SPACE,
 	STATUS,
 	SURFACE,
-	TOKENS
+	TOKENS,
+	TYPE
 } from './tokens';
 
 /**
- * Frozen token contract (Phase 3B1 section 5).
+ * Frozen token contract (V2.2).
  *
  * These assertions are EXACT. There is no approximate color matching and no
  * tolerance: if a hex value drifts by one character the suite fails. That is
  * the point — a design system that can be "nearly right" is not frozen.
  *
- * The CSS file is parsed and compared against tokens.ts, so the stylesheet and
- * the TypeScript source cannot diverge.
+ * The values come from the approved Pen.dev artifact. The CSS file is parsed
+ * and compared against tokens.ts, so the stylesheet and the TypeScript source
+ * cannot diverge.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -51,31 +53,56 @@ function parseCssVariables(css: string): Record<string, string> {
 	return out;
 }
 
+/** WCAG 2.x relative luminance for a `#RRGGBB` string. */
+function luminance(hex: string): number {
+	const value = hex.replace('#', '');
+	const channel = (offset: number) => {
+		const c = Number.parseInt(value.slice(offset, offset + 2), 16) / 255;
+		return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+	};
+	return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+}
+
+/** WCAG 2.x contrast ratio between two `#RRGGBB` strings. */
+function contrast(a: string, b: string): number {
+	const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+	return (hi + 0.05) / (lo + 0.05);
+}
+
 describe('frozen design tokens', () => {
 	it('pins the exact brand colors', () => {
 		expect(BRAND).toEqual({
 			primary: '#0F766E',
+			primaryStrong: '#115E59',
 			primaryHover: '#0B6B63',
-			primaryActive: '#084F49'
+			primaryActive: '#084F49',
+			primaryTint: '#E6F1EF',
+			onPrimary: '#FFFFFF'
 		});
 	});
 
 	it('pins the exact surface and text colors', () => {
 		expect(SURFACE).toEqual({
-			canvas: '#F7F6F3',
+			canvas: '#F7F9F8',
 			surface: '#FFFFFF',
-			foreground: '#1C1B1A',
-			muted: '#57534E',
-			border: '#E0DDD8'
+			sunken: '#F1F4F3',
+			foreground: '#17211F',
+			muted: '#5F6F6B',
+			border: '#767E7C',
+			borderSubtle: '#E0E6E3'
 		});
 	});
 
-	it('pins the exact semantic status colors', () => {
+	it('pins the exact semantic status colors and their tints', () => {
 		expect(STATUS).toEqual({
-			success: '#2F7D32',
-			warning: '#B45309',
-			danger: '#C4322A',
-			info: '#1D6BB5'
+			success: '#147A3A',
+			successTint: '#E9F4EC',
+			warning: '#AC4F08',
+			warningTint: '#FBF1E4',
+			danger: '#B42318',
+			dangerTint: '#FBEDEA',
+			info: '#2563A6',
+			infoTint: '#EAF1F8'
 		});
 	});
 
@@ -91,10 +118,34 @@ describe('frozen design tokens', () => {
 		expect(CONTROL_HEIGHT.adminComfortable).toBeGreaterThanOrEqual(40);
 	});
 
-	it('keeps the 8px spacing rhythm', () => {
-		expect(Object.values(SPACE)).toEqual(['8px', '16px', '24px', '32px', '40px', '48px']);
+	it('keeps a 4px-based spacing ladder', () => {
+		expect(Object.values(SPACE)).toEqual([
+			'4px',
+			'8px',
+			'12px',
+			'16px',
+			'24px',
+			'32px',
+			'48px',
+			'64px'
+		]);
 		for (const value of Object.values(SPACE)) {
-			expect(Number.parseInt(value, 10) % 8).toBe(0);
+			expect(Number.parseInt(value, 10) % 4).toBe(0);
+		}
+	});
+
+	it('pins the type scale, with no step below 11px', () => {
+		expect(TYPE).toEqual({
+			display: 32,
+			pageTitle: 20,
+			subtitle: 15,
+			body: 14,
+			label: 13,
+			caption: 12,
+			micro: 11
+		});
+		for (const [name, size] of Object.entries(TYPE)) {
+			expect(size, `type step ${name} must be at least 11px`).toBeGreaterThanOrEqual(11);
 		}
 	});
 
@@ -106,17 +157,26 @@ describe('frozen design tokens', () => {
 		expect(Object.keys(TOKENS).sort()).toEqual(
 			[
 				'--sigap-primary',
+				'--sigap-primary-strong',
 				'--sigap-primary-hover',
 				'--sigap-primary-active',
+				'--sigap-primary-tint',
+				'--sigap-on-primary',
 				'--sigap-canvas',
 				'--sigap-surface',
+				'--sigap-surface-sunken',
 				'--sigap-foreground',
 				'--sigap-muted',
 				'--sigap-border',
+				'--sigap-border-subtle',
 				'--sigap-success',
+				'--sigap-success-tint',
 				'--sigap-warning',
+				'--sigap-warning-tint',
 				'--sigap-danger',
+				'--sigap-danger-tint',
 				'--sigap-info',
+				'--sigap-info-tint',
 				'--sigap-radius-control',
 				'--sigap-radius-panel',
 				'--sigap-radius-dialog',
@@ -129,6 +189,15 @@ describe('frozen design tokens', () => {
 				'--sigap-space-4',
 				'--sigap-space-5',
 				'--sigap-space-6',
+				'--sigap-space-7',
+				'--sigap-space-8',
+				'--sigap-type-display',
+				'--sigap-type-page-title',
+				'--sigap-type-subtitle',
+				'--sigap-type-body',
+				'--sigap-type-label',
+				'--sigap-type-caption',
+				'--sigap-type-micro',
 				'--sigap-icon-stroke'
 			].sort()
 		);
@@ -185,9 +254,11 @@ describe('frozen design tokens', () => {
 		// that NAMES a retired color (for example the removed emerald accent)
 		// does not read as a live value.
 		const allowed = new Set(
-			[...Object.values(BRAND), ...Object.values(SURFACE), ...Object.values(STATUS)].map((hex) =>
-				hex.toLowerCase()
-			)
+			[
+				...Object.values(BRAND),
+				...Object.values(SURFACE),
+				...Object.values(STATUS)
+			].map((hex) => hex.toLowerCase())
 		);
 		for (const file of ['tokens.css']) {
 			const source = stripComments(read(file));
@@ -197,5 +268,75 @@ describe('frozen design tokens', () => {
 				);
 			}
 		}
+	});
+
+	/**
+	 * The accessibility contract the token split exists to satisfy.
+	 *
+	 * These are not decorative assertions. The retired palette shipped a single
+	 * `border: #E0DDD8` at 1.24:1 wired to every input and button outline, which
+	 * fails the WCAG 2.2 AA 3:1 non-text requirement. These tests make that
+	 * specific defect impossible to reintroduce.
+	 */
+	describe('contrast requirements', () => {
+		it('keeps the control border at or above 3:1 on every ground it draws on', () => {
+			for (const ground of [SURFACE.surface, SURFACE.canvas, SURFACE.sunken]) {
+				const ratio = contrast(SURFACE.border, ground);
+				expect(
+					ratio,
+					`control border ${SURFACE.border} on ${ground} must clear 3:1 for non-text contrast`
+				).toBeGreaterThanOrEqual(3);
+			}
+		});
+
+		it('never lets the decorative separator be mistaken for a control border', () => {
+			const ratio = contrast(SURFACE.borderSubtle, SURFACE.surface);
+			expect(ratio, 'the decorative separator must stay below the 3:1 control threshold').toBeLessThan(
+				3
+			);
+		});
+
+		it('keeps every status tone at or above 4.5:1 on its own tint ground', () => {
+			const pairs: Array<[string, string, string]> = [
+				[STATUS.success, STATUS.successTint, 'success'],
+				[STATUS.warning, STATUS.warningTint, 'warning'],
+				[STATUS.danger, STATUS.dangerTint, 'danger'],
+				[STATUS.info, STATUS.infoTint, 'info']
+			];
+			for (const [tone, tint, name] of pairs) {
+				const ratio = contrast(tone, tint);
+				expect(ratio, `${name} ${tone} on its tint ${tint} must clear 4.5:1`).toBeGreaterThanOrEqual(
+					4.5
+				);
+			}
+		});
+
+		it('keeps body text at or above 4.5:1 on every ground it draws on', () => {
+			for (const ground of [SURFACE.surface, SURFACE.canvas, SURFACE.sunken]) {
+				expect(contrast(SURFACE.foreground, ground)).toBeGreaterThanOrEqual(4.5);
+			}
+		});
+
+		it('keeps muted supporting text at or above 4.5:1 on surface and canvas', () => {
+			for (const ground of [SURFACE.surface, SURFACE.canvas]) {
+				expect(
+					contrast(SURFACE.muted, ground),
+					`muted ${SURFACE.muted} on ${ground} must clear 4.5:1`
+				).toBeGreaterThanOrEqual(4.5);
+			}
+		});
+
+		it('keeps the primary action legible for white text on it', () => {
+			expect(contrast(BRAND.onPrimary, BRAND.primary)).toBeGreaterThanOrEqual(4.5);
+		});
+
+		/**
+		 * The border token is a control boundary, not a text colour. This test
+		 * pins the reason so a future author cannot "tidy up" by using it for a
+		 * caption and quietly ship a 4.16:1 failure.
+		 */
+		it('documents that the control border is unsuitable as small body text', () => {
+			expect(contrast(SURFACE.border, SURFACE.surface)).toBeLessThan(4.5);
+		});
 	});
 });

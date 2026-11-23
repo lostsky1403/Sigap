@@ -62,7 +62,13 @@ func (s *Service) LogEvent(ctx context.Context, e Event) {
 		slog.Warn("audit: failed to read previous hash", "err", err, "request_id", e.RequestID)
 	}
 
-	hash := computeHash(e, prevHash)
+	// One timestamp for BOTH the hash payload and the persisted occurred_at.
+	// Previously computeHash stamped its own time.Now() while the INSERT used a
+	// separate time.Now(), so no verifier could recompute event_hash from the
+	// stored row (the hashed instant was never persisted). Millisecond truncation
+	// keeps the JSON time and the TIMESTAMPTZ value byte-for-byte equal.
+	occurredAt := time.Now().UTC().Truncate(time.Millisecond)
+	hash := computeHash(e, prevHash, occurredAt)
 
 	var actorUserID *string
 	if e.ActorUserID != "" {
@@ -102,7 +108,7 @@ func (s *Service) LogEvent(ctx context.Context, e Event) {
 	`
 
 	_, err = s.pool.Exec(ctx, sql,
-		time.Now().UTC(),
+		occurredAt,
 		e.ActorType,
 		e.Action,
 		e.ResourceType,
@@ -122,7 +128,7 @@ func (s *Service) LogEvent(ctx context.Context, e Event) {
 		// is sufficient to identify the actor; the FK is not needed for dev.
 		if actorUserID != nil && e.ActorType == "dev" {
 			_, retryErr := s.pool.Exec(ctx, sql,
-				time.Now().UTC(),
+				occurredAt,
 				e.ActorType,
 				e.Action,
 				e.ResourceType,
@@ -176,7 +182,10 @@ func (s *Service) previousHash(ctx context.Context) (string, error) {
 }
 
 // computeHash creates a deterministic SHA-256 of the canonical event payload.
-func computeHash(e Event, previousHash string) string {
+// `occurredAt` is supplied by the caller — the SAME value written to
+// audit_events.occurred_at — so a verifier can recompute the hash from the
+// stored row. Never stamp the time inside this function.
+func computeHash(e Event, previousHash string, occurredAt time.Time) string {
 	// Use a stable, explicit ordering so the hash is reproducible.
 	payload := struct {
 		Action       string         `json:"action"`
@@ -195,7 +204,7 @@ func computeHash(e Event, previousHash string) string {
 		ActorUserID:  e.ActorUserID,
 		Metadata:     e.Metadata,
 		PreviousHash: previousHash,
-		At:           time.Now().UTC().Truncate(time.Millisecond),
+		At:           occurredAt,
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {

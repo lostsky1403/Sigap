@@ -45,6 +45,7 @@
 	 * citizen picking their faskes twice and picking them once.
 	 */
 	$: bookingHref = `/appointments/new?facility_id=${encodeURIComponent(facility.id)}`;
+	$: walkInHref = `/queues/new?facility_id=${encodeURIComponent(facility.id)}`;
 	$: typeLabel = facilityTypeLabel(facility.type);
 </script>
 
@@ -61,15 +62,23 @@
 		<p class="sigap-facility-row__type">{typeLabel}</p>
 	</div>
 
-	<a
-		class="sigap-facility-row__action"
-		style:border-radius={RADIUS.control}
-		href={bookingHref}
-		aria-label="Buat janji di {facility.name}"
-	>
-		<span>Buat janji</span>
-		<Icon icon={ChevronRight} size={16} />
-	</a>
+	<div class="sigap-facility-row__actions">
+		<a
+			class="sigap-facility-row__action"
+			href={bookingHref}
+			aria-label="Buat janji temu di {facility.name}"
+		>
+			<span>Buat janji temu</span>
+			<Icon icon={ChevronRight} size={16} />
+		</a>
+		<a
+			class="sigap-facility-row__walkin"
+			href={walkInHref}
+			aria-label="Datang langsung ke {facility.name}"
+		>
+			<span>Datang langsung</span>
+		</a>
+	</div>
 </div>
 
 <style>
@@ -110,7 +119,7 @@
 		font-weight: 500;
 		color: var(--sigap-muted);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	/*
@@ -147,6 +156,44 @@
 	}
 
 	.sigap-facility-row__action:focus-visible {
+		outline: 2px solid var(--sigap-primary);
+		outline-offset: -2px;
+	}
+
+	/*
+	 * Two stacked actions on the trailing edge: the filled booking affordance
+	 * and, below it, the walk-in path. Stacking rather than placing them side
+	 * by side keeps the row narrow enough to avoid forcing the facility name
+	 * into a third line at 390px, and the hierarchy is unambiguous — the teal
+	 * action is the primary journey, the muted one the alternative.
+	 */
+	.sigap-facility-row__actions {
+		flex: none;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 2px;
+	}
+
+	.sigap-facility-row__walkin {
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: flex-end;
+		/* Citizen touch floor, matching the booking action above it. */
+		min-height: 44px;
+		padding: 0 12px;
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--sigap-muted);
+		text-decoration: none;
+	}
+
+	.sigap-facility-row__walkin:hover {
+		color: var(--sigap-primary);
+	}
+
+	.sigap-facility-row__walkin:focus-visible {
 		outline: 2px solid var(--sigap-primary);
 		outline-offset: -2px;
 	}

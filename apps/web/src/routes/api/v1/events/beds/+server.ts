@@ -1,13 +1,16 @@
 import type { RequestHandler } from '@sveltejs/kit';
 import { authHeaders } from '$lib/server/auth';
+import { resolveApiBase } from '$lib/server/upstream';
 
 // Proxy GET /api/v1/events/beds for Server-Sent Events (SSE) to Go API.
 // Forwards the stream so client can do new EventSource('/api/v1/events/beds') (relative, same origin).
-// Uses internal Docker hostname from SIGAP_API_INTERNAL so it works inside compose network.
+// The upstream base comes from SIGAP_API_INTERNAL via resolveApiBase, which refuses
+// to guess a host: a wrong guess surfaces as an outage and hides the real cause.
 export const GET: RequestHandler = async (event) => {
-	const apiBase = process.env.SIGAP_API_INTERNAL || 'http://api:8080';
+	const resolved = resolveApiBase();
+	if ('unavailable' in resolved) return resolved.unavailable;
 
-	const upstream = await fetch(`${apiBase}/api/v1/events/beds`, {
+	const upstream = await fetch(`${resolved.base}/api/v1/events/beds`, {
 		headers: { ...authHeaders(event) }
 	});
 

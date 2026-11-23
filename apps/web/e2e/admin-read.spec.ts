@@ -34,7 +34,8 @@ const DESTINATIONS = [
 	{ href: '/admin/appointments', label: 'Janji Temu' },
 	{ href: '/admin/schedules', label: 'Jadwal' },
 	{ href: '/admin/facilities', label: 'Fasilitas' },
-	{ href: '/admin/notifications', label: 'Notifikasi' }
+	{ href: '/admin/notifications', label: 'Notifikasi' },
+	{ href: '/admin/organizations', label: 'Organisasi' }
 ] as const;
 
 /** Any UUID. Used to prove a machine identifier never reaches the UI. */
@@ -138,8 +139,8 @@ test.describe('the admin shell', () => {
 		test(`${destination.href} is reachable and marks itself current`, async ({ page }) => {
 			await gotoAdmin(page, destination.href);
 
-			// All six destinations exist, with their frozen labels.
-			await expect(adminNav(page).getByRole('link')).toHaveCount(6);
+			// All seven destinations exist, with their frozen labels.
+			await expect(adminNav(page).getByRole('link')).toHaveCount(7);
 			await expect(
 				adminNav(page).getByRole('link', { name: destination.label })
 			).toBeVisible();
@@ -215,6 +216,54 @@ test.describe('the admin shell at 1024px', () => {
 		for (const destination of DESTINATIONS) {
 			await gotoAdmin(page, destination.href);
 			await expectNoHorizontalOverflow(page);
+		}
+	});
+
+	test('does not scroll the whole page sideways at 390px either', async ({ page }) => {
+		/*
+			The 1024px case above is not the hard one. At 390px the rail still
+			costs 56px, and Ringkasan's bespoke five-column schedule table is
+			~520px wide — without a scroll region of its own it widens the page to
+			520 and drags the sidebar off-screen with it. That regression shipped
+			because the existing check only ran at 1024px, so this pins the narrow
+			width too.
+		*/
+		await page.setViewportSize({ width: 390, height: 844 });
+		for (const destination of DESTINATIONS) {
+			await gotoAdmin(page, destination.href);
+			await expectNoHorizontalOverflow(page);
+		}
+	});
+});
+
+test.describe('the admin page header', () => {
+	test.use({ viewport: DESKTOP });
+
+	test('every destination states its freshness and offers the re-read', async ({ page }) => {
+		/*
+			The freshness label and the refresh control are drawn in the page header
+			on all six destinations, so they are a claim about EVERY page — but they
+			were only asserted on Ringkasan and Antrean, and the other four silently
+			shipped without the label at all: their initial load never stamped
+			`loadedAt`, so "Diperbarui pukul" appeared only after a manual refresh.
+
+			Asserting the pair per destination is what closes that gap. Both halves
+			are required: a freshness label with no way to re-read it is a fact an
+			operator cannot act on, and a refresh with no freshness label gives them
+			no idea what they refreshed.
+		*/
+		for (const destination of DESTINATIONS) {
+			await gotoAdmin(page, destination.href);
+
+			await expect(
+				page.getByText(/Diperbarui pukul \d{2}\.\d{2}/).first(),
+				`${destination.label} must state when its data was read`
+			).toBeVisible(SETTLE);
+
+			await expect(
+				page.getByRole('button', { name: /Perbarui/ }).first(),
+				`${destination.label} must offer a manual re-read`
+			).toBeVisible(SETTLE);
 		}
 	});
 });
@@ -531,7 +580,19 @@ test.describe('admin reads are real and scoped', () => {
 		// The summary cards settle first; the list may legitimately be empty.
 		await expect(page.getByText(/Menunggu/).first()).toBeVisible(SETTLE);
 
-		const body = (await page.locator('body').textContent()) ?? '';
+		// Read the VISIBLE text, with <script> removed.
+		//
+		// `body.textContent` includes inline script source, and in dev Vite
+		// injects `/@vite/client` plus a `__sveltekit_dev` bootstrap whose text
+		// contains a URL with an `@`. That made this assertion fail on a page
+		// that leaks nothing — the pattern matched the dev tooling, not the
+		// notification data. Cloning and stripping scripts keeps the test about
+		// what an operator can actually read.
+		const body = await page.evaluate(() => {
+			const clone = document.body.cloneNode(true) as HTMLElement;
+			clone.querySelectorAll('script').forEach((s) => s.remove());
+			return clone.textContent ?? '';
+		});
 		// The internal dedup key is never in the response, and nothing here may
 		// reconstruct a longer contact from the masked form.
 		expect(body, 'no hash may be shown').not.toMatch(/hash/i);
@@ -540,7 +601,7 @@ test.describe('admin reads are real and scoped', () => {
 		expect(body).not.toMatch(/\+62\d{9,}/);
 	});
 
-	test('Notifikasi offers URL-synced filters and no pagination controls', async ({ page }) => {
+	test('Notifikasi offers URL-synced filters and a client-side pager', async ({ page }) => {
 		await gotoAdmin(page, '/admin/notifications');
 		await expect(page.getByText(/Menunggu/).first()).toBeVisible(SETTLE);
 
@@ -554,12 +615,16 @@ test.describe('admin reads are real and scoped', () => {
 		await page.getByLabel('Status').selectOption('failed');
 		await page.waitForURL(/status=failed/, { timeout: SETTLE.timeout });
 
-		// NO pagination. The endpoint returns a bounded list with no cursor and no
-		// total, so a page-number control would be a control that cannot work.
+		// Pagination is CLIENT-side: it pages what the list endpoint has ALREADY
+		// returned. The control is therefore absent when the loaded list fits one
+		// page (the seeded smoke rows do), and — when present — is the honest
+		// bounded pager over the loaded total, never a "muat lebih" cursor and never
+		// a set of numbered page buttons that would imply a server-side page
+		// parameter the endpoint does not accept.
+		const nav = page.getByRole('navigation', { name: 'Navigasi halaman notifikasi' });
+		expect(await nav.count(), 'the pager appears at most once').toBeLessThanOrEqual(1);
 		const body = ((await page.locator('body').textContent()) ?? '').toLowerCase();
-		for (const forbidden of ['halaman', 'berikutnya', 'sebelumnya', 'muat lebih']) {
-			expect(body, `must not offer ${forbidden}`).not.toContain(forbidden);
-		}
+		expect(body, 'must not offer a cursor-style load-more').not.toContain('muat lebih');
 		await expect(page.getByRole('button', { name: /^\d+$/ })).toHaveCount(0);
 	});
 

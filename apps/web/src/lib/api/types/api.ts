@@ -118,23 +118,57 @@ export interface PublicServiceUnit {
  * ------------------------------------------------------------------ */
 
 /**
- * `found_by` is "checkin_code" or "formatted_number", depending on which
- * lookup matched.
- *
  * The three queue fields are `omitempty` pointers in Go, so they are OMITTED
  * entirely when the LEFT JOIN found no ticket. They are optional here, not
  * nullable, because `undefined` and `null` are different states on the wire.
  */
 export interface PatientStatus {
-	found_by: 'checkin_code' | 'formatted_number';
+	/**
+	 * Always `checkin_code`. The endpoint resolves check-in codes only — the
+	 * formatted-number strategy was removed to close the enumeration vector — so
+	 * the union this once carried had a second arm the server could not reach.
+	 */
+	found_by: 'checkin_code';
 	facility_name: string;
+	/**
+	 * What the citizen is here for — public service-catalog data (e.g.
+	 * "Poli Umum"), never patient data. Omitted by the backend when absent.
+	 */
+	service_unit_name?: string;
 	appointment_status: AppointmentStatus;
-	appointment_time: string;
+	/**
+	 * The backend deliberately does NOT return the visit time on this code-only
+	 * public endpoint: exposing it enables correlation attacks (attendance /
+	 * facility-visit patterns) and is PHI-adjacent. Do not re-add it here.
+	 */
 	/** Derived label, not the raw status: e.g. "not_checked_in", "in_queue". */
 	checkin_status: string;
 	queue_number?: number;
 	queue_status?: QueueStatus;
 	queue_formatted_number?: string;
+}
+
+/* ------------------------------------------------------------------ *
+ * Patient portal (authenticated, account-scoped)
+ * ------------------------------------------------------------------ */
+
+/**
+ * One appointment in the signed-in citizen's own list.
+ *
+ * Scoped server-side to the authenticated account: the client sends no
+ * identifier and no check-in code, and the rows returned are exactly the ones
+ * the account owns. `appointment_time` is the one timing field this surface
+ * does expose — it is the citizen's own visit, not a correlation target — so
+ * it stays RFC3339 text on the wire, as Go marshals it.
+ */
+export interface MyAppointment {
+	id: string;
+	checkin_code: string;
+	facility_name: string;
+	/** Omitted by the backend when the LEFT JOIN found no service unit. */
+	service_unit_name?: string;
+	appointment_status: AppointmentStatus;
+	appointment_time: string;
 }
 
 /* ------------------------------------------------------------------ *

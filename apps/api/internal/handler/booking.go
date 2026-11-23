@@ -31,6 +31,7 @@ type BookingHandler struct {
 	audit          *audit.Service
 	limiter        *limiter.RateLimiter
 	checkinLimiter *limiter.RateLimiter // AUDIT-302: per-IP+appointment brute-force protection
+	cancelLimiter  *limiter.RateLimiter // shared with patient status lookup: 30/min/IP
 	queueSvc       service.QueueService
 	notify         *notification.Service
 }
@@ -44,6 +45,16 @@ func NewBookingHandler(pool *pgxpool.Pool, rl *limiter.RateLimiter) *BookingHand
 // AUDIT-302: 5 attempts per5 minutes per (IP, appointment) pair.
 func (h *BookingHandler) WithCheckinLimiter(rl *limiter.RateLimiter) *BookingHandler {
 	h.checkinLimiter = rl
+	return h
+}
+
+// WithCancelLimiter attaches the SAME per-IP limiter the public status lookup
+// uses (30 req/min). Sharing the instance, rather than creating a second
+// limiter, means a code cannot be probed at 60 combined req/min by spreading
+// attempts across the status and cancel surfaces — the two endpoints burn the
+// same budget.
+func (h *BookingHandler) WithCancelLimiter(rl *limiter.RateLimiter) *BookingHandler {
+	h.cancelLimiter = rl
 	return h
 }
 
@@ -180,16 +191,25 @@ func (h *BookingHandler) BookAppointment(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Claim the appointment for the authenticated citizen account when one is
+	// present; anonymous (unauthenticated) booking leaves patient_account_id NULL
+	// and stays on the code-only model — no booking is forced into auth.
+	actorAccountID := identity.ActorFromContext(ctx).PatientAccountID()
+	var patientAccountID *string
+	if actorAccountID != "" {
+		patientAccountID = &actorAccountID
+	}
+
 	// Insert appointment
 	var id string
 	err = h.pool.QueryRow(ctx,
 		`INSERT INTO appointments
 		 (facility_id, service_unit_id, practitioner_schedule_id, patient_display_name,
-		  patient_phone, appointment_time, status, checkin_code, notes, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', $7, $8, NOW(), NOW())
+		  patient_phone, appointment_time, status, checkin_code, notes, patient_account_id, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', $7, $8, $9, NOW(), NOW())
 		 RETURNING id`,
 		req.FacilityID, req.ServiceUnitID, strPtr(req.PractitionerScheduleID),
-		req.PatientDisplayName, phone, aptTime, code, strPtr(req.Notes)).Scan(&id)
+		req.PatientDisplayName, phone, aptTime, code, strPtr(req.Notes), patientAccountID).Scan(&id)
 	if err != nil {
 		slog.Error("booking insert failed",
 			"facility_id", req.FacilityID,
@@ -260,16 +280,30 @@ func normalizePhone(s string) string {
 	return re.ReplaceAllString(s, "")
 }
 
-// generateCheckinCode creates a random alphanumeric code of given length.
+// checkinCodeAlphabet is the symbol set a check-in code is drawn from.
+//
+// It deliberately omits I, O, 0 and 1. A check-in code is read off a
+// confirmation screen or an SMS and typed into a phone, often at a facility
+// entrance, and "O" versus "0" and "I" versus "1" are indistinguishable in
+// most sans faces. A citizen who transcribes the letter faithfully but the
+// screen renders a digit (or vice versa) gets "Kode tidak ditemukan" — the
+// code they hold is correct, they copied what they saw, and the system tells
+// them it does not exist. That is unfixable by the user and is exactly the
+// failure this alphabet prevents.
+//
+// 32 symbols over 6 positions is 32^6 = 1.07e9 combinations, which remains far
+// outside anything the endpoint's per-IP limit (30 requests/minute) can walk.
+const checkinCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+// generateCheckinCode creates a random code of the given length.
 func generateCheckinCode(length int) (string, error) {
-	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	result := make([]byte, length)
 	for i := range result {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(checkinCodeAlphabet))))
 		if err != nil {
 			return "", err
 		}
-		result[i] = charset[n.Int64()]
+		result[i] = checkinCodeAlphabet[n.Int64()]
 	}
 	return string(result), nil
 }
@@ -498,7 +532,15 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 			err2 := h.pool.QueryRow(ctx,
 				`SELECT EXISTS(SELECT 1 FROM appointments WHERE id = $1)`, id,
 			).Scan(&exists)
-			if err2 != nil || !exists {
+			if err2 != nil {
+				// A database failure is not evidence the appointment is absent;
+				// answering 404 here would hide an outage behind a user error.
+				slog.Error("check-in existence probe failed",
+					"appointment_id", id, "err", err2.Error())
+				writeError(w, http.StatusInternalServerError, "Gagal memverifikasi check-in.")
+				return
+			}
+			if !exists {
 				writeError(w, http.StatusNotFound, "Janji temu tidak ditemukan.")
 				return
 			}
@@ -511,6 +553,8 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 				`SELECT checkin_code, status FROM appointments WHERE id = $1`, id,
 			).Scan(&dbCode, &dbStatus)
 			if err3 != nil {
+				slog.Error("check-in code verification failed",
+					"appointment_id", id, "err", err3.Error())
 				writeError(w, http.StatusInternalServerError, "Gagal memverifikasi check-in.")
 				return
 			}
@@ -522,6 +566,8 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "Janji temu tidak dapat check-in dengan status: "+dbStatus)
 			return
 		}
+		slog.Error("atomic check-in transition failed",
+			"appointment_id", id, "err", err.Error())
 		writeError(w, http.StatusInternalServerError, "Gagal memperbarui status check-in.")
 		return
 	}
@@ -539,9 +585,11 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 	// safe behavior.
 	if h.queueSvc == nil {
 		// Roll back to scheduled so the appointment is not stranded.
-		// Guarded: only this request (which set status='checked_in') can release.
-		_, _ = h.pool.Exec(ctx,
-			`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
+		slog.Error("queue service not configured", "appointment_id", id)
+		if _, rbErr := h.rollbackCheckIn(ctx, id); rbErr != nil {
+			slog.Error("rollback to scheduled failed",
+				"appointment_id", id, "err", rbErr.Error())
+		}
 		writeError(w, http.StatusInternalServerError, "Layanan antrean tidak tersedia.")
 		return
 	}
@@ -559,13 +607,11 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 			"facility_id", facilityID,
 			"err", err.Error())
 		// Roll back to scheduled so the appointment can be retried.
-		// Guarded: only this request (which set status='checked_in') can release.
-		ct, rbErr := h.pool.Exec(ctx,
-			`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
+		rows, rbErr := h.rollbackCheckIn(ctx, id)
 		if rbErr != nil {
 			slog.Error("rollback to scheduled failed",
 				"appointment_id", id, "err", rbErr.Error())
-		} else if ct.RowsAffected() == 0 {
+		} else if rows == 0 {
 			slog.Warn("rollback guard: appointment no longer in checked_in state",
 				"appointment_id", id)
 			writeError(w, http.StatusConflict, "Janji temu sudah diproses oleh permintaan lain.")
@@ -587,6 +633,8 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 				`UPDATE appointments SET status = 'checked_in', checkin_at = NOW(), updated_at = NOW() WHERE id = $1 AND status = 'scheduled' AND queue_ticket_id IS NULL`,
 				id)
 			if err != nil {
+				slog.Error("fallback re-acquire failed",
+					"appointment_id", id, "err", err.Error())
 				writeError(w, http.StatusInternalServerError, "Gagal memperbarui status check-in.")
 				return
 			}
@@ -606,44 +654,57 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 				},
 			})
 			if err != nil {
+				slog.Error("fallback queue generation failed",
+					"appointment_id", id, "err", err.Error())
 				// We hold checked_in but produced no ticket — release so a retry works.
-				_, _ = h.pool.Exec(ctx,
-					`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
+				if _, rbErr := h.rollbackCheckIn(ctx, id); rbErr != nil {
+					slog.Error("rollback to scheduled failed",
+						"appointment_id", id, "err", rbErr.Error())
+				}
 				writeError(w, http.StatusInternalServerError, "Gagal mengambil nomor antrean.")
 				return
 			}
 
-			// Insert a real queue_tickets row so the UUID FK is valid.
-			ticketUUID := uuid.New().String()
-			err = h.pool.QueryRow(ctx,
-				`WITH p AS (
-				    INSERT INTO patients (id, full_name, phone, date_of_birth)
-				    VALUES ($1::uuid, $2, $3, '2000-01-01')
-				    ON CONFLICT (phone) DO UPDATE SET full_name = EXCLUDED.full_name
-				    RETURNING id
-				),
-				q AS (
-				    INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status)
-				    SELECT $4::uuid, $5::uuid, p.id,
-				           COALESCE((SELECT MAX(qt2.queue_number) FROM queue_tickets qt2 WHERE qt2.facility_id = $5::uuid AND qt2.registered_at::date = CURRENT_DATE), 0) + 1,
-				           $6, 'waiting'
-				    FROM p
-				    RETURNING id
-				)
-				SELECT id FROM q`,
-				uuid.New().String(), patientName, patientPhone, ticketUUID, facilityID, res.FormattedNumber,
-			).Scan(&ticketUUID)
-			if err != nil {
-				_, _ = h.pool.Exec(ctx,
-					`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
+			// No engine issued this ticket, so this process mints the id and
+			// stores the row itself.
+			res.TicketID = uuid.New().String()
+			if err := h.recordQueueTicket(ctx, time.Now(), res.TicketID, facilityID, patientName, patientPhone, res.FormattedNumber); err != nil {
+				slog.Error("fallback ticket insert failed",
+					"appointment_id", id, "queue_ticket_id", res.TicketID, "err", err.Error())
+				if _, rbErr := h.rollbackCheckIn(ctx, id); rbErr != nil {
+					slog.Error("rollback to scheduled failed",
+						"appointment_id", id, "err", rbErr.Error())
+				}
 				writeError(w, http.StatusInternalServerError, "Gagal membuat tiket antrean.")
 				return
 			}
-			res.TicketID = ticketUUID
 		} else {
 			writeError(w, http.StatusInternalServerError, "Gagal mengambil nomor antrean.")
 			return
 		}
+	}
+
+	// The engine commits queue_tickets in its own transaction, against whatever
+	// DATABASE_URL it was started with. When that is not this database the row
+	// is invisible here and the foreign key on appointments.queue_ticket_id
+	// rejects the finalize below, leaving the citizen checked_in with no ticket.
+	//
+	// This is a configuration fault, and it is reported as one. An earlier
+	// attempt inserted a local copy of the engine-issued ticket so the finalize
+	// would succeed — that was worse than the bug: the waiting-room display
+	// reads the engine's database, so the number the citizen received would
+	// never be called, and the local insert would silently fork the numbering
+	// sequence into duplicate numbers on the board. A failed check-in the
+	// citizen can retry is honest; a ticket that looks real and is not is not.
+	if err := h.verifyQueueTicketVisible(ctx, res.TicketID); err != nil {
+		slog.Error("queue ticket is not visible in this database; check that the queue engine and the API share one DATABASE_URL",
+			"appointment_id", id, "queue_ticket_id", res.TicketID, "err", err.Error())
+		if _, rbErr := h.rollbackCheckIn(ctx, id); rbErr != nil {
+			slog.Error("rollback to scheduled failed",
+				"appointment_id", id, "err", rbErr.Error())
+		}
+		writeError(w, http.StatusServiceUnavailable, "Layanan antrean tidak sinkron. Coba lagi sebentar lagi.")
+		return
 	}
 
 	// Transition to queued with queue_ticket_id
@@ -652,6 +713,18 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 		`UPDATE appointments SET status = 'queued', queue_ticket_id = $1, updated_at = NOW() WHERE id = $2 AND status = 'checked_in' AND queue_ticket_id IS NULL`,
 		res.TicketID, id)
 	if err != nil {
+		slog.Error("check-in finalization failed",
+			"appointment_id", id, "queue_ticket_id", res.TicketID, "err", err.Error())
+		// A failed finalize must not leave the appointment checked_in without a
+		// ticket: that state has no exit, because a retry no longer matches the
+		// status='scheduled' guard and is answered 409 forever. Releasing it back
+		// to scheduled lets the citizen retry with the same code; the ticket
+		// row already recorded stays behind as an unused number, which is
+		// cheaper than an appointment nobody can check in.
+		if _, rbErr := h.rollbackCheckIn(ctx, id); rbErr != nil {
+			slog.Error("rollback to scheduled failed",
+				"appointment_id", id, "err", rbErr.Error())
+		}
 		writeError(w, http.StatusInternalServerError, "Gagal menyelesaikan check-in.")
 		return
 	}
@@ -681,8 +754,193 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 	h.fireCheckInConfirmation(id, patientPhone, facilityID, res.FormattedNumber)
 }
 
+// CancelAppointment handles POST /api/v1/appointments/cancel (public).
+//
+// A citizen cancels their own appointment by check-in code, mirroring the
+// status lookup: no auth, code-only access, per-IP rate limiting, and the same
+// confusable-fold fallback so a mistyped "O"/"0" or "I"/"1" still resolves.
+//
+// Information-oracle resistance: an ambiguous fold fails closed as "not found"
+// (indistinguishable from an unknown code), and the error classification never
+// distinguishes "wrong code" from "already checked in".
+func (h *BookingHandler) CancelAppointment(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CheckinCode string `json:"checkin_code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Format permintaan tidak valid.")
+		return
+	}
+
+	// Whitespace anywhere, not just at the ends: a code copied from an SMS or
+	// read aloud often arrives with stray spaces, exactly as the status lookup
+	// tolerates.
+	code := strings.Join(strings.Fields(req.CheckinCode), "")
+	if code == "" {
+		writeError(w, http.StatusBadRequest, "Kode check-in wajib diisi.")
+		return
+	}
+	if len(code) > maxPatientCodeLen || !safeCodeRe.MatchString(code) {
+		writeError(w, http.StatusBadRequest, "Kode tidak valid.")
+		return
+	}
+
+	// Rate limit with the SAME limiter instance the status lookup uses
+	// (30 req/min per IP). WHY shared, not a second instance: a code must not
+	// be probeable at 60 combined req/min by spreading attempts across the
+	// status and cancel surfaces.
+	if h.cancelLimiter != nil && !h.cancelLimiter.Allow(extractIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "Terlalu banyak permintaan. Coba lagi nanti.")
+		return
+	}
+
+	if h.pool == nil {
+		writeError(w, http.StatusInternalServerError, "Database connection unavailable.")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Exact match first, folded as a fallback — the same two-query strategy as
+	// the status lookup. SELECTing id/facility_id/status and the owner account
+	// id only; no patient data.
+	const resolveSQL = `
+		SELECT a.id, a.facility_id, a.status, a.patient_account_id
+		FROM appointments a
+		WHERE %s`
+
+	id, facilityID, status, ownerAccountID, err := h.resolveByCheckinCode(
+		ctx, fmt.Sprintf(resolveSQL, `upper(a.checkin_code) = upper($1)`), code)
+	if err == errAmbiguousCode {
+		writeError(w, http.StatusNotFound, "Kode tidak ditemukan.")
+		return
+	}
+	if err == pgx.ErrNoRows {
+		id, facilityID, status, ownerAccountID, err = h.resolveByCheckinCode(
+			ctx,
+			fmt.Sprintf(resolveSQL, `translate(upper(a.checkin_code), '01', 'OI') = translate(upper($1), '01', 'OI') LIMIT 2`),
+			code,
+		)
+		if err == errAmbiguousCode {
+			writeError(w, http.StatusNotFound, "Kode tidak ditemukan.")
+			return
+		}
+	}
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "Kode tidak ditemukan.")
+			return
+		}
+		slog.Error("cancel resolve failed", "err", err.Error())
+		writeError(w, http.StatusInternalServerError, "Gagal memproses pembatalan.")
+		return
+	}
+
+	// Server-side ownership re-check on cancel.
+	//
+	// An appointment claimed by a citizen account (patient_account_id NOT NULL)
+	// may only be cancelled BY that account. Anonymous bookings (NULL) keep the
+	// code-only model — holding the check-in code is still sufficient — and are
+	// deliberately NOT forced into authentication. This is what stops a signed-in
+	// citizen (or anyone holding a leaked code) from cancelling a DIFFERENT
+	// citizen's owned appointment.
+	actorAccountID := identity.ActorFromContext(r.Context()).PatientAccountID()
+	if ownerAccountID != nil && (actorAccountID == "" || actorAccountID != *ownerAccountID) {
+		// Record the refusal. This inline 403 is not a route RequiredPolicy, so
+		// identity/authz.go's logAuthzDenied never fires for it. Without this
+		// event a forbidden cancel attempt on another patient's owned appointment
+		// leaves no trace in the hash-chained audit log. No PHI is written — the
+		// detail is a fixed string; logBookingEvent derives the actor from context.
+		h.logBookingEvent(r, "appointment.cancel.denied", "denied", "cancel-ownership-check-failed")
+		writeError(w, http.StatusForbidden, "Anda tidak berhak membatalkan janji temu ini.")
+		return
+	}
+
+	switch status {
+	case "cancelled":
+		// Idempotent: a double-tap or a retry after a dropped response reaches
+		// an already-cancelled appointment and should not be reported as a loss.
+		writeJSON(w, http.StatusOK, map[string]any{"status": status})
+		return
+	case "checked_in", "queued", "completed", "no_show":
+		// The citizen is past the point they still control the appointment;
+		// staff must handle these. WHY 409 rather than a silent no-op: saying
+		// "cancelled" here would be false — the appointment is still live.
+		writeError(w, http.StatusConflict, "Janji temu sudah tidak dapat dibatalkan.")
+		return
+	case "scheduled":
+		// Proceed to the guarded transition below.
+	default:
+		// Any status the codebase does not model is treated as
+		// non-cancellable-by-citizen rather than risk cancelling something
+		// staff owns.
+		writeError(w, http.StatusConflict, "Janji temu sudah tidak dapat dibatalkan.")
+		return
+	}
+
+	// Guarded transition: WHERE id=$1 AND status='scheduled' so a concurrent
+	// request that already moved this appointment cannot be overwritten.
+	ct, err := h.pool.Exec(ctx,
+		`UPDATE appointments SET status = 'cancelled', cancelled_at = NOW(), updated_at = NOW()
+		 WHERE id = $1 AND status = 'scheduled'`, id)
+	if err != nil {
+		slog.Error("cancel transition failed", "appointment_id", id, "err", err.Error())
+		writeError(w, http.StatusInternalServerError, "Gagal membatalkan janji temu.")
+		return
+	}
+	if ct.RowsAffected() == 0 {
+		// Lost a race: the appointment left 'scheduled' between resolve and
+		// update. Report the conflict rather than claiming success.
+		writeError(w, http.StatusConflict, "Janji temu sudah tidak dapat dibatalkan.")
+		return
+	}
+
+	h.logBookingEvent(r, "appointment.cancelled", "ok",
+		fmt.Sprintf("facility=%s appointment=%s", facilityID, id))
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"data": map[string]any{
+			"appointment_id": id,
+			"status":         "cancelled",
+		},
+	})
+}
+
+// resolveByCheckinCode runs one lookup and returns the resolved appointment's
+// id, facility id, current status, and owner account id (NULL for anonymous
+// bookings), following lookupBy's ambiguity contract (more than one canonical
+// row → errAmbiguousCode).
+func (h *BookingHandler) resolveByCheckinCode(ctx context.Context, query, code string) (id, facilityID, status string, ownerAccountID *string, err error) {
+	rows, err := h.pool.Query(ctx, query, code)
+	if err != nil {
+		return "", "", "", nil, err
+	}
+	defer rows.Close()
+
+	matched := 0
+	for rows.Next() {
+		matched++
+		if matched > 1 {
+			return "", "", "", nil, errAmbiguousCode
+		}
+		if err := rows.Scan(&id, &facilityID, &status, &ownerAccountID); err != nil {
+			return "", "", "", nil, err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", "", nil, err
+	}
+	if matched == 0 {
+		return "", "", "", nil, pgx.ErrNoRows
+	}
+	return id, facilityID, status, ownerAccountID, nil
+}
+
 // PublicAppointmentsRouter dispatches public appointment endpoints.
 // POST /api/v1/appointments               → BookAppointment
+// POST /api/v1/appointments/cancel        → CancelAppointment
 // POST /api/v1/appointments/{id}/check-in → CheckIn
 func (h *BookingHandler) PublicAppointmentsRouter(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -693,6 +951,10 @@ func (h *BookingHandler) PublicAppointmentsRouter(w http.ResponseWriter, r *http
 			return
 		}
 		parts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(parts) == 4 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "appointments" && parts[3] == "cancel" {
+			h.CancelAppointment(w, r)
+			return
+		}
 		if len(parts) == 5 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "appointments" && parts[4] == "check-in" {
 			h.CheckIn(w, r)
 			return
@@ -703,16 +965,119 @@ func (h *BookingHandler) PublicAppointmentsRouter(w http.ResponseWriter, r *http
 	}
 }
 
+// rollbackCheckIn releases an appointment this request claimed but could not
+// finalize. The guard keeps the release idempotent and stops it from undoing a
+// concurrent request that already completed the transition.
+//
+// The release runs on a context detached from the request: the failure that
+// brought us here is often a timeout, and a rollback inheriting the expired
+// deadline would leave exactly the stranded row it exists to prevent.
+func (h *BookingHandler) rollbackCheckIn(ctx context.Context, id string) (int64, error) {
+	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
+	ct, err := h.pool.Exec(rbCtx,
+		`UPDATE appointments SET status = 'scheduled', checkin_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'checked_in' AND queue_ticket_id IS NULL`, id)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
+}
+
+// verifyQueueTicketVisible confirms the ticket the queue service issued actually
+// exists in THIS database, before the appointment is allowed to reference it.
+//
+// A non-UUID id is rejected here rather than by the uuid column, so a
+// misbehaving queue service surfaces as a named error instead of a driver-level
+// syntax failure. A UUID that is absent means the engine committed somewhere
+// else — see the comment at the call site for why that is reported rather than
+// repaired.
+func (h *BookingHandler) verifyQueueTicketVisible(ctx context.Context, ticketID string) error {
+	if _, err := uuid.Parse(ticketID); err != nil {
+		return fmt.Errorf("queue service returned a non-UUID ticket id %q: %w", ticketID, err)
+	}
+
+	var exists bool
+	if err := h.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM queue_tickets WHERE id = $1)`, ticketID,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("look up queue ticket: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("queue ticket %s was issued but is not in this database", ticketID)
+	}
+	return nil
+}
+
+// recordQueueTicket inserts a queue ticket this process minted itself.
+//
+// It exists for exactly one caller: the SIGAP_ENGINE_FALLBACK=dev path, where
+// the in-memory FakeQueueService answers without touching any database, so the
+// API must persist the ticket or the appointment would reference nothing. It is
+// NOT used to paper over a real engine that committed elsewhere — that case is
+// reported by verifyQueueTicketVisible.
+func (h *BookingHandler) recordQueueTicket(ctx context.Context, now time.Time, ticketID, facilityID, patientName, patientPhone, formattedNumber string) error {
+	dayStart, dayEnd := serviceDayRange(now)
+	_, err := h.pool.Exec(ctx,
+		`WITH p AS (
+		    INSERT INTO patients (id, full_name, phone, date_of_birth)
+		    VALUES ($1::uuid, $2, $3, '2000-01-01')
+		    ON CONFLICT (phone) DO UPDATE SET full_name = EXCLUDED.full_name
+		    RETURNING id
+		)
+		INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status, registered_at)
+		SELECT $4::uuid, $5::uuid, p.id,
+		       (SELECT COALESCE(MAX(qt.queue_number), 0) + 1 FROM queue_tickets qt
+		         WHERE qt.facility_id = $5::uuid AND qt.registered_at >= $7 AND qt.registered_at < $8),
+		       $6, 'waiting', $9
+		FROM p
+		ON CONFLICT (id) DO NOTHING`,
+		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber, dayStart, dayEnd, now)
+	return err
+}
+
+// logBookingEvent writes an appointment audit event with the actor from the
+// TRUSTED request context (populated by auth.Middleware from the verified JWT),
+// never from the request body or any client header.
+//
+// The appointment endpoints are public/code-only, but the middleware still
+// attaches a real Better Auth citizen actor when one is present. Previously this
+// helper hard-coded ActorType "anonymous" for every event, so an authenticated
+// citizen's booking/check-in/cancel was recorded as anonymous and — for the
+// code-only check-in — became unrecoverable. Deriving the actor here closes that
+// gap without touching ownership logic (booking.go:197-201, :848-852 remain
+// byte-identical): a staff actor still has an empty PatientAccountID, so its
+// appointment stays ownerless; only the audit attribution improves.
 func (h *BookingHandler) logBookingEvent(r *http.Request, action, status, detail string) {
 	if h.audit == nil {
 		return
 	}
-	h.audit.LogEvent(r.Context(), audit.Event{
+	ctx := r.Context()
+	actor := identity.ActorFromContext(ctx)
+
+	// Default: no authenticated principal (genuine code-only caller).
+	actorType := "anonymous"
+	actorUserID := ""
+
+	switch {
+	case actor.Type == identity.ActorUser && actor.AppUserID != "":
+		// Verified citizen/staff identity with a server-resolved app_users id.
+		actorType = string(identity.ActorUser)
+		actorUserID = actor.AuditUserID()
+	case actor.Type == identity.ActorDev:
+		// Local dev actor: AppUserID empty → audit row writes NULL; the dev
+		// FK-fallback in audit.Service handles that. Local-gated only.
+		actorType = string(identity.ActorDev)
+	case actor.Type == identity.ActorSystem:
+		actorType = string(identity.ActorSystem)
+	}
+
+	h.audit.LogEvent(ctx, audit.Event{
 		Action:       action,
 		ResourceType: "appointment",
-		ActorType:    "anonymous",
-		ActorUserID:  "",
-		RequestID:    identity.RequestIDFromContext(r.Context()),
+		ActorType:    actorType,
+		ActorUserID:  actorUserID,
+		RequestID:    identity.RequestIDFromContext(ctx),
 		Metadata: audit.SanitizeMetadata(map[string]any{
 			"status": status,
 			"detail": detail,

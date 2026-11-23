@@ -253,6 +253,25 @@ function queueRow(page: Page, formattedNumber: string): Locator {
 	return page.locator('tr', { has: page.getByText(formattedNumber, { exact: true }) });
 }
 
+/**
+ * The row for one specific ticket, located by id and asserted by its visible
+ * number.
+ *
+ * The original helper scoped rows by formatted number so a test would fail if
+ * the number were not rendered — a good property. It broke for a reason that
+ * has nothing to do with rendering: the daily counter resets, so "DEMO-0001"
+ * exists once per facility per DAY, and a dev database with a few days of
+ * walk-ins contains several. Playwright's strict mode then matched two rows and
+ * the test failed on a database that was merely older, not wrong.
+ *
+ * So the row is found by the id (unique), and the visible number is asserted
+ * separately by the caller — the operator-visibility property survives, and the
+ * locator stops depending on how much history the database happens to hold.
+ */
+function queueRowById(page: Page, ticketId: string): Locator {
+	return page.locator(`tr[data-ticket-id="${ticketId}"]`);
+}
+
 test.describe.configure({ mode: 'serial' });
 
 test.describe('T-3B5-01 queue status mutation', () => {
@@ -269,16 +288,18 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		const ticket = await createWalkIn(page, 'E2E Antrean Called');
 		await gotoAdmin(page, '/admin/queues');
 
-		const row = queueRow(page, ticket.number);
+		const row = queueRowById(page, ticket.id);
 		await expect(row, 'the new walk-in must appear on the board').toBeVisible(SETTLE);
+		// The operator reads the formatted number, so the row must show it.
+		await expect(row).toContainText(ticket.number);
 
 		// A waiting ticket offers EXACTLY called + cancelled. Anything else on
 		// the row would be an affordance the server would refuse.
 		await expect(row.getByRole('button')).toHaveCount(2);
-		await expect(row.getByRole('button', { name: 'Dipanggil' })).toBeVisible();
-		await expect(row.getByRole('button', { name: 'Dibatalkan' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Panggil' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Batalkan' })).toBeVisible();
 
-		await row.getByRole('button', { name: 'Dipanggil' }).click();
+		await row.getByRole('button', { name: 'Panggil' }).click();
 
 		// The row RELOADS rather than patching locally, so the assertion is that
 		// the server's new state came back. The ticket moves from the waiting
@@ -289,20 +310,20 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		).toBeVisible(SETTLE);
 
 		// And the awaiting set is exactly what `called` allows.
-		const moved = queueRow(page, ticket.number);
+		const moved = queueRowById(page, ticket.id);
 		await expect(moved.getByRole('button')).toHaveCount(3);
-		await expect(moved.getByRole('button', { name: 'Dalam Pelayanan' })).toBeVisible();
-		await expect(moved.getByRole('button', { name: 'Dibatalkan' })).toBeVisible();
-		await expect(moved.getByRole('button', { name: 'Dilewati' })).toBeVisible();
+		await expect(moved.getByRole('button', { name: 'Layani' })).toBeVisible();
+		await expect(moved.getByRole('button', { name: 'Batalkan' })).toBeVisible();
+		await expect(moved.getByRole('button', { name: 'Lewati' })).toBeVisible();
 	});
 
 	test('announces the transition politely and shows a toast', async ({ page }) => {
 		const ticket = await createWalkIn(page, 'E2E Antrean Toast');
 		await gotoAdmin(page, '/admin/queues');
 
-		const row = queueRow(page, ticket.number);
+		const row = queueRowById(page, ticket.id);
 		await expect(row).toBeVisible(SETTLE);
-		await row.getByRole('button', { name: 'Dipanggil' }).click();
+		await row.getByRole('button', { name: 'Panggil' }).click();
 
 		// The live region is aria-live="polite", so it must not interrupt. An
 		// assertive region here would cut across whatever the operator is doing.
@@ -319,7 +340,7 @@ test.describe('T-3B5-01 queue status mutation', () => {
 	test('surfaces the backend 400 message verbatim on an invalid transition', async ({ page }) => {
 		const ticket = await createWalkIn(page, 'E2E Antreai Invalid');
 		await gotoAdmin(page, '/admin/queues');
-		await expect(queueRow(page, ticket.number)).toBeVisible(SETTLE);
+		await expect(queueRowById(page, ticket.id)).toBeVisible(SETTLE);
 
 		// waiting -> completed is illegal in the state machine. The UI will not
 		// offer it, which is the point — so the only way to reach the refusal is
@@ -357,8 +378,8 @@ test.describe('T-3B5-01 queue status mutation', () => {
 			}
 		);
 
-		const row = queueRow(page, ticket.number);
-		await row.getByRole('button', { name: 'Dipanggil' }).click();
+		const row = queueRowById(page, ticket.id);
+		await row.getByRole('button', { name: 'Panggil' }).click();
 
 		// VERBATIM. The row must show the server's own words, character for
 		// character, in an alert region so it is announced as a failure.
@@ -370,21 +391,21 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		const ticket = await createWalkIn(page, 'E2E Antrean Terminal');
 		await gotoAdmin(page, '/admin/queues');
 
-		const row = queueRow(page, ticket.number);
+		const row = queueRowById(page, ticket.id);
 		await expect(row).toBeVisible(SETTLE);
 		// Drive it to `skipped`, which is terminal: called -> skipped.
-		await row.getByRole('button', { name: 'Dipanggil' }).click();
+		await row.getByRole('button', { name: 'Panggil' }).click();
 		await expect(
 			page.locator('section', { has: page.getByRole('heading', { name: 'Dipanggil' }) })
 				.locator('tr', { has: page.getByText(ticket.number, { exact: true }) })
 		).toBeVisible(SETTLE);
 
-		const calledRow = queueRow(page, ticket.number);
-		await calledRow.getByRole('button', { name: 'Dilewati' }).click();
+		const calledRow = queueRowById(page, ticket.id);
+		await calledRow.getByRole('button', { name: 'Lewati' }).click();
 
 		// A terminal state says so in words. An empty cell would read as
 		// "still loading", which is a different and wrong claim.
-		const finished = queueRow(page, ticket.number);
+		const finished = queueRowById(page, ticket.id);
 		await expect(finished.getByText('Tidak ada aksi lanjutan')).toBeVisible(SETTLE);
 		await expect(finished.getByRole('button')).toHaveCount(0);
 	});
@@ -415,8 +436,10 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		const ticket = await createWalkIn(page, 'E2E Antrean Filter');
 		await gotoAdmin(page, '/admin/queues');
 
-		const row = queueRow(page, ticket.number);
+		const row = queueRowById(page, ticket.id);
 		await expect(row, 'the new walk-in must appear on the board').toBeVisible(SETTLE);
+		// The operator reads the formatted number, so the row must show it.
+		await expect(row).toContainText(ticket.number);
 
 		// The facility is read from the server's own list, not hardcoded, so the
 		// same assertion holds for every actor in the matrix.
@@ -467,10 +490,10 @@ test.describe('T-3B5-01 queue status mutation', () => {
 		// applied at all, this row would still be visible too — which is why the
 		// control's value above is the real assertion and this one is the
 		// consequence.
-		await expect(queueRow(page, ticket.number)).toBeVisible(SETTLE);
+		await expect(queueRowById(page, ticket.id)).toBeVisible(SETTLE);
 
 		// The mutation, through the page's own control.
-		await queueRow(page, ticket.number).getByRole('button', { name: 'Dipanggil' }).click();
+		await queueRowById(page, ticket.id).getByRole('button', { name: 'Panggil' }).click();
 		await expect(
 			page.locator('section', { has: page.getByRole('heading', { name: 'Dipanggil' }) })
 				.locator('tr', { has: page.getByText(ticket.number, { exact: true }) })
@@ -488,7 +511,7 @@ test.describe('T-3B5-01 queue status mutation', () => {
 
 		// And the narrowing is still in force: the mutated row is still on the
 		// page, and the count label still reports a subset.
-		await expect(queueRow(page, ticket.number)).toBeVisible(SETTLE);
+		await expect(queueRowById(page, ticket.id)).toBeVisible(SETTLE);
 		await expect(page.locator('.sigap-facility-filter__count')).toContainText(
 			'Menampilkan:',
 			SETTLE
@@ -661,11 +684,11 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 		// one of the confirmed ones.
 		const row = table.locator('tr', { has: page.getByText(name) }).first();
 		await expect(row).toBeVisible(SETTLE);
-		await expect(row.getByRole('button', { name: 'Sudah Check-in' })).toBeVisible();
-		await expect(row.getByRole('button', { name: 'Dibatalkan' })).toBeVisible();
-		await expect(row.getByRole('button', { name: 'Tidak Datang' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Check-in' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Batalkan' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Tandai tidak datang' })).toBeVisible();
 
-		await row.getByRole('button', { name: 'Sudah Check-in' }).click();
+		await row.getByRole('button', { name: 'Check-in' }).click();
 
 		// NO DIALOG, asserted against the live UI rather than a snapshot. If
 		// checking in asked for confirmation this times out — which is the proof,
@@ -700,10 +723,10 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 
 		// THE ABSENCE. §4 calls this "ABSOLUTELY NO", and it is the one
 		// transition most likely to be reintroduced as a convenience shortcut.
-		await expect(row.getByRole('button', { name: 'Dalam Antrean' })).toBeVisible();
-		await expect(row.getByRole('button', { name: 'Dibatalkan' })).toBeVisible();
-		await expect(row.getByRole('button', { name: 'Tidak Datang' })).toBeVisible();
-		await expect(row.getByRole('button', { name: 'Selesai' })).toHaveCount(0);
+		await expect(row.getByRole('button', { name: 'Antrekan' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Batalkan' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Tandai tidak datang' })).toBeVisible();
+		await expect(row.getByRole('button', { name: 'Selesaikan' })).toHaveCount(0);
 		await expect(row.getByRole('button')).toHaveCount(3);
 
 		// And the server refuses it too, so the button would have been a control
@@ -756,7 +779,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 
 		// Cancellation is the ONLY confirmed action. Every other transition was
 		// proven dialog-free above; this is the one that must have one.
-		await row.getByRole('button', { name: 'Dibatalkan' }).click();
+		await row.getByRole('button', { name: 'Batalkan' }).click();
 
 		const modal = dialog(page);
 		await expect(modal).toBeVisible(SETTLE);
@@ -794,7 +817,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 			)
 			.toBe('cancelled');
 		await expect(table.locator('tr', { has: page.getByText(name) }).first()).toContainText(
-			'Status final',
+			'Tidak ada aksi lanjutan',
 			SETTLE
 		);
 
@@ -814,7 +837,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 		await expect(table.locator('tbody tr').first()).toBeVisible(SETTLE);
 
 		const row = table.locator('tr', { has: page.getByText(name) }).first();
-		const trigger = row.getByRole('button', { name: 'Dibatalkan' });
+		const trigger = row.getByRole('button', { name: 'Batalkan' });
 		await expect(trigger).toBeVisible(SETTLE);
 
 		await trigger.click();
@@ -843,7 +866,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 			.poll(
 				async () =>
 					page.evaluate(
-						() => document.activeElement?.textContent?.trim() === 'Dibatalkan'
+						() => document.activeElement?.textContent?.trim() === 'Batalkan'
 					),
 				{ timeout: SETTLE.timeout }
 			)
@@ -861,7 +884,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 		await expect(table.locator('tbody tr').first()).toBeVisible(SETTLE);
 
 		const row = table.locator('tr', { has: page.getByText(name) }).first();
-		const trigger = row.getByRole('button', { name: 'Dibatalkan' });
+		const trigger = row.getByRole('button', { name: 'Batalkan' });
 		await expect(trigger).toBeVisible(SETTLE);
 
 		await trigger.click();
@@ -878,7 +901,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 			.poll(
 				async () =>
 					page.evaluate(
-						() => document.activeElement?.textContent?.trim() === 'Dibatalkan'
+						() => document.activeElement?.textContent?.trim() === 'Batalkan'
 					),
 				{ timeout: SETTLE.timeout }
 			)
@@ -908,7 +931,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 		await expect(row).toBeVisible(SETTLE);
 
 		// A terminal row states so in words and offers nothing further.
-		await expect(row).toContainText('Status final', SETTLE);
+		await expect(row).toContainText('Tidak ada aksi lanjutan', SETTLE);
 		await expect(row.getByRole('button')).toHaveCount(0);
 	});
 
@@ -971,7 +994,7 @@ test.describe('T-3B5-02 appointment status mutation', () => {
 		await expect(live).toHaveAttribute('aria-live', 'polite');
 		await expect(live).toHaveAttribute('aria-atomic', 'true');
 
-		await row.getByRole('button', { name: 'Sudah Check-in' }).click();
+		await row.getByRole('button', { name: 'Check-in' }).click();
 
 		// The announcement names the transition the operator just made, so it is
 		// recognisable as THIS action's result rather than generic confirmation.
@@ -1382,6 +1405,67 @@ test.describe('T-3B5-05 notification actions', () => {
 
 	test.skip(HOLDS_NO_DATA, 'this actor holds nothing to act on; its refusal is asserted in admin-read.spec.ts');
 
+	/**
+	 * Walks every page of the client-side paginated notifications table in DOM
+	 * order, calling `visit` once per page. Returns to page 1 first via
+	 * "Sebelumnya" — NOT via a refetch — so the DOM set stays exactly the set
+	 * the stable-tally loop above pinned. A refetch could pick up a row another
+	 * suite appended in the window and desync the comparison that the loop just
+	 * made exact.
+	 */
+	async function walkNotificationPages(
+		page: Page,
+		visit: (table: Locator) => Promise<void>
+	): Promise<void> {
+		const table = page.locator('table');
+		const prev = page.getByRole('button', { name: 'Sebelumnya' });
+		const next = page.getByRole('button', { name: 'Berikutnya' });
+		const pageIndicator = page.locator('.sigap-pagination__page');
+
+		while ((await prev.count()) > 0 && (await prev.isEnabled())) {
+			const before = (await pageIndicator.textContent()) ?? '';
+			await prev.click();
+			await expect
+				.poll(() => pageIndicator.textContent(), { timeout: SETTLE.timeout })
+				.not.toBe(before);
+		}
+
+		for (;;) {
+			await visit(table);
+			// The pager is absent on a single page, and "Berikutnya" is disabled
+			// on the last page — either way there is nowhere left to go.
+			if ((await next.count()) === 0 || !(await next.isEnabled())) break;
+			const before = (await pageIndicator.textContent()) ?? '';
+			await next.click();
+			// Key on the page indicator, not a settle timeout: its text flips in
+			// the SAME Svelte flush that swaps the rows, so once it changes the
+			// next page's rows are present and the next `visit` cannot read a
+			// stale slice.
+			await expect
+				.poll(() => pageIndicator.textContent(), { timeout: SETTLE.timeout })
+				.not.toBe(before);
+		}
+	}
+
+	/**
+	 * Sums the buttons whose accessible name is `name` across EVERY page of the
+	 * notifications table.
+	 *
+	 * WHY THIS EXISTS: the page renders only 25 rows per page while the server
+	 * tallies count every row the API returned, so counting buttons on a single
+	 * page and comparing that count to a ~321-row total can never match. Walking
+	 * the client's own pages — the rows the client actually drew — keeps the §12
+	 * comparison "the DOM's buttons equal the server's two booleans and nothing
+	 * else".
+	 */
+	async function countActionButtonsAcrossPages(page: Page, name: string): Promise<number> {
+		let total = 0;
+		await walkNotificationPages(page, async (table) => {
+			total += await table.getByRole('button', { name }).count();
+		});
+		return total;
+	}
+
 	test('shows action buttons strictly from can_retry and can_cancel', async ({ page }) => {
 		/**
 		 * Reads the server's own per-row affordance tallies.
@@ -1453,25 +1537,32 @@ test.describe('T-3B5-05 notification actions', () => {
 			await expect(table).toBeVisible(SETTLE);
 		}
 
-		// Counted across the WHOLE table, and compared to the server's own tallies.
-		// This is the §12 assertion: the visible button set is the server's two
-		// booleans and nothing else. A client-side rule keyed on status, role,
-		// facility, or an email-shaped heuristic would produce a different count
-		// here, which is exactly the class of bug this phase forbids.
-		await expect(table.getByRole('button', { name: 'Kirim ulang' })).toHaveCount(tallies.retry);
-		await expect(table.getByRole('button', { name: 'Batalkan' })).toHaveCount(tallies.cancel);
+		// Counted across the WHOLE table — every client-rendered page — and
+		// compared to the server's own tallies. This is the §12 assertion: the
+		// visible button set is the server's two booleans and nothing else. A
+		// client-side rule keyed on status, role, facility, or an email-shaped
+		// heuristic would produce a different count here, which is exactly the
+		// class of bug this phase forbids.
+		expect(await countActionButtonsAcrossPages(page, 'Kirim ulang')).toBe(tallies.retry);
+		expect(await countActionButtonsAcrossPages(page, 'Batalkan')).toBe(tallies.cancel);
 
 		// A row the server marked unactionable says so in words rather than
-		// showing an empty cell an operator would read as a failed load.
+		// showing an empty cell an operator would read as a failed load. Walked
+		// like the buttons so the wording is verified against the whole set,
+		// not just the first rendered page.
+		let renderedText = '';
+		await walkNotificationPages(page, async (tbody) => {
+			renderedText += (await tbody.textContent()) ?? '';
+		});
+
 		if (tallies.retry === 0 || tallies.cancel === 0) {
-			await expect(table).toContainText('Tidak ada aksi');
+			expect(renderedText).toContain('Tidak ada aksi');
 		}
 
 		// The two boolean names themselves must never reach the DOM. They are a
 		// wire contract, not UI copy.
-		const text = (await table.textContent()) ?? '';
-		expect(text).not.toContain('can_retry');
-		expect(text).not.toContain('can_cancel');
+		expect(renderedText).not.toContain('can_retry');
+		expect(renderedText).not.toContain('can_cancel');
 	});
 
 	test('preserves the URL filters and the masked recipient across a mutation', async ({
@@ -1643,14 +1734,14 @@ test.describe('T-3B5-05 notification actions', () => {
 						false
 					);
 				}
-				await expect(
-					table.getByRole('button', { name: 'Kirim ulang' }),
+				expect(
+					await countActionButtonsAcrossPages(page, 'Kirim ulang'),
 					'a read-only outbox must offer no retry control'
-				).toHaveCount(0);
-				await expect(
-					table.getByRole('button', { name: 'Batalkan' }),
+				).toBe(0);
+				expect(
+					await countActionButtonsAcrossPages(page, 'Batalkan'),
 					'a read-only outbox must offer no cancel control'
-				).toHaveCount(0);
+				).toBe(0);
 				return;
 			}
 			for (const row of rows.slice(0, 5)) {

@@ -1,9 +1,12 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
+	import AdminFreshness from '$lib/admin/AdminFreshness.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
-	import StatusBadge from '$lib/ui/StatusBadge.svelte';
-	import { RADIUS } from '$lib/design/tokens';
+	import AdminStatusBadge, {
+		QUEUE_STATUS_ICON,
+		activeStateIcon
+	} from '$lib/admin/AdminStatusBadge.svelte';
 	import {
 		listAppointments,
 		listFacilities,
@@ -11,14 +14,15 @@
 		listSchedules
 	} from '$lib/api/endpoints/admin';
 	import { indexBy, facilityName } from '$lib/domain/joins';
-	import { formatDate, formatTime, formatNumber } from '$lib/domain/format';
+	import { formatClockTime, formatDate, formatNumber } from '$lib/domain/format';
 	import { QUEUE_STATUS_LABEL, queueTone } from '$lib/domain/status';
-	import { formatUpdatedAt, isEmptyScope } from '$lib/admin/readState';
+	import { isEmptyScope } from '$lib/admin/readState';
 	import {
 		activeQueueCount,
 		attentionItems,
 		headlineMetrics,
-		nextSchedule
+		nextSchedule,
+		scopeLabel
 	} from '$lib/admin/ringkasan';
 	import { getSession, subscribeToSession } from '$lib/stores/session';
 	import type { ApiError } from '$lib/api/errors';
@@ -55,24 +59,51 @@
 	let loading = true;
 	let error: ApiError | null = null;
 	let loadedAt: Date | null = null;
+	/*
+		Separate from `loading`: that drives `AdminReadState`, which replaces the
+		whole overview with a loading panel. Right for a first read, wrong for a
+		refresh — the operator asked for fresh numbers and should keep the ones
+		they are reading until the new ones arrive.
+	*/
+	let refreshing = false;
 	let hasSession = getSession().hasSession;
 	let unsubscribeSession: (() => void) | undefined;
+
+	onDestroy(() => unsubscribeSession?.());
 
 	onMount(() => {
 		unsubscribeSession = subscribeToSession((session) => {
 			hasSession = session.hasSession;
 		});
+		void loadOverview();
+	});
+
+	/**
+	 * The four scoped reads, as one reloadable unit.
+	 *
+	 * Named rather than inlined in `onMount` because `AdminReadState`'s retry has
+	 * to be able to run it again. An inline `Promise.all` inside the mount hook
+	 * leaves the error panel with nothing to call, which is how a failed overview
+	 * becomes a dead end: the operator's only way back is a manual page reload.
+	 *
+	 * `error` is cleared on entry so a retry cannot render the previous failure
+	 * next to the request that is replacing it, and `loading` is set so the retry
+	 * shows the loading state rather than a frozen error panel.
+	 */
+	async function loadOverview() {
+		loading = true;
+		error = null;
 
 		// All four are issued together. The overview cannot show a count until every
 		// source has answered, so there is nothing to gain from sequencing them.
-		Promise.all([
+		await Promise.all([
 			listQueueTickets(),
 			listAppointments(),
 			listSchedules(),
 			listFacilities()
 		])
 			.then(([queueResult, appointmentResult, scheduleResult, facilityResult]) => {
-				// A partial failure is still a failure. Showing a headline strip with
+				// A partial failure is still a failure. Showing a headline summary with
 				// three of four numbers would present an incomplete overview as a
 				// complete one, and the operator cannot tell which figure is missing.
 				if (!queueResult.ok) return (error = queueResult.error);
@@ -89,11 +120,31 @@
 				loadedAt = new Date();
 			})
 			.finally(() => (loading = false));
-	});
+	}
+
+	/**
+	 * The header's `Perbarui`. Re-reads without blanking the overview.
+	 *
+	 * It cannot call `loadOverview` directly: that sets `loading`, which swaps
+	 * the summary for a loading panel, so every figure would flicker on each
+	 * refresh. The tradeoff is explicit — a refresh that fails leaves the
+	 * previous figures on screen with a stale `loadedAt`, which is the honest
+	 * state, rather than showing an error over numbers that are still the last
+	 * ones the server confirmed.
+	 */
+	async function refreshOverview() {
+		refreshing = true;
+		try {
+			await loadOverview();
+		} finally {
+			refreshing = false;
+		}
+	}
 
 	$: metrics = headlineMetrics({ queues, appointments, schedules, facilities });
 	$: attention = attentionItems({ queues, appointments, schedules, facilities });
 	$: upcoming = nextSchedule(schedules);
+	$: scope = scopeLabel(facilities);
 	$: facilityIndex = indexBy(facilities, (facility) => facility.id);
 
 	const QUEUE_BANDS: readonly QueueStatus[] = ['called', 'waiting', 'in_service'];
@@ -102,11 +153,7 @@
 <div class="sigap-admin-page">
 	<AdminPageHeader title="Ringkasan" subtitle="Ringkasan kegiatan dalam lingkup akses Anda.">
 		<svelte:fragment slot="aside">
-			{#if loadedAt}
-				<span class="sigap-admin-updated" aria-live="polite">
-					{formatUpdatedAt(loadedAt)}
-				</span>
-			{/if}
+			<AdminFreshness {loadedAt} refreshing={refreshing} onRefresh={() => void refreshOverview()} />
 		</svelte:fragment>
 	</AdminPageHeader>
 
@@ -117,28 +164,70 @@
 		rowCount={facilities.length}
 		scopeEmpty={loading === false && error === null && isEmptyScope(facilities)}
 		emptyTitle="Belum ada fasilitas"
+		onRetry={() => void loadOverview()}
 	>
 		<!--
-			The headline strip. Each figure names its source, because a count an
-			operator cannot trace is a number they have to take on faith.
+			The scope, stated before any figure. Every number below is bounded by
+			WHICH facilities the operator holds in scope (one named facility, or the
+			unscoped all-facilities view), so a glance cannot mistake a scoped
+			snapshot for a whole-clinic total. Freshness stays in the page header
+			(AdminFreshness) — stating the timestamp twice would make the two
+			disagree on a re-read.
 		-->
-		<section class="sigap-ringkasan-strip" aria-label="Ringkasan angka utama">
-			{#each metrics as metric (metric.label)}
-				<div class="sigap-ringkasan-strip__item">
-					<p class="sigap-ringkasan-strip__label">{metric.label}</p>
-					<p class="sigap-ringkasan-strip__value">{formatNumber(metric.value)}</p>
-					<p class="sigap-ringkasan-strip__source">
-						{#if metric.href && metric.detail}
-							<a class="sigap-ringkasan-strip__link" href={metric.href}>
+		<p class="sigap-ringkasan-scope">
+			<span class="sigap-ringkasan-scope__name">{scope}</span>
+		</p>
+
+		<!--
+			The attention list comes FIRST: it is the actionable half. Each row is
+			a count, the source it was counted from, and where to act on it — and
+			nothing else. A row an operator cannot follow is noise sitting above
+			the numbers that actually matter.
+		-->
+		<section class="sigap-ringkasan-section" aria-labelledby="ringkasan-attention">
+			<h2 class="sigap-ringkasan-section__title" id="ringkasan-attention">Perlu perhatian hari ini (WIB)</h2>
+			{#if attention.length === 0}
+				<p class="sigap-ringkasan-section__empty">
+					Tidak ada hal yang perlu perhatian dari data yang dimuat.
+				</p>
+			{:else}
+				<ul class="sigap-ringkasan-attention">
+					{#each attention as item (item.label)}
+						<li class="sigap-ringkasan-attention__row">
+							<span class="sigap-ringkasan-attention__count">{formatNumber(item.value)}</span>
+							<span class="sigap-ringkasan-attention__label">{item.label}</span>
+							<span class="sigap-ringkasan-attention__source">{item.source}</span>
+							{#if item.href}
+								<a class="sigap-ringkasan-link" href={item.href}>Buka</a>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+
+		<!--
+			The compact summary, AFTER the attention list. Labelled lines rather
+			than a KPI-card grid: each figure is one traceable line, and a row of
+			shadowed tiles would imply comparisons and trends these four scoped
+			reads cannot support.
+		-->
+		<section class="sigap-ringkasan-section" aria-label="Ringkasan angka utama">
+			<ul class="sigap-ringkasan-summary">
+				{#each metrics as metric (metric.label)}
+					<li class="sigap-ringkasan-summary__row">
+						<span class="sigap-ringkasan-summary__label">{metric.label}</span>
+						<span class="sigap-ringkasan-summary__value">{formatNumber(metric.value)}</span>
+						<span class="sigap-ringkasan-summary__source">
+							{#if metric.href}
+								<a class="sigap-ringkasan-link" href={metric.href}>{metric.source}</a>
+							{:else}
 								{metric.source}
-							</a>
-							<span class="sigap-ringkasan-strip__detail">{metric.detail}</span>
-						{:else}
-							{metric.source}
-						{/if}
-					</p>
-				</div>
-			{/each}
+							{/if}
+						</span>
+					</li>
+				{/each}
+			</ul>
 		</section>
 
 		<!--
@@ -155,36 +244,16 @@
 			Bukan data real-time, dan bukan angka untuk seluruh klinik.
 		</p>
 
-		<section class="sigap-ringkasan-section" aria-labelledby="ringkasan-attention">
-			<h2 class="sigap-ringkasan-section__title" id="ringkasan-attention">Perlu perhatian</h2>
-			{#if attention.length === 0}
-				<p class="sigap-ringkasan-section__empty">
-					Tidak ada hal yang perlu perhatian dari data yang dimuat.
-				</p>
-			{:else}
-				<ul class="sigap-ringkasan-attention">
-					{#each attention as item (item.label)}
-						<li class="sigap-ringkasan-attention__row">
-							<span class="sigap-ringkasan-attention__count">{formatNumber(item.value)}</span>
-							<span class="sigap-ringkasan-attention__label">{item.label}</span>
-							{#if item.href}
-								<a class="sigap-ringkasan-strip__link" href={item.href}>Buka</a>
-							{/if}
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</section>
-
 		<section class="sigap-ringkasan-section" aria-labelledby="ringkasan-queue">
 			<h2 class="sigap-ringkasan-section__title" id="ringkasan-queue">Antrean saat ini</h2>
 			<div class="sigap-ringkasan-bands">
 				{#each QUEUE_BANDS as status (status)}
 					<div class="sigap-ringkasan-bands__item">
-						<StatusBadge
+						<AdminStatusBadge
 							label={QUEUE_STATUS_LABEL[status]}
 							tone={queueTone(status)}
 							size="sm"
+							icon={QUEUE_STATUS_ICON[status]}
 						/>
 						<!--
 							Counted from the scoped queue list, not from a dedicated
@@ -197,7 +266,7 @@
 					</div>
 				{/each}
 			</div>
-			<a class="sigap-ringkasan-strip__link" href="/admin/queues">Buka Antrean</a>
+			<a class="sigap-ringkasan-link" href="/admin/queues">Buka Antrean</a>
 		</section>
 
 		<section class="sigap-ringkasan-section" aria-labelledby="ringkasan-schedule">
@@ -207,33 +276,48 @@
 					Tidak ada jadwal aktif berikutnya dalam lingkup operator.
 				</p>
 			{:else}
-				<table class="sigap-ringkasan-schedule">
-					<caption class="sigap-ringkasan-schedule__caption">
-						Jadwal aktif terdekat dalam lingkup operator
-					</caption>
-					<thead>
-						<tr>
-							<th scope="col">Tanggal</th>
-							<th scope="col">Waktu</th>
-							<th scope="col">Fasilitas</th>
-							<th scope="col">Kapasitas per slot</th>
-							<th scope="col">Status</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr>
-							<td>{formatDate(upcoming.schedule_date)}</td>
-							<td>
-								{formatTime(upcoming.start_time)}–{formatTime(upcoming.end_time)}
-							</td>
-							<td>{facilityName(facilityIndex, upcoming.facility_id)}</td>
-							<td>{formatNumber(upcoming.capacity_per_slot)}</td>
-							<td>
-								<StatusBadge label="Aktif" tone="success" size="sm" />
-							</td>
-						</tr>
-					</tbody>
-				</table>
+				<!--
+					The scroll region is required, not decorative. This table has five
+					columns and is wider than a 390px viewport, and without a scroller
+					of its own it widens the PAGE — which on the admin shell means the
+					sidebar scrolls away and the operator loses their navigation. The
+					shared `DataTable` wraps its own table for exactly this reason;
+					this bespoke table has to do the same.
+				-->
+				<div class="sigap-ringkasan-schedule__region">
+					<table class="sigap-ringkasan-schedule">
+						<caption class="sigap-ringkasan-schedule__caption">
+							Jadwal aktif terdekat dalam lingkup operator
+						</caption>
+						<thead>
+							<tr>
+								<th scope="col">Tanggal</th>
+								<th scope="col">Waktu</th>
+								<th scope="col">Fasilitas</th>
+								<th scope="col">Kapasitas per slot</th>
+								<th scope="col">Status</th>
+							</tr>
+						</thead>
+						<tbody>
+							<tr>
+								<td>{formatDate(upcoming.schedule_date)}</td>
+								<td>
+									{formatClockTime(upcoming.start_time)}–{formatClockTime(upcoming.end_time)}
+								</td>
+								<td>{facilityName(facilityIndex, upcoming.facility_id)}</td>
+								<td>{formatNumber(upcoming.capacity_per_slot)}</td>
+								<td>
+									<AdminStatusBadge
+										label="Aktif"
+										tone="success"
+										size="sm"
+										icon={activeStateIcon(true)}
+									/>
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
 				<p class="sigap-ringkasan-note">
 					Nama unit layanan tidak ditampilkan — data jadwal hanya berisi kode unit.
 				</p>
@@ -247,83 +331,122 @@
 		min-width: 0;
 	}
 
-	.sigap-admin-updated {
-		font-size: 12px;
-		color: var(--sigap-muted);
-		font-variant-numeric: tabular-nums;
-	}
 
-	.sigap-ringkasan-strip {
+	/*
+		The scope + freshness line. Stated before any figure, it names the TWO
+		horizons every number below is bounded by — the facility scope (derived
+		from the loaded facility list) and the read time (the same `loadedAt`
+		the sticky header shows). It is a sentence, not a tile, so it cannot be
+		mistaken for a metric.
+	*/
+	.sigap-ringkasan-scope {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 32px;
-		padding: 14px 0;
+		align-items: baseline;
+		gap: var(--sigap-space-2);
+		margin: 0 0 var(--sigap-space-4);
+		font-size: var(--sigap-type-label);
 	}
 
-	.sigap-ringkasan-strip__item {
-		min-width: 160px;
-	}
-
-	.sigap-ringkasan-strip__label {
-		margin: 0 0 2px;
-		font-size: 12px;
-		color: var(--sigap-muted);
-	}
-
-	.sigap-ringkasan-strip__value {
-		margin: 0;
-		font-size: 20px;
+	.sigap-ringkasan-scope__name {
 		font-weight: 600;
 		color: var(--sigap-foreground);
+	}
+
+	/*
+		The compact summary: labelled lines, NOT a KPI-card grid. A shadowed,
+		tinted, big-number-in-a-box tile is the visual grammar of a generic SaaS
+		dashboard and implies comparisons and trends these four scoped reads
+		cannot support. Each line is one figure plus its provenance, on the page
+		ground with hairline separators. No shadow, no tint, no box per figure.
+	*/
+	.sigap-ringkasan-summary {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		border-top: 1px solid var(--sigap-border-subtle);
+		border-bottom: 1px solid var(--sigap-border-subtle);
+	}
+
+	.sigap-ringkasan-summary__row {
+		display: flex;
+		align-items: baseline;
+		gap: var(--sigap-space-3);
+		min-height: var(--sigap-control-admin-comfortable);
+		font-size: var(--sigap-type-label);
+		border-bottom: 1px solid var(--sigap-border-subtle);
+	}
+
+	.sigap-ringkasan-summary__row:last-child {
+		border-bottom: none;
+	}
+
+	.sigap-ringkasan-summary__label {
+		flex: 1;
+		min-width: 0;
+		color: var(--sigap-foreground);
+	}
+
+	.sigap-ringkasan-summary__value {
+		/* Two-digit alignment so the sources line up as counts change width. */
+		min-width: 2ch;
+		text-align: right;
+		font-weight: 600;
 		font-variant-numeric: tabular-nums;
+		color: var(--sigap-foreground);
 	}
 
-	.sigap-ringkasan-strip__source {
-		margin: 2px 0 0;
-		font-size: 12px;
+	.sigap-ringkasan-summary__source {
+		text-align: right;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
+		white-space: nowrap;
 	}
 
-	.sigap-ringkasan-strip__link {
-		font-size: 13px;
+	.sigap-ringkasan-link {
+		/*
+			An inline follow-through ("Buka", "Daftar antrean", "Buka Antrean"),
+			not a word: an invisible 36px compact floor so the link is a target
+			without restyling the row it sits in.
+		*/
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sigap-control-admin-compact);
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		text-decoration: none;
 	}
 
-	.sigap-ringkasan-strip__link:hover {
+	.sigap-ringkasan-link:hover {
 		text-decoration: underline;
 	}
 
-	.sigap-ringkasan-strip__link:focus-visible {
+	.sigap-ringkasan-link:focus-visible {
 		outline: 2px solid var(--sigap-primary);
 		outline-offset: 2px;
 	}
 
-	.sigap-ringkasan-strip__detail {
-		display: block;
-	}
-
 	.sigap-ringkasan-note {
-		margin: 0 0 20px;
-		font-size: 12px;
+		margin: 0 0 var(--sigap-space-5);
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-ringkasan-section {
-		margin-bottom: 24px;
+		margin-bottom: var(--sigap-space-5);
 	}
 
 	.sigap-ringkasan-section__title {
-		margin: 0 0 8px;
-		font-size: 13px;
+		margin: 0 0 var(--sigap-space-2);
+		font-size: var(--sigap-type-label);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-ringkasan-section__empty {
 		margin: 0;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 	}
 
@@ -331,17 +454,18 @@
 		margin: 0;
 		padding: 0;
 		list-style: none;
-		border-top: 1px solid var(--sigap-border);
-		border-bottom: 1px solid var(--sigap-border);
+		/* List hairlines, not control boundaries. */
+		border-top: 1px solid var(--sigap-border-subtle);
+		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-ringkasan-attention__row {
 		display: flex;
 		align-items: center;
-		gap: 12px;
-		min-height: 40px;
-		font-size: 13px;
-		border-bottom: 1px solid var(--sigap-border);
+		gap: var(--sigap-space-3);
+		min-height: var(--sigap-control-admin-comfortable);
+		font-size: var(--sigap-type-label);
+		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-ringkasan-attention__row:last-child {
@@ -361,35 +485,53 @@
 		min-width: 0;
 	}
 
+	.sigap-ringkasan-attention__source {
+		font-size: var(--sigap-type-caption);
+		color: var(--sigap-muted);
+		white-space: nowrap;
+	}
+
 	.sigap-ringkasan-bands {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 12px;
-		margin-bottom: 8px;
+		gap: var(--sigap-space-3);
+		margin-bottom: var(--sigap-space-2);
 	}
 
 	.sigap-ringkasan-bands__item {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
-		padding: 8px 12px;
+		gap: var(--sigap-space-1);
+		padding: var(--sigap-space-2) var(--sigap-space-3);
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
-		border-radius: 8px;
+		/* A panel outline is decorative; the badge inside carries the state. */
+		border: 1px solid var(--sigap-border-subtle);
+		border-radius: var(--sigap-radius-panel);
 	}
 
 	.sigap-ringkasan-bands__count {
 		margin: 0;
-		font-size: 18px;
+		font-size: var(--sigap-type-subtitle);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 		font-variant-numeric: tabular-nums;
 	}
 
+	/*
+		The table's own scroll container. A five-column table is wider than a
+		narrow viewport, and letting it widen the page would take the sidebar with
+		it — the operator would lose navigation while reading the table. Same
+		contract as the shared `DataTable` region.
+	*/
+	.sigap-ringkasan-schedule__region {
+		overflow-x: auto;
+		max-width: 100%;
+	}
+
 	.sigap-ringkasan-schedule {
 		width: 100%;
 		border-collapse: collapse;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 	}
 
 	.sigap-ringkasan-schedule__caption {
@@ -405,21 +547,25 @@
 	}
 
 	.sigap-ringkasan-schedule th {
-		padding: 10px 12px;
+		padding: var(--sigap-space-3);
 		text-align: left;
-		font-size: 11px;
+		/* 11px uppercase muted header on the sunken ground, per the admin register. */
+		font-size: var(--sigap-type-micro);
 		font-weight: 600;
 		letter-spacing: 0.04em;
 		text-transform: uppercase;
 		color: var(--sigap-muted);
-		border-bottom: 1px solid var(--sigap-border);
+		background-color: var(--sigap-surface-sunken);
+		/* The header's own bottom edge: a rule, not a control boundary. */
+		border-bottom: 1px solid var(--sigap-border-subtle);
 		white-space: nowrap;
 	}
 
 	.sigap-ringkasan-schedule td {
-		height: 44px;
-		padding: 0 12px;
-		border-bottom: 1px solid var(--sigap-border);
+		height: var(--sigap-control-admin-comfortable);
+		padding: 0 var(--sigap-space-3);
+		/* A row separator, so the subtle token. */
+		border-bottom: 1px solid var(--sigap-border-subtle);
 		background-color: var(--sigap-surface);
 	}
 </style>

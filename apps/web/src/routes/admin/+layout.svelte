@@ -1,7 +1,27 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import AdminShell from '$lib/admin/AdminShell.svelte';
+	import { ADMIN_DESTINATIONS, isActiveDestination } from '$lib/admin/navigation';
+
+	/**
+	 * The document title, derived from the same nav table the sidebar renders.
+	 *
+	 * All six admin routes shipped an empty `<title>`. That is not cosmetic: an
+	 * empty title gives every admin tab the same label, so six open pages are
+	 * indistinguishable in the tab strip and in browser history, and a screen
+	 * reader announces the page without naming it.
+	 *
+	 * Deriving it from ADMIN_DESTINATIONS rather than hardcoding six strings
+	 * means a renamed destination renames its title too, and a seventh admin
+	 * page gets one for free.
+	 */
+	$: currentAdminTitle =
+		ADMIN_DESTINATIONS.find((d) => isActiveDestination($page.url.pathname, d.href))?.label ?? '';
 </script>
+
+<svelte:head>
+	<title>{currentAdminTitle ? `${currentAdminTitle} — Sigap` : 'Sigap'}</title>
+</svelte:head>
 
 <!--
 	The admin layout.
@@ -31,6 +51,25 @@
 	perfectly valid sidebar around nothing at all.
 -->
 <AdminShell path={$page.url.pathname}>
+	<!--
+		A visible statement that this is a development preview acting as a seeded
+		identity.
+
+		The admin screens are reachable here without signing in because the web
+		tier injects `SIGAP_LOCAL_E2E_ACTOR`, a documented local-only affordance:
+		the Go API resolves that subject's roles from the database on every
+		request and refuses to arm the selector outside SIGAP_ENV=local. That is
+		correct for a local preview and would be a serious problem if it were
+		ever mistaken for the shipped product — so it says so, on the page, in
+		the operator's own view.
+
+		Deliberately not dismissible. A banner an operator can close is a banner
+		that is gone by the time they screenshot a page for someone else.
+	-->
+	<div class="sigap-admin-devbar" role="note" data-testid="admin-dev-banner">
+		Pratinjau pengembangan — layar admin berjalan sebagai identitas uji coba
+		(<code>local-global-super-admin</code>), bukan sesi pengguna sungguhan.
+	</div>
 	<slot />
 </AdminShell>
 
@@ -45,8 +84,34 @@
 		min-width: 0;
 	}
 
+	/*
+		The Pen's admin `Content` frame is `[20,24]`: 20px vertical, 24px
+		horizontal. 20 is not a step on the 4px ladder, so it is written as the
+		literal the frame specifies rather than rounded to 16 or 24 — a 4px
+		difference on every admin page is visible as the header sitting closer
+		to or further from the toolbar than the reference.
+	*/
 	:global(.sigap-admin-page) {
 		min-width: 0;
-		padding: 20px 24px;
+		padding: 20px var(--sigap-space-5);
+	}
+
+	/*
+		The preview-identity strip. Warning-toned rather than neutral: it is
+		describing a condition that must not be mistaken for normal operation.
+		Full width of the content column, directly under the header, so it is
+		read before the page it qualifies.
+	*/
+	.sigap-admin-devbar {
+		padding: var(--sigap-space-2) var(--sigap-space-5);
+		font-size: var(--sigap-type-caption);
+		color: var(--sigap-warning);
+		background-color: var(--sigap-warning-tint);
+		border-bottom: 1px solid var(--sigap-warning);
+	}
+
+	.sigap-admin-devbar code {
+		font-family: var(--sigap-font-mono, ui-monospace, monospace);
+		font-size: inherit;
 	}
 </style>

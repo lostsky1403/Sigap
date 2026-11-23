@@ -100,15 +100,20 @@ func (h *CatalogHandler) ListPublicServiceUnits(w http.ResponseWriter, r *http.R
 	var rows pgx.Rows
 	var err error
 
+	// `code` is nullable in the schema, and most seeded units have no code: it
+	// is an operator-assigned shorthand, not an identifier the system needs.
+	// Scanning NULL into a plain string aborts the whole response, so one
+	// un-coded unit would 500 the booking dropdown for every facility. The
+	// wire contract is `code: string`, so the absence is carried as "".
 	if facilityID != "" {
 		rows, err = h.pool.Query(ctx,
-			`SELECT id, facility_id, name, code, is_active
+			`SELECT id, facility_id, name, COALESCE(code, ''), is_active
 			 FROM service_units
 			 WHERE is_active = true AND facility_id = $1
 			 ORDER BY name`, facilityID)
 	} else {
 		rows, err = h.pool.Query(ctx,
-			`SELECT id, facility_id, name, code, is_active
+			`SELECT id, facility_id, name, COALESCE(code, ''), is_active
 			 FROM service_units
 			 WHERE is_active = true
 			 ORDER BY name`)

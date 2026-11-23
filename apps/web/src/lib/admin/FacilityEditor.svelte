@@ -325,18 +325,18 @@
 	.sigap-facility-editor {
 		display: flex;
 		flex-direction: column;
-		gap: 14px;
+		gap: var(--sigap-space-4);
 	}
 
 	.sigap-facility-editor__pair {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
-		gap: 12px;
+		gap: var(--sigap-space-3);
 	}
 
 	.sigap-facility-editor__error {
 		margin: 0;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		line-height: 1.45;
 		color: var(--sigap-danger);
 	}
@@ -344,16 +344,16 @@
 	.sigap-facility-editor__actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 8px;
+		gap: var(--sigap-space-2);
 		justify-content: flex-end;
 	}
 
 	.sigap-facility-editor__cancel,
 	.sigap-facility-editor__submit {
-		height: 40px;
-		padding: 0 16px;
+		height: var(--sigap-control-admin-comfortable);
+		padding: 0 var(--sigap-space-4);
 		font: inherit;
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		font-weight: 500;
 		cursor: pointer;
 	}
@@ -361,6 +361,7 @@
 	.sigap-facility-editor__cancel {
 		color: var(--sigap-foreground);
 		background-color: var(--sigap-surface);
+		/* A control boundary. */
 		border: 1px solid var(--sigap-border);
 	}
 

@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import AdminPageHeader from '$lib/admin/AdminPageHeader.svelte';
+	import AdminFreshness from '$lib/admin/AdminFreshness.svelte';
 	import AdminReadState from '$lib/admin/AdminReadState.svelte';
 	import AdminToolbar from '$lib/admin/AdminToolbar.svelte';
 	import FacilityFilter from '$lib/admin/FacilityFilter.svelte';
 	import DataTable from '$lib/ui/DataTable.svelte';
-	import StatusBadge from '$lib/ui/StatusBadge.svelte';
+	import AdminStatusBadge, { activeStateIcon } from '$lib/admin/AdminStatusBadge.svelte';
 	import ForbiddenPanel from '$lib/ui/ForbiddenPanel.svelte';
 	import ScheduleEditor from '$lib/admin/ScheduleEditor.svelte';
 	import AdminConfirmDialog from '$lib/admin/AdminConfirmDialog.svelte';
@@ -20,7 +21,7 @@
 		updateSchedule
 	} from '$lib/api/endpoints/admin';
 	import { indexBy, facilityName, serviceUnitName } from '$lib/domain/joins';
-	import { formatDate, formatTime } from '$lib/domain/format';
+	import { formatClockTime, formatDate } from '$lib/domain/format';
 	import { isEmptyScope, ORDINARY_EMPTY_DESCRIPTION } from '$lib/admin/readState';
 	import { runAdminMutation } from '$lib/admin/adminMutation';
 	import { toScheduleRequest } from '$lib/admin/scheduleForm';
@@ -55,11 +56,22 @@
 	let units: AdminServiceUnit[] = [];
 	let loading = true;
 	let error: ApiError | null = null;
+	/*
+		Separate from `loading`: `loading` drives `AdminReadState`, which replaces
+		the table with a loading panel. That is right for a first read and wrong
+		for a refresh, where the operator asked for fresh data and should keep
+		reading the rows they already have.
+	*/
+	let refreshing = false;
+	/** When the rows on screen were last confirmed by the server. */
+	let loadedAt: Date | null = null;
 	let facilitiesLoaded = false;
 	let facilityFilter = '';
 	let activeOnly = false;
 	let hasSession = getSession().hasSession;
 	let unsubscribeSession: (() => void) | undefined;
+
+	onDestroy(() => unsubscribeSession?.());
 
 	/**
 	 * No `manageDenied` flag, and its absence is deliberate.
@@ -100,6 +112,12 @@
 
 		if (scheduleResult.ok) {
 			schedules = scheduleResult.data;
+			// Stamped here as well as in `reloadSchedules`. The initial read is a
+			// real read, so the header must state its time immediately; leaving
+			// the stamp to the reload alone meant "Diperbarui" was absent until
+			// the operator pressed Perbarui, which reads as a page that never
+			// loaded even though the rows are on screen.
+			loadedAt = new Date();
 		} else {
 			error = scheduleResult.error;
 		}
@@ -187,10 +205,29 @@
 		if (result.ok) {
 			schedules = result.data;
 			error = null;
+			// Stamped only on success: a failed read leaves the previous time
+			// standing, because the previous rows are still what is on screen.
+			loadedAt = new Date();
 		} else {
 			error = result.error;
 		}
 		loading = false;
+	}
+
+	/**
+	 * The header's `Perbarui`. Re-reads without blanking the table.
+	 *
+	 * It cannot call `reloadSchedules` directly: that sets `loading`, which
+	 * swaps the table for a loading panel, so the rows would disappear under the
+	 * operator's cursor every time they asked for fresh data.
+	 */
+	async function refreshSchedules() {
+		refreshing = true;
+		try {
+			await reloadSchedules();
+		} finally {
+			refreshing = false;
+		}
 	}
 
 	async function loadMutationOptions() {
@@ -271,7 +308,11 @@
 	<AdminPageHeader
 		title="Jadwal"
 		subtitle="Jadwal praktik dalam lingkup akses Anda. Pilihan fasilitas pada editor berasal dari server."
-	/>
+	>
+		<svelte:fragment slot="aside">
+			<AdminFreshness {loadedAt} refreshing={refreshing} onRefresh={() => void refreshSchedules()} />
+		</svelte:fragment>
+	</AdminPageHeader>
 
 	<!--
 		THE EDITOR ENTRY POINT, gated on a server-provided affordance.
@@ -328,7 +369,6 @@
 	{/if}
 
 	<AdminToolbar
-		showRefresh={false}
 		note="Pilihan fasilitas memantulkan fasilitas yang ada dalam data yang sudah dimuat. Nama unit layanan ditampilkan hanya bila unitnya dikenal; selain itu tampil sebagai “-”."
 	>
 		<FacilityFilter
@@ -360,6 +400,7 @@
 		scopeEmpty={facilitiesLoaded && isEmptyScope(facilities)}
 		emptyTitle="Belum ada jadwal"
 		emptyDescription={ORDINARY_EMPTY_DESCRIPTION}
+		onRetry={() => void reloadSchedules()}
 	>
 		{#if filtered.length === 0}
 			<div class="sigap-admin-nomatch" style:border-radius={RADIUS.panel} role="status">
@@ -395,7 +436,7 @@
 					<tr>
 						<td class="sigap-schedule-row__date">{formatDate(schedule.schedule_date)}</td>
 						<td class="sigap-schedule-row__time">
-							{formatTime(schedule.start_time)}–{formatTime(schedule.end_time)}
+							{formatClockTime(schedule.start_time)}–{formatClockTime(schedule.end_time)}
 						</td>
 						<td class="sigap-table-col-secondary">
 							{facilityName(facilityIndex, schedule.facility_id)}
@@ -404,10 +445,11 @@
 						<td class="sigap-schedule-row__num">{schedule.slot_minutes} mnt</td>
 						<td class="sigap-schedule-row__num">{schedule.capacity_per_slot}</td>
 						<td>
-							<StatusBadge
+							<AdminStatusBadge
 								label={schedule.is_active ? 'Aktif' : 'Nonaktif'}
 								tone={schedule.is_active ? 'success' : 'neutral'}
 								size="sm"
+								icon={activeStateIcon(schedule.is_active)}
 							/>
 						</td>
 						<td class="sigap-schedule-row__actions">
@@ -497,14 +539,14 @@
 	.sigap-admin-actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 8px;
+		gap: var(--sigap-space-2);
 	}
 
 	.sigap-admin-actions__primary {
-		height: 40px;
-		padding: 0 16px;
+		height: var(--sigap-control-admin-comfortable);
+		padding: 0 var(--sigap-space-4);
 		font: inherit;
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		font-weight: 500;
 		color: var(--sigap-surface);
 		background-color: var(--sigap-primary);
@@ -524,9 +566,9 @@
 	}
 
 	.sigap-admin-inline-error {
-		margin: 0 0 12px;
-		padding: 8px 12px;
-		font-size: 13px;
+		margin: 0 0 var(--sigap-space-3);
+		padding: var(--sigap-space-2) var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		line-height: 1.45;
 		color: var(--sigap-danger);
 		background-color: var(--sigap-surface);
@@ -538,13 +580,16 @@
 	}
 
 	.sigap-schedule-row__edit {
-		height: 32px;
-		padding: 0 12px;
+		/* The frozen compact admin control height; see the row-action density rule
+		   in e2e/admin-table-density.spec.ts. */
+		height: var(--sigap-control-admin-compact);
+		padding: 0 var(--sigap-space-3);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		background-color: var(--sigap-surface);
+		/* A control boundary: this is a button. */
 		border: 1px solid var(--sigap-border);
 		cursor: pointer;
 	}
@@ -555,25 +600,36 @@
 	}
 
 	.sigap-schedule-row__readonly {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-checkfield {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: var(--sigap-space-2);
 		/* Aligns the checkbox with the 36px control row beside it. */
-		height: 36px;
+		height: var(--sigap-control-admin-compact);
 	}
 
 	.sigap-admin-checkfield__input {
 		width: 16px;
 		height: 16px;
+		/* Native control colouring, so the checkbox matches the brand without a
+		   hand-rolled box that would lose the platform's own states. */
+		accent-color: var(--sigap-primary);
 	}
 
 	.sigap-admin-checkfield__label {
-		font-size: 13px;
+		/*
+			The label is the checkbox's hit area (`for` associates them). Stretch
+			it to the checkfield's 36px row so the whole row toggles, instead of
+			only the 16px box and the ~17px text line.
+		*/
+		display: flex;
+		align-items: center;
+		align-self: stretch;
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-foreground);
 	}
 
@@ -597,33 +653,35 @@
 	}
 
 	.sigap-admin-nomatch {
-		padding: 24px;
+		padding: var(--sigap-space-5);
 		text-align: center;
 		background-color: var(--sigap-surface);
-		border: 1px dashed var(--sigap-border);
+		/* A panel outline is decorative; this is a message, not a control. */
+		border: 1px dashed var(--sigap-border-subtle);
 	}
 
 	.sigap-admin-nomatch__title {
-		margin: 0 0 4px;
-		font-size: 15px;
+		margin: 0 0 var(--sigap-space-1);
+		font-size: var(--sigap-type-subtitle);
 		font-weight: 600;
 		color: var(--sigap-foreground);
 	}
 
 	.sigap-admin-nomatch__body {
-		margin: 0 0 12px;
-		font-size: 14px;
+		margin: 0 0 var(--sigap-space-3);
+		font-size: var(--sigap-type-body);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-admin-nomatch__reset {
-		height: 36px;
-		padding: 0 14px;
+		height: var(--sigap-control-admin-compact);
+		padding: 0 var(--sigap-space-4);
 		font: inherit;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		font-weight: 500;
 		color: var(--sigap-primary);
 		background-color: var(--sigap-surface);
+		/* A control boundary: this is a button. */
 		border: 1px solid var(--sigap-border);
 		cursor: pointer;
 	}

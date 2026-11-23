@@ -131,3 +131,55 @@ func TestContextWithActor_RoundTrip(t *testing.T) {
 		t.Error("expected HasPermission('*') == true")
 	}
 }
+
+// The audit actor id must be the resolved app_users.id, never the external
+// subject.
+//
+// `audit_events.actor_user_id` is a uuid with a foreign key to app_users.id.
+// Handlers used to pass UserID, which is the EXTERNAL subject: a Supabase `sub`
+// in production, and a plain string like "local-facility-admin" under the local
+// test identity. Writing that string into a uuid column fails with SQLSTATE
+// 22P02, and the audit service only retries without the column when the actor
+// type is "dev" — so every admin read and write under the local test identity
+// silently produced no audit row at all.
+//
+// The audit trail is the one record that is supposed to survive a compromise.
+// Losing it quietly is worse than losing a screen.
+func TestActor_AuditUserID_UsesResolvedAppUserID(t *testing.T) {
+	appUserID := uuid.NewString()
+
+	t.Run("prefers the resolved app user id over the subject", func(t *testing.T) {
+		a := Actor{
+			UserID:    "local-facility-admin",
+			Type:      ActorUser,
+			AppUserID: appUserID,
+		}
+		if got := a.AuditUserID(); got != appUserID {
+			t.Errorf("expected the app user id %q, got %q", appUserID, got)
+		}
+	})
+
+	t.Run("a jwt subject that is uuid-shaped is still not the app user id", func(t *testing.T) {
+		// Both values are valid uuids here, so nothing about the shape reveals
+		// the mistake. The FK is what would fail, and only sometimes — which is
+		// exactly why the wrong field survived this long.
+		subject := uuid.NewString()
+		a := Actor{UserID: subject, Type: ActorUser, AppUserID: appUserID}
+		if got := a.AuditUserID(); got == subject {
+			t.Error("AuditUserID returned the external subject; the audit FK requires app_users.id")
+		}
+		if got := a.AuditUserID(); got != appUserID {
+			t.Errorf("expected %q, got %q", appUserID, got)
+		}
+	})
+
+	t.Run("an unresolvable actor yields empty, not the subject", func(t *testing.T) {
+		// Empty is written as NULL: an audit row with no actor is still worth
+		// keeping. Returning the subject here would fail the insert instead and
+		// discard the whole event.
+		a := Actor{UserID: "some-external-sub", Type: ActorUser}
+		if got := a.AuditUserID(); got != "" {
+			t.Errorf("expected empty, got %q", got)
+		}
+	})
+}

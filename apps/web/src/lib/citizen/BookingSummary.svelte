@@ -112,28 +112,32 @@
 </aside>
 
 <style>
+	/*
+		The summary is read-only: it frames values and is never operated, so its
+		outline and the header's bottom edge are decorative hairlines.
+	*/
 	.sigap-booking-summary {
 		background-color: var(--sigap-surface);
-		border: 1px solid var(--sigap-border);
+		border: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-booking-summary__title {
 		margin: 0;
-		padding: 12px 16px;
-		font-size: 13px;
+		padding: var(--sigap-space-3) var(--sigap-space-4);
+		font-size: var(--sigap-type-label);
 		font-weight: 600;
 		color: var(--sigap-foreground);
-		border-bottom: 1px solid var(--sigap-border);
+		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-booking-summary__body {
-		padding: 16px;
+		padding: var(--sigap-space-4);
 	}
 
 	.sigap-booking-summary__list {
 		display: flex;
 		flex-direction: column;
-		gap: 14px;
+		gap: var(--sigap-space-4);
 		margin: 0;
 	}
 
@@ -144,7 +148,7 @@
 	}
 
 	.sigap-booking-summary__term {
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 
@@ -155,7 +159,7 @@
 
 	.sigap-booking-summary__primary {
 		display: block;
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		font-weight: 500;
 		color: var(--sigap-foreground);
 		overflow-wrap: anywhere;
@@ -163,7 +167,7 @@
 
 	.sigap-booking-summary__secondary {
 		display: block;
-		font-size: 12px;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 		overflow-wrap: anywhere;
 	}
@@ -175,13 +179,13 @@
 	*/
 	.sigap-booking-summary__empty {
 		display: block;
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		color: var(--sigap-muted);
 	}
 
 	.sigap-booking-summary__hint {
-		margin: 14px 0 0;
-		font-size: 12px;
+		margin: var(--sigap-space-4) 0 0;
+		font-size: var(--sigap-type-caption);
 		color: var(--sigap-muted);
 	}
 </style>

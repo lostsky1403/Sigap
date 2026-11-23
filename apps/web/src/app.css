@@ -4,58 +4,227 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Sigap strict minimalist design system
- * - Generous whitespace
- * - Single brand: teal 700 (#0F766E), defined in lib/design/tokens.css
- * - Inter / system typography
- * - Calm, high-contrast, no AI slop
+/* SIGAP V2.2 — "Calm Civic Healthcare Utility"
  *
- * The legacy `--accent: #059669` emerald token was removed in Phase 3B1. The
- * brand color now comes exclusively from the frozen token source.
+ * - Generous whitespace, rules instead of boxes
+ * - Single brand: teal 700 (#0F766E), from the frozen token source
+ * - Inter / system typography, with JetBrains Mono for identifiers
+ * - Calm, high-contrast, no gradient, no shadow, no glassmorphism
+ *
+ * Every value below resolves from lib/design/tokens.css. No raw hex appears in
+ * this file; the token test fails the build if one does.
  */
 
 body {
 	font-family: Inter, system-ui, -apple-system, sans-serif;
+	background-color: var(--sigap-canvas);
+	color: var(--sigap-foreground);
 }
 
 /*
- * Shared page-level typography for citizen routes.
+ * ---------------------------------------------------------------------------
+ * Page container
+ * ---------------------------------------------------------------------------
  *
- * These live here rather than in a component because Beranda and /faskes are
- * separate pages that must present the same heading hierarchy. Scoping them to
- * one component would guarantee the two pages drift apart. Sizes follow the
- * frozen references: a 20px page title on mobile, 24px on desktop, with a
- * 13px section title above grouped content.
+ * Every citizen page is the same object: a centred 1440px column with a top
+ * offset, a gutter, and a reserved strip at the bottom for the fixed tab bar.
  *
- * Only semantic tokens are used. No raw colour, no gradient, no shadow.
+ * The values are measured off the approved frames rather than derived from the
+ * spacing ladder, because the Pen does not use ladder steps for page padding:
+ * `Body` is `[40,48]` on the standard desktop page, `[64,48]` on Beranda and
+ * the auth pages, `[24,16]` on mobile, and `[20,16]` on the two mobile browse
+ * pages. Neither 40 nor 20 is a ladder step, so expressing them as one would be
+ * a fiction.
+ *
+ * Bottom padding is not a separate value: the Pen's `Body` padding is symmetric,
+ * so the bottom offset equals the top one. On a phone that is replaced by the
+ * tab-bar reserve — 96px plus the home-indicator inset — which is what keeps the
+ * last row of a long page from ending up underneath the fixed bar. On desktop
+ * the bar is hidden, so the reserve would be dead space and the symmetric value
+ * applies instead.
+ *
+ * The container is a flex column with `--sigap-page-gap` between its children,
+ * because every frame's `Body` is one. The Pen runs a 24px gap on every citizen
+ * page at both breakpoints, and 64px desktop / 32px phone on Beranda alone, so
+ * the value is a variable a page can override rather than a per-page margin.
+ */
+.sigap-page {
+	--sigap-page-top: 24px;
+	--sigap-page-gutter: var(--sigap-space-4);
+	--sigap-page-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+	--sigap-page-gap: var(--sigap-space-5);
+	display: flex;
+	flex-direction: column;
+	gap: var(--sigap-page-gap);
+	max-width: 1440px;
+	margin: 0 auto;
+	padding: var(--sigap-page-top) var(--sigap-page-gutter) var(--sigap-page-bottom);
+}
+
+@media (min-width: 1024px) {
+	.sigap-page {
+		--sigap-page-top: 40px;
+		--sigap-page-gutter: var(--sigap-space-7);
+		--sigap-page-bottom: var(--sigap-page-top);
+	}
+}
+
+/*
+ * Beranda and the auth cards, which the Pen gives 64px of air at the top.
+ *
+ * The modifier only needs to exist inside the desktop query: the phone value is
+ * already the base 24px.
+ */
+@media (min-width: 1024px) {
+	.sigap-page--roomy {
+		--sigap-page-top: var(--sigap-space-8);
+	}
+}
+
+/*
+ * The two mobile browse pages, which the Pen draws 4px tighter than the rest of
+ * the phone frames. Scoped to the phone breakpoint rather than left
+ * unconditional: a bare class here would land after the desktop query above and
+ * override the standard 40px offset with 20px on a 1440px screen.
+ */
+@media (max-width: 1023px) {
+	.sigap-page--tight {
+		--sigap-page-top: 20px;
+	}
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * Section opening: eyebrow, 2px rule, title, description
+ * ---------------------------------------------------------------------------
+ *
+ * The signature device of the design. Every citizen section opens the same way,
+ * so these live here rather than in a component: scoping them to one section
+ * would guarantee the sections drift apart.
+ *
+ * The rule is a content-measure rule, never full-bleed. On desktop it is 620px
+ * on every page; on mobile it is 140px, except on the two browse pages where
+ * the Pen draws 100px. It is the ONLY decorative teal on a page besides the
+ * primary action and the active nav item.
+ */
+.sigap-rule {
+	width: var(--sigap-rule-mobile, 140px);
+	height: 2px;
+	background-color: var(--sigap-primary);
+	flex: none;
+}
+
+.sigap-rule--compact {
+	--sigap-rule-mobile: 100px;
+}
+
+@media (min-width: 768px) {
+	.sigap-rule {
+		width: 620px;
+	}
+}
+
+/*
+ * The uppercase micro-label between the rule and the title.
+ *
+ * Used for two different things, and they behave differently:
+ *
+ * - A SECTION eyebrow (`FASKES AKTIF`, `CARA MENGGUNAKAN SIGAP` on Beranda) is
+ *   visible at every viewport. The mobile frames draw it.
+ * - A PAGE eyebrow is desktop-only. The Pen gives Beranda one at 1440
+ *   (`LAYANAN KESEHATAN WARGA`) and drops it on the 390px frame, where the rule
+ *   and the title alone open the page. `PageHeader` scopes its own to `md` up.
+ */
+.sigap-eyebrow {
+	margin: 0;
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 1.45;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--sigap-muted);
+}
+
+/*
+ * Page titles. Two steps: 22px on a phone, 32px on a desktop.
+ *
+ * The previous scale stopped at 24px, which is why no page could open with the
+ * display weight the design calls for.
+ *
+ * Both steps read a custom property so a page can override its own scale
+ * without restating the rule. Beranda needs exactly that: the Pen draws it as
+ * a compact orientation header — 22px/600 on a phone and 24px/700 on a desktop
+ * — because it opens a hub rather than a task. Faskes, Status, Check-In, the
+ * booking flow and the walk-in form all open at 32px/600, which is the default
+ * below. Keeping one rule with two variables is what stops the two scales
+ * drifting apart.
  */
 .sigap-page-title {
 	margin: 0;
-	font-size: 20px;
-	font-weight: 600;
-	line-height: 1.5rem;
+	font-size: var(--sigap-page-title-size, 22px);
+	font-weight: var(--sigap-page-title-weight, 600);
+	line-height: 1.25;
+	letter-spacing: -0.02em;
 	color: var(--sigap-foreground);
 }
 
 @media (min-width: 1024px) {
 	.sigap-page-title {
-		font-size: 24px;
+		font-size: var(--sigap-page-title-size-lg, 32px);
+		font-weight: var(--sigap-page-title-weight-lg, var(--sigap-page-title-weight, 600));
 	}
 }
 
 .sigap-page-subtitle {
 	margin: 4px 0 0;
 	font-size: 14px;
-	line-height: 1.25rem;
+	line-height: 1.5;
 	color: var(--sigap-muted);
 }
 
 .sigap-section-title {
 	margin: 0;
-	font-size: 13px;
-	font-weight: 600;
+	font-size: var(--sigap-section-title-size, 18px);
+	font-weight: var(--sigap-section-title-weight, 600);
+	line-height: 1.4;
+	letter-spacing: -0.01em;
 	color: var(--sigap-foreground);
 }
+
+@media (min-width: 1024px) {
+	.sigap-section-title {
+		font-size: var(--sigap-section-title-size-lg, 20px);
+		font-weight: var(--sigap-section-title-weight-lg, var(--sigap-section-title-weight, 600));
+	}
+}
+
+.sigap-section-desc {
+	margin: 0;
+	font-size: 14px;
+	line-height: 1.5;
+	color: var(--sigap-muted);
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * Identifiers
+ * ---------------------------------------------------------------------------
+ *
+ * A queue number, a check-in code and an appointment id are read aloud, typed
+ * back, and compared character by character. They get the monospace stack and
+ * tabular figures so a 1 and a 7 are distinguishable and the digits line up.
+ */
+.sigap-identifier {
+	font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0.06em;
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * Accessible helper
+ * ---------------------------------------------------------------------------
+ */
 
 /*
  * Available to assistive technology, invisible on screen.

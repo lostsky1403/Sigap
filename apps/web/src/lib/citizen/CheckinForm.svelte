@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -38,33 +39,73 @@
 		errors.appointment_id ?? (attempted ? validateRequired(appointmentId, 'ID janji temu') : '');
 	$: codeError = errors.checkin_code ?? (attempted ? validateRequired(checkinCode, 'Kode check-in') : '');
 
-	function handleSubmit() {
+	async function handleSubmit() {
 		attempted = true;
-		if (validateRequired(appointmentId, 'ID janji temu')) return;
-		if (validateRequired(checkinCode, 'Kode check-in')) return;
+
+		// Focus the first invalid control once its error has rendered, so a
+		// keyboard user is taken to the problem instead of being left on the
+		// submit button with two messages somewhere above them.
+		const firstInvalidId = validateRequired(appointmentId, 'ID janji temu')
+			? 'sigap-checkin-appointment_id'
+			: validateRequired(checkinCode, 'Kode check-in')
+				? 'sigap-checkin-checkin_code'
+				: null;
+
+		if (firstInvalidId) {
+			await tick();
+			document.getElementById(firstInvalidId)?.focus();
+			return;
+		}
+
 		onSubmit();
 	}
 </script>
 
 <form class="sigap-checkin-form" novalidate on:submit|preventDefault={handleSubmit}>
-	<Field id="sigap-checkin-appointment_id" label="ID janji temu" required error={appointmentError}>
+	<!--
+		The helpers are the approved copy and they carry real information: where
+		the appointment id comes from, and the exact shape of the code. Without
+		them a citizen who cannot find the id has nothing to go on, and one who
+		types a five-character code learns nothing until it fails.
+
+		The label names the source because "ID janji temu" alone does not tell a
+		citizen holding only a six-character code that a long identifier exists
+		at all, and the helper repeats the exact screen and section: a generic
+		"check your booking" would leave them searching the confirmation page
+		for something it calls appointment_id. The previous helper said "dari
+		email", which is false here — notification_outbox rows stay at
+		status=pending on the dev channel, so nothing is ever delivered.
+	-->
+	<Field
+		id="sigap-checkin-appointment_id"
+		label="ID janji temu (dari halaman konfirmasi)"
+		helper="Ada di halaman konfirmasi janji temu Anda, di bagian 'Detail teknis' — baris appointment_id. Salin seluruh nilainya."
+		required
+		error={appointmentError}
+	>
 		<Input
 			id="sigap-checkin-appointment_id"
 			bind:value={appointmentId}
 			describedBy={appointmentError ? 'sigap-checkin-appointment_id-error' : ''}
 			invalid={Boolean(appointmentError)}
-			placeholder="ID janji temu"
+			placeholder="Tempel ID dari halaman konfirmasi"
 			autocomplete="off"
 		/>
 	</Field>
 
-	<Field id="sigap-checkin-checkin_code" label="Kode check-in" required error={codeError}>
+	<Field
+		id="sigap-checkin-checkin_code"
+		label="Kode check-in"
+		helper="6 karakter huruf dan angka, misalnya 4F8K2Q."
+		required
+		error={codeError}
+	>
 		<Input
 			id="sigap-checkin-checkin_code"
 			bind:value={checkinCode}
 			describedBy={codeError ? 'sigap-checkin-checkin_code-error' : ''}
 			invalid={Boolean(codeError)}
-			placeholder="Kode check-in"
+			placeholder="Contoh: 4F8K2Q"
 			autocomplete="off"
 		/>
 	</Field>
@@ -78,7 +119,7 @@
 	.sigap-checkin-form {
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		gap: var(--sigap-space-4);
 	}
 
 	/*

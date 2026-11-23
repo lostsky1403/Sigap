@@ -1,16 +1,20 @@
 <script lang="ts">
-	import { RADIUS } from '$lib/design/tokens';
 	import CitizenDesktopNav from './CitizenDesktopNav.svelte';
 	import CitizenBottomNav from './CitizenBottomNav.svelte';
-	import AccountMenu from './AccountMenu.svelte';
+	import CitizenActions from './CitizenActions.svelte';
 
 	/**
 	 * The citizen shell header.
 	 *
-	 * Owns the wordmark, the two navigations, and the account control. The
-	 * header is a landmark and the navigations inside it are separate
-	 * landmarks, so assistive tech can jump straight to navigation rather than
-	 * walking the page.
+	 * Owns the wordmark, the two navigations, the account control, and the
+	 * booking CTA. The header is a landmark and the navigations inside it are
+	 * separate landmarks, so assistive tech can jump straight to navigation
+	 * rather than walking the page.
+	 *
+	 * The layout is three regions: wordmark, navigation, actions. The nav takes
+	 * the slack so the four destinations centre in the gap between the other
+	 * two rather than in the viewport — which is where the reference puts them,
+	 * and why the labels sit left of the page's true centre at 1440px.
 	 *
 	 * The two navs are mutually exclusive by viewport: the bottom bar is
 	 * `display: none` from 1024px up and the desktop nav is `display: none`
@@ -21,19 +25,28 @@
 	export let path: string = '/';
 	export let hasSession: boolean = false;
 	export let userEmail: string = '';
+
+	/**
+	 * Whether the masthead's booking CTA is the page's dominant action.
+	 *
+	 * The frozen frames are explicit about this and it is not a style choice:
+	 * `Buat Janji Temu` is filled on the catalog page, which promotes nothing
+	 * itself, and outlined on the landing and auth pages, which already carry a
+	 * filled primary of their own. The rule the frames encode is one filled
+	 * primary per action context — so the masthead defers rather than adding a
+	 * second one.
+	 *
+	 * It is a prop and not an inference because the header cannot see the page
+	 * body. A page that promotes an action says so here; every other page takes
+	 * the default and gets an outlined CTA.
+	 */
+	export let ctaEmphasis: 'filled' | 'outlined' = 'outlined';
 </script>
 
 <header class="sigap-citizen-header">
 	<div class="sigap-citizen-header__inner">
-		<a
-			class="sigap-citizen-header__brand"
-			style:border-radius={RADIUS.control}
-			href="/"
-			aria-label="Sigap, kembali ke Beranda"
-		>
-			<span class="sigap-citizen-header__mark" style:border-radius={RADIUS.control} aria-hidden="true">
-				S
-			</span>
+		<a class="sigap-citizen-header__brand" href="/" aria-label="Sigap, kembali ke Beranda">
+			<span class="sigap-citizen-header__mark" aria-hidden="true">S</span>
 			<span class="sigap-citizen-header__wordmark">Sigap</span>
 			<span class="sigap-citizen-header__tagline">Layanan Kesehatan Warga</span>
 		</a>
@@ -42,8 +55,8 @@
 			<CitizenDesktopNav {path} />
 		</div>
 
-		<div class="sigap-citizen-header__account">
-			<AccountMenu {hasSession} {userEmail} />
+		<div class="sigap-citizen-header__actions">
+			<CitizenActions {hasSession} {userEmail} {path} {ctaEmphasis} />
 		</div>
 	</div>
 </header>
@@ -60,30 +73,43 @@
 		top: 0;
 		z-index: 40;
 		background-color: var(--sigap-surface);
-		border-bottom: 1px solid var(--sigap-border);
+		/* Band delimiter, not a control edge. */
+		border-bottom: 1px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-citizen-header__inner {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
-		gap: 16px;
+		gap: var(--sigap-space-4);
+		/*
+			56px at every viewport. The reference draws the same height on the
+			1440 desktop frames and the 390px mobile frames, and a taller bar on
+			desktop would push the page content down for no gain.
+		*/
 		height: 56px;
-		padding: 0 16px;
+		padding: 0 var(--sigap-space-4);
 	}
 
 	@media (min-width: 1024px) {
 		.sigap-citizen-header__inner {
-			height: 64px;
-			padding: 0 24px;
+			max-width: 1440px;
+			margin: 0 auto;
+			padding: 0 var(--sigap-space-7);
 		}
 	}
 
 	.sigap-citizen-header__brand {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: var(--sigap-space-2);
+		flex: none;
 		min-width: 0;
+		/*
+			The wordmark is a target, not a word. A 44px touch floor keeps the
+			brand reachable without growing the mark's 24px visual block, so the
+			56px masthead composition stays untouched.
+		*/
+		min-height: var(--sigap-control-citizen);
 		text-decoration: none;
 	}
 
@@ -97,13 +123,14 @@
 		align-items: center;
 		justify-content: center;
 		flex: none;
-		width: 28px;
-		height: 28px;
-		font-size: 15px;
-		font-weight: 600;
+		width: 24px;
+		height: 24px;
+		font-size: 14px;
+		font-weight: 700;
 		line-height: 1;
-		color: var(--sigap-surface);
+		color: var(--sigap-on-primary);
 		background-color: var(--sigap-primary);
+		border-radius: var(--sigap-radius-control);
 	}
 
 	.sigap-citizen-header__wordmark {
@@ -136,10 +163,12 @@
 	@media (min-width: 1024px) {
 		.sigap-citizen-header__nav {
 			display: flex;
+			flex: 1 1 auto;
+			min-width: 0;
 		}
 	}
 
-	.sigap-citizen-header__account {
+	.sigap-citizen-header__actions {
 		display: flex;
 		align-items: center;
 		flex: none;

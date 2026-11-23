@@ -409,27 +409,28 @@
 	.sigap-schedule-editor {
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		gap: var(--sigap-space-4);
 	}
 
 	.sigap-schedule-editor__pair {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
-		gap: 12px;
+		gap: var(--sigap-space-3);
 	}
 
 	.sigap-schedule-editor__preview {
 		margin: 0;
-		padding: 8px 10px;
-		font-size: 13px;
+		padding: var(--sigap-space-2) var(--sigap-space-3);
+		font-size: var(--sigap-type-label);
 		color: var(--sigap-muted);
 		background-color: var(--sigap-canvas);
-		border-left: 3px solid var(--sigap-border);
+		/* A decorative accent on a preview message, never a control boundary. */
+		border-left: 3px solid var(--sigap-border-subtle);
 	}
 
 	.sigap-schedule-editor__error {
 		margin: 0;
-		font-size: 13px;
+		font-size: var(--sigap-type-label);
 		line-height: 1.45;
 		color: var(--sigap-danger);
 	}
@@ -437,16 +438,16 @@
 	.sigap-schedule-editor__actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 8px;
+		gap: var(--sigap-space-2);
 		justify-content: flex-end;
 	}
 
 	.sigap-schedule-editor__cancel,
 	.sigap-schedule-editor__submit {
-		height: 40px;
-		padding: 0 16px;
+		height: var(--sigap-control-admin-comfortable);
+		padding: 0 var(--sigap-space-4);
 		font: inherit;
-		font-size: 14px;
+		font-size: var(--sigap-type-body);
 		font-weight: 500;
 		cursor: pointer;
 	}
@@ -454,6 +455,7 @@
 	.sigap-schedule-editor__cancel {
 		color: var(--sigap-foreground);
 		background-color: var(--sigap-surface);
+		/* A control boundary. */
 		border: 1px solid var(--sigap-border);
 	}
 
