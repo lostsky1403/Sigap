@@ -804,6 +804,21 @@ func serviceDayRange(instant time.Time) (start, end time.Time) {
 	return start, start.AddDate(0, 0, 1)
 }
 
+// serviceDayDate returns the WIB calendar date (YYYY-MM-DD) of the service day
+// containing the given instant — the same day serviceDayRange scopes the
+// queue_number counter to. It is passed as a plain date string so no
+// session-timezone cast is involved, and it keeps service_date identical to
+// the day the number was counted for even when the wall clock has moved on:
+// notably in tests with an injected clock, and at the midnight boundary when
+// the database and application clocks disagree by a second. Without it the
+// UNIQUE (facility_id, service_date, queue_number) backstop from migration
+// 0015 would reject a ticket whose number belongs to a different logical day
+// than the DEFAULT-derived service_date.
+func serviceDayDate(instant time.Time) string {
+	dayStart, _ := serviceDayRange(instant)
+	return dayStart.Format("2006-01-02")
+}
+
 // resolveServiceDay turns the optional `date` query value into the WIB calendar
 // day it names and its half-open [start, end) instant bounds. An empty value is
 // replaced by TODAY in WIB — the live-board default that also scopes the admin
@@ -2878,14 +2893,14 @@ func (h *AdminHandler) recordAdminQueueTicket(ctx context.Context, now time.Time
 		    ON CONFLICT (phone) DO UPDATE SET full_name = EXCLUDED.full_name
 		    RETURNING id
 		)
-		INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status, registered_at)
+		INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status, registered_at, service_date)
 		SELECT $4::uuid, $5::uuid, p.id,
 		       (SELECT COALESCE(MAX(qt.queue_number), 0) + 1 FROM queue_tickets qt
 		         WHERE qt.facility_id = $5::uuid AND qt.registered_at >= $7 AND qt.registered_at < $8),
-		       $6, 'waiting', $9
+		       $6, 'waiting', $9, $10
 		FROM p
 		ON CONFLICT (id) DO NOTHING`,
-		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber, dayStart, dayEnd, now)
+		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber, dayStart, dayEnd, now, serviceDayDate(now))
 	return err
 }
 

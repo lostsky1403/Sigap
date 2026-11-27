@@ -42,6 +42,13 @@ only outside the repository (a secret, a DNS record, a platform toggle), it is m
 > contract, the implemented four-context guard, negative tests and the list of rows to update
 > are in `design/regional-release-integration-contract.md` (§6.2 for the single integration
 > strategy). This note changes no historical acceptance gate in this runbook.
+>
+> **Hotfix migrations on ordinary branches.** An ordinary branch may add a migration
+> only if it is in the declared hotfix set in `scripts/ops/check-migration-inventory.sh`
+> (context B) — currently only `0015_queue_ticket_service_date_unique.sql`
+> (queue-counter atomicity fix, with its SHA-256 recorded in the guard). Any other
+> added migration aborts the guard. The regional set (`0012`–`0014`) is unchanged
+> and still belongs to contexts C/D only.
 
 ---
 

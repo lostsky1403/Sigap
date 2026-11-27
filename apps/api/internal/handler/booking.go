@@ -1025,14 +1025,14 @@ func (h *BookingHandler) recordQueueTicket(ctx context.Context, now time.Time, t
 		    ON CONFLICT (phone) DO UPDATE SET full_name = EXCLUDED.full_name
 		    RETURNING id
 		)
-		INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status, registered_at)
+		INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status, registered_at, service_date)
 		SELECT $4::uuid, $5::uuid, p.id,
 		       (SELECT COALESCE(MAX(qt.queue_number), 0) + 1 FROM queue_tickets qt
 		         WHERE qt.facility_id = $5::uuid AND qt.registered_at >= $7 AND qt.registered_at < $8),
-		       $6, 'waiting', $9
+		       $6, 'waiting', $9, $10
 		FROM p
 		ON CONFLICT (id) DO NOTHING`,
-		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber, dayStart, dayEnd, now)
+		uuid.New().String(), patientName, patientPhone, ticketID, facilityID, formattedNumber, dayStart, dayEnd, now, serviceDayDate(now))
 	return err
 }
 
