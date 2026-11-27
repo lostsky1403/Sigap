@@ -42,9 +42,14 @@
  *                                every commit still gets the AI-trailer check.
  *   SIGAP_ATTRIBUTION_ALLOWLIST  forwarded to check-attribution.mjs (human co-authors).
  *
- * A GitHub system merge commit (committer noreply@github.com, >=2 parents, author
+ * A GitHub system merge commit (committer GitHub <noreply@github.com>, author
  * is a verified maintainer) is accepted as a distinct, verified system identity —
- * not as a generic agent placeholder.
+ * not as a generic agent placeholder. That covers both shapes GitHub itself
+ * creates: a real merge commit (>=2 parents) and a squash merge (1 parent).
+ * The parent count never proved GitHub origin — anyone can create a 2-parent
+ * commit locally — so it is not part of the exemption; the author being a
+ * verified maintainer is the check that matters, and the committer name
+ * ("GitHub") plus email pin the exemption to GitHub's own merge identity.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -295,12 +300,18 @@ function main() {
 			if (identity.role === 'author' && grandfathered) continue;
 			const email = (identity.email ?? '').toLowerCase();
 			// GitHub's own merge committer is a verified system identity, distinct
-			// from generic agent placeholders: allow it only for a real merge commit
-			// (>=2 parents) whose author is a verified maintainer.
+			// from generic agent placeholders: allow it for any merge GitHub
+			// itself creates — a real merge commit (>=2 parents) or a squash
+			// merge (1 parent) — whose author is a verified maintainer. The
+			// parent count is deliberately not consulted: it never proved
+			// GitHub origin (a 2-parent commit can be created locally), and
+			// requiring it rejected every squash merge to main (PR #100,
+			// b935fc65). The committer name ("GitHub") plus email pin the
+			// exemption to GitHub's own merge identity.
 			const githubSystemMerge =
 				identity.role === 'committer' &&
+				(identity.name ?? '') === 'GitHub' &&
 				email === 'noreply@github.com' &&
-				commit.parents.length >= 2 &&
 				MAINTAINER_EMAILS.includes((commit.authorEmail ?? '').toLowerCase());
 			if (githubSystemMerge) continue;
 			const okAuthorized = authorized.has(email);
