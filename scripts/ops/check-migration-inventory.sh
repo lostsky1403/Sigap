@@ -3,7 +3,11 @@
 #
 # Contexts (the ONLY supported interpretations; any other shape fails closed):
 #   A  historical design release  — design/ui-ux-overhaul, anchor d7705f09, 0006 hardening + 0011
-#   B  ordinary hotfix/other      — no migration change relative to origin/main
+#   B  ordinary hotfix/other      — no migration change relative to origin/main,
+#                                  except an added migration in the declared
+#                                  hotfix set (EXPECTED_HOTFIX below). The
+#                                  regional set is NOT an ordinary-branch
+#                                  allowance: contexts C/D require it exactly.
 #   C  regional development       — feat/sigap-selfhosted-auth, baseline 4813de64, exactly 0012-0014 added
 #   D  future dedicated release   — release/sigap-regional-v1, baseline 4813de64, exactly 0012-0014 added
 #
@@ -28,6 +32,14 @@ REGIONAL_RELEASE_BRANCH=release/sigap-regional-v1
 MIG_DIR=packages/db/migrations
 EXPECTED_REGIONAL="packages/db/migrations/0012_service_day_wib.sql packages/db/migrations/0013_organizations.sql packages/db/migrations/0014_patient_account.sql"
 EXPECTED_SHA256="0012_service_day_wib.sql:618154620aa57c9b044b2a19423ff24358ec050bd1a8d7a220076e7646157663 0013_organizations.sql:6bf14b56079e4a252bc366e57977b1b3daed5399dbd68c34371479a660c4d5b1 0014_patient_account.sql:001e7784b420649732970f963df2f24eca388b0e5d64cc83fd505ed925e21624"
+
+# Declared hotfix migrations: the ONLY migrations an ordinary branch (context B)
+# may add relative to origin/main. This set is separate from the regional set
+# above — the regional batch (0012-0014) stays the exact set for contexts C/D
+# and must not be repurposed as an ordinary-branch allowance. 0015 is the
+# queue-counter atomicity fix; it is not part of the regional release.
+EXPECTED_HOTFIX="packages/db/migrations/0015_queue_ticket_service_date_unique.sql"
+EXPECTED_HOTFIX_SHA256="0015_queue_ticket_service_date_unique.sql:926e98e136ec0aa86168637576379d84371b77a7dd53b22636cea31fd3558dad"
 
 branch='' baseline='' context=''
 while [ $# -gt 0 ]; do
@@ -121,6 +133,27 @@ check_regional_checksums() {
   ok 'declared 0012-0014 SHA-256 checksums match'
 }
 
+check_hotfix_checksums() {
+  # Verify the SHA-256 of every added file that is in the declared hotfix set.
+  # Runs in the main shell (for loop, no pipeline) so fail() exits the script.
+  for f in $added; do
+    case " $EXPECTED_HOTFIX " in
+      *" $f "*) ;;
+      *) continue ;;
+    esac
+    file=${f##*/}
+    want=
+    for pair in $EXPECTED_HOTFIX_SHA256; do
+      [ "${pair%%:*}" = "$file" ] && want=${pair#*:}
+    done
+    [ -n "$want" ] || fail "declared hotfix migration has no recorded checksum: $file"
+    actual=$(sha256sum "$MIG_DIR/$file" 2>/dev/null | awk '{print $1}')
+    [ -n "$actual" ] || fail "declared hotfix migration missing or unreadable: $file"
+    [ "$actual" = "$want" ] || fail "checksum mismatch for $file: $actual"
+  done
+  ok 'declared hotfix SHA-256 checksums match'
+}
+
 check_never_applied_changed() {
   applied=$(git diff --name-only "$base"..HEAD -- "$MIG_DIR/0001_init.sql" "$MIG_DIR/0002_medical_records.sql" \
     "$MIG_DIR/0003_identity_rbac.sql" "$MIG_DIR/0004_audit_events.sql" "$MIG_DIR/0005_appointments.sql" \
@@ -146,9 +179,20 @@ case "$context" in
   B)
     [ -z "$destroyed" ] || fail "B: branch deletes/renames an applied migration: $(printf '%s' "$destroyed" | tr '\n' ' ')"
     [ -z "$modified" ] || fail "B: branch modifies an applied migration: $(printf '%s' "$modified" | tr '\n' ' ')"
-    [ -z "$added" ] || fail "B: undeclared migration added on an ordinary branch: $(printf '%s' "$added" | tr '\n' ' ')"
+    # An ordinary branch may add ONLY a migration in the declared hotfix set;
+    # anything else is undeclared. The check collects the undeclared additions
+    # (printing only, so the piped loop is safe) and fails on them below.
+    undeclared=$(printf '%s\n' "$added" | while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      case " $EXPECTED_HOTFIX " in
+        *" $f "*) ;;
+        *) printf '%s\n' "$f" ;;
+      esac
+    done)
+    [ -z "$undeclared" ] || fail "B: undeclared migration added on an ordinary branch: $(printf '%s' "$undeclared" | tr '\n' ' ')"
+    check_hotfix_checksums
     check_forward_order
-    ok 'B: ordinary branch ships no migration change'
+    ok 'B: ordinary branch ships no undeclared migration change'
     ;;
   C)
     [ -z "$destroyed" ] || fail "C: branch deletes/renames an applied migration: $(printf '%s' "$destroyed" | tr '\n' ' ')"

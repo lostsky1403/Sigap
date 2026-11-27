@@ -226,13 +226,10 @@ if [ "${missing_base_ref:-0}" -eq 0 ]; then
     # false red on every non-release PR (observed on
     # fix/go-security-toolchain-1.26.11).
     #
-    # Every other branch keeps a REAL assertion: it must not DELETE, RENAME or
-    # MODIFY any existing migration (a hotfix may add none, but must never
-    # rewrite or remove the applied history), and if it does add one it must be
-    # declared. The check is never vacuous.
-    maindiff=$(git diff --name-only origin/main..HEAD -- packages/db/migrations)
-    destroyed=$(git diff --name-only --diff-filter=DR origin/main..HEAD -- packages/db/migrations)
-    modified=$(git diff --name-only --diff-filter=M origin/main..HEAD -- packages/db/migrations)
+    # Every other branch keeps a REAL assertion, enforced by the dedicated
+    # inventory guard (context B) below: it must not DELETE, RENAME or MODIFY
+    # any existing migration, and if it does add one it must be in the
+    # declared hotfix set. The check is never vacuous.
     if [ "$HEAD_REF" = "$RELEASE_BRANCH" ]; then
       # On the release branch the migration set is asserted against the DURABLE
       # ANCHOR (d7705f09, the rewritten 'deploy: env-driven production origin'
@@ -277,18 +274,13 @@ if [ "${missing_base_ref:-0}" -eq 0 ]; then
         bad "dedicated regional release migration inventory failed the declared-set guard"
       fi
     else
-      if [ -n "$destroyed" ]; then
-        bad "branch removes or renames an applied migration — refusing a rewrite of migration history"
-        printf '  got : %s\n' "$(printf '%s' "$destroyed" | tr '\n' ' ')"
-      elif [ -n "$modified" ]; then
-        bad "branch modifies an already-applied migration — refusing a rewrite of migration history"
-        printf '  got : %s\n' "$(printf '%s' "$modified" | tr '\n' ' ')"
-      elif [ -n "$maindiff" ]; then
-        bad "branch adds a migration that is not part of the declared release set"
-        printf '  got : %s\n' "$(printf '%s' "$maindiff" | tr '\n' ' ')"
-      else
-        printf '  not the release branch and ships no migration change; migration history is untouched\n'
+      # B: an ordinary branch must satisfy the inventory guard — no
+      # deletion/rename/modification of applied migrations, and any added
+      # migration must be in the declared hotfix set.
+      if sh scripts/ops/check-migration-inventory.sh --branch "$HEAD_REF" --context B; then
         ok
+      else
+        bad "ordinary branch migration inventory failed the declared-set guard"
       fi
     fi
   fi
