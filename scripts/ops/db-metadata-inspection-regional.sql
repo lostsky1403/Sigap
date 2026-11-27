@@ -1,6 +1,6 @@
--- REGIONAL variant of db-metadata-inspection.sql — development contract 0001..0014.
+-- REGIONAL variant of db-metadata-inspection.sql — development contract 0001..0015.
 -- This file exists so the HISTORICAL 1..11 production classifier remains untouched.
--- Only expected_version is extended (1..14); required_version stays at 1..10 for
+-- Only expected_version is extended (1..15); required_version stays at 1..10 for
 -- the same load-bearing reason as the historical file: 0011 may legitimately be
 -- applied with psql (no ledger row), and 0012..0014 are development migrations
 -- whose production application is a separate owner-authorized decision. Adding
@@ -149,7 +149,7 @@ expected_column(name) AS (
          ('related_resource_id'), ('created_at'), ('updated_at')
 ),
 expected_version(version) AS (
-  VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14)
+  VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14),(15)
 ),
 -- Versions that MUST be present. This is 1..10, not 1..11, and the difference is
 -- load-bearing: 0011 converges a drifted database, and whether version 11 is
@@ -252,7 +252,7 @@ expected_column(name) AS (
          ('related_resource_id'), ('created_at'), ('updated_at')
 ),
 expected_version(version) AS (
-  VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14)
+  VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14),(15)
 ),
 -- Versions that MUST be present. This is 1..10, not 1..11, and the difference is
 -- load-bearing: 0011 converges a drifted database, and whether version 11 is
