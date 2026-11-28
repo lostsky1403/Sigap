@@ -28,9 +28,14 @@ type GenerateResult struct {
 	FormattedNumber      string `json:"formatted_number"`
 	Status               string
 	RegisteredAt         string `json:"registered_at"`
-	EstimatedWaitMinutes int    `json:"estimated_wait_minutes"`
+	// EstimatedWaitMinutes is nil when the engine cannot compute an estimate
+	// from real queue data (no history yet). The field is omitted from the
+	// wire payload in that case: callers must not read an absent estimate
+	// as "0 minutes". The old behaviour returned a hardcoded 25 minutes
+	// for every ticket.
+	EstimatedWaitMinutes *int   `json:"estimated_wait_minutes,omitempty"`
 	ProcessingTime       string `json:"processing_time"` // e.g. "45µs" from Rust engine micro-second measurement
-	Signature            string `json:"signature"`       // SHA-256 hex from Rust engine for immutable Health Wallet proof
+	Signature            string `json:"signature"`       // HMAC-SHA256 hex from Rust engine (record-integrity checksum; verifiable only with the server signing secret)
 }
 
 // QueueService is the interface for the core queue generation logic.
@@ -71,14 +76,15 @@ func (f *fakeQueueService) Generate(ctx context.Context, input GenerateInput) (G
 	// TicketID is persisted into uuid columns (appointments.queue_ticket_id), so
 	// it must be a real UUID: a synthetic "ticket-N" string fails at the column
 	// with a driver-level syntax error the caller cannot classify or recover.
+	// No wait estimate: the fake has no queue history to compute one from,
+	// so it reports "no estimate" (nil) instead of inventing a minute value.
 	return GenerateResult{
-		TicketID:             uuid.New().String(),
-		FormattedNumber:      fmt.Sprintf("RSK-%04d", f.counter),
-		Status:               "waiting",
-		RegisteredAt:         now,
-		EstimatedWaitMinutes: 25,
-		ProcessingTime:       "123µs", // dummy for unit tests; real value comes from Rust gRPC
-		Signature:            "a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef01", // demo immutable sig
+		TicketID:        uuid.New().String(),
+		FormattedNumber: fmt.Sprintf("RSK-%04d", f.counter),
+		Status:          "waiting",
+		RegisteredAt:    now,
+		ProcessingTime:  "123µs", // dummy for unit tests; real value comes from Rust gRPC
+		Signature:       "a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef01", // demo HMAC-format sig
 	}, nil
 }
 

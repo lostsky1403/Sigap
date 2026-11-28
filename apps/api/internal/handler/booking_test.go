@@ -458,11 +458,12 @@ type engineTicketQueueService struct {
 }
 
 func (e *engineTicketQueueService) Generate(ctx context.Context, input service.GenerateInput) (service.GenerateResult, error) {
+	// No wait estimate: this fake has no queue history to compute one
+	// from, so it reports "no estimate" (nil) instead of a minute value.
 	return service.GenerateResult{
-		TicketID:             e.ticketID,
-		FormattedNumber:      e.formatted,
-		Status:               "waiting",
-		EstimatedWaitMinutes: 25,
+		TicketID:        e.ticketID,
+		FormattedNumber: e.formatted,
+		Status:          "waiting",
 	}, nil
 }
 

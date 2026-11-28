@@ -77,12 +77,21 @@ func (g *grpcQueueService) Generate(ctx context.Context, input service.GenerateI
 		return service.GenerateResult{}, fmt.Errorf("rust engine error: %w", err)
 	}
 
+	// The engine reports -1 when it cannot compute an estimate from real
+	// queue data. The wire contract is nil ("no estimate", omitted) rather
+	// than a negative number.
+	var estimatedWait *int
+	if resp.EstimatedWaitMinutes >= 0 {
+		v := int(resp.EstimatedWaitMinutes)
+		estimatedWait = &v
+	}
+
 	return service.GenerateResult{
 		TicketID:             resp.TicketId,
 		FormattedNumber:      resp.FormattedNumber,
 		Status:               resp.Status,
 		RegisteredAt:         resp.RegisteredAt,
-		EstimatedWaitMinutes: int(resp.EstimatedWaitMinutes),
+		EstimatedWaitMinutes: estimatedWait,
 		ProcessingTime:       fmt.Sprintf("%dµs", resp.ProcessingTimeMicros),
 		Signature:            resp.Signature,
 	}, nil

@@ -102,36 +102,49 @@ type facilityResponse struct {
 	AvailableBeds int        `json:"available_beds"`
 	IsActive      bool       `json:"is_active"`
 	ShortCode     string     `json:"short_code"`
+	// Latitude/Longitude are nil when the facility has no coordinates (it
+	// then cannot appear in /facilities/nearby). IsDemo marks demo/synthetic
+	// rows: the public catalog and /facilities/nearby exclude them by
+	// default, and operators onboard real facilities with is_demo = false.
+	Latitude      *float64   `json:"latitude,omitempty"`
+	Longitude     *float64   `json:"longitude,omitempty"`
+	IsDemo        bool       `json:"is_demo"`
 	CreatedAt     *time.Time `json:"created_at,omitempty"`
 	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
 }
 
 // CreateFacilityRequest is the JSON body for facility creation.
 type CreateFacilityRequest struct {
-	Name          string `json:"name"`
-	Type          string `json:"type"`
-	Address       string `json:"address"`
-	Kecamatan     string `json:"kecamatan"`
-	KabupatenKota string `json:"kabupaten_kota"`
-	Provinsi      string `json:"provinsi"`
-	Phone         string `json:"phone"`
-	TotalBeds     int    `json:"total_beds"`
-	AvailableBeds int    `json:"available_beds"`
-	ShortCode     string `json:"short_code"`
+	Name          string   `json:"name"`
+	Type          string   `json:"type"`
+	Address       string   `json:"address"`
+	Kecamatan     string   `json:"kecamatan"`
+	KabupatenKota string   `json:"kabupaten_kota"`
+	Provinsi      string   `json:"provinsi"`
+	Phone         string   `json:"phone"`
+	TotalBeds     int      `json:"total_beds"`
+	AvailableBeds int      `json:"available_beds"`
+	ShortCode     string   `json:"short_code"`
+	Latitude      *float64 `json:"latitude,omitempty"`
+	Longitude     *float64 `json:"longitude,omitempty"`
+	IsDemo        *bool    `json:"is_demo,omitempty"`
 }
 
 // UpdateFacilityRequest is the JSON body for facility updates.
 type UpdateFacilityRequest struct {
-	Name          *string `json:"name,omitempty"`
-	Type          *string `json:"type,omitempty"`
-	Address       *string `json:"address,omitempty"`
-	Kecamatan     *string `json:"kecamatan,omitempty"`
-	KabupatenKota *string `json:"kabupaten_kota,omitempty"`
-	Provinsi      *string `json:"provinsi,omitempty"`
-	Phone         *string `json:"phone,omitempty"`
-	TotalBeds     *int    `json:"total_beds,omitempty"`
-	AvailableBeds *int    `json:"available_beds,omitempty"`
-	ShortCode     *string `json:"short_code,omitempty"`
+	Name          *string  `json:"name,omitempty"`
+	Type          *string  `json:"type,omitempty"`
+	Address       *string  `json:"address,omitempty"`
+	Kecamatan     *string  `json:"kecamatan,omitempty"`
+	KabupatenKota *string  `json:"kabupaten_kota,omitempty"`
+	Provinsi      *string  `json:"provinsi,omitempty"`
+	Phone         *string  `json:"phone,omitempty"`
+	TotalBeds     *int     `json:"total_beds,omitempty"`
+	AvailableBeds *int     `json:"available_beds,omitempty"`
+	ShortCode     *string  `json:"short_code,omitempty"`
+	Latitude      *float64 `json:"latitude,omitempty"`
+	Longitude     *float64 `json:"longitude,omitempty"`
+	IsDemo        *bool    `json:"is_demo,omitempty"`
 }
 
 // --- Facility handlers ---
@@ -213,12 +226,14 @@ func (h *AdminHandler) ListFacilities(w http.ResponseWriter, r *http.Request) {
 	if readSet.Unrestricted {
 		rows, err = h.pool.Query(ctx,
 			`SELECT id, name, type, kecamatan, kabupaten_kota, provinsi,
-				phone, total_beds, available_beds, is_active, short_code
+				phone, total_beds, available_beds, is_active, short_code,
+				latitude, longitude, is_demo
 			 FROM facilities ORDER BY name`)
 	} else {
 		rows, err = h.pool.Query(ctx,
 			`SELECT id, name, type, kecamatan, kabupaten_kota, provinsi,
-				phone, total_beds, available_beds, is_active, short_code
+				phone, total_beds, available_beds, is_active, short_code,
+				latitude, longitude, is_demo
 			 FROM facilities
 			 WHERE id = ANY($1)
 			 ORDER BY name`, readSet.IDs)
@@ -234,7 +249,8 @@ func (h *AdminHandler) ListFacilities(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var f facilityResponse
 		if err := rows.Scan(&f.ID, &f.Name, &f.Type, &f.Kecamatan, &f.KabupatenKota,
-			&f.Provinsi, &f.Phone, &f.TotalBeds, &f.AvailableBeds, &f.IsActive, &f.ShortCode); err != nil {
+			&f.Provinsi, &f.Phone, &f.TotalBeds, &f.AvailableBeds, &f.IsActive, &f.ShortCode,
+			&f.Latitude, &f.Longitude, &f.IsDemo); err != nil {
 			writeError(w, http.StatusInternalServerError, "Gagal membaca data fasilitas.")
 			h.logAccess(r, actor, "facility.list", "error", err.Error())
 			return
@@ -296,11 +312,11 @@ func (h *AdminHandler) GetFacility(w http.ResponseWriter, r *http.Request) {
 	err = h.pool.QueryRow(ctx,
 		`SELECT id, name, type, address, kecamatan, kabupaten_kota, provinsi,
 			phone, total_beds, available_beds, is_active, short_code,
-			created_at, updated_at
+			latitude, longitude, is_demo, created_at, updated_at
 		 FROM facilities WHERE id = $1`, id).
 		Scan(&f.ID, &f.Name, &f.Type, &f.Address, &f.Kecamatan, &f.KabupatenKota,
 			&f.Provinsi, &f.Phone, &f.TotalBeds, &f.AvailableBeds, &f.IsActive,
-			&f.ShortCode, &f.CreatedAt, &f.UpdatedAt)
+			&f.ShortCode, &f.Latitude, &f.Longitude, &f.IsDemo, &f.CreatedAt, &f.UpdatedAt)
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -351,14 +367,22 @@ func (h *AdminHandler) CreateFacility(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// is_demo defaults to false (a real facility). An explicit NULL must
+	// never reach the NOT NULL column, so dereference with a false default.
+	isDemo := false
+	if req.IsDemo != nil {
+		isDemo = *req.IsDemo
+	}
+
 	var id string
 	err := h.pool.QueryRow(ctx,
 		`INSERT INTO facilities (name, type, address, kecamatan, kabupaten_kota, provinsi,
-			phone, total_beds, available_beds, short_code)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			phone, total_beds, available_beds, short_code, latitude, longitude, is_demo)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		 RETURNING id`,
 		req.Name, req.Type, req.Address, req.Kecamatan, req.KabupatenKota, req.Provinsi,
 		req.Phone, req.TotalBeds, req.AvailableBeds, req.ShortCode,
+		req.Latitude, req.Longitude, isDemo,
 	).Scan(&id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Gagal membuat fasilitas.")
@@ -449,6 +473,21 @@ func (h *AdminHandler) UpdateFacility(w http.ResponseWriter, r *http.Request) {
 	if req.ShortCode != nil {
 		setClauses = append(setClauses, fmt.Sprintf("short_code = $%d", argIdx))
 		args = append(args, *req.ShortCode)
+		argIdx++
+	}
+	if req.Latitude != nil {
+		setClauses = append(setClauses, fmt.Sprintf("latitude = $%d", argIdx))
+		args = append(args, *req.Latitude)
+		argIdx++
+	}
+	if req.Longitude != nil {
+		setClauses = append(setClauses, fmt.Sprintf("longitude = $%d", argIdx))
+		args = append(args, *req.Longitude)
+		argIdx++
+	}
+	if req.IsDemo != nil {
+		setClauses = append(setClauses, fmt.Sprintf("is_demo = $%d", argIdx))
+		args = append(args, *req.IsDemo)
 		argIdx++
 	}
 
@@ -702,6 +741,9 @@ func validateCreateFacility(req CreateFacilityRequest) error {
 	if err := validateShortCode(strings.TrimSpace(req.ShortCode)); err != nil {
 		return err
 	}
+	if err := validateCoordinates(req.Latitude, req.Longitude); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -728,6 +770,22 @@ func validateUpdateFacility(req UpdateFacilityRequest) error {
 		if err := validateShortCode(strings.TrimSpace(*req.ShortCode)); err != nil {
 			return err
 		}
+	}
+	if err := validateCoordinates(req.Latitude, req.Longitude); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateCoordinates rejects out-of-range WGS84 coordinates. Both fields
+// are optional; a lone latitude or longitude is accepted (the row simply
+// stays out of /facilities/nearby until both are set).
+func validateCoordinates(lat, lon *float64) error {
+	if lat != nil && (*lat < -90 || *lat > 90) {
+		return fmt.Errorf("Lintang harus di antara -90 dan 90.")
+	}
+	if lon != nil && (*lon < -180 || *lon > 180) {
+		return fmt.Errorf("Bujur harus di antara -180 dan 180.")
 	}
 	return nil
 }

@@ -364,12 +364,16 @@ func main() {
 
 	mux.HandleFunc("/api/v1/queues/generate", enableCORS(qh.Generate))
 
-	// Real-time SSE endpoint for bed/queue updates (Langkah 2)
+	// Real-time SSE endpoint for queue updates (Langkah 2). The stream carries
+	// queue events only — there is no live bed feed, so nothing here claims
+	// to push bed availability.
 	// Wrapped for CORS so browser EventSource from localhost:3005 works when not using proxy
 	mux.HandleFunc("/api/v1/events/beds", enableCORS(events.Bus.ServeSSE))
 
-	// Super App: facilities/nearby exposes only facility/bed info (non-PHI).
-	mux.HandleFunc("/api/v1/facilities/nearby", enableCORS(facilitiesNearbyHandler))
+	// Super App: facilities/nearby exposes only facility/bed info (non-PHI),
+	// read from the facilities table. Bed counts are operator-maintained
+	// values with a beds_updated_at timestamp — never presented as live.
+	mux.HandleFunc("/api/v1/facilities/nearby", enableCORS(facilitiesNearbyHandler(dbPool)))
 
 	// Public catalog endpoints: no auth required; return minimal fields for
 	// the patient booking flow (AUDIT-1801).
@@ -488,68 +492,108 @@ func main() {
 
 // --- Super App endpoints: mapcn Smart Routing + Health Wallet ---
 
-// facilitiesNearbyHandler returns alternative facilities sorted by distance + availability (for rujukan when target penuh).
-// Uses same coords as UI samples for consistency. Real version would query DB with PostGIS.
-func facilitiesNearbyHandler(w http.ResponseWriter, r *http.Request) {
-	latStr := r.URL.Query().Get("lat")
-	lonStr := r.URL.Query().Get("lon")
-	exclude := r.URL.Query().Get("exclude")
+// facilitiesNearbyHandler returns alternative facilities sorted by distance +
+// availability (for rujukan when target penuh). It reads the facilities
+// table — never a hardcoded list — and returns only rows an operator has
+// onboarded as real facilities: is_active = true, is_demo = false, with
+// coordinates. Bed counts are operator-maintained values, so each row
+// carries beds_updated_at: callers must show how stale the number is
+// instead of presenting it as live. Demo rows are excluded by default;
+// pass include_demo=true to see them (labelled is_demo in the response).
+// When the database is unavailable the endpoint fails closed with 503
+// instead of serving invented data.
+func facilitiesNearbyHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		latStr := r.URL.Query().Get("lat")
+		lonStr := r.URL.Query().Get("lon")
+		exclude := r.URL.Query().Get("exclude")
+		includeDemo := r.URL.Query().Get("include_demo") == "true"
 
-	lat, _ := strconv.ParseFloat(latStr, 64)
-	lon, _ := strconv.ParseFloat(lonStr, 64)
-	if lat == 0 || lon == 0 {
-		lat, lon = -6.2088, 106.8456 // default Jakarta
-	}
-
-	// Hardcoded master list (sync with UI + previous geo task). In prod: SELECT ... from facilities + ST_Distance.
-	type f struct {
-		ID      string  `json:"id"`
-		Name    string  `json:"name"`
-		Short   string  `json:"short_code"`
-		Lat     float64 `json:"lat"`
-		Lon     float64 `json:"lon"`
-		Avail   int     `json:"available_beds"`
-		Total   int     `json:"total_beds"`
-	}
-	all := []f{
-		{"f1", "RSUD Kota Sehat", "RSK", -6.9175, 107.6191, 42, 180},
-		{"f2", "Puskesmas Sukajaya", "PKM", -6.9820, 107.6820, 19, 28},
-		{"f3", "RS Mitra Sehat", "RSM", -6.1751, 106.8270, 11, 95},
-		{"f4", "Puskesmas Melati Indah", "PMI", -6.2658, 106.7814, 27, 35},
-		{"f5", "RSUD Sejahtera", "RSJ", -6.9197, 106.9270, 68, 120},
-		{"f6", "Puskesmas Harapan Baru", "PHB", -6.5950, 106.8000, 5, 22},
-	}
-
-	type out struct {
-		ID      string  `json:"id"`
-		Name    string  `json:"name"`
-		Short   string  `json:"short_code"`
-		Lat     float64 `json:"lat"`
-		Lon     float64 `json:"lon"`
-		Avail   int     `json:"available_beds"`
-		Total   int     `json:"total_beds"`
-		DistKm  float64 `json:"dist_km"`
-	}
-	var res []out
-	for _, fac := range all {
-		if fac.ID == exclude {
-			continue
+		lat, errLat := strconv.ParseFloat(latStr, 64)
+		lon, errLon := strconv.ParseFloat(lonStr, 64)
+		if errLat != nil || errLon != nil || lat == 0 || lon == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false,
+				"error":   "lat and lon query parameters are required and must be valid coordinates",
+			})
+			return
 		}
-		if fac.Avail <= 0 {
-			continue
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"success": false,
+				"error":   "facility data is unavailable",
+			})
+			return
 		}
-		d := haversine(lat, lon, fac.Lat, fac.Lon)
-		res = append(res, out{fac.ID, fac.Name, fac.Short, fac.Lat, fac.Lon, fac.Avail, fac.Total, d})
-	}
-	// sort by dist asc
-	for i := 0; i < len(res); i++ {
-		for j := i + 1; j < len(res); j++ {
-			if res[j].DistKm < res[i].DistKm {
-				res[i], res[j] = res[j], res[i]
+
+		rows, err := db.Query(r.Context(), `
+			SELECT id, name, short_code, latitude, longitude,
+			       available_beds, total_beds, last_updated, is_demo
+			FROM facilities
+			WHERE is_active = true
+			  AND latitude IS NOT NULL AND longitude IS NOT NULL
+			  AND available_beds > 0
+			  AND ($1 OR NOT is_demo)
+			ORDER BY (
+			  6371.0 * 2 * ASIN(SQRT(
+			    POWER(SIN(RADIANS(latitude - $2) / 2), 2) +
+			    COS(RADIANS($2)) * COS(RADIANS(latitude)) *
+			    POWER(SIN(RADIANS(longitude - $3) / 2), 2)
+			  ))
+			) ASC
+			LIMIT 20
+		`, includeDemo, lat, lon)
+		if err != nil {
+			slog.Error("facilities/nearby query failed", "error", err)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"success": false,
+				"error":   "facility data is unavailable",
+			})
+			return
+		}
+		defer rows.Close()
+
+		type out struct {
+			ID        string  `json:"id"`
+			Name      string  `json:"name"`
+			Short     string  `json:"short_code"`
+			Lat       float64 `json:"lat"`
+			Lon       float64 `json:"lon"`
+			Avail     int     `json:"available_beds"`
+			Total     int     `json:"total_beds"`
+			DistKm    float64 `json:"dist_km"`
+			BedsUpdAt string  `json:"beds_updated_at"`
+			IsDemo    bool    `json:"is_demo"`
+		}
+		res := make([]out, 0, 20)
+		for rows.Next() {
+			var o out
+			var updAt time.Time
+			if err := rows.Scan(&o.ID, &o.Name, &o.Short, &o.Lat, &o.Lon, &o.Avail, &o.Total, &updAt, &o.IsDemo); err != nil {
+				slog.Error("facilities/nearby row scan failed", "error", err)
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+					"success": false,
+					"error":   "facility data is unavailable",
+				})
+				return
 			}
+			if o.ID == exclude {
+				continue
+			}
+			o.DistKm = haversine(lat, lon, o.Lat, o.Lon)
+			o.BedsUpdAt = updAt.UTC().Format(time.RFC3339)
+			res = append(res, o)
 		}
+		if err := rows.Err(); err != nil {
+			slog.Error("facilities/nearby rows failed", "error", err)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"success": false,
+				"error":   "facility data is unavailable",
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": res})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": res})
 }
 
 func haversine(lat1, lon1, lat2, lon2 float64) float64 {
