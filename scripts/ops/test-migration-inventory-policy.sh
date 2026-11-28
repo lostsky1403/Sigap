@@ -41,6 +41,22 @@ setup() { # [omit_0005]
 	git commit -q -m 'regional development migrations'
 }
 
+setup_b() { # baseline 0001-0014 as origin/main (ordinary-branch base)
+	TMP=$(mktemp -d 2>/dev/null || echo "/tmp/sigap-migpol-$$")
+	OUT="$TMP/out"
+	REPO="$TMP/repo"
+	git init -q "$REPO" || exit 1
+	cd "$REPO" || exit 1
+	git config user.name 'policy-test'
+	git config user.email 'policy-test@example.org'
+	mkdir -p packages/db/migrations docs/operations
+	: > docs/operations/DEPLOYMENT_RUNBOOK.md
+	cp "$SRC"/000[1-9]_*.sql "$SRC"/001[01]_*.sql "$SRC"/0012_*.sql "$SRC"/0013_*.sql "$SRC"/0014_*.sql packages/db/migrations/ 2>/dev/null
+	git add -A
+	git commit -q -m 'baseline 0001-0014'
+	git update-ref refs/remotes/origin/main HEAD
+}
+
 run() { sh "$GUARD" "$@" >"$OUT" 2>&1; echo $?; }
 
 # Positive: declared 0012-0014 on the regional development branch.
@@ -87,6 +103,25 @@ assert 'negative: incorrect branch context' 1 "$(run --branch release/sigap-regi
 setup
 SIGAP_RELEASE_BRANCH=feat/sigap-selfhosted-auth sh "$GUARD" --branch hotfix/try >"$OUT" 2>&1
 assert 'negative: branch-name override to dev branch' 1 $?
+
+# Positive B: an ordinary branch adding only the declared hotfix migration passes.
+setup_b
+cp "$SRC"/0015_*.sql packages/db/migrations/
+git add -A && git commit -q -m 'add declared hotfix migration'
+assert 'B: declared hotfix migration accepted' 0 "$(run --branch fix/queue-counter-race-0015)"
+
+# Negative B1: an ordinary branch adding an undeclared migration fails.
+setup_b
+printf 'SELECT 1;\n' > packages/db/migrations/0016_unexpected.sql
+git add -A && git commit -q -m 'add unexpected migration'
+assert 'negative B: unexpected migration added' 1 "$(run --branch fix/queue-counter-race-0015)"
+
+# Negative B2: a tampered declared hotfix migration fails the checksum.
+setup_b
+cp "$SRC"/0015_*.sql packages/db/migrations/
+printf '\n-- unauthorized edit --\n' >> packages/db/migrations/0015_queue_ticket_service_date_unique.sql
+git add -A && git commit -q -m 'tamper declared hotfix migration'
+assert 'negative B: hotfix checksum mismatch' 1 "$(run --branch fix/queue-counter-race-0015)"
 
 # Fail-closed: an unresolvable baseline must not pass.
 setup

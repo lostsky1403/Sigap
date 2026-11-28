@@ -467,9 +467,9 @@ func TestFacilityScope_ListQueueTicketsServiceDay(t *testing.T) {
 	}
 	for _, tk := range tickets {
 		if _, err := pool.Exec(ctx,
-			`INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status, registered_at)
-			 VALUES ($1, $2, $3, 1, $4, 'waiting', $5)`,
-			uuid.NewString(), facilityID, patientID, tk.number, tk.registered); err != nil {
+			`INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status, registered_at, service_date)
+			 VALUES ($1, $2, $3, 1, $4, 'waiting', $5, $6)`,
+			uuid.NewString(), facilityID, patientID, tk.number, tk.registered, serviceDayDate(tk.registered)); err != nil {
 			t.Fatalf("seed queue ticket %s: %v", tk.number, err)
 		}
 	}

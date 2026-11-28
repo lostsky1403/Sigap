@@ -2,7 +2,7 @@ package notification
 
 // Fresh-chain migration tests. The historical 0011 transition tests in
 // migration_transition_test.go deliberately stage only 0001..0011; these tests
-// cover the CURRENT 0001..0014 chain through the real runner, its version-only
+// cover the CURRENT 0001..0015 chain through the real runner, its version-only
 // ledger, checksum recording, ordering and idempotency.
 //
 // Requires DATABASE_URL (a server connection with CREATEDB); skips when unset.
@@ -47,11 +47,11 @@ func sha256File(t *testing.T, path string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// TestFreshMigrationChain_0014 verifies that the real runner applies every
-// migration 0001..0014 exactly once in forward order, records the correct
+// TestFreshMigrationChain_0015 verifies that the real runner applies every
+// migration 0001..0015 exactly once in forward order, records the correct
 // checksum, is idempotent on re-run, and that the previously applied 0001..0011
 // files are byte-for-byte the canonical versions.
-func TestFreshMigrationChain_0014(t *testing.T) {
+func TestFreshMigrationChain_0015(t *testing.T) {
 	pool := migPool(t)
 	ctx := context.Background()
 
@@ -63,8 +63,8 @@ func TestFreshMigrationChain_0014(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discover migrations: %v", err)
 	}
-	if len(migrations) != 14 {
-		t.Fatalf("expected 14 migrations in the regional chain, got %d", len(migrations))
+	if len(migrations) != 15 {
+		t.Fatalf("expected 15 migrations in the chain, got %d", len(migrations))
 	}
 	for i, m := range migrations {
 		if m.Version != i+1 {
@@ -76,8 +76,8 @@ func TestFreshMigrationChain_0014(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply full chain: %v", err)
 	}
-	if n != 14 {
-		t.Fatalf("expected 14 newly applied migrations, got %d", n)
+	if n != 15 {
+		t.Fatalf("expected 15 newly applied migrations, got %d", n)
 	}
 
 	var count int
@@ -85,11 +85,11 @@ func TestFreshMigrationChain_0014(t *testing.T) {
 	var outOfOrder int
 	if err := pool.QueryRow(ctx,
 		`SELECT count(*), count(DISTINCT version),
-		        count(*) FILTER (WHERE version < 1 OR version > 14)::int
+		        count(*) FILTER (WHERE version < 1 OR version > 15)::int
 		   FROM schema_migrations`).Scan(&count, &distinct, &outOfOrder); err != nil {
 		t.Fatalf("read ledger: %v", err)
 	}
-	if count != 14 || distinct != 14 || outOfOrder != 0 {
+	if count != 15 || distinct != 15 || outOfOrder != 0 {
 		t.Fatalf("ledger wrong: rows=%d distinct=%d out-of-range=%d", count, distinct, outOfOrder)
 	}
 
@@ -124,8 +124,8 @@ func TestFreshMigrationChain_0014(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&after); err != nil {
 		t.Fatalf("re-read ledger: %v", err)
 	}
-	if after != 14 {
-		t.Fatalf("ledger changed on re-run: %d rows, want 14", after)
+	if after != 15 {
+		t.Fatalf("ledger changed on re-run: %d rows, want 15", after)
 	}
 
 	// Schema compatibility: the objects introduced by 0012..0014 are present.

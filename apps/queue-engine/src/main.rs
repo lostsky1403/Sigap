@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let engine = SigapQueueEngine::new(pool);
 
     println!(
-        "sigap-queue-engine (real tx + FOR UPDATE) gRPC listening on {}",
+        "sigap-queue-engine (real tx + atomic upsert) gRPC listening on {}",
         addr
     );
 

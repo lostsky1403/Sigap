@@ -26,8 +26,9 @@ fn service_day_wib(instant: chrono::DateTime<chrono::Utc>) -> chrono::NaiveDate 
 }
 
 /// Core atomic transaction for generating a queue number.
-/// Uses SELECT ... FOR UPDATE on daily_queue_counters to guarantee
-/// exactly-once increment even under heavy concurrent load (zero double-booking).
+/// Uses a single atomic INSERT ... ON CONFLICT DO UPDATE ... RETURNING on
+/// daily_queue_counters (PK (facility_id, date)) to guarantee exactly-once
+/// increment even under heavy concurrent load (zero double-booking).
 pub async fn generate_queue_number_tx(
     pool: &PgPool,
     req: GenerateQueueRequest,
@@ -88,45 +89,31 @@ pub async fn generate_queue_number_tx(
         .await
         .map_err(|e| Status::internal(format!("select pasien gagal: {}", e)))?;
 
-    // 3. Atomic daily counter with row-level lock (THE critical part for Zero Double-Booking)
-    // The counter/cap day is the WIB service day (Asia/Jakarta, UTC+7), so the
-    // sequence resets at WIB midnight (00:00 WIB), not at UTC midnight (07:00 WIB).
+    // 3. Atomic daily counter (THE critical part for Zero Double-Booking).
+    // One INSERT ... ON CONFLICT DO UPDATE ... RETURNING creates-or-increments
+    // the day's counter under the row lock Postgres takes on the conflicting
+    // (facility_id, date) row. The old SELECT ... FOR UPDATE + INSERT pattern
+    // could not lock a row that did not exist yet, so the first two concurrent
+    // requests of a facility-day both INSERTed and one failed with a PK
+    // violation (Status::internal). The counter/cap day is the WIB service
+    // day (Asia/Jakarta, UTC+7), so the sequence resets at WIB midnight
+    // (00:00 WIB), not at UTC midnight (07:00 WIB).
     let today = service_day_wib(chrono::Utc::now());
 
-    let counter_row: Option<(i32,)> = sqlx::query_as(
-        "SELECT last_number FROM daily_queue_counters WHERE facility_id = $1 AND date = $2 FOR UPDATE"
+    let next_number: i32 = sqlx::query_scalar(
+        r#"
+        INSERT INTO daily_queue_counters (facility_id, date, last_number)
+        VALUES ($1, $2, 1)
+        ON CONFLICT (facility_id, date)
+        DO UPDATE SET last_number = daily_queue_counters.last_number + 1
+        RETURNING last_number
+        "#,
     )
     .bind(facility_id)
     .bind(today)
-    .fetch_optional(&mut *tx)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(|e| Status::internal(format!("lock counter gagal: {}", e)))?;
-
-    let next_number: i32 = if let Some((last,)) = counter_row {
-        let next = last + 1;
-        sqlx::query(
-            "UPDATE daily_queue_counters SET last_number = $1 WHERE facility_id = $2 AND date = $3",
-        )
-        .bind(next)
-        .bind(facility_id)
-        .bind(today)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| Status::internal(format!("update counter gagal: {}", e)))?;
-        next
-    } else {
-        let first = 1i32;
-        sqlx::query(
-            "INSERT INTO daily_queue_counters (facility_id, date, last_number) VALUES ($1, $2, $3)",
-        )
-        .bind(facility_id)
-        .bind(today)
-        .bind(first)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| Status::internal(format!("insert counter gagal: {}", e)))?;
-        first
-    };
+    .map_err(|e| Status::internal(format!("counter antrean gagal: {}", e)))?;
 
     if next_number > DAILY_QUEUE_LIMIT {
         return Err(Status::resource_exhausted(
@@ -150,12 +137,15 @@ pub async fn generate_queue_number_tx(
     hasher.update(sig_input.as_bytes());
     let signature = format!("{:x}", hasher.finalize());
 
-    // 4. Create the ticket (client-supplied UUID)
+    // 4. Create the ticket (client-supplied UUID). service_date is the same
+    // WIB day the counter just used, so the ticket and its counter row can
+    // never disagree about which day they belong to (migration 0015 enforces
+    // UNIQUE (facility_id, service_date, queue_number) as a backstop).
     let ticket_id = Uuid::new_v4();
     sqlx::query(
         r#"
-        INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status)
-        VALUES ($1, $2, $3, $4, $5, 'waiting')
+        INSERT INTO queue_tickets (id, facility_id, patient_id, queue_number, formatted_number, status, service_date)
+        VALUES ($1, $2, $3, $4, $5, 'waiting', $6)
         "#
     )
     .bind(ticket_id)
@@ -163,6 +153,7 @@ pub async fn generate_queue_number_tx(
     .bind(patient_id)
     .bind(next_number)
     .bind(formatted.clone())
+    .bind(today)
     .execute(&mut *tx)
     .await
     .map_err(|e| Status::internal(format!("insert tiket gagal: {}", e)))?;
