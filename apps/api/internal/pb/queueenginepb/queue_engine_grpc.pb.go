@@ -27,7 +27,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // QueueEngine is the gRPC service implemented by the Rust microservice.
-// It owns the dynamic, high-safety logic for queue number generation and bed synchronization.
+// It owns the dynamic, high-safety logic for queue number generation.
 type QueueEngineClient interface {
 	// GenerateQueueNumber performs atomic daily counter, patient handling,
 	// ticket creation and returns the formatted nomor antrean.
@@ -58,7 +58,7 @@ func (c *queueEngineClient) GenerateQueueNumber(ctx context.Context, in *Generat
 // for forward compatibility.
 //
 // QueueEngine is the gRPC service implemented by the Rust microservice.
-// It owns the dynamic, high-safety logic for queue number generation and bed synchronization.
+// It owns the dynamic, high-safety logic for queue number generation.
 type QueueEngineServer interface {
 	// GenerateQueueNumber performs atomic daily counter, patient handling,
 	// ticket creation and returns the formatted nomor antrean.

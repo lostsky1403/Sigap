@@ -194,7 +194,8 @@ export interface CheckInResult {
 	formatted_number: string;
 	/** Always the literal "queued" on success. */
 	status: 'queued';
-	estimated_wait_minutes: number;
+	/** Omitted when the engine could not compute an estimate from real queue data. */
+	estimated_wait_minutes?: number;
 	processing_time: string;
 }
 
@@ -212,7 +213,8 @@ export interface QueueGenerateResult {
 	formatted_number: string;
 	Status: QueueStatus;
 	registered_at: string;
-	estimated_wait_minutes: number;
+	/** Omitted when the engine could not compute an estimate from real queue data. */
+	estimated_wait_minutes?: number;
 	processing_time: string;
 	signature: string;
 }

@@ -210,7 +210,7 @@
 				</Button>
 			</div>
 
-			{#if ticket.estimatedWaitMinutes > 0}
+			{#if ticket.estimatedWaitMinutes != null}
 				<div class="sigap-walkin__wait">
 					<p class="sigap-walkin__wait-value">
 						{estimatedWaitLabel(ticket.estimatedWaitMinutes)}

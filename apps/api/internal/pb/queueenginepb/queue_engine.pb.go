@@ -144,12 +144,12 @@ func (x *PatientInfo) GetDateOfBirth() string {
 type GenerateQueueResponse struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	TicketId             string                 `protobuf:"bytes,1,opt,name=ticket_id,json=ticketId,proto3" json:"ticket_id,omitempty"`
-	FormattedNumber      string                 `protobuf:"bytes,2,opt,name=formatted_number,json=formattedNumber,proto3" json:"formatted_number,omitempty"` // e.g. "RSK-0042"
-	Status               string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`                                          // waiting | ...
-	RegisteredAt         string                 `protobuf:"bytes,4,opt,name=registered_at,json=registeredAt,proto3" json:"registered_at,omitempty"`          // RFC3339
-	EstimatedWaitMinutes int32                  `protobuf:"varint,5,opt,name=estimated_wait_minutes,json=estimatedWaitMinutes,proto3" json:"estimated_wait_minutes,omitempty"`
+	FormattedNumber      string                 `protobuf:"bytes,2,opt,name=formatted_number,json=formattedNumber,proto3" json:"formatted_number,omitempty"`                   // e.g. "RSK-0042"
+	Status               string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`                                                            // waiting | ...
+	RegisteredAt         string                 `protobuf:"bytes,4,opt,name=registered_at,json=registeredAt,proto3" json:"registered_at,omitempty"`                            // RFC3339
+	EstimatedWaitMinutes int32                  `protobuf:"varint,5,opt,name=estimated_wait_minutes,json=estimatedWaitMinutes,proto3" json:"estimated_wait_minutes,omitempty"` // Minutes, computed from the real queue (tickets ahead x measured average service time). -1 = no estimate (no completed ticket to average over yet).
 	ProcessingTimeMicros int64                  `protobuf:"varint,6,opt,name=processing_time_micros,json=processingTimeMicros,proto3" json:"processing_time_micros,omitempty"` // Micro-second (µs) latency of the atomic transaction inside the Rust engine (for traceability)
-	Signature            string                 `protobuf:"bytes,7,opt,name=signature,proto3" json:"signature,omitempty"`                                                     // SHA-256 hex signature of the visit (immutable proof for Health Wallet)
+	Signature            string                 `protobuf:"bytes,7,opt,name=signature,proto3" json:"signature,omitempty"`                                                      // HMAC-SHA256 hex checksum of the visit (record-integrity checksum, verifiable only with the server signing secret; not a digital signature)
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -226,6 +226,13 @@ func (x *GenerateQueueResponse) GetProcessingTimeMicros() int64 {
 	return 0
 }
 
+func (x *GenerateQueueResponse) GetSignature() string {
+	if x != nil {
+		return x.Signature
+	}
+	return ""
+}
+
 var File_sigap_queue_engine_proto protoreflect.FileDescriptor
 
 const file_sigap_queue_engine_proto_rawDesc = "" +
@@ -241,14 +248,15 @@ const file_sigap_queue_engine_proto_rawDesc = "" +
 	"\x06gender\x18\x03 \x01(\tH\x00R\x06gender\x88\x01\x01\x12'\n" +
 	"\rdate_of_birth\x18\x04 \x01(\tH\x01R\vdateOfBirth\x88\x01\x01B\t\n" +
 	"\a_genderB\x10\n" +
-	"\x0e_date_of_birth\"\x88\x02\n" +
+	"\x0e_date_of_birth\"\xa6\x02\n" +
 	"\x15GenerateQueueResponse\x12\x1b\n" +
 	"\tticket_id\x18\x01 \x01(\tR\bticketId\x12)\n" +
 	"\x10formatted_number\x18\x02 \x01(\tR\x0fformattedNumber\x12\x16\n" +
 	"\x06status\x18\x03 \x01(\tR\x06status\x12#\n" +
 	"\rregistered_at\x18\x04 \x01(\tR\fregisteredAt\x124\n" +
 	"\x16estimated_wait_minutes\x18\x05 \x01(\x05R\x14estimatedWaitMinutes\x124\n" +
-	"\x16processing_time_micros\x18\x06 \x01(\x03R\x14processingTimeMicros2y\n" +
+	"\x16processing_time_micros\x18\x06 \x01(\x03R\x14processingTimeMicros\x12\x1c\n" +
+	"\tsignature\x18\a \x01(\tR\tsignature2y\n" +
 	"\vQueueEngine\x12j\n" +
 	"\x13GenerateQueueNumber\x12(.sigap.queue_engine.GenerateQueueRequest\x1a).sigap.queue_engine.GenerateQueueResponseBIZGgithub.com/sigap/sigap/apps/api/internal/pb/queueenginepb;queueenginepbb\x06proto3"
 

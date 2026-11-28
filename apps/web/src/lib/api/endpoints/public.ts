@@ -179,7 +179,7 @@ export interface WalkInTicket {
 	ticketId: string;
 	formattedNumber: string;
 	status: QueueStatus;
-	estimatedWaitMinutes: number;
+	estimatedWaitMinutes: number | null;
 	processingTime: string;
 	registeredAt: string;
 }
@@ -235,11 +235,16 @@ export function normalizeQueueTicket(raw: RawQueueTicket | null | undefined): Wa
 		ticketId: raw?.TicketID ?? raw?.ticket_id ?? raw?.ticketId ?? '',
 		formattedNumber: readFormattedNumber(raw),
 		status,
-		// Coerced to a number because the field is typed `int` in Go, so a
-		// missing value is 0 rather than undefined. Rendered conditionally by
-		// the caller, which is the only way to distinguish "no estimate" from
-		// "an estimate of zero minutes".
-		estimatedWaitMinutes: raw?.estimated_wait_minutes ?? 0,
+		// Preserved as null when the engine could not compute an estimate
+		// from real queue data: the Go field is a *int with omitempty, so
+		// the key is absent rather than 0. A negative value (the engine's
+		// old -1 sentinel, or a stale deploy) is also null. Callers render
+		// the estimate only when this is not null, so "no estimate" can
+		// never read as "an estimate of zero minutes".
+		estimatedWaitMinutes:
+			raw?.estimated_wait_minutes == null || raw.estimated_wait_minutes < 0
+				? null
+				: raw.estimated_wait_minutes,
 		processingTime: raw?.processing_time ?? '',
 		registeredAt: raw?.registered_at ?? ''
 	};

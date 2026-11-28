@@ -5,7 +5,7 @@ package sigap.queue_engine;
 option go_package = "github.com/sigap/sigap/apps/api/internal/pb/queueenginepb;queueenginepb";
 
 // QueueEngine is the gRPC service implemented by the Rust microservice.
-// It owns the dynamic, high-safety logic for queue number generation and bed synchronization.
+// It owns the dynamic, high-safety logic for queue number generation.
 service QueueEngine {
   // GenerateQueueNumber performs atomic daily counter, patient handling,
   // ticket creation and returns the formatted nomor antrean.
@@ -30,7 +30,7 @@ message GenerateQueueResponse {
   string formatted_number = 2;     // e.g. "RSK-0042"
   string status = 3;               // waiting | ...
   string registered_at = 4;        // RFC3339
-  int32 estimated_wait_minutes = 5;
+  int32 estimated_wait_minutes = 5; // Minutes, computed from the real queue (tickets ahead x measured average service time). -1 = no estimate (no completed ticket to average over yet).
   int64 processing_time_micros = 6; // Micro-second (µs) latency of the atomic transaction inside the Rust engine (for traceability)
-  string signature = 7;            // SHA-256 hex signature of the visit (immutable proof for Health Wallet)
+  string signature = 7;            // HMAC-SHA256 hex checksum of the visit (record-integrity checksum, verifiable only with the server signing secret; not a digital signature)
 }

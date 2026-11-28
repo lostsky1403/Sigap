@@ -19,7 +19,8 @@
 	 * live would be a claim the system cannot keep, and a citizen told 20
 	 * minutes who waits 40 has been lied to by the interface. So the label says
 	 * "estimasi" and the caveat is printed next to it rather than hidden
-	 * behind a tooltip.
+	 * behind a tooltip. When the engine has no history yet it omits the field
+	 * and this block stays hidden instead of showing a made-up number.
 	 */
 	export let ticket: CheckInResult;
 	/**
