@@ -115,6 +115,37 @@ newrepo
 node "$SCRIPT" --range 'no-such-ref..HEAD' --mode strict >"$OUT" 2>&1
 assert 'unresolvable range is exit 2' 2 $?
 
+# 12. GitHub squash-merge commit (author maintainer, committer GitHub
+# <noreply@github.com>, 1 parent), strict -> PASS. This is the PR #100
+# shape (b935fc65) the old >=2-parents rule rejected.
+newrepo
+commit_as 'lostsky1403' 'moch22188ti@student.nurulfikri.ac.id' 'GitHub' 'noreply@github.com'
+assert 'GitHub squash-merge commit, strict' 0 "$(run_gate strict)"
+
+# 13. GitHub real merge commit (author maintainer, committer GitHub
+# <noreply@github.com>, 2 parents), strict -> PASS.
+newrepo
+BASE_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+git checkout -q -b side
+commit_as 'lostsky1403' 'moch22188ti@student.nurulfikri.ac.id' 'lostsky1403' 'moch22188ti@student.nurulfikri.ac.id'
+git checkout -q "$BASE_BRANCH"
+GIT_AUTHOR_NAME='lostsky1403' GIT_AUTHOR_EMAIL='moch22188ti@student.nurulfikri.ac.id' \
+GIT_COMMITTER_NAME='GitHub' GIT_COMMITTER_EMAIL='noreply@github.com' \
+	git merge -q --no-ff side -m 'merge side'
+assert 'GitHub real merge commit, strict' 0 "$(run_gate strict)"
+
+# 14. Forged noreply committer with a NON-maintainer author, strict -> FAIL.
+# The exemption requires a verified maintainer author.
+newrepo
+commit_as 'External Person' 'external@example.org' 'GitHub' 'noreply@github.com'
+assert 'noreply committer, non-maintainer author' 1 "$(run_gate strict)"
+
+# 15. noreply@github.com committer under a different name, strict -> FAIL.
+# The exemption pins the committer name to "GitHub", not just the email.
+newrepo
+commit_as 'lostsky1403' 'moch22188ti@student.nurulfikri.ac.id' 'Some Bot' 'noreply@github.com'
+assert 'noreply committer, wrong name' 1 "$(run_gate strict)"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 printf 'PASS: COMMIT_IDENTITY_POLICY\n'

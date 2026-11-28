@@ -418,7 +418,10 @@ maintainer branches (`main`, `design/ui-ux-overhaul`, `feat/sigap-selfhosted-aut
 identity (`SIGAP_AUTHORIZED_COMMITTERS`); fork PRs run in permissive mode so genuine external
 contributors are not blocked for having a different email. It scans only new commits, so
 historical canonical commits are never rewritten or failed. Verified by
-`sh scripts/ops/test-commit-identity.sh` (11 positive/negative cases, all passing).
+`sh scripts/ops/test-commit-identity.sh` (15 positive/negative cases, all passing —
+including a GitHub squash merge and a GitHub real merge passing, and a forged
+`noreply@github.com` committer with a non-maintainer author or under a different
+name failing).
 
 ---
 
@@ -472,8 +475,11 @@ uses a date, name, email or path pattern — backdating or reusing an allowed em
 create a new exception. A new commit with `design@sigap`, `design@sigap.local`,
 `impl@sigap.local` or `sigap-ops <ops@local>` is rejected. Only the AUTHOR check is
 grandfathered; every commit still gets the AI-trailer check and a committer-identity
-check. GitHub's own merge committer (`noreply@github.com`) is accepted only for a real
-merge commit (two or more parents) whose author is a verified maintainer.
+check. GitHub's own merge committer (`GitHub <noreply@github.com>`) is accepted for
+any merge GitHub itself creates — a real merge commit (two or more parents) or a
+squash merge (one parent) — whose author is a verified maintainer. The parent count
+is deliberately not consulted: it never proved GitHub origin, and requiring it
+rejected every squash merge to main (PR #100, `b935fc65`).
 
 `sh scripts/ops/test-attribution-exception.sh` proves both sides: the 19 historical
 commits pass, while new placeholder authors, `sigap-ops`, and AI trailers fail, and a
