@@ -123,6 +123,35 @@ printf '\n-- unauthorized edit --\n' >> packages/db/migrations/0015_queue_ticket
 git add -A && git commit -q -m 'tamper declared hotfix migration'
 assert 'negative B: hotfix checksum mismatch' 1 "$(run --branch fix/queue-counter-race-0015)"
 
+setup_b2() { # baseline 0001-0015 as origin/main (ordinary-branch base for 0016)
+	TMP=$(mktemp -d 2>/dev/null || echo "/tmp/sigap-migpol-$$")
+	OUT="$TMP/out"
+	REPO="$TMP/repo"
+	git init -q "$REPO" || exit 1
+	cd "$REPO" || exit 1
+	git config user.name 'policy-test'
+	git config user.email 'policy-test@example.org'
+	mkdir -p packages/db/migrations docs/operations
+	: > docs/operations/DEPLOYMENT_RUNBOOK.md
+	cp "$SRC"/000[1-9]_*.sql "$SRC"/001[01]_*.sql "$SRC"/0012_*.sql "$SRC"/0013_*.sql "$SRC"/0014_*.sql "$SRC"/0015_*.sql packages/db/migrations/ 2>/dev/null
+	git add -A
+	git commit -q -m 'baseline 0001-0015'
+	git update-ref refs/remotes/origin/main HEAD
+}
+
+# Positive B3: an ordinary branch adding only the declared 0016 hotfix passes.
+setup_b2
+cp "$SRC"/0016_*.sql packages/db/migrations/
+git add -A && git commit -q -m 'add declared hotfix migration 0016'
+assert 'B: declared hotfix 0016 accepted' 0 "$(run --branch fix/data-honesty-phase1)"
+
+# Negative B3: a tampered declared 0016 hotfix fails the checksum.
+setup_b2
+cp "$SRC"/0016_*.sql packages/db/migrations/
+printf '\n-- unauthorized edit --\n' >> packages/db/migrations/0016_facilities_geo_demo.sql
+git add -A && git commit -q -m 'tamper declared hotfix migration 0016'
+assert 'negative B: hotfix 0016 checksum mismatch' 1 "$(run --branch fix/data-honesty-phase1)"
+
 # Fail-closed: an unresolvable baseline must not pass.
 setup
 assert 'fail-closed: unresolvable baseline' 2 "$(run --branch feat/sigap-selfhosted-auth --context C --baseline 0000000000000000000000000000000000000000)"
