@@ -31,12 +31,12 @@ ON CONFLICT (id) DO UPDATE SET
 -- Facilities: 2 per organization (4 total), all synthetic
 -- Suffix r001/r002 = org A; r003/r004 = org B
 -- ============================================================
-INSERT INTO facilities (id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, total_beds, available_beds, short_code, is_active, organization_id)
+INSERT INTO facilities (id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, total_beds, available_beds, short_code, is_active, organization_id, latitude, longitude, is_demo)
 VALUES
-    ('00000000-0000-0000-0000-00000000c101'::uuid, 'RS Sehat Nusantara Cimahi', 'rumah_sakit', 'Jl. Fiksi Nusantara No. 1', 'Cimahi Utara', 'Kota Cimahi', 'Jawa Barat', '+62-555-0101', 120, 40, 'RSNCM', true, '00000000-0000-0000-0000-00000000c001'::uuid),
-    ('00000000-0000-0000-0000-00000000c102'::uuid, 'RS Sehat Nusantara Bogor',   'rumah_sakit', 'Jl. Fiksi Nusantara No. 2', 'Bogor Timur',  'Kota Bogor',   'Jawa Barat', '+62-555-0102', 90,  25, 'RSNBG', true, '00000000-0000-0000-0000-00000000c001'::uuid),
-    ('00000000-0000-0000-0000-00000000c103'::uuid, 'Puskesmas Prima Tangerang',  'puskesmas',   'Jl. Fiksi Prima No. 1',     'Cipondoh',     'Kota Tangerang', 'Banten',     '+62-555-0103', 30,  12, 'PPTGR', true, '00000000-0000-0000-0000-00000000c002'::uuid),
-    ('00000000-0000-0000-0000-00000000c104'::uuid, 'Puskesmas Prima Depok',       'puskesmas',   'Jl. Fiksi Prima No. 2',     'Sukmajaya',    'Kota Depok',  'Jawa Barat', '+62-555-0104', 28,  9,  'PPDPK', true, '00000000-0000-0000-0000-00000000c002'::uuid)
+    ('00000000-0000-0000-0000-00000000c101'::uuid, 'RS Sehat Nusantara Cimahi', 'rumah_sakit', 'Jl. Fiksi Nusantara No. 1', 'Cimahi Utara', 'Kota Cimahi', 'Jawa Barat', '+62-555-0101', 120, 40, 'RSNCM', true, '00000000-0000-0000-0000-00000000c001'::uuid, -6.8721, 107.5420, true),
+    ('00000000-0000-0000-0000-00000000c102'::uuid, 'RS Sehat Nusantara Bogor',   'rumah_sakit', 'Jl. Fiksi Nusantara No. 2', 'Bogor Timur',  'Kota Bogor',   'Jawa Barat', '+62-555-0102', 90,  25, 'RSNBG', true, '00000000-0000-0000-0000-00000000c001'::uuid, -6.5971, 106.8060, true),
+    ('00000000-0000-0000-0000-00000000c103'::uuid, 'Puskesmas Prima Tangerang',  'puskesmas',   'Jl. Fiksi Prima No. 1',     'Cipondoh',     'Kota Tangerang', 'Banten',     '+62-555-0103', 30,  12, 'PPTGR', true, '00000000-0000-0000-0000-00000000c002'::uuid, -6.1783, 106.6319, true),
+    ('00000000-0000-0000-0000-00000000c104'::uuid, 'Puskesmas Prima Depok',       'puskesmas',   'Jl. Fiksi Prima No. 2',     'Sukmajaya',    'Kota Depok',  'Jawa Barat', '+62-555-0104', 28,  9,  'PPDPK', true, '00000000-0000-0000-0000-00000000c002'::uuid, -6.4025, 106.7942, true)
 ON CONFLICT (id) DO UPDATE SET
     name            = EXCLUDED.name,
     type            = EXCLUDED.type,
@@ -49,7 +49,10 @@ ON CONFLICT (id) DO UPDATE SET
     available_beds  = EXCLUDED.available_beds,
     short_code      = EXCLUDED.short_code,
     is_active       = EXCLUDED.is_active,
-    organization_id = EXCLUDED.organization_id;
+    organization_id = EXCLUDED.organization_id,
+    latitude        = EXCLUDED.latitude,
+    longitude       = EXCLUDED.longitude,
+    is_demo         = EXCLUDED.is_demo;
 
 -- ============================================================
 -- Service units: 2 per facility (8 total)

@@ -735,16 +735,23 @@ func (h *BookingHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The wait estimate is omitted entirely when the engine could not
+	// compute one from real queue data: an absent key must never read as
+	// "0 minutes".
+	data := map[string]any{
+		"appointment_id":   id,
+		"queue_ticket_id":  res.TicketID,
+		"formatted_number": res.FormattedNumber,
+		"status":           "queued",
+		"processing_time":  res.ProcessingTime,
+	}
+	if res.EstimatedWaitMinutes != nil {
+		data["estimated_wait_minutes"] = *res.EstimatedWaitMinutes
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
-		"data": map[string]any{
-			"appointment_id":         id,
-			"queue_ticket_id":        res.TicketID,
-			"formatted_number":       res.FormattedNumber,
-			"status":                 "queued",
-			"estimated_wait_minutes": res.EstimatedWaitMinutes,
-			"processing_time":        res.ProcessingTime,
-		},
+		"data":    data,
 	})
 
 	h.logBookingEvent(r, "appointment.checked_in", "ok",

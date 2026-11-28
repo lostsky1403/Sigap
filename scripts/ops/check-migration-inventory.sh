@@ -47,9 +47,10 @@ EXPECTED_SHA256="0012_service_day_wib.sql:618154620aa57c9b044b2a19423ff24358ec05
 # may add relative to origin/main. This set is separate from the regional set
 # above — the regional batch (0012-0014) stays the exact set for contexts C/D
 # and must not be repurposed as an ordinary-branch allowance. 0015 is the
-# queue-counter atomicity fix; it is not part of the regional release.
-EXPECTED_HOTFIX="packages/db/migrations/0015_queue_ticket_service_date_unique.sql"
-EXPECTED_HOTFIX_SHA256="0015_queue_ticket_service_date_unique.sql:926e98e136ec0aa86168637576379d84371b77a7dd53b22636cea31fd3558dad"
+# queue-counter atomicity fix; 0016 is the facilities geo/demo columns for
+# data honesty (Fase 1). Neither is part of the regional release.
+EXPECTED_HOTFIX="packages/db/migrations/0015_queue_ticket_service_date_unique.sql packages/db/migrations/0016_facilities_geo_demo.sql"
+EXPECTED_HOTFIX_SHA256="0015_queue_ticket_service_date_unique.sql:926e98e136ec0aa86168637576379d84371b77a7dd53b22636cea31fd3558dad 0016_facilities_geo_demo.sql:ccf4dab5587512f482e2e1f10f531a9fb2f210384a9dc7994c30824a282c3206"
 
 branch='' baseline='' context=''
 while [ $# -gt 0 ]; do

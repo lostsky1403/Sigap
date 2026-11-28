@@ -158,7 +158,7 @@ func stageMigrations(t *testing.T, maxVersion int) string {
 // migrations into the fixture and "exactly 1 applied (0011)" would break for
 // reasons that have nothing to do with the 0011 regression. Staging 0001..0011
 // keeps the original security assertions intact and independent of later work.
-// The fresh 0001..0015 chain is covered separately by TestFreshMigrationChain*.
+// The fresh 0001..0016 chain is covered separately by TestFreshMigrationChain*.
 func stage0011(t *testing.T) string { return stageMigrations(t, 11) }
 
 func constraintDef(t *testing.T, pool *pgxpool.Pool, name string) (def string, valid bool) {

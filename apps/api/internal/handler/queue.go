@@ -91,7 +91,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		"data":    result,
 	})
 
-	// 7. Real-time: notify SSE subscribers that a bed/queue state may have
+	// 7. Real-time: notify SSE subscribers that a queue state may have
 	// changed. Marshal a typed struct instead of interpolating the client's
 	// facilityId into a format string: a quote or newline in that field could
 	// otherwise produce malformed JSON or inject an extra SSE frame. json.Marshal

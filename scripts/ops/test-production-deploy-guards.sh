@@ -15,7 +15,13 @@ bad()  { printf 'GUARD FAIL: %s\n' "$1"; failed=$((failed + 1)); }
 CFG="docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml -f docker-compose.prod-edge.yml config"
 EDGE_CFG="docker compose -f docker-compose.yml -f docker-compose.prod-edge.yml config"
 PORTS_CFG="docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml config"
-BASE_CREDS="POSTGRES_PASSWORD=x SIGAP_AUTH_MODE=jwt SIGAP_AUTH_ISSUER=i SIGAP_AUTH_AUDIENCE=a"
+# Test-only interpolation fixture (NOT a real credential): the compose set
+# requires SIGAP_SIGNING_SECRET (:? guard, added by Fase 1 for the HMAC key),
+# and the guard cases below only resolve when every :? variable is covered
+# here or passed explicitly per check (SIGAP_ENV). A placeholder value is
+# enough for `docker compose config` interpolation; production uses a real
+# secret from /opt/sigap/.env (see the runbook).
+BASE_CREDS="POSTGRES_PASSWORD=x SIGAP_AUTH_MODE=jwt SIGAP_AUTH_ISSUER=i SIGAP_AUTH_AUDIENCE=a SIGAP_SIGNING_SECRET=guard-test-only-not-a-real-secret"
 export SIGAP_DEPLOY_DIR=.   # preflight script requires the directory contract
 
 # 1. Missing SIGAP_ENV through the production overlay set must refuse (before any container starts).
@@ -419,6 +425,23 @@ if _check19_bad_claim "$sec6b"; then
 else
   ok
 fi
+
+# 20. Every ${VAR:?} in the compose set must resolve from the guard's test env
+#     (BASE_CREDS, or SIGAP_ENV which is passed explicitly per check). If a new
+#     :? variable is added to compose without a fixture here, checks 3/7/7b/7c
+#     fail on the missing variable instead of testing what they claim to test —
+#     which is exactly how Fase 1 broke this job (SIGAP_SIGNING_SECRET).
+missing=""
+for v in $(grep -rhoE '\$\{[A-Z_][A-Z_0-9]*:\?' docker-compose.yml docker-compose.prod-ports.yml docker-compose.prod-edge.yml | sed -E 's/^\$\{([A-Z_][A-Z_0-9]*):\?/\1/' | sort -u); do
+  case "$v" in
+    SIGAP_ENV) continue ;;
+  esac
+  case " $BASE_CREDS " in
+    *" $v="*) ;;
+    *) missing="$missing $v" ;;
+  esac
+done
+if [ -z "$missing" ]; then ok; else bad "compose :? variables missing from guard test env:$missing"; fi
 
 printf 'deploy-guard tests: %s pass, %s fail\n' "$pass" "$failed"
 exit "$([ "$failed" -eq 0 ] && echo 0 || echo 1)"

@@ -156,7 +156,7 @@ layar 4–6 memakainya kembali.
 - **Ucapkan:** "Di pintu masuk, pasien cukup satu kode untuk check-in dan
   mendapat nomor antrean yang adil dengan estimasi tunggu yang jujur."
 - **Hasil diharapkan:** panel sukses: nomor antrean `RSK-000x`, estimasi tunggu
-  (~25 menit), status `queued`.
+  (dihitung dari antrean nyata; bisa tidak tampil bila belum ada riwayat layanan), status `queued`.
 - **Salin:** **nomor antrean** (mis. `RSK-0002`).
 - **Jangan tunjukkan:** internal engine/gRPC di balik pembuatan tiket.
 

@@ -175,7 +175,10 @@ export function formatAppointmentTime(value: string): string {
  * `estimated_wait_minutes` comes from the queue engine at registration time and
  * is not recomputed as the queue moves. Presenting it as a live figure is the
  * single easiest way to make a health page dishonest: the number is real, the
- * claim that it is current is not.
+ * claim that it is current is not. The engine computes it from the real queue
+ * (tickets ahead x measured average service time) and omits it entirely when
+ * there is no history to average over — an absent estimate is rendered as no
+ * estimate, never as zero minutes.
  *
  * The wording carries "estimasi" and the sentence carries what the estimate
  * does not cover, so the caveat is not something a citizen has to notice on

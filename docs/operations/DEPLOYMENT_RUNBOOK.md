@@ -45,10 +45,12 @@ only outside the repository (a secret, a DNS record, a platform toggle), it is m
 >
 > **Hotfix migrations on ordinary branches.** An ordinary branch may add a migration
 > only if it is in the declared hotfix set in `scripts/ops/check-migration-inventory.sh`
-> (context B) — currently only `0015_queue_ticket_service_date_unique.sql`
-> (queue-counter atomicity fix, with its SHA-256 recorded in the guard). Any other
-> added migration aborts the guard. The regional set (`0012`–`0014`) is unchanged
-> and still belongs to contexts C/D only.
+> (context B) — currently `0015_queue_ticket_service_date_unique.sql`
+> (queue-counter atomicity fix) and `0016_facilities_geo_demo.sql`
+> (facilities geo/demo columns for data honesty, Fase 1), each with its
+> SHA-256 recorded in the guard. Any other added migration aborts the
+> guard. The regional set (`0012`–`0014`) is unchanged and still belongs
+> to contexts C/D only.
 
 ---
 
@@ -287,6 +289,12 @@ whether a variable is live.
 | `SIGAP_TLS_TERMINATED` | confirms TLS upstream | `true` when behind TLS | `internal/config/envguard.go:112` |
 | `SIGAP_TRUSTED_PROXIES` | trusted proxy hops | `2` (edge + SvelteKit proxy) | `internal/router/proxy.go:48` |
 | `SIGAP_GRPC_TLS` | TLS to the engine | **unset** in the compose topology — the engine serves plaintext on the internal network and the compose `api` service does not forward this variable. Set `true` only for a separately provisioned mTLS deployment with the CA mounted at `/etc/sigap/certs/ca.crt`; with it `true` and no CA, the API exits 1. | `internal/grpc/client.go:33` |
+
+### 5.1b Required — Queue engine (`docker-compose.yml` → `rust-engine`)
+
+| Variable | Purpose | Expected production state | Read at |
+|---|---|---|---|
+| `SIGAP_SIGNING_SECRET` | HMAC-SHA256 key for medical-record integrity checksums | set, at least 32 random bytes (`openssl rand -hex 32`). The engine refuses to start without it and compose fails fast when it is unset — there is no default and no fallback. Rotate by setting a new value and restarting the engine; records signed with the old secret can no longer be verified (no verification consumer exists today). | `apps/queue-engine/src/main.rs` |
 
 ### 5.2 Required — Web (`docker-compose.yml` → `web`)
 

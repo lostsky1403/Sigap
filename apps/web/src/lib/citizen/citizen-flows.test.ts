@@ -365,10 +365,18 @@ describe('walk-in ticket normalization', () => {
 	it('survives a response missing everything', () => {
 		const ticket = normalizeQueueTicket({});
 		expect(ticket.formattedNumber).toBe('');
-		expect(ticket.estimatedWaitMinutes).toBe(0);
+		// A missing estimate stays missing (null), never a coerced 0: 0 is a
+		// real estimate ("you are next") and must not be shown for a ticket
+		// the engine could not estimate.
+		expect(ticket.estimatedWaitMinutes).toBeNull();
 		// Defaults to a real queue state rather than undefined, so a status
 		// chip cannot end up reading "undefined".
 		expect(ticket.status).toBe('waiting');
+	});
+
+	it('treats a negative estimate as no estimate', () => {
+		const ticket = normalizeQueueTicket({ estimated_wait_minutes: -1 });
+		expect(ticket.estimatedWaitMinutes).toBeNull();
 	});
 });
 

@@ -54,7 +54,7 @@ BEGIN;
 --     relies on this canonical facility (d000) owning the DEMO-UMUM
 --     service unit for deterministic booking.
 -- ============================================================
-INSERT INTO facilities (id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, total_beds, available_beds, short_code, is_active)
+INSERT INTO facilities (id, name, type, address, kecamatan, kabupaten_kota, provinsi, phone, total_beds, available_beds, short_code, is_active, latitude, longitude, is_demo)
 VALUES (
     '00000000-0000-0000-0000-00000000d000'::uuid,
     'Sigap Demo Facility',
@@ -67,12 +67,18 @@ VALUES (
     50,
     50,
     'DEMO',
+    TRUE,
+    -6.2088,
+    106.8456,
     TRUE
 )
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name,
     short_code = EXCLUDED.short_code,
-    is_active = EXCLUDED.is_active;
+    is_active = EXCLUDED.is_active,
+    latitude = EXCLUDED.latitude,
+    longitude = EXCLUDED.longitude,
+    is_demo = EXCLUDED.is_demo;
 
 DELETE FROM user_roles
 WHERE user_id IN (

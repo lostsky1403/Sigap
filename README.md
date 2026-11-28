@@ -86,7 +86,7 @@ flowchart TD
 │   ├── api/                            # Go — gateway HTTP publik
 │   │   ├── cmd/server/main.go
 │   │   └── internal/handler/queue_test.go   # TDD dimulai di sini
-│   ├── queue-engine/                   # Rust — mesin pemroses antrean + bed sync
+│   ├── queue-engine/                   # Rust — mesin pemroses antrean
 │   │   └── src/
 │   │       ├── main.rs
 │   │       └── engine/queue.rs         # Logika transaksi kritis

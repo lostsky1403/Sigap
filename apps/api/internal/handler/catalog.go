@@ -55,7 +55,9 @@ type publicServiceUnit struct {
 }
 
 // ListPublicFacilities returns active facilities (id, name, short_code, type,
-// is_active). No authentication required.
+// is_active). No authentication required. Demo rows (is_demo = true) are
+// excluded: the public catalog must never present demo data as real
+// facilities.
 func (h *CatalogHandler) ListPublicFacilities(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -63,7 +65,7 @@ func (h *CatalogHandler) ListPublicFacilities(w http.ResponseWriter, r *http.Req
 	rows, err := h.pool.Query(ctx,
 		`SELECT id, name, short_code, type, is_active
 		 FROM facilities
-		 WHERE is_active = true
+		 WHERE is_active = true AND NOT is_demo
 		 ORDER BY name`)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Gagal mengambil data fasilitas.")

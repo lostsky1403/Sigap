@@ -3,7 +3,8 @@ use std::time::Instant;
 use tonic::Status;
 use uuid::Uuid;
 
-use sha2::{Digest, Sha256};
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 
 use crate::queue_engine::{GenerateQueueRequest, GenerateQueueResponse};
 
@@ -29,9 +30,14 @@ fn service_day_wib(instant: chrono::DateTime<chrono::Utc>) -> chrono::NaiveDate 
 /// Uses a single atomic INSERT ... ON CONFLICT DO UPDATE ... RETURNING on
 /// daily_queue_counters (PK (facility_id, date)) to guarantee exactly-once
 /// increment even under heavy concurrent load (zero double-booking).
+///
+/// `signing_secret` is the server HMAC key (SIGAP_SIGNING_SECRET) used for
+/// the medical-record integrity checksum. It is passed in, never read from
+/// the environment here, so tests can supply their own key.
 pub async fn generate_queue_number_tx(
     pool: &PgPool,
     req: GenerateQueueRequest,
+    signing_secret: &[u8],
 ) -> Result<GenerateQueueResponse, Status> {
     let facility_id = Uuid::parse_str(&req.facility_id)
         .map_err(|_| Status::invalid_argument("facility_id bukan UUID yang valid"))?;
@@ -123,7 +129,12 @@ pub async fn generate_queue_number_tx(
 
     let formatted = format!("{}-{:04}", short_code, next_number);
 
-    // Immutable Health Record: compute SHA-256 signature for tamper-proof proof
+    // Record-integrity checksum: HMAC-SHA256 keyed by the server signing
+    // secret (SIGAP_SIGNING_SECRET). Only the server can produce or verify
+    // it — that is what makes the checksum unforgeable by clients, and the
+    // absence of a public key is what makes it NOT a digital signature.
+    // It replaces the old plain SHA-256 hash, which anyone could recompute
+    // and which was wrongly described as "tamper-proof proof".
     let visit_time = chrono::Utc::now();
     let sig_input = format!(
         "{}|{}|{}|{}|{}",
@@ -133,9 +144,7 @@ pub async fn generate_queue_number_tx(
         formatted,
         visit_time.to_rfc3339()
     );
-    let mut hasher = Sha256::new();
-    hasher.update(sig_input.as_bytes());
-    let signature = format!("{:x}", hasher.finalize());
+    let signature = compute_record_signature(signing_secret, &sig_input);
 
     // 4. Create the ticket (client-supplied UUID). service_date is the same
     // WIB day the counter just used, so the ticket and its counter row can
@@ -158,7 +167,20 @@ pub async fn generate_queue_number_tx(
     .await
     .map_err(|e| Status::internal(format!("insert tiket gagal: {}", e)))?;
 
-    // 5. Insert immutable medical record (Health Wallet) with the signature (anti-ubah)
+    // 4b. Wait estimate from the real queue: how many tickets are still
+    // ahead of this one today, times the facility's measured average
+    // service time. When no completed ticket exists yet there is no
+    // history to average over, so the engine reports -1 ("no estimate")
+    // instead of inventing a number. The new ticket is 'waiting' with
+    // number `next_number`, so the ahead-count (numbers < next_number)
+    // never includes it, and the average excludes it too (its called_at
+    // is NULL).
+    let estimated_wait_minutes =
+        estimate_wait_minutes(&mut tx, facility_id, today, next_number).await?;
+
+    // 5. Insert the medical record (Health Wallet) with the HMAC
+    // record-integrity checksum. The checksum proves the row was written
+    // by this server; it is not a tamper-proof proof for third parties.
     sqlx::query(
         r#"
         INSERT INTO medical_records (patient_phone, facility_id, queue_number, formatted_number, signature, visit_time)
@@ -187,10 +209,78 @@ pub async fn generate_queue_number_tx(
         formatted_number: formatted,
         status: "waiting".to_string(),
         registered_at: visit_time.to_rfc3339(),
-        estimated_wait_minutes: 25,
+        estimated_wait_minutes,
         processing_time_micros,
         signature,
     })
+}
+
+/// HMAC-SHA256 record-integrity checksum for one medical record. The key is
+/// the server signing secret (SIGAP_SIGNING_SECRET); verification needs the
+/// same secret, so the checksum is meaningful only to this server.
+fn compute_record_signature(signing_secret: &[u8], input: &str) -> String {
+    let mut mac = Hmac::<Sha256>::new_from_slice(signing_secret)
+        .expect("HMAC accepts a key of any length");
+    mac.update(input.as_bytes());
+    format!("{:x}", mac.finalize().into_bytes())
+}
+
+/// Computes the wait estimate for a ticket that just took `ticket_number`
+/// today: the number of tickets still ahead of it (waiting, called or in
+/// service with a smaller number) times the facility's average measured
+/// service time in minutes, rounded up. The average comes from tickets
+/// that were both called and completed in the last 30 service days; a
+/// ticket that was never called or never completed has no measured service
+/// time and is excluded. Returns -1 when no completed ticket exists, so
+/// the caller reports "no estimate" instead of a fabricated number.
+//
+// The AVG is cast to float8 in SQL: Postgres AVG over an interval-derived
+// expression returns NUMERIC, which sqlx cannot decode into f64.
+#[allow(clippy::result_large_err)]
+async fn estimate_wait_minutes(
+    tx: &mut Transaction<'_, Postgres>,
+    facility_id: Uuid,
+    today: chrono::NaiveDate,
+    ticket_number: i32,
+) -> Result<i32, Status> {
+    let ahead: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM queue_tickets
+        WHERE facility_id = $1
+          AND service_date = $2
+          AND queue_number < $3
+          AND status IN ('waiting', 'called', 'in_service')
+        "#,
+    )
+    .bind(facility_id)
+    .bind(today)
+    .bind(ticket_number)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| Status::internal(format!("hitung antrean di depan gagal: {}", e)))?;
+
+    let avg_minutes: Option<f64> = sqlx::query_scalar(
+        r#"
+        SELECT AVG(EXTRACT(EPOCH FROM (completed_at - called_at)) / 60.0)::float8
+        FROM queue_tickets
+        WHERE facility_id = $1
+          AND service_date >= $2 - INTERVAL '30 days'
+          AND called_at IS NOT NULL
+          AND completed_at IS NOT NULL
+          AND completed_at > called_at
+        "#,
+    )
+    .bind(facility_id)
+    .bind(today)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| Status::internal(format!("hitung rata-rata layanan gagal: {}", e)))?;
+
+    let Some(avg) = avg_minutes.filter(|v| *v > 0.0) else {
+        return Ok(-1);
+    };
+    Ok((ahead as f64 * avg).ceil() as i32)
 }
 
 #[cfg(test)]

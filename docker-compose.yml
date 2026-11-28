@@ -74,6 +74,9 @@ services:
     container_name: sigap-rust-engine
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-sigap}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-sigap}?sslmode=require
+      # HMAC secret for medical-record integrity checksums. Compose fails
+      # fast if unset — the engine refuses to start without it.
+      SIGAP_SIGNING_SECRET: "${SIGAP_SIGNING_SECRET:?set SIGAP_SIGNING_SECRET in .env (generate with: openssl rand -hex 32)}"
       RUST_LOG: info
     depends_on:
       postgres:

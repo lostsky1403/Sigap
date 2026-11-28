@@ -7,7 +7,8 @@ import (
 )
 
 // Hub is a minimal in-memory broadcaster for Server-Sent Events.
-// Used to push real-time bed availability updates to connected browsers.
+// Used to push real-time queue updates to connected browsers. There is no
+// live bed feed: nothing published here is bed data.
 type Hub struct {
 	mu        sync.RWMutex
 	clients   map[chan string]struct{}
@@ -77,7 +78,7 @@ func (h *Hub) ServeSSE(w http.ResponseWriter, r *http.Request) {
 	defer h.Unsubscribe(c)
 
 	// send a comment to keep connection alive in some proxies
-	fmt.Fprintf(w, ": connected to Sigap bed events\n\n")
+	fmt.Fprintf(w, ": connected to Sigap queue events\n\n")
 	flusher.Flush()
 
 	for {
@@ -88,7 +89,7 @@ func (h *Hub) ServeSSE(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			fmt.Fprintf(w, "event: bed_updated\ndata: %s\n\n", msg)
+			fmt.Fprintf(w, "event: queue_updated\ndata: %s\n\n", msg)
 			flusher.Flush()
 		}
 	}
