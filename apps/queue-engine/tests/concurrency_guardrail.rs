@@ -28,6 +28,11 @@ const TEST_FACILITY_ID: &str = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
 /// without sharing any counter, ticket or patient row.
 const FIRST_DAY_FACILITY_ID: &str = "b1eebc99-9c0b-4ef8-bb6d-6bb9bd380a12";
 
+/// Signing secret for the HMAC record-integrity checksum in these tests.
+/// The engine takes the secret as an argument, so tests supply their own.
+/// Never use this value outside tests.
+const TEST_SIGNING_SECRET: &[u8] = b"test-signing-secret-do-not-use-in-production";
+
 #[tokio::test]
 async fn concurrent_queue_requests_produce_unique_numbers() {
     let database_url = match env::var("DATABASE_URL") {
@@ -82,7 +87,7 @@ async fn concurrent_queue_requests_produce_unique_numbers() {
                 }),
             };
             let resp =
-                sigap_queue_engine::engine::queue::generate_queue_number_tx(&pool, req).await;
+                sigap_queue_engine::engine::queue::generate_queue_number_tx(&pool, req, TEST_SIGNING_SECRET).await;
             resp
         });
         handles.push(handle);
@@ -188,7 +193,7 @@ async fn first_ticket_of_the_day_is_race_free_from_empty_counter() {
                     date_of_birth: Some("1990-01-01".to_string()),
                 }),
             };
-            sigap_queue_engine::engine::queue::generate_queue_number_tx(&pool, req).await
+            sigap_queue_engine::engine::queue::generate_queue_number_tx(&pool, req, TEST_SIGNING_SECRET).await
         });
         handles.push(handle);
     }
