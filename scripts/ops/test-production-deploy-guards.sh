@@ -273,16 +273,6 @@ if [ "${missing_base_ref:-0}" -eq 0 ]; then
       else
         bad "dedicated regional release migration inventory failed the declared-set guard"
       fi
-    elif [ "$HEAD_REF" = "feat/sigap-identity-deactivation" ]; then
-      # E: explicit stacked child of the verified regional development branch.
-      # The guard validates the parent inventory/checksums against the canonical
-      # baseline and requires ZERO migration changes in the child. It activates
-      # only on a real pull_request event with exact base/head/repo identity.
-      if sh scripts/ops/check-migration-inventory.sh --context E; then
-        ok
-      else
-        bad "stacked-child migration inventory failed the declared-set guard"
-      fi
     else
       # B: an ordinary branch must satisfy the inventory guard — no
       # deletion/rename/modification of applied migrations, and any added
