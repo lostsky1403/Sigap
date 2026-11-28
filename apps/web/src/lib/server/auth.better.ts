@@ -43,6 +43,7 @@ import { getRequestEvent } from "$app/server";
 import { building } from "$app/environment";
 import { PostgresDialect } from "kysely";
 import { databaseConfigured, getPool } from "./db";
+import { assertActiveIdentity } from "./identity-status";
 import { sendMail } from "./mail";
 
 /**
@@ -146,6 +147,22 @@ export const auth = betterAuth({
 	// replay for the same auth user changes nothing and can never produce a
 	// second active row for one subject.
 	databaseHooks: {
+		// Identity-status gate (adopted owner policy, 2026-11-19, ADR Option 1).
+		// No Better Auth session may be created unless the authenticated subject
+		// currently maps to an ACTIVE, non-deleted `public.app_users` row. The
+		// helper throws a single generic credential error for every refusal
+		// (inactive / deleted / missing identity / DB outage / blank subject), so
+		// the response cannot reveal whether the account exists or is disabled.
+		// `create.before` runs on every session-creation path (sign-in) in
+		// better-auth 1.7.20; returning a thrown error rejects the write, so no
+		// session row and no JWT can be minted for a refused identity.
+		session: {
+			create: {
+				before: async (session) => {
+					await assertActiveIdentity(session?.userId);
+				},
+			},
+		},
 		user: {
 			create: {
 				// Runs after the `auth.user` write (better-auth 1.7.20 queues it

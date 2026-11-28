@@ -184,10 +184,18 @@ function resolveTarget({ fromEnvFile }) {
  */
 function createPool({ connectionString, loopback }) {
 	const local = loopback || /@(127\.0\.0\.1|localhost):/.test(connectionString);
+	// An EXPLICIT sslmode=disable is authoritative even on loopback: CI service
+	// containers and other plain-TCP databases are reachable this way. This
+	// mirrors src/lib/server/db.ts exactly — only the self-signed local dev path
+	// gets relaxed verification. Production URLs are never touched.
+	const sslDisabled = /[?&]sslmode=disable(?:&|$)/i.test(connectionString);
 	const stripped = local
 		? connectionString.replace(/([?&])sslmode=[^&]+(&?)/, (_m, lead, trail) => (trail ? lead : ''))
 		: connectionString;
-	return new Pool({ connectionString: stripped, ssl: local ? { rejectUnauthorized: false } : undefined });
+	return new Pool({
+		connectionString: stripped,
+		ssl: local && !sslDisabled ? { rejectUnauthorized: false } : undefined
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -890,9 +898,11 @@ async function runDeactivate(pool, auth, email, opts) {
 		);
 	}
 	console.log(
-		'  note         : better-auth 1.7.20 base config has no ban column on auth.user (that arrives with the admin plugin), so a deactivated\n' +
-			'                 account can still create a session; it authorizes nothing (the Go resolver filters app_users.status), and an\n' +
-			'                 already-minted JWT stops authenticating the subject within the 1 h access-token TTL — design/session-lifecycle-policy.md §2.1, §3.'
+		'  note         : this deactivation sets app_users.status=disabled and revokes every Better Auth session; the\n' +
+			'                 session.create.before gate (identity-status.ts) now refuses ANY new session for a disabled,\n' +
+			'                 deleted, missing or unverified identity - so a deactivated account can no longer sign in at all.\n' +
+			'                 An already-minted JWT still verifies to its 1 h exp (no zero-second revocation) but authorizes\n' +
+			'                 nothing because Go re-resolves app_users.status per request - design/session-lifecycle-policy.md §2.1, §3.'
 	);
 }
 

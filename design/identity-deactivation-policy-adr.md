@@ -224,3 +224,163 @@ oracle trade-off); (c) who performs §4.2 session revocation on deactivation;
 
 **Owner decision needed:** choose 0 / 1 / 4 and approve error-wording and audit
 treatment. Until then `IDENTITY_DEACTIVATION_POLICY=OPEN`.
+
+---
+
+## 9. Implementation record — 2026-11-19 (branch `feat/sigap-identity-deactivation`)
+
+Owner **adopted Option 1** with the ten policy items in the task brief. Implemented
+in an isolated worktree based on PR #97 head `2b1bb86`; PR #97 itself is untouched.
+
+### 9.1 What was actually implemented
+- `apps/web/src/lib/server/identity-status.ts` — `assertActiveIdentity(subject)`.
+  Queries `public.app_users` by `subject` and **throws a single generic
+  `APIError.from("UNAUTHORIZED", { message: "Email atau kata sandi salah.",
+  code: "INVALID_EMAIL_OR_PASSWORD" })`** for every denial: blank/non-string
+  subject, no DB pool, query error (DB outage), no row, `status <> 'active'`, or
+  `deleted_at IS NOT NULL`. Returns void only for a confirmed-active identity.
+  No SQL/status/existence signal is exposed — the login action maps that exact
+  APIError shape to the same message as a wrong password (anti-enumeration).
+- `apps/web/src/lib/server/auth.better.ts` — `databaseHooks.session.create.before`
+  calls `assertActiveIdentity(session.userId)`. In Better Auth 1.7.20
+  (`with-hooks.mjs:11`) a thrown error from `create.before` propagates and the
+  session row is never written; no JWT can be minted for a refused identity.
+  Coverage of creation paths (static source verification): every session write
+  goes through `internalAdapter.createSession`, which is wrapped by
+  `createWithHooks(data, "session", …)` (`internal-adapter.mjs:336`); that includes
+  the ordinary `signInEmail` path (autoSignIn is false at sign-up) and the
+  two-factor/MFA path where a verified TOTP mints a fresh session
+  (`plugins/two-factor/index.mjs:174`). No alternative session-creation path that
+  bypasses the adapter hook was found. This is a source-level confirmation, not a
+  runtime proof (no disposable DB was available locally).
+- `apps/web/scripts/provision-staff.mjs --deactivate` is the **real, existing**
+  deactivation operation: it sets `app_users.status='disabled'` and calls
+  `internalAdapter.deleteUserSessions` (verified `after === 0`, `fail()` on
+  partial failure). Its stale "can still create a session" note was corrected to
+  reflect the new gate. No new public admin endpoint was invented.
+
+### 9.2 ADR statements kept true after implementation
+- The ≤1 h JWT identity bound is **unchanged** — a previously issued JWT still
+  verifies to `exp`; only new-session creation is gated. No zero-second claim.
+- Go RBAC still re-resolves `app_users.status` per request (zero authority for a
+  disabled subject) — unchanged, still the authorization authority.
+- There is still **one** source of truth (`public.app_users`); no `auth.user.banned`.
+- MFA behaviour is untouched (`STAFF_MFA=PARTIAL`).
+- Audit: refusing the session is observable in logs/the generic error; there is
+  no Go `audit_events` write (gap 9 unchanged, owner/infra-blocked).
+
+### 9.3 Test evidence (honest)
+- `apps/web/src/lib/server/identity-status.test.ts`: **6/6 PASS** with a FAKE pool
+  (ACTIVE allowed; DISABLED/SOFT-DELETED/MISSING/DB-error/blank-subject all denied
+  with the generic 401 shape). Runs without a DB.
+- `apps/web/tests/identity-deactivation.integration.test.js`: DB-gated integration
+  suite for the 16 mandated scenarios (real session rows, responses, JWT bound,
+  reactivation). **NOT RUN locally** — no disposable Postgres credentials on this
+  host; it SKIPs without DB and FAILs with `SIGAP_IDENTITY_DEACTIVATION_REQUIRE_DB=1`
+  (no fake PASS). CI must run it with disposable Postgres.
+- Frontend `pnpm test:unit`: **768/768 PASS**; `pnpm check` 0/0; production build PASS.
+- `go build ./...` / `go test ./...`: PASS (DB-gated Go suites skip locally without
+  `DATABASE_URL`).
+
+### 9.4 Real-database verification — 2026-11-19 (disposable PostgreSQL 18)
+A task-owned, loopback-only PostgreSQL 18 cluster (port 55432, db
+`sigap_identity_test`, user `sigap_test`, self-signed SSL) was provisioned,
+migrations 0001–0014 applied (14/14), and the Better Auth auth schema created
+via `getMigrations(auth.options)` (6 tables). No shared/dev/production DB was
+used. Verified with REAL runtime behaviour:
+
+- **integration test (built app, HTTP API, real session rows):** 22/22 assertions
+  PASS — active citizen/staff login 200 + session row; inactive/soft-deleted/
+  missing-identity login 401 with generic `INVALID_EMAIL_OR_PASSWORD` and **no
+  session row**; simulated DB outage fails closed; repeated attempts stay denied;
+  reactivation allows a fresh session. The test was rewritten as a built-app HTTP
+  runner (Node runtime) because the prior `.js` variant that imported `.ts`
+  directly could not resolve SvelteKit's `$app/*` virtual modules.
+- **real deactivation operation:** a live session (count 1) was created via the
+  built app, `provision-staff.mjs --deactivate <email> --apply` ran against the
+  disposable DB → `sessions_after=0`, `app_users.status=disabled`, subsequent
+  login 401. `DEACTIVATION_RUNTIME=PASS`.
+- **DB-backed regression suites:** session-security **62/0/0**, session-lifecycle
+  **67/0/0**, auth-config **0/0/0** — all with `REQUIRE_DB=1` semantics, zero skips.
+  Two stale gap-characterization assertions were updated from "disabled still
+  signs in" to "disabled is refused at the identity layer" (strengthening, not
+  weakening); the expiry test now uses a fresh post-reactivation device.
+- strict attribution (`2b1bb86..HEAD`, mode strict) PASS; Gitleaks 0 leaks;
+  `pnpm check` 0/0; `pnpm test:unit` 768/768; production build PASS;
+  `go build ./...` / `go test ./...` PASS (DB-gated suites skip locally without
+  `DATABASE_URL`; with the minimal disposable DB three schedule tests that need a
+  demo facility fixture fail — an environment-fixture issue, not a regression;
+  CI's full seed supplies that fixture).
+- **MFA runtime path:** NOT exercised end-to-end locally. Hook coverage of the
+  two-factor session mint was confirmed from library source in §9.2, but no TOTP
+  verification test was driven against the disposable DB. `MFA_HOOK_RUNTIME=NOT_RUN`.
+- **Go per-request RBAC / regional / patient isolation:** not re-driven against
+  the disposable DB beyond the existing suites; covered by PR #97's 9/9 CI on
+  head `2b1bb86` (unchanged by this feature branch).
+- **deactivation/login race:** source review shows the gate queries live status
+  at each sign-in and the deactivation operation revokes sessions then sets
+  status; an in-flight login that passes the gate just before deactivation could
+  still mint a session that deactivation then revokes (the revocation runs after
+  and deletes all sessions). No atomic cross-system guarantee is claimed — the
+  lifecycle contract's zero-privilege outcome still holds via Go RBAC. Status OPEN
+  for an explicit race test.
+
+### 9.5 CI / stacked-PR integration plan
+`.github/workflows/ci.yml` triggers `pull_request` only for `main` and
+`design/ui-ux-overhaul`. A stacked PR targeting `feat/sigap-selfhosted-auth`
+will **not** auto-trigger CI. Least-disruptive options (owner-gated, none done
+here): (a) run the PostgreSQL CI job locally/reproduce the nine checks before
+opening the stacked PR — already done for the relevant suites above; (b) with
+owner approval, add `feat/sigap-selfhosted-auth` to the workflow's PR target so
+the stacked PR gets real CI; (c) after PR #97 merges to `main`, rebase this branch
+onto the new `main` and open a normal PR (which triggers CI). Do NOT open a PR to
+`main` now (would duplicate PR #97) and do NOT modify the protected parent PR.
+
+### 9.7 Final security gates — 2026-11-19 (real MFA + race + fixture parity)
+A second task-owned disposable PostgreSQL 18 cluster (loopback `127.0.0.1:55433`,
+db `sigap_mfa_test`, user `sigap_test`, self-signed SSL) was used. Migrations
+0001–0014 (14/14), Better Auth schema (6 tables), and the additive demo fixtures
+(`dev.sql` + `rbac.sql` + `demo.sql`) were applied. No shared/production DB used.
+
+- **MFA/TOTP runtime — PASS (18/18).** Real enrolled TOTP (RFC 6238 generated
+  from the enable response's base32 secret) through the built app's HTTP API:
+  (A) active TOTP sign-in mints a session; (B) disabling between credential
+  sign-in and TOTP verification blocks verification and leaves **no** session;
+  (C) deactivation revokes the MFA-authenticated session; (D) after reactivation
+  a fresh MFA login succeeds and the old session is not resurrected. This closes
+  the prior `MFA_HOOK_RUNTIME=NOT_RUN` gap with runtime evidence, not source
+  inspection. (`tests/mfa-runtime.mjs`)
+- **Deactivation/login race — PASS (bounded concurrency, 8 iterations).** A
+  sign-in request and the real `--deactivate --apply` operation were interleaved
+  repeatedly; after deactivation completed, **no usable session remained** and
+  status was `disabled`. The final-state invariant holds because deactivation
+  deletes all sessions after the status update. No atomic cross-system guarantee
+  is claimed — only the verified post-deactivation invariant. (`tests/deactivation-race.mjs`)
+- **Go fixture parity — PASS.** The three previously failing schedule tests pass
+  once `demo.sql` (which seeds facility `...d000`) is applied after `dev.sql` and
+  `rbac.sql`; the earlier failure was a missing demo fixture, not a defect. Full
+  `go test ./...` passes with the seeded disposable DB.
+- **Targeted regression:** identity integration 22/22; session-security 62/0/0;
+  session-lifecycle 67/0/0; auth-config 0/0/0 (all DB-gated, zero skips); Vitest
+  768/768; svelte-check 0/0; strict attribution PASS; Gitleaks 0 leaks.
+
+### 9.8 Residual limitations (final)
+- `SESSION_LIFECYCLE` stays **PARTIAL** only for the unresolved MFA **recovery /
+  backup-code / lockout lifecycle** acceptance criteria — the core identity gate,
+  TOTP session creation, deactivation, race invariant and session revocation are
+  now runtime-verified. `STAFF_MFA=PARTIAL` for the same recovery/lockout gaps.
+- No atomic cross-system revocation is claimed: session deletion + app_users status
+  update are separate operations with observable partial failure, not one transaction.
+- Race verification is bounded (8 iterations) final-state, not a proof of the
+  absence of every transient timing window; the approved policy's zero-authority
+  outcome is additionally enforced by Go's per-request RBAC.
+- The intermittent 429 rate-limit observed during tests was a shared-bucket test
+  artifact (no forwarded client IP); tests forward rotating loopback IPs. It is
+  not an identity-gate behaviour and does not affect production semantics.
+- Previous JWTs remain valid to their 1 h `exp` (documented bound); no zero-second
+  JWT revocation is claimed. Race conditions in the previous_hash audit chain are
+  unrelated and unchanged.
+- CI: `.github/workflows/ci.yml` triggers PRs only for `main` and
+  `design/ui-ux-overhaul`; a stacked PR to `feat/sigap-selfhosted-auth` will not
+  auto-run CI. All nine relevant suites were reproduced locally on the feature
+  head. Owner must approve either a workflow target addition or a post-merge PR.

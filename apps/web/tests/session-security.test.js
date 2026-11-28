@@ -694,31 +694,32 @@ try {
 			await db.query(`UPDATE public.app_users SET status = 'disabled' WHERE subject = $1`, [userIdA]);
 			const devA4 = await device(emailA, password, markerE);
 			check(
-				'GAP CHARACTERIZATION: a deactivated account still obtains a Better Auth session (identity layer does not gate; the Go RBAC resolver does)',
-				devA4.res.status === 200 && devA4.jar.has() && typeof devA4.token === 'string' && devA4.token.length > 0,
+				'IDENTITY GATE: a deactivated account is refused at sign-in (no new Better Auth session)',
+				devA4.res.status === 401 && !devA4.jar.has(),
 				{ status: devA4.res.status, body: devA4.text.slice(0, 120) }
 			);
-			const deactivatedSession = await api(url, '/get-session', { method: 'GET', jar: devA4.jar });
 			check(
-				'GAP CHARACTERIZATION: that session resolves to the deactivated user at the identity layer',
-				deactivatedSession.res.status === 200 && deactivatedSession.json?.user?.id === userIdA,
-				{ status: deactivatedSession.res.status, userId: deactivatedSession.json?.user?.id ?? null }
+				'IDENTITY GATE: refusal is generic and does not reveal deactivation state',
+				/INVALID_EMAIL_OR_PASSWORD/.test(devA4.text) && !/disabled/i.test(devA4.text),
+				{ body: devA4.text.slice(0, 120) }
 			);
 			await db.query(`UPDATE public.app_users SET status = $2 WHERE subject = $1`, [userIdA, prevStatus.rows[0]?.status ?? 'active']);
 
 			// --- expiration: past expiresAt ⇒ get-session null / /token 401.
-			//     Reuses device A4 (the deactivation device): one sign-in serves the
-			//     identity-gap characterization, then the clock test. ---
-			const expireToken = devA4.token;
+			//     A4 was refused by the identity gate (no session), so after
+			//     reactivation we use a FRESH device for the clock test. ---
+			const expireDevice = await device(emailA, password, markerE + '-expiry');
+			check('reactivated identity establishes a session for the expiry test', expireDevice.res.status === 200 && expireDevice.jar.has(), { status: expireDevice.res.status });
+			const expireToken = expireDevice.token;
 			// Live BEFORE the clock moves: otherwise "expired ⇒ null" would also be
 			// satisfied by a session that never worked at all.
-			const beforeExpiry = await api(url, '/get-session', { method: 'GET', jar: devA4.jar });
+			const beforeExpiry = await api(url, '/get-session', { method: 'GET', jar: expireDevice.jar });
 			check('the expiration device is live before the clock is moved', beforeExpiry.res.status === 200 && beforeExpiry.json !== null, beforeExpiry.text.slice(0, 80));
 			await db.query(`UPDATE auth."session" SET "expiresAt" = $2 WHERE token = $1`, [expireToken, new Date(Date.now() - 1000)]);
 
-			const expiredGet = await api(url, '/get-session', { method: 'GET', jar: devA4.jar });
+			const expiredGet = await api(url, '/get-session', { method: 'GET', jar: expireDevice.jar });
 			check('an expired session answers get-session with 200 null (never a 5xx)', expiredGet.res.status === 200 && expiredGet.json === null, { status: expiredGet.res.status, body: expiredGet.text.slice(0, 80) });
-			const expiredMint = await api(url, '/token', { method: 'GET', jar: devA4.jar });
+			const expiredMint = await api(url, '/token', { method: 'GET', jar: expireDevice.jar });
 			check('the expired session can no longer mint an access JWT (401)', expiredMint.res.status === 401, { status: expiredMint.res.status, body: expiredMint.text.slice(0, 80) });
 
 			// --- revocation: a caller ends ONE of its OWN sessions. Reuses device A3:
